@@ -1,0 +1,6 @@
+-- DEPRECATED: this file was part of the original PostgreSQL warehouse design (superseded).
+-- The target database is now MySQL 8 (existing production infrastructure) per the
+-- 2026-07-05 correction to docs/tech-stack-decision.md. Its replacement is 0002_core_sales_facts.sql
+-- in this same directory. This file is intentionally left as a no-op comment (nothing to
+-- execute) so it can't be run by accident; it is kept in git history for traceability rather
+-- than deleted outright, per the "replace, don't silently disappear" instruction.

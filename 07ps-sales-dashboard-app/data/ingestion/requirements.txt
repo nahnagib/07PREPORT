@@ -1,0 +1,9 @@
+pandas>=2.2
+openpyxl>=3.1
+# psycopg2-binary removed: stale from the original PostgreSQL design. orchestrator.py and
+# star_schema/loader.py both use pymysql against MySQL 8 -- see docs/tech-stack-decision.md's
+# 2026-07-05 correction. Kept out rather than left silently alongside pymysql so nobody installs
+# a driver this code never actually imports.
+pymysql>=1.1
+APScheduler>=3.10
+python-dotenv>=1.0

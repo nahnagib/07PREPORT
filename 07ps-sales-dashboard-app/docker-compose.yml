@@ -1,0 +1,58 @@
+# Deployment target: Libyan Spider VPS (root access) - see docs/tech-stack-decision.md Section 5.
+# `docker compose up -d --build` on the VPS runs the whole stack behind Nginx/TLS.
+# Build contexts are the repo root for frontend/backend so the @07ps/ui workspace package
+# resolves correctly under npm workspaces.
+#
+# MySQL is NOT containerized here -- this app connects to the existing production MySQL 8
+# instance (see backend/.env's DB_* vars and docs/etl-deployment.md), matching how this
+# environment already runs today. The `postgres` service that used to be here was dead: nothing
+# in this repo has targeted Postgres since the earlier migration to that MySQL instance.
+version: '3.9'
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    ports:
+      - '127.0.0.1:6379:6379' # not exposed publicly - only backend/etl-worker reach it
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file: ./backend/.env
+    depends_on: [redis]
+    ports:
+      - '127.0.0.1:4000:4000'
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on: [backend]
+    ports:
+      - '127.0.0.1:3000:3000'
+
+  # Runs the integrated ETL (backend/src/etl + the vendored pipeline in data/etl). Only this
+  # service needs Python installed -- the API container above only enqueues jobs; this one
+  # executes them (see backend/Dockerfile.etl-worker). Replaces the old Windows Task Scheduler +
+  # scheduler.py combo entirely -- no scheduling happens outside this stack anymore.
+  etl-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.etl-worker
+    restart: unless-stopped
+    env_file: ./backend/.env
+    depends_on: [redis]
+
+  ingestion:
+    build: ./data/ingestion
+    restart: unless-stopped
+    env_file: ./data/ingestion/.env
+
+volumes:
+  redisdata:

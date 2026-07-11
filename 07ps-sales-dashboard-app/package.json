@@ -1,0 +1,40 @@
+{
+  "name": "07ps-sales-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BMH 07 Ps Project - Sales/Promotion dashboard web app (Phase P1/P2 foundation)",
+  "workspaces": [
+    "frontend",
+    "backend",
+    "packages/*"
+  ],
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev": "concurrently -n backend,frontend -c yellow,cyan \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "backend": "npm run dev --workspace backend",
+    "frontend": "npm run dev --workspace frontend",
+    "etl:run": "npm run etl:run --workspace backend --",
+    "etl:full": "npm run etl:full --workspace backend --",
+    "etl:incremental": "npm run etl:incremental --workspace backend --",
+    "etl:sql": "npm run etl:sql --workspace backend --",
+    "etl:excel": "npm run etl:excel --workspace backend --",
+    "etl:worker": "npm run etl:worker --workspace backend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1"
+  }
+}

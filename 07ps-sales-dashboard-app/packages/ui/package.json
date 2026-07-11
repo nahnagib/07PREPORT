@@ -1,0 +1,28 @@
+{
+  "name": "@07ps/ui",
+  "version": "0.1.0",
+  "description": "07 Ps shared dashboard component library (Standards Section 3.20 / 5.8) - the only building-block set future department dashboards may use.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "license": "UNLICENSED",
+  "scripts": {
+    "lint": "eslint src --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "@tanstack/react-table": "^8.20.5",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^2.5.2",
+    "lucide-react": "^0.383.0",
+    "recharts": "^2.12.7",
+    "xlsx": "^0.18.5"
+  }
+}

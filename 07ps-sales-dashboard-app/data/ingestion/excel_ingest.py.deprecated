@@ -1,0 +1,99 @@
+# DEPRECATED 2026-07-05: superseded by input_sheets/settings_factory.py + the vendored pipeline.transform()'s own reference-data loading (ProductMasterLoader/SalesOrgRepository/TargetsLoader/BlockedCustomersLoader/OffDaysFactBuilder) - this file's REQUIRED_COLUMNS/business_unit_code/branch_code/employee_code schema was designed blind and does not match the real Input-folder files' actual columns.
+#
+# This file was written in the Phase P1 bootstrap session, before the existing
+# powerbi_sales_pipeline codebase (the pipeline that actually produces SalesModel_OneOutput.xlsx)
+# had been read. It designed its own Odoo/Excel extraction logic and Postgres schema from
+# scratch/blind, which the ingestion-layer session (see ../README.md) found does not match the
+# real pipeline's proven business rules, the real Input-folder file schemas, or the MySQL 8
+# warehouse this app now targets. Left in git history for traceability; not imported by anything
+# and not maintained. See ../README.md for the current, validated implementation.
+
+"""Excel target-file ingestion - Standards Section 6.1/6.3, Migration Plan Section 6.2 (Phase P1).
+
+Loads the current Excel-based Value/Volume/ASP targets into fact_target_plan
+(0003_target_plan_fact.sql), replacing the Excel file as the *governed* source (the Excel
+keeps being the input artifact; the warehouse table becomes the single source every
+consumer reads from - Section 6.4).
+
+Migration Plan risk register: "Target/Plan values migrate out of Excel incorrectly -> Tachometer
+and Critical Number show wrong pace-vs-target from day one. Mitigation: reconcile the new
+Target/Plan fact against the current Excel inputs line-by-line before P1 exit." `reconcile()`
+below is that check, not just a nice-to-have.
+"""
+
+from __future__ import annotations
+
+import glob
+import logging
+import os
+from typing import Any
+
+import pandas as pd
+
+from config import CONFIG
+
+logger = logging.getLogger(__name__)
+
+REQUIRED_COLUMNS = [
+    "business_unit_code",
+    "branch_code",
+    "employee_code",
+    "target_grain",
+    "period_date",
+    "target_value",
+    "target_volume",
+]
+
+
+def discover_target_files() -> list[str]:
+    return sorted(glob.glob(os.path.join(CONFIG.excel_targets_dir, "*.xlsx")))
+
+
+def load_target_file(path: str) -> pd.DataFrame:
+    """Reads one target workbook. Expected sheet: first sheet, header row 1, columns per
+    REQUIRED_COLUMNS - confirm the exact current template with the Data Analyst during Phase P0
+    (this is the "confirm and lock the KPI catalog and data dictionary" step, Migration Plan 6.1).
+    """
+    df = pd.read_excel(path, sheet_name=0, engine="openpyxl")
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"{path}: missing expected columns {missing}. Confirm the target-file template "
+            "against the current 07 P's manual before re-running."
+        )
+    df["source_file"] = os.path.basename(path)
+    return df[REQUIRED_COLUMNS + ["source_file"]]
+
+
+def load_all_targets() -> pd.DataFrame:
+    files = discover_target_files()
+    if not files:
+        logger.warning("No target Excel files found in %s", CONFIG.excel_targets_dir)
+        return pd.DataFrame(columns=REQUIRED_COLUMNS + ["source_file"])
+    frames = [load_target_file(f) for f in files]
+    return pd.concat(frames, ignore_index=True)
+
+
+def reconcile(df: pd.DataFrame, warehouse_df: pd.DataFrame) -> dict[str, Any]:
+    """Line-by-line comparison between freshly-parsed Excel targets and what's already in the
+    warehouse, per the Migration Plan's explicit P1 risk mitigation. Returns a small report;
+    callers should fail the P1 exit criterion (not just log a warning) on any mismatch.
+    """
+    merged = df.merge(
+        warehouse_df,
+        on=["business_unit_code", "branch_code", "employee_code", "period_date"],
+        how="outer",
+        suffixes=("_excel", "_warehouse"),
+        indicator=True,
+    )
+    mismatches = merged[merged["_merge"] != "both"]
+    value_diffs = merged[
+        (merged["_merge"] == "both")
+        & (merged["target_value_excel"].round(2) != merged["target_value_warehouse"].round(2))
+    ]
+    return {
+        "rows_compared": len(merged),
+        "rows_only_in_one_source": len(mismatches),
+        "rows_with_value_mismatch": len(value_diffs),
+        "clean": len(mismatches) == 0 and len(value_diffs) == 0,
+    }

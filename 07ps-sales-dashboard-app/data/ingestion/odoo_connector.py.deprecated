@@ -1,0 +1,103 @@
+# DEPRECATED 2026-07-05: superseded by odoo/extract.py + odoo/mock_client.py + odoo/fixtures.py (reuses the vendored sales_pipeline.odoo repositories instead of a hand-rolled sale.order.line query).
+#
+# This file was written in the Phase P1 bootstrap session, before the existing
+# powerbi_sales_pipeline codebase (the pipeline that actually produces SalesModel_OneOutput.xlsx)
+# had been read. It designed its own Odoo/Excel extraction logic and Postgres schema from
+# scratch/blind, which the ingestion-layer session (see ../README.md) found does not match the
+# real pipeline's proven business rules, the real Input-folder file schemas, or the MySQL 8
+# warehouse this app now targets. Left in git history for traceability; not imported by anything
+# and not maintained. See ../README.md for the current, validated implementation.
+
+"""Odoo ERP ingestion - Standards Section 7.1/6.1 (Odoo is the Sales/HR/Finance/Production source).
+
+Uses Odoo's native XML-RPC API (the same protocol Odoo's own official clients use - see
+tech-stack-decision.md Section 4 for why this stays in Python rather than a Node RPC client).
+
+This module makes REAL xmlrpc calls - it is not a mock - but per the Data Analyst's confirmation
+that Odoo is currently reachable only from her local machine, running this against production
+Odoo requires ODOO_URL/ODOO_DB/ODOO_USERNAME/ODOO_API_KEY to be set to a host this process can
+actually reach (today: local machine; later: the VPS once network access is arranged).
+"""
+
+from __future__ import annotations
+
+import logging
+import xmlrpc.client
+from datetime import date
+from typing import Any
+
+from config import CONFIG
+
+logger = logging.getLogger(__name__)
+
+
+class OdooConnectionError(RuntimeError):
+    """Raised when Odoo is unreachable or credentials are missing - never silently mocked."""
+
+
+class OdooClient:
+    def __init__(self):
+        if not (
+            CONFIG.odoo_url and CONFIG.odoo_db and CONFIG.odoo_username and CONFIG.odoo_api_key
+        ):
+            raise OdooConnectionError(
+                "Odoo credentials not configured. Set ODOO_URL, ODOO_DB, ODOO_USERNAME, "
+                "ODOO_API_KEY (see .env.example) - this connector deliberately refuses to run "
+                "against a guessed/mocked endpoint."
+            )
+        self._common = xmlrpc.client.ServerProxy(f"{CONFIG.odoo_url}/xmlrpc/2/common")
+        self._models = xmlrpc.client.ServerProxy(f"{CONFIG.odoo_url}/xmlrpc/2/object")
+        self._uid: int | None = None
+
+    def authenticate(self) -> int:
+        self._uid = self._common.authenticate(
+            CONFIG.odoo_db, CONFIG.odoo_username, CONFIG.odoo_api_key, {}
+        )
+        if not self._uid:
+            raise OdooConnectionError("Odoo authentication failed - check credentials/db name.")
+        logger.info("Authenticated to Odoo as uid=%s", self._uid)
+        return self._uid
+
+    def search_read(
+        self, model: str, domain: list[Any], fields: list[str], limit: int = 0
+    ) -> list[dict[str, Any]]:
+        if self._uid is None:
+            self.authenticate()
+        return self._models.execute_kw(
+            CONFIG.odoo_db,
+            self._uid,
+            CONFIG.odoo_api_key,
+            model,
+            "search_read",
+            [domain],
+            {"fields": fields, "limit": limit},
+        )
+
+    def fetch_sales_orders(self, since: date) -> list[dict[str, Any]]:
+        """Pulls confirmed sale.order.line records since a given date.
+
+        Field names below are Odoo's standard sale.order.line schema; confirm against the actual
+        BMH Odoo instance's customizations during Phase P0 sign-off before trusting field mapping.
+        """
+        return self.search_read(
+            model="sale.order.line",
+            domain=[
+                ["order_id.state", "=", "sale"],
+                ["order_id.date_order", ">=", since.isoformat()],
+            ],
+            fields=[
+                "order_id",
+                "product_id",
+                "product_uom_qty",
+                "price_subtotal",
+                "order_partner_id",
+                "salesman_id",
+                "order_id.date_order",
+            ],
+        )
+
+
+def run_incremental_sales_pull(since: date) -> list[dict[str, Any]]:
+    """Entry point called by scheduler.py on each of the 5 daily refresh runs."""
+    client = OdooClient()
+    return client.fetch_sales_orders(since)

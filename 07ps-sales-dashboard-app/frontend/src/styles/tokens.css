@@ -1,0 +1,158 @@
+/**
+ * Standards Section 3.9 (Color System) + Section 3.19 (Dark Mode Strategy) implemented as
+ * light/dark CSS-variable pairs, per tech-stack-decision.md Section 7 (tokens derived from the
+ * BMH/Majaal/Tika logo assets rather than invented placeholder hex values).
+ *
+ * Business-unit accent swaps (Section 3.12/4.5) are applied via the [data-business-unit] attribute
+ * set by BusinessUnitProvider - see src/components/BusinessUnitProvider.tsx.
+ */
+
+:root {
+  /* Neutral scale - from BMH group lockup + Majaal's grayscale brand guide */
+  --ps-neutral-white: #ffffff;
+  --ps-neutral-ash: #b0b0b0;
+  --ps-neutral-granite: #666666;
+  --ps-neutral-iron: #333333;
+  --ps-neutral-charcoal: #1a1a1a;
+  --ps-neutral-black: #000000;
+
+  /* Semantic (brand-independent) */
+  --ps-color-success: #2e7d32;
+  --ps-color-watch: #b8860b;
+  --ps-color-alert: #cc0033;
+  --ps-color-last-year: #8c8c8c;
+
+  /* Light theme surface/text */
+  --ps-color-page-bg: #f5f6f8;
+  --ps-color-gold: #b8860b;
+  --ps-color-translucent-bg: rgba(255, 255, 255, 0.86);
+  --ps-color-surface: var(--ps-neutral-white);
+  --ps-color-muted-bg: #f2f2f2;
+  --ps-color-border: #e2e2e2;
+  --ps-color-text: var(--ps-neutral-charcoal);
+  --ps-color-muted-text: var(--ps-neutral-granite);
+  --ps-color-neutral-text: var(--ps-neutral-granite);
+  --ps-color-on-accent: #ffffff;
+
+  /* Default (Business Unit = All) accent */
+  --ps-color-accent: var(--ps-neutral-charcoal);
+
+  /* Modernization pass: Standards Section 3.9's "Brand Navy" (#1B2A49), previously documented but
+     unused in code -- now backing the new IconNavRail (left icon-only nav, replacing the bottom
+     tab bar per an explicit, user-approved deviation from Section 3.3 - see status-report.md). */
+  --ps-color-nav-rail-bg: #1b2a49;
+  --ps-color-nav-rail-icon: #b7c2d9;
+  --ps-color-nav-rail-icon-active: #ffffff;
+  --ps-color-nav-rail-active-bg: rgba(255, 255, 255, 0.14);
+
+  /* UI-improvements pass ("premium analytics platform" design language): radius widened from 8px
+     to 14px (within the requested 12-16px range) and shadow softened/deepened slightly for a more
+     modern, less boxy feel. Every Card consumer picks this up automatically via the CSS variable. */
+  --ps-card-radius: 14px;
+  --ps-card-radius-sm: 10px;
+  --ps-card-padding: 16px;
+  --ps-card-bg: var(--ps-color-surface);
+  --ps-card-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.05);
+  --ps-card-shadow-hover: 0 8px 20px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.06);
+
+  /* Complete UI Redesign pass: strict 8px spacing scale (Standards "8px grid" ask). Every new
+     component (KpiCard, RadialGauge, BulletChart, InsightCard, AppSidebar, AppHeader, TrendChart)
+     should pull margins/paddings/gaps from this scale rather than hand-picked px values, so the
+     whole dashboard reads as consistently spaced at a glance. */
+  --ps-space-1: 4px;   /* half-step, for tight inline gaps (icon-to-label) only */
+  --ps-space-2: 8px;
+  --ps-space-3: 16px;
+  --ps-space-4: 24px;
+  --ps-space-5: 32px;
+  --ps-space-6: 40px;
+  --ps-space-8: 48px;
+
+  /* Soft tinted status backgrounds, derived from --ps-color-success/-watch/-alert at low alpha.
+     Used behind status badges/chips/insight-card accents so color communicates status without the
+     heavy saturated fills the redesign brief explicitly asked to avoid. Text/icons on top still use
+     the full-strength --ps-color-success/-watch/-alert for contrast. */
+  --ps-color-success-bg: rgba(46, 125, 50, 0.1);
+  --ps-color-success-border: rgba(46, 125, 50, 0.28);
+  --ps-color-watch-bg: rgba(184, 134, 11, 0.12);
+  --ps-color-watch-border: rgba(184, 134, 11, 0.3);
+  --ps-color-alert-bg: rgba(204, 0, 51, 0.09);
+  --ps-color-alert-border: rgba(204, 0, 51, 0.26);
+
+  /* Accent-tinted background for the default/neutral accent, used by chips and rail highlights
+     that need a soft fill rather than a hard line. */
+  --ps-color-accent-bg: rgba(27, 42, 73, 0.08);
+}
+
+[data-theme='dark'] {
+  /* Tachometer rebuild (dark-theme pass): explicit deep navy page canvas per the new mockup
+     ("#0B111E or #111827"), kept distinct from --ps-card-bg (below) which stays a step lighter --
+     "slightly lighter cards for depth" -- rather than the previous pass where page and card shared
+     one --ps-color-surface value. */
+  --ps-color-page-bg: #0b111e;
+  --ps-color-surface: #161d2e;
+  --ps-color-muted-bg: #1d2537;
+  --ps-color-border: #2a3245;
+  --ps-color-text: #f2f2f2; /* Brand Navy bg -> off-white text, per Section 3.19 */
+  --ps-color-muted-text: var(--ps-neutral-ash);
+  --ps-color-neutral-text: var(--ps-neutral-ash);
+  --ps-card-shadow: 0 2px 8px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --ps-card-shadow-hover: 0 10px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
+  /* Gold accent for the active-tab underline (TopTabBar / BottomNavBar), a new, deliberately
+     distinct hue from the semantic success/watch/alert scale -- pure navigation affordance, never
+     used to signal KPI status. */
+  --ps-color-gold: #d4a94a;
+  --ps-color-translucent-bg: rgba(11, 17, 30, 0.82);
+  /* Semantic hues keep the same hue, luminance adjusted for WCAG AA on dark surface (Section 3.19) */
+  --ps-color-success: #4caf50;
+  --ps-color-watch: #e0a815;
+  --ps-color-alert: #ff5c7a;
+  /*
+   * Design-quality pass finding: the default/Majaal accent (--ps-neutral-charcoal, #1a1a1a) is
+   * near-black - fine against the light theme's white surface, but nearly invisible against the
+   * dark theme's #14161a surface (NavTabBar's active-tab background, EmptyState's reset button,
+   * and this session's new Select/DateInput focus rings all rely on this token). This is a
+   * pre-existing gap surfaced by actually checking dark mode end-to-end this session, not
+   * something introduced by this pass. Fixed with a lighter tint of Standards Section 3.9's
+   * "Brand Blue" (#2E5AAC) so it stays legible on dark surfaces while remaining visually distinct
+   * from Tika's own dark-mode accent (#4d88c4) below (which still wins for Tika via the more
+   * specific [data-business-unit='tika'] selector).
+   */
+  --ps-color-accent: #6f9ceb;
+
+  /* Soft status backgrounds re-tinted for the dark surface using the dark-mode success/watch/alert
+     hues above, at slightly higher alpha (dark backgrounds need more alpha to read as "tinted"
+     rather than invisible). */
+  --ps-color-success-bg: rgba(76, 175, 80, 0.16);
+  --ps-color-success-border: rgba(76, 175, 80, 0.34);
+  --ps-color-watch-bg: rgba(224, 168, 21, 0.18);
+  --ps-color-watch-border: rgba(224, 168, 21, 0.36);
+  --ps-color-alert-bg: rgba(255, 92, 122, 0.16);
+  --ps-color-alert-border: rgba(255, 92, 122, 0.34);
+  --ps-color-accent-bg: rgba(111, 156, 235, 0.14);
+}
+
+/* Business Unit accent swap - Section 3.12 / 4.5 */
+[data-business-unit='majaal'] {
+  --ps-color-accent: var(--ps-neutral-charcoal);
+}
+[data-business-unit='tika'] {
+  --ps-color-accent: #003366;
+}
+[data-theme='dark'][data-business-unit='tika'] {
+  --ps-color-accent: #4d88c4;
+}
+
+.ps-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--ps-color-muted-bg) 25%,
+    var(--ps-color-border) 37%,
+    var(--ps-color-muted-bg) 63%
+  );
+  background-size: 400% 100%;
+  animation: ps-skeleton-loading 1.4s ease infinite;
+}
+@keyframes ps-skeleton-loading {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}

@@ -1,0 +1,29 @@
+# The only image in this stack that needs both runtimes: Node (to run the BullMQ worker, reusing
+# backend/src/etl unchanged) and Python (to actually execute the vendored ETL pipeline in
+# data/etl). The API/frontend images stay Node-only and lightweight -- see docker-compose.yml.
+# Build context is the repo root (same convention as backend/Dockerfile and frontend/Dockerfile).
+FROM node:20-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-venv python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /repo
+COPY package.json ./
+COPY backend ./backend
+RUN npm install --workspace backend --omit=dev
+WORKDIR /repo/backend
+RUN npm run build
+
+WORKDIR /repo
+COPY data/etl ./data/etl
+RUN python3 -m venv data/etl/.venv \
+    && data/etl/.venv/bin/pip install --upgrade pip \
+    && data/etl/.venv/bin/pip install -r data/etl/requirements.txt \
+    && data/etl/.venv/bin/pip install -e data/etl
+
+WORKDIR /repo/backend
+# Points ETL_PYTHON_BIN at the venv created above; override via env_file/.env if a different
+# layout is used. All other ETL_*/ODOO_*/DB_* config still comes from backend/.env at runtime.
+ENV ETL_PYTHON_BIN=/repo/data/etl/.venv/bin/python
+CMD ["node", "dist/etl/commands/worker.js"]

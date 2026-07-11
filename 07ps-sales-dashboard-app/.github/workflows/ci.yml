@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  node:
+    name: Frontend / Backend / UI package (lint + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run build
+
+  python:
+    name: Data ingestion (lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install ruff black -r data/ingestion/requirements.txt
+      - run: ruff check data/ingestion --config pyproject.toml
+      - run: black --check data/ingestion
+
+  sql:
+    name: Warehouse migrations (syntax check)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations against a throwaway database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE ps_warehouse_ci;"
+          for f in data/warehouse/migrations/*.sql; do
+            echo "Applying $f"
+            psql -h localhost -U postgres -d ps_warehouse_ci -v ON_ERROR_STOP=1 -f "$f"
+          done
+          psql -h localhost -U postgres -d ps_warehouse_ci -v ON_ERROR_STOP=1 -f data/warehouse/seed/seed.sql

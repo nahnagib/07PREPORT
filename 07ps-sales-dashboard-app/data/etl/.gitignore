@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env (created locally / on the server per DEPLOYMENT.md, never committed)
+venv/
+.venv/
+
+# Real credentials -- Node injects these as subprocess env vars at spawn time (see
+# backend/src/etl/services/pythonRunner.ts); this directory should never contain its own .env.
+.env
+
+# Logs (structured run history lives in MySQL: pipeline_run_log/pipeline_run_audit;
+# backend/src/etl writes its own orchestration logs to backend/logs/etl/)
+logs/
+
+# Runtime input/output data, not code
+Input/
+Exports/
+
+.pytest_cache/

@@ -1,0 +1,39 @@
+Act as a senior frontend engineer and UI/UX expert specializing in high-performance analytics dashboards. Your task is to implement the "Tachometer" view for the Ben Mussa Holding Sales Executive Dashboard based on the design specifications provided below.
+
+### 1. General Layout & Theme
+- **Theme**: Dark mode execution. Use a deep navy/slate background (e.g., #0B111E or #111827) with slightly lighter cards for depth.
+- **Header**: Top global header containing the logo ("Ben Mussa Holding"), page title ("Sales Executive Dashboard"), profile identifier, and a Light/Dark toggle.
+- **Global Filters**: A horizontal filter bar positioned directly below the header containing date range pickers, dropdown selectors (Company, Sales Team, Salesperson, Channel, Segment, Customer, Customer Status), and a "Reset Filters" button.
+- **Typography & Alignment**: Clean, modern sans-serif typography. Maintain high contrast for metrics while keeping target labels subtle. Refer to the layout structure in watermarked_img_9650466607577780279.png.
+
+### 2. Metric Cards & Visuals (Upper Section)
+Replicate the exact clean gauge card structure and layout distribution from image_ce8941.jpg:
+- **Layout**: 4 main metric blocks arranged in a 2x2 grid (Value on the left, Volume on the right; YTD on top, MTD on the bottom).
+- **Gauges**: Standard 180-degree semicircular speedometer/tachometer visual indicators.
+  - The gauges must clearly map current performance against targets, color-coded by threshold status (e.g., Red for Critical, Yellow for Warning, Green for On Track).
+- **ASP (Average Selling Price) Insertion**: In the exact middle column between the Value and Volume blocks, embed a sleek vertical stack for ASP:
+  - **Top Card**: YTD Actual ASP (with a green highlighted pill badge for current performance vs target).
+  - **Bottom Card**: MTD Actual ASP (with a green highlighted pill badge for current performance vs target).
+
+### 3. Detail Performance Tables (Lower Section)
+Directly below the visual cards, create two distinct, detailed data tables aligned side-by-side as shown in Gemini_Generated_Image_rn1ldhrn1ldhrn1l_2.png:
+- **Left Table: Value Performance Details**
+  - Columns: Metric Name, Actual, Target, Variance%, Variance LY, Trend.
+  - Rows should include: Sales Value, Product Sales Value, MTD Value, etc.
+- **Right Table: Volume/ASP Performance Details**
+  - Columns: Metric Name, Actual, Target, Variance%, Variance LY, Trend, Status.
+  - Rows should include: Group ASP YTD, Region 1 ASP YTD, MTD ASP Trend, etc.
+- **Styling**: Tables should use subtle borders, clear column alignments, and conditional color-coding for status badges and trend lines (e.g., green sparklines for 'On Track', red for 'Critical').
+
+### 4. Bottom Navigation Bar
+Implement a highly modern bottom page navigator modeled after image_ce906d.png but optimized for a dark tech aesthetic as seen in watermarked_img_9650466607577780279.png:
+- **Positioning**: Fixed at the very bottom of the screen.
+- **Items**: Tachometer (Active), Critical Number, Revenue Trend, Invoices Engine, Customer Growth.
+- **Design Style**: Low-profile, dark-tinted translucent container.
+- **Active State**: The active tab ("Tachometer") should feature a subtle gold/yellow underline bar, an explicit filled icon (like a speedometer gauge), and high-contrast white text.
+- **Inactive States**: Inactive tabs should feature muted gold/white outlined icons and grayed text that softly illuminates on hover.
+
+### Technical Deliverables
+- Write clean, modular component structures.
+- Ensure state management cleanly binds the global filters to both the visual gauges and the underlying detail tables.
+- Make the dashboard responsive, maintaining card proportions across common desktop resolutions.

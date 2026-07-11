@@ -1,0 +1,18 @@
+# Normalize line endings for text files, let Git handle CRLF/LF conversion
+* text=auto eol=lf
+
+# Windows-specific scripts keep CRLF
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Treat these as binary (no line-ending conversion, no text diff)
+*.xlsx binary
+*.xls binary
+*.docx binary
+*.doc binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary

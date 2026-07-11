@@ -1,0 +1,39 @@
+# DEPRECATED 2026-07-05: superseded by input_sheets/settings_factory.py (build_settings()) + the vendored config/settings.py it wraps.
+#
+# This file was written in the Phase P1 bootstrap session, before the existing
+# powerbi_sales_pipeline codebase (the pipeline that actually produces SalesModel_OneOutput.xlsx)
+# had been read. It designed its own Odoo/Excel extraction logic and Postgres schema from
+# scratch/blind, which the ingestion-layer session (see ../README.md) found does not match the
+# real pipeline's proven business rules, the real Input-folder file schemas, or the MySQL 8
+# warehouse this app now targets. Left in git history for traceability; not imported by anything
+# and not maintained. See ../README.md for the current, validated implementation.
+
+"""Central config for the ingestion service - every credential is env-driven, nothing hardcoded.
+
+Per tech-stack-decision.md Section 4: Odoo API and target Excel files are currently reachable
+only from the Data Analyst's local machine. This module doesn't care where it runs - point
+ODOO_URL/EXCEL_TARGETS_DIR at whatever is reachable from wherever this process executes.
+"""
+
+import os
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+@dataclass(frozen=True)
+class Config:
+    database_url: str = os.environ.get("DATABASE_URL", "")
+    odoo_url: str = os.environ.get("ODOO_URL", "")
+    odoo_db: str = os.environ.get("ODOO_DB", "")
+    odoo_username: str = os.environ.get("ODOO_USERNAME", "")
+    odoo_api_key: str = os.environ.get("ODOO_API_KEY", "")
+    excel_targets_dir: str = os.environ.get("EXCEL_TARGETS_DIR", "./sample_data/targets")
+
+    # Standards Section 2.1.2/5.14 - 5x-daily schedule, not real-time.
+    refresh_times: tuple = ("09:00", "12:00", "15:00", "18:00", "21:00")
+
+
+CONFIG = Config()

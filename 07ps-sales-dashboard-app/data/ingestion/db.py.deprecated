@@ -1,0 +1,76 @@
+# DEPRECATED 2026-07-05: superseded by star_schema/loader.py (MySQL via pymysql, matching the validated warehouse schema) - this file was Postgres (psycopg2), superseded when the warehouse moved to MySQL 8 in the prior session.
+#
+# This file was written in the Phase P1 bootstrap session, before the existing
+# powerbi_sales_pipeline codebase (the pipeline that actually produces SalesModel_OneOutput.xlsx)
+# had been read. It designed its own Odoo/Excel extraction logic and Postgres schema from
+# scratch/blind, which the ingestion-layer session (see ../README.md) found does not match the
+# real pipeline's proven business rules, the real Input-folder file schemas, or the MySQL 8
+# warehouse this app now targets. Left in git history for traceability; not imported by anything
+# and not maintained. See ../README.md for the current, validated implementation.
+
+"""Thin Postgres helper for the ingestion service - writes into the warehouse defined in
+../warehouse/migrations, and logs every run into refresh_log (Standards Section 5.11).
+"""
+
+from __future__ import annotations
+
+import contextlib
+from collections.abc import Iterator
+from datetime import UTC, datetime
+
+import psycopg2
+import psycopg2.extras
+
+from config import CONFIG
+
+
+@contextlib.contextmanager
+def get_connection() -> Iterator[psycopg2.extensions.connection]:
+    conn = psycopg2.connect(CONFIG.database_url)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+class RefreshRun:
+    """Context manager that brackets one ingestion run with a refresh_log row.
+
+    Standards Section 5.11: "Refresh jobs log start time, end time, row counts, and
+    success/failure per source (Odoo, Excel, manual logs)."
+    """
+
+    def __init__(self, conn, source: str):
+        self.conn = conn
+        self.source = source
+        self.refresh_id = None
+        self.row_count = 0
+
+    def __enter__(self):
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO refresh_log (source, started_at, status)
+                   VALUES (%s, %s, 'RUNNING') RETURNING refresh_id""",
+                (self.source, datetime.now(UTC)),
+            )
+            self.refresh_id = cur.fetchone()[0]
+        self.conn.commit()
+        return self
+
+    def __exit__(self, exc_type, exc, _tb):
+        status = "FAILED" if exc_type else "SUCCESS"
+        # Section 5.9: log a short summary only, never a raw stack trace to any user-facing surface.
+        error_summary = str(exc)[:500] if exc else None
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """UPDATE refresh_log
+                   SET finished_at = %s, row_count = %s, status = %s, error_summary = %s
+                   WHERE refresh_id = %s""",
+                (datetime.now(UTC), self.row_count, status, error_summary, self.refresh_id),
+            )
+        self.conn.commit()
+        return False  # never swallow the exception
