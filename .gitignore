@@ -15,6 +15,9 @@ dist/
 build/
 .npm/
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Python
 __pycache__/
 *.py[cod]

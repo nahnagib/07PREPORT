@@ -65,24 +65,36 @@ Full rationale for every choice above is in
 
 The full, verified step-by-step guide (with expected output for every command) lives in
 **[`07ps-sales-dashboard-app/docs/running-the-project.md`](07ps-sales-dashboard-app/docs/running-the-project.md)**.
-Short version:
+Short version — run these in order from a fresh clone:
 
 ```bash
 cd 07ps-sales-dashboard-app
 npm install                                    # installs frontend, backend, packages/ui
 
-# Configure environment (never commit the resulting .env files)
+# 1. Configure environment (never commit the resulting .env files)
 cp backend/.env.example backend/.env
 cp data/ingestion/.env.example data/ingestion/.env
 # edit backend/.env: DB_*, JWT_SECRET, ODOO_*, SMTP_*, REDIS_* — see comments in the file
+# requires a reachable MySQL 8 instance (not containerized) — set DB_HOST/DB_PORT/DB_USER/
+# DB_PASSWORD/DB_NAME accordingly before the next step
 
-# Run the web app (two terminals)
+# 2. Create the database schema — applies every file in data/warehouse/migrations/ in order
+pip install pymysql --break-system-packages    # or: pip install -r data/ingestion/requirements.txt
+python data/warehouse/apply_migrations.py
+# creates the DB_NAME database if it doesn't exist yet; reads DB_* from the environment, so either
+# export backend/.env's values into your shell first, or pass them via your shell's env directly
+
+# 3. Run the web app (two terminals)
 cd backend && npm run dev      # http://localhost:4000
 cd frontend && npm run dev     # http://localhost:3000
 ```
 
 See [Environment Files](07ps-sales-dashboard-app/docs/running-the-project.md#environment-files)
 for exactly which variables are needed and why only `backend/.env` matters for the web app.
+
+This gets the **web app** running against an empty (schema-only) database. To also run the **ETL**
+pipeline (load real or reference data), see [ETL Workflow](#etl-workflow) below for the required
+Python environment setup — a fresh clone cannot run any `etl:*` command until that's done.
 
 ## Reference Input Files
 
@@ -110,6 +122,37 @@ export — each runnable manually (`--sync`) or via the Redis-backed queue/worke
 every command, and expected run times are documented in
 [`docs/ETL_WORKFLOW.md`](docs/ETL_WORKFLOW.md) (this repo) and
 [`07ps-sales-dashboard-app/docs/running-the-project.md`](07ps-sales-dashboard-app/docs/running-the-project.md).
+
+### Preparing the ETL Python environment (required before any `etl:*` command)
+
+A fresh clone has no Python virtual environment yet — set one up once, from the repo root:
+
+```bash
+cd 07ps-sales-dashboard-app/data/etl
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt    # Windows; use .venv/bin/pip on macOS/Linux
+.venv/Scripts/pip install -e .
+cd ../../..
+```
+
+Then, in `07ps-sales-dashboard-app/backend/.env`, confirm `ETL_PYTHON_BIN` points at that venv's
+interpreter (this is already the default value in `backend/.env.example`):
+
+```
+ETL_PYTHON_BIN=../data/etl/.venv/Scripts/python.exe
+```
+
+Finally, copy the reference workbooks from [`Input/`](Input/) (see
+[Reference Input Files](#reference-input-files) above) into `data/etl/Input/` — the ETL reads from
+this local, git-ignored runtime copy, not from the repo's `Input/` folder directly:
+
+```bash
+mkdir -p 07ps-sales-dashboard-app/data/etl/Input
+cp Input/*.xlsx 07ps-sales-dashboard-app/data/etl/Input/
+```
+
+With those three steps done, `npm run etl:full -- --sync` (run from `backend/`) will work. See
+[`docs/ETL_WORKFLOW.md`](docs/ETL_WORKFLOW.md) for every available mode.
 
 ## Scheduler
 
