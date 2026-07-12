@@ -180,3 +180,35 @@ html, body {
     grid-row: auto !important;
   }
 }
+
+/* Invoices Engine page: Zone A's 3 KPI panels (2 on tablet, 1/full-width on mobile) and Zones B/C's
+   chart+cards pairs (chart above, cards/donut below once they can no longer sit side by side) --
+   same auto-fit/minmax approach as .ps-report-tables-grid, just with explicit breakpoints so the
+   "chart is visually primary" 2fr/1fr split only applies at desktop width. */
+.ps-invoices-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--ps-space-3, 16px);
+}
+@media (max-width: 1279px) {
+  .ps-invoices-kpi-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 767px) {
+  .ps-invoices-kpi-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ps-invoices-zone {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: var(--ps-space-3, 16px);
+  align-items: stretch;
+}
+@media (max-width: 1023px) {
+  .ps-invoices-zone {
+    grid-template-columns: 1fr;
+  }
+}

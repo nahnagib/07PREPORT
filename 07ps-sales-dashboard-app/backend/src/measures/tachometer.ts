@@ -555,8 +555,10 @@ const MONTH_LABELS = [
 ];
 
 /** One calendar month's window, clipped to `anchor` if this is the anchor's own (possibly
- * partial) month -- consistent with mtdWindow/ytdWindow's "never look past anchor" semantics. */
-function monthWindow(year: number, month: number, anchor: Date): DateWindow {
+ * partial) month -- consistent with mtdWindow/ytdWindow's "never look past anchor" semantics.
+ * Exported for revenueTrend.ts, which needs the identical current-year month-window logic (only
+ * the prior-year window differs there -- see that file's monthWindowFull). */
+export function monthWindow(year: number, month: number, anchor: Date): DateWindow {
   const start = dateOnlyUTC(year, month, 1);
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const naturalEnd = dateOnlyUTC(year, month, lastDay);

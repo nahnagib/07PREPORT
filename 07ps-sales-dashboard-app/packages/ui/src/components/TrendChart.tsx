@@ -14,6 +14,9 @@ import {
 export interface TrendPoint {
   label: string;
   actual: number;
+  /** Optional prior-year ("Y-1") reference series -- omit entirely (leave every point's `lastYear`
+   * undefined/null) to render the original two-line Actual/Target chart unchanged. */
+  lastYear?: number | null;
   target: number | null;
 }
 
@@ -22,14 +25,25 @@ export interface TrendChartProps {
   points: TrendPoint[];
   /** Legend/tooltip name for the actual series, e.g. "Revenue". Defaults to "Actual". */
   actualLabel?: string;
+  /** Legend/tooltip name for the prior-year series. Defaults to "Y-1". */
+  lastYearLabel?: string;
   /** Legend/tooltip name for the target series, e.g. "Target". Defaults to "Target". */
   targetLabel?: string;
-  /** Formats numbers on the Y axis and in the tooltip (e.g. compact "63.7M" style). Defaults to a
-   * plain toLocaleString. */
+  /** Formats numbers on the Y axis (e.g. compact "63.7M" style). Defaults to a plain toLocaleString. */
   valueFormatter?: (value: number) => string;
+  /** Formats the exact value shown in the hover tooltip. Defaults to `valueFormatter` -- pass a
+   * full-precision formatter when the axis display is rounded/compact but the tooltip should show
+   * the exact figure. */
+  tooltipValueFormatter?: (value: number) => string;
   height?: number;
   /** Color for the actual-value line. Defaults to the dashboard's accent token. */
   color?: string;
+  /** Color for the prior-year line. Defaults to the dashboard's "last year" semantic token. */
+  lastYearColor?: string;
+  /** Set false to suppress the internal title text (still renders the Export image button) --
+   * for callers that already show the title in their own surrounding chart-card chrome (e.g.
+   * @07ps/ui's ChartPanel), so the title isn't rendered twice. Defaults to true. */
+  showTitle?: boolean;
 }
 
 function defaultFormatter(v: number): string {
@@ -58,13 +72,19 @@ export function TrendChart({
   title,
   points,
   actualLabel = 'Actual',
+  lastYearLabel = 'Y-1',
   targetLabel = 'Target',
   valueFormatter = defaultFormatter,
+  tooltipValueFormatter,
   height = 280,
   color = 'var(--ps-color-accent)',
+  lastYearColor = 'var(--ps-color-last-year)',
+  showTitle = true,
 }: TrendChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  const tooltipFormatter = tooltipValueFormatter ?? valueFormatter;
+  const showLastYear = points.some((p) => p.lastYear !== undefined && p.lastYear !== null);
 
   // Recharts' Legend onClick payload type varies across its own overloads (Payload['dataKey'] is
   // typed as `DataKey<any>`, which can technically be a function) -- narrowed here to the string
@@ -123,11 +143,11 @@ export function TrendChart({
         style={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          justifyContent: showTitle ? 'space-between' : 'flex-end',
           marginBottom: 'var(--ps-space-2, 8px)',
         }}
       >
-        <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>
+        {showTitle && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>}
         <button
           type="button"
           onClick={handleExportImage}
@@ -158,7 +178,8 @@ export function TrendChart({
               width={48}
             />
             <Tooltip
-              formatter={(value: number, name: string) => [valueFormatter(value), name]}
+              formatter={(value: number, name: string) => [tooltipFormatter(value), name]}
+              labelFormatter={(label: string) => `Month: ${label}`}
               contentStyle={{
                 borderRadius: 10,
                 border: '1px solid var(--ps-color-border)',
@@ -177,6 +198,20 @@ export function TrendChart({
               hide={!!hidden.actual}
               isAnimationActive={false}
             />
+            {showLastYear && (
+              <Line
+                type="monotone"
+                dataKey="lastYear"
+                name={lastYearLabel}
+                stroke={lastYearColor}
+                strokeWidth={2}
+                strokeDasharray="2 3"
+                dot={{ r: 2.5 }}
+                hide={!!hidden.lastYear}
+                isAnimationActive={false}
+                connectNulls
+              />
+            )}
             <Line
               type="monotone"
               dataKey="target"
