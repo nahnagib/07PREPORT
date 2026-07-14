@@ -41,18 +41,28 @@ function parseSelectedYear(raw: unknown): number | undefined {
   return Number(raw);
 }
 
+const VALID_CATEGORIES = new Set(['A', 'B', 'C', 'D']);
+
+function parseSelectedCategory(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim().toUpperCase();
+  return VALID_CATEGORIES.has(trimmed) ? trimmed : undefined;
+}
+
 customerGrowthRouter.get('/overview', async (req, res, next) => {
   try {
     const filters = req.scopedFilters!;
     const anchor = parseAnchorDate(req.query.anchorDate);
     const selectedYear = parseSelectedYear(req.query.selectedYear);
-    const scope: CustomerGrowthScope = { year: selectedYear };
+    const selectedCategory = parseSelectedCategory(req.query.selectedCategory);
+    const scope: CustomerGrowthScope = { year: selectedYear, category: selectedCategory };
 
     const overview = await computeCustomerGrowthOverview(pool, anchor, filters, scope);
 
     res.json({
       anchorDate: anchor.toISOString().slice(0, 10),
       selectedYear: selectedYear ?? null,
+      selectedCategory: selectedCategory ?? null,
       ...overview,
     });
   } catch (err) {

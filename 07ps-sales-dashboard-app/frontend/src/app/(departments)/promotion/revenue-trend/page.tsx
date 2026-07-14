@@ -22,6 +22,10 @@ import type { RevenueTrendMonthPoint, RevenueTrendVarianceCard, TachometerFilter
 import { formatAsp, formatCurrency, formatTimestamp, formatVariance, formatVolume } from '../../../../lib/format';
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
+/** Jan 1 of the current year -- every page's date-range filter defaults to YTD (Jan 1 -> today) on
+ * load, not a single-day "today" range; anchorDate itself still drives the actual YTD/MTD window
+ * math (ytdWindow/mtdWindow in filters.ts), this only fixes the visible From/To fields to match. */
+const ytdStartIso = () => `${new Date().getUTCFullYear()}-01-01`;
 
 const EMPTY_FILTERS: TachometerFilters = {
   companyKeys: [],
@@ -89,7 +93,7 @@ export default function RevenueTrendPage() {
   const { setBusinessUnit } = useBusinessUnit();
   const { user, isSalesperson, salespersonKey, token, error: authError, retryAuth, logout } = useAuth();
   const [anchorDate, setAnchorDate] = useState(todayIso());
-  const [dateFromDate, setDateFromDate] = useState(todayIso());
+  const [dateFromDate, setDateFromDate] = useState(ytdStartIso());
   const [dateToDate, setDateToDate] = useState(todayIso());
   const [filters, setFilters] = useState<TachometerFilters>(EMPTY_FILTERS);
 
@@ -121,7 +125,7 @@ export default function RevenueTrendPage() {
     setBusinessUnit('all');
     const today = todayIso();
     setAnchorDate(today);
-    setDateFromDate(today);
+    setDateFromDate(ytdStartIso());
     setDateToDate(today);
   }
 

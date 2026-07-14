@@ -50,6 +50,12 @@ export interface CustomerGrowthScope {
    * filter: every windowed (YTD/LYTD/MTD/LMTD-style) query remaps its anchor into this year rather
    * than intersecting the window with a `Year = ?` clause. */
   year?: number;
+  /** Restricts to a single Customer Category ('A' | 'B' | 'C' | 'D', Dim_Customer.CustomerClass_LY)
+   * -- sourced from a Customers Category Performance bar click when that chart's own drill-down
+   * mode is off. Same self-exclusion convention as `year`/Customers Trend: fetchCategoryPerformance
+   * (the chart that produces this scope) deliberately ignores it and always returns the full A-D
+   * breakdown; every other query honors it. */
+  category?: string;
 }
 
 function anchorForYear(anchor: Date, year: number | undefined): Date {
@@ -59,6 +65,11 @@ function anchorForYear(anchor: Date, year: number | undefined): Date {
 
 function fullYearWindow(year: number): DateWindow {
   return { start: dateOnlyUTC(year, 1, 1), end: dateOnlyUTC(year, 12, 31) };
+}
+
+function buildCategorySqlClause(category: string | undefined, alias: string): { clause: string; params: string[] } {
+  if (!category) return { clause: '1=1', params: [] };
+  return { clause: `${alias}.CustomerClass_LY = ?`, params: [category] };
 }
 
 // ---------------------------------------------------------------------------
@@ -81,8 +92,10 @@ export async function fetchCustomerActivitySnapshot(
   pool: Pool,
   effectiveAnchor: Date,
   filters: Filters,
+  scope: CustomerGrowthScope = {},
 ): Promise<Map<number, CustomerActivity>> {
   const { clause, params } = buildWhereClause(filters, 'fsl');
+  const cat = buildCategorySqlClause(scope.category, 'dc');
   const ytd = ytdWindow(effectiveAnchor);
   const lytd = lytdWindow(effectiveAnchor);
   const sql = `
@@ -94,7 +107,8 @@ export async function fetchCustomerActivitySnapshot(
       MAX(CASE WHEN dd.Date < ? THEN 1 ELSE 0 END) AS hasBeforeLytd
     FROM Fact_SalesLines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    WHERE ${clause}
+    JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
+    WHERE ${clause} AND ${cat.clause}
     GROUP BY fsl.CustomerKey
   `;
   const [rows] = await pool.query(sql, [
@@ -103,6 +117,7 @@ export async function fetchCustomerActivitySnapshot(
     toDateOnlyString(lytd.start), toDateOnlyString(lytd.end),
     toDateOnlyString(lytd.start),
     ...params,
+    ...cat.params,
   ]);
   const map = new Map<number, CustomerActivity>();
   for (const r of rows as any[]) {
@@ -188,10 +203,17 @@ export interface CustomerRow {
 /** Every customer with at least one sale matching `filters` (all-time, no date bound), joined to
  * Dim_Customer's static attributes and classified. Backs both the Zone A Customer Status counts
  * (tallyCustomerStatusCounts) and the Details view's Customers Table + Status Slicer -- computed
- * once so the two can never disagree. */
-export async function fetchCustomerRows(pool: Pool, effectiveAnchor: Date, filters: Filters): Promise<CustomerRow[]> {
+ * once so the two can never disagree. Honors scope.category (a Customer Category page-filter row
+ * whose Fact_SalesLines rows are excluded by fetchCustomerActivitySnapshot simply never appears
+ * here), so both the Zone A counts and the Details table narrow together automatically. */
+export async function fetchCustomerRows(
+  pool: Pool,
+  effectiveAnchor: Date,
+  filters: Filters,
+  scope: CustomerGrowthScope = {},
+): Promise<CustomerRow[]> {
   const [activityMap, dimMap] = await Promise.all([
-    fetchCustomerActivitySnapshot(pool, effectiveAnchor, filters),
+    fetchCustomerActivitySnapshot(pool, effectiveAnchor, filters, scope),
     fetchCustomerDim(pool),
   ]);
   const rows: CustomerRow[] = [];
@@ -240,22 +262,35 @@ export interface PeriodCustomerCounts {
   lmtd: number;
 }
 
-async function fetchDistinctCustomerCount(pool: Pool, window: DateWindow, filters: Filters): Promise<number> {
+async function fetchDistinctCustomerCount(
+  pool: Pool,
+  window: DateWindow,
+  filters: Filters,
+  scope: CustomerGrowthScope = {},
+): Promise<number> {
   const { clause, params } = buildWhereClause(filters, 'fsl');
+  const cat = buildCategorySqlClause(scope.category, 'dc');
   const sql = `
     SELECT COUNT(DISTINCT fsl.CustomerKey) AS cnt
     FROM Fact_SalesLines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    WHERE dd.Date BETWEEN ? AND ? AND ${clause}
+    JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
+    WHERE dd.Date BETWEEN ? AND ? AND ${clause} AND ${cat.clause}
   `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params, ...cat.params]);
   return Number((rows as any[])[0].cnt);
 }
 
 /** A customer counts as "new" in `window` if they have a sale in the window AND their all-time
  * first purchase (Dim_Customer.First_Purchase_Date) also falls within that same window. */
-async function fetchNewCustomerCount(pool: Pool, window: DateWindow, filters: Filters): Promise<number> {
+async function fetchNewCustomerCount(
+  pool: Pool,
+  window: DateWindow,
+  filters: Filters,
+  scope: CustomerGrowthScope = {},
+): Promise<number> {
   const { clause, params } = buildWhereClause(filters, 'fsl');
+  const cat = buildCategorySqlClause(scope.category, 'dc');
   const sql = `
     SELECT COUNT(DISTINCT fsl.CustomerKey) AS cnt
     FROM Fact_SalesLines fsl
@@ -263,12 +298,13 @@ async function fetchNewCustomerCount(pool: Pool, window: DateWindow, filters: Fi
     JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date BETWEEN ? AND ?
       AND dc.First_Purchase_Date BETWEEN ? AND ?
-      AND ${clause}
+      AND ${clause} AND ${cat.clause}
   `;
   const [rows] = await pool.query(sql, [
     toDateOnlyString(window.start), toDateOnlyString(window.end),
     toDateOnlyString(window.start), toDateOnlyString(window.end),
     ...params,
+    ...cat.params,
   ]);
   return Number((rows as any[])[0].cnt);
 }
@@ -281,10 +317,10 @@ export async function computeTotalCustomers(
 ): Promise<PeriodCustomerCounts> {
   const effectiveAnchor = anchorForYear(anchor, scope.year);
   const [ytd, lytd, mtd, lmtd] = await Promise.all([
-    fetchDistinctCustomerCount(pool, ytdWindow(effectiveAnchor), filters),
-    fetchDistinctCustomerCount(pool, lytdWindow(effectiveAnchor), filters),
-    fetchDistinctCustomerCount(pool, mtdWindow(effectiveAnchor), filters),
-    fetchDistinctCustomerCount(pool, lmtdWindow(effectiveAnchor), filters),
+    fetchDistinctCustomerCount(pool, ytdWindow(effectiveAnchor), filters, scope),
+    fetchDistinctCustomerCount(pool, lytdWindow(effectiveAnchor), filters, scope),
+    fetchDistinctCustomerCount(pool, mtdWindow(effectiveAnchor), filters, scope),
+    fetchDistinctCustomerCount(pool, lmtdWindow(effectiveAnchor), filters, scope),
   ]);
   return { ytd, lytd, mtd, lmtd };
 }
@@ -297,10 +333,10 @@ export async function computeNewCustomers(
 ): Promise<PeriodCustomerCounts> {
   const effectiveAnchor = anchorForYear(anchor, scope.year);
   const [ytd, lytd, mtd, lmtd] = await Promise.all([
-    fetchNewCustomerCount(pool, ytdWindow(effectiveAnchor), filters),
-    fetchNewCustomerCount(pool, lytdWindow(effectiveAnchor), filters),
-    fetchNewCustomerCount(pool, mtdWindow(effectiveAnchor), filters),
-    fetchNewCustomerCount(pool, lmtdWindow(effectiveAnchor), filters),
+    fetchNewCustomerCount(pool, ytdWindow(effectiveAnchor), filters, scope),
+    fetchNewCustomerCount(pool, lytdWindow(effectiveAnchor), filters, scope),
+    fetchNewCustomerCount(pool, mtdWindow(effectiveAnchor), filters, scope),
+    fetchNewCustomerCount(pool, lmtdWindow(effectiveAnchor), filters, scope),
   ]);
   return { ytd, lytd, mtd, lmtd };
 }
@@ -349,8 +385,14 @@ export interface CustomerYearPoint {
   customerCount: number;
 }
 
-export async function fetchCustomersTrendByYear(pool: Pool, anchor: Date, filters: Filters): Promise<CustomerYearPoint[]> {
+export async function fetchCustomersTrendByYear(
+  pool: Pool,
+  anchor: Date,
+  filters: Filters,
+  scope: CustomerGrowthScope = {},
+): Promise<CustomerYearPoint[]> {
   const { clause, params } = buildWhereClause(filters, 'fsl');
+  const cat = buildCategorySqlClause(scope.category, 'dc');
   const sql = `
     SELECT
       dd.Year AS year,
@@ -358,11 +400,12 @@ export async function fetchCustomersTrendByYear(pool: Pool, anchor: Date, filter
       COUNT(DISTINCT fsl.CustomerKey) AS customerCount
     FROM Fact_SalesLines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    WHERE dd.Date <= ? AND ${clause}
+    JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
+    WHERE dd.Date <= ? AND ${clause} AND ${cat.clause}
     GROUP BY dd.Year
     ORDER BY dd.Year
   `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(anchor), ...params]);
+  const [rows] = await pool.query(sql, [toDateOnlyString(anchor), ...params, ...cat.params]);
   return (rows as any[]).map((r) => ({
     year: Number(r.year),
     label: String(r.year),
@@ -400,6 +443,7 @@ export async function fetchCustomersContribution(
   scope: CustomerGrowthScope = {},
 ): Promise<CustomersContribution> {
   const { clause, params } = buildWhereClause(filters, 'fsl');
+  const cat = buildCategorySqlClause(scope.category, 'dc');
   const window = scope.year !== undefined ? fullYearWindow(scope.year) : ytdWindow(anchor);
   const sql = `
     SELECT
@@ -409,12 +453,12 @@ export async function fetchCustomersContribution(
     FROM Fact_SalesLines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     LEFT JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
-    WHERE dd.Date BETWEEN ? AND ? AND ${clause}
+    WHERE dd.Date BETWEEN ? AND ? AND ${clause} AND ${cat.clause}
     GROUP BY fsl.CustomerKey, dc.customer
     HAVING value > 0
     ORDER BY value DESC
   `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params, ...cat.params]);
   const all = (rows as any[]).map((r) => ({
     customerKey: Number(r.customerKey),
     name: String(r.name),
@@ -548,8 +592,8 @@ export async function computeCustomerGrowthOverview(
   const [newCustomers, totalCustomers, customersTable, customersTrend, customersContribution, categoryPerformance] = await Promise.all([
     computeNewCustomers(pool, anchor, filters, scope),
     computeTotalCustomers(pool, anchor, filters, scope),
-    fetchCustomerRows(pool, effectiveAnchor, filters),
-    fetchCustomersTrendByYear(pool, anchor, filters),
+    fetchCustomerRows(pool, effectiveAnchor, filters, scope),
+    fetchCustomersTrendByYear(pool, anchor, filters, scope),
     fetchCustomersContribution(pool, anchor, filters, scope),
     fetchCategoryPerformance(pool, anchor, filters, scope),
   ]);

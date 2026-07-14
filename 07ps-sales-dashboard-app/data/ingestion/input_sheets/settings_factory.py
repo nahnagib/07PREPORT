@@ -1,4 +1,4 @@
-"""Builds a vendored ``config.settings.Settings`` object pointed at the manual-input Excel
+"""Builds a vendored ``config_src.settings.Settings`` object pointed at the manual-input Excel
 sheets, and validates the 5 required files are present before anything downstream tries to read
 them.
 
@@ -28,7 +28,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from config.settings import Settings
+from config_src.settings import Settings
 
 REQUIRED_INPUT_FILES = [
     "sales_targets.xlsx",

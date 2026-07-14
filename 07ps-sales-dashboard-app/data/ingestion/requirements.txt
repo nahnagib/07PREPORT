@@ -7,3 +7,7 @@ openpyxl>=3.1
 pymysql>=1.1
 APScheduler>=3.10
 python-dotenv>=1.0
+
+# ETL Flask API (app.py/wsgi.py) - the api-etl.<domain> side of the split cPanel deployment.
+Flask>=3.0
+gunicorn>=21.2

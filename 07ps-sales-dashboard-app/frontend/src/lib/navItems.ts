@@ -1,4 +1,4 @@
-import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck } from 'lucide-react';
+import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity } from 'lucide-react';
 
 /** Single source of truth for primary nav entries, each tied to a `pages.page_key` from the
  * permissions model (0009_auth_identity.sql). Every nav component (BottomNavBar today,
@@ -11,6 +11,9 @@ export const NAV_ITEMS = [
   { label: 'Revenue Trend', icon: TrendingUp, href: '/promotion/revenue-trend', pageKey: 'revenue_trend' },
   { label: 'Invoices Engine', icon: FileText, href: '/promotion/invoices-engine', pageKey: 'invoices_engine' },
   { label: 'Customer Growth', icon: Users, href: '/promotion/customer-growth', pageKey: 'customer_growth' },
+  { label: 'Pipeline Health', icon: Filter, href: '/promotion/pipeline-health', pageKey: 'pipeline_health' },
+  { label: 'Pipeline Trend', icon: LineChart, href: '/promotion/pipeline-trend', pageKey: 'pipeline_trend' },
+  { label: 'Activity Momentum', icon: Activity, href: '/promotion/activity-momentum', pageKey: 'activity_momentum' },
 ] as const;
 
 /** Administration lands on User Management; the admin section itself has its own internal nav. */

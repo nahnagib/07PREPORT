@@ -1,12 +1,11 @@
 # Deployment target: Libyan Spider VPS (root access) - see docs/tech-stack-decision.md Section 5.
-# `docker compose up -d --build` on the VPS runs the whole stack behind Nginx/TLS.
-# Build contexts are the repo root for frontend/backend so the @07ps/ui workspace package
-# resolves correctly under npm workspaces.
+# `docker compose up -d --build` on the VPS runs the whole stack behind Nginx/TLS (see
+# docker/nginx.conf and docs/vps-deployment.md - Nginx runs on the VPS host, not in this compose
+# file, so it can also terminate TLS for anything else on the host).
 #
 # MySQL is NOT containerized here -- this app connects to the existing production MySQL 8
 # instance (see backend/.env's DB_* vars and docs/etl-deployment.md), matching how this
-# environment already runs today. The `postgres` service that used to be here was dead: nothing
-# in this repo has targeted Postgres since the earlier migration to that MySQL instance.
+# environment already runs today.
 version: '3.9'
 
 services:
@@ -17,6 +16,30 @@ services:
       - redisdata:/data
     ports:
       - '127.0.0.1:6379:6379' # not exposed publicly - only backend/etl-worker reach it
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: 'json-file'
+      options: { max-size: '10m', max-file: '3' }
+
+  # Flask ETL API - wraps the real pipeline (data/etl/src/sales_pipeline). Only etl-worker calls
+  # this (via pythonRunner.ts); the main backend API process never does. Not exposed externally by
+  # default - see docker/nginx.conf's commented-out etl-api server block if that's ever needed.
+  etl-api:
+    build:
+      context: .
+      dockerfile: data/etl/Dockerfile.api
+    restart: unless-stopped
+    env_file: ./data/etl/.env
+    ports:
+      - '127.0.0.1:5001:5001' # localhost only - internal-only service
+    # Healthcheck comes from data/etl/Dockerfile.api's own HEALTHCHECK instruction.
+    logging:
+      driver: 'json-file'
+      options: { max-size: '50m', max-file: '5' }
 
   backend:
     build:
@@ -24,30 +47,79 @@ services:
       dockerfile: backend/Dockerfile
     restart: unless-stopped
     env_file: ./backend/.env
-    depends_on: [redis]
+    environment:
+      NODE_ENV: production
+      # Container-to-container DNS, not the host loopback -- overrides backend/.env's local-dev
+      # default (localhost) so nobody has to remember to edit that file for this deployment path.
+      REDIS_HOST: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+      # No etl-api dependency: only etl-worker calls it (via pythonRunner.ts), not this API
+      # process. The dashboard/API should come up even if the ETL service is briefly down.
     ports:
       - '127.0.0.1:4000:4000'
+    healthcheck:
+      test: ['CMD', 'node', '-e', "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: 'json-file'
+      options: { max-size: '50m', max-file: '5' }
 
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        # Next.js inlines NEXT_PUBLIC_* into the client bundle at `next build` time, inside this
+        # Dockerfile's own build stage - a plain runtime `environment:` entry below would NOT take
+        # effect for any browser-side code (it'd only be visible to server-side reads at runtime,
+        # which is why it's set both places: as a build arg here, and as env below for parity).
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api.benmussa-invest.com}
     restart: unless-stopped
-    depends_on: [backend]
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://api.benmussa-invest.com}
     ports:
       - '127.0.0.1:3000:3000'
+    healthcheck:
+      test: ['CMD', 'node', '-e', "require('http').get('http://localhost:3000/', r => process.exit(r.statusCode<500?0:1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: 'json-file'
+      options: { max-size: '50m', max-file: '5' }
 
-  # Runs the integrated ETL (backend/src/etl + the vendored pipeline in data/etl). Only this
-  # service needs Python installed -- the API container above only enqueues jobs; this one
-  # executes them (see backend/Dockerfile.etl-worker). Replaces the old Windows Task Scheduler +
-  # scheduler.py combo entirely -- no scheduling happens outside this stack anymore.
+  # Runs the integrated ETL (backend/src/etl). Only this service consumes the BullMQ queue and
+  # actually executes runs - it calls the etl-api service over HTTP (pythonRunner.ts) instead of
+  # spawning Python itself, so it no longer needs Python installed at all (see
+  # backend/Dockerfile.etl-worker).
   etl-worker:
     build:
       context: .
       dockerfile: backend/Dockerfile.etl-worker
     restart: unless-stopped
     env_file: ./backend/.env
-    depends_on: [redis]
+    environment:
+      NODE_ENV: production
+      ETL_API_URL: http://etl-api:5001 # internal Docker network DNS, not localhost
+      REDIS_HOST: redis
+    depends_on:
+      redis:
+        condition: service_healthy
+      etl-api:
+        condition: service_healthy
+    logging:
+      driver: 'json-file'
+      options: { max-size: '50m', max-file: '5' }
 
   ingestion:
     build: ./data/ingestion
@@ -56,3 +128,4 @@ services:
 
 volumes:
   redisdata:
+    driver: local

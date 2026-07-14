@@ -8,8 +8,9 @@ choice, see
 
 ```
 Next.js frontend  →  Express/Node API  →  MySQL 8 (warehouse)  ←  Python ETL (Odoo + Excel)
-                          │                                            │
-                          └── Redis (BullMQ job queue, ETL only) ──────┘
+                          │                                            ▲
+                          │                                            │ HTTP
+                          └── Redis (BullMQ, ETL queue only) ── etl-worker ── ETL Flask API
 ```
 
 | Layer | Technology | Location |
@@ -19,19 +20,27 @@ Next.js frontend  →  Express/Node API  →  MySQL 8 (warehouse)  ←  Python E
 | Backend/API | Node.js + Express, TypeScript | `07ps-sales-dashboard-app/backend/` |
 | Auth | JWT, issued by the backend, role/company/salesperson-scoped | `backend/src/middleware/` |
 | Warehouse | MySQL 8, star schema | `07ps-sales-dashboard-app/data/warehouse/` |
-| ETL | Python (pandas, Odoo XML-RPC, openpyxl) | `07ps-sales-dashboard-app/data/etl/` |
+| ETL pipeline | Python (pandas, Odoo XML-RPC, openpyxl) | `07ps-sales-dashboard-app/data/etl/` |
+| ETL Flask API | Flask/gunicorn, wraps the ETL pipeline as an HTTP service | `07ps-sales-dashboard-app/data/etl/api/` |
 | Job queue | Redis + BullMQ (ETL only) | configured via `REDIS_HOST`/`REDIS_PORT` |
 
 ## Data Flow
 
 1. **Odoo ERP** and manually-maintained **Excel reference files** (`Input/`) are the two source
    systems.
-2. The Python ETL pipeline (`data/etl/`) extracts, transforms, and loads into the MySQL warehouse
-   (or, in Excel-export mode, writes a workbook instead — never both destinations from Odoo
-   directly to the web app).
-3. The Node backend reads exclusively from the warehouse — it never queries Odoo directly.
-4. The Next.js frontend calls the backend's REST API for dashboard data, filter value-lists, and
-   ETL run status.
+2. The Node backend's `etl-worker` process enqueues/consumes ETL jobs via BullMQ, but doesn't
+   execute the pipeline itself — it calls the **ETL Flask API** (`data/etl/api/`) over HTTP, which
+   is the only process that actually spawns the Python pipeline (`data/etl/`) and has its
+   dependencies installed. This split exists because the API/worker containers otherwise wouldn't
+   need Python at all; see `07ps-sales-dashboard-app/docs/etl-deployment.md`.
+3. The pipeline extracts, transforms, and loads into the MySQL warehouse (or, in Excel-export
+   mode, writes a workbook instead — never both destinations from Odoo directly to the web app).
+4. The main Node backend (API process) reads exclusively from the warehouse — it never queries
+   Odoo directly, and never calls the ETL Flask API itself (only `etl-worker` does).
+5. The Next.js frontend calls the backend's REST API — a **separate origin/subdomain** in
+   production (`NEXT_PUBLIC_API_BASE_URL`), not a path prefix on the same domain, since backend
+   routes are mounted at root paths (`/health`, `/tachometer`, `/admin/etl-runs`, etc.) that can
+   collide with frontend page routes of the same name.
 
 ## Why MySQL, not PostgreSQL
 

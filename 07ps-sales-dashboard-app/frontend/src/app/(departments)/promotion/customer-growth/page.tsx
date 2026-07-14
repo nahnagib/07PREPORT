@@ -1,6 +1,6 @@
 'use client';
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Info } from 'lucide-react';
+import { ArrowLeft, Info, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
@@ -34,6 +34,10 @@ import type {
 import { formatCurrency, formatTimestamp, formatVariance } from '../../../../lib/format';
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
+/** Jan 1 of the current year -- every page's date-range filter defaults to YTD (Jan 1 -> today) on
+ * load, not a single-day "today" range; anchorDate itself still drives the actual YTD/MTD window
+ * math (ytdWindow/mtdWindow in filters.ts), this only fixes the visible From/To fields to match. */
+const ytdStartIso = () => `${new Date().getUTCFullYear()}-01-01`;
 
 const EMPTY_FILTERS: TachometerFilters = {
   companyKeys: [],
@@ -80,18 +84,23 @@ function formatCountOrDash(value: number | undefined): string {
  * by clicking the Customer Status panel's title. Three independent interactions, same
  * self-contained pattern as Invoices Engine:
  *   1. Customers Trend: clicking a year sets/clears the page's Year filter (selectedYear) -- a
- *      real backend re-query, re-scoping every other visual (including the Details view).
+ *      real backend re-query, re-scoping every other visual (including the Details view). No
+ *      drill-down mode of its own -- always click-to-filter.
  *   2. Customers Contribution donut: clicking Top 10 / Other drills the chart itself into that
  *      bucket's individual customers -- purely local state, no re-fetch (the backend already
  *      returns the ranked customer list).
- *   3. Customers Category Performance bars: clicking a category drills into that category's
- *      customers -- same local-only, no-refetch pattern.
+ *   3. Customers Category Performance bars: same dual-mode toggle as Invoices Engine's own Sales
+ *      Trend chart (categoryDrillMode). Off (default): clicking a category sets/clears the page's
+ *      Category filter (selectedCategory) -- a real backend re-query, re-scoping every other
+ *      visual (including the Details view) same as selectedYear. On: clicking a category drills
+ *      the chart itself into that category's customers -- local-only, no re-fetch. The two modes
+ *      are mutually exclusive, same as Invoices Engine's drillMode/selectedYear split.
  */
 export default function CustomerGrowthPage() {
   const { setBusinessUnit } = useBusinessUnit();
   const { user, isSalesperson, salespersonKey, token, error: authError, retryAuth, logout } = useAuth();
   const [anchorDate, setAnchorDate] = useState(todayIso());
-  const [dateFromDate, setDateFromDate] = useState(todayIso());
+  const [dateFromDate, setDateFromDate] = useState(ytdStartIso());
   const [dateToDate, setDateToDate] = useState(todayIso());
   const [filters, setFilters] = useState<TachometerFilters>(EMPTY_FILTERS);
 
@@ -103,10 +112,17 @@ export default function CustomerGrowthPage() {
   const [view, setView] = useState<'summary' | 'details'>('summary');
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [contributionDrill, setContributionDrill] = useState<'top10' | 'other' | null>(null);
+  // Customers Category Performance chart's dual-mode interaction, same drillMode/drilledYear vs
+  // selectedYear split as Invoices Engine's Sales Trend chart: categoryDrillMode toggles whether a
+  // click drills the chart itself into that category's customers (categoryDrill, local-only) or
+  // sets the page's Category filter (selectedCategory, a real backend re-query) instead. Off by
+  // default, same as Invoices Engine's own drillMode.
+  const [categoryDrillMode, setCategoryDrillMode] = useState(false);
   const [categoryDrill, setCategoryDrill] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<CustomerStatusLabel | null>(null);
 
-  const scope: CustomerGrowthScope = { selectedYear };
+  const scope: CustomerGrowthScope = { selectedYear, selectedCategory };
 
   const filterOptions = useFilterOptions(token, authError, retryAuth);
   const overview = useCustomerGrowthOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
@@ -131,12 +147,14 @@ export default function CustomerGrowthPage() {
     setBusinessUnit('all');
     const today = todayIso();
     setAnchorDate(today);
-    setDateFromDate(today);
+    setDateFromDate(ytdStartIso());
     setDateToDate(today);
     setView('summary');
     setSelectedYear(null);
     setContributionDrill(null);
+    setCategoryDrillMode(false);
     setCategoryDrill(null);
+    setSelectedCategory(null);
     setStatusFilter(null);
   }
 
@@ -165,8 +183,25 @@ export default function CustomerGrowthPage() {
   }
 
   function handleCategoryClick(label: string) {
-    if (categoryDrill) return; // already drilled into one category -- no further level defined
-    if (CATEGORY_LETTERS.has(label)) setCategoryDrill(label);
+    if (!CATEGORY_LETTERS.has(label)) return;
+    if (categoryDrillMode) {
+      if (categoryDrill == null) setCategoryDrill(label);
+      // Already drilled into one category's customers -- no further drill level defined here.
+      return;
+    }
+    setSelectedCategory((prev) => (prev === label ? null : label));
+  }
+
+  /** Mutually exclusive per the same convention Invoices Engine's Sales Trend drillMode toggle
+   * follows: entering drill-down clears any active Category page-filter (its own click behavior
+   * takes over instead); leaving it clears the in-chart drill. */
+  function toggleCategoryDrillMode() {
+    setCategoryDrillMode((prev) => {
+      const next = !prev;
+      if (next) setSelectedCategory(null);
+      else setCategoryDrill(null);
+      return next;
+    });
   }
 
   /** Back button (Details view -> Summary view): resets the Status Slicer selection (a
@@ -282,7 +317,6 @@ export default function CustomerGrowthPage() {
                 />
                 <CountMetricPanel
                   title="Total Customers"
-                  infoText="Number of distinct customers who generated sales within each timeframe."
                   counts={kpis?.totalCustomers}
                   loading={overview.loading}
                   error={overview.error ?? undefined}
@@ -407,7 +441,12 @@ export default function CustomerGrowthPage() {
                   )}
                 </ChartPanel>
 
-                <ChartPanel title="Customers Category Performance" infoText="Sales LYTD vs. Sales YTD by Customer Category (A highest value - D lowest). Click a category to see its individual customers." style={{ minHeight: 380 }}>
+                <ChartPanel
+                  title="Customers Category Performance"
+                  infoText="Sales LYTD vs. Sales YTD by Customer Category (A highest value - D lowest). Enable drill-down to click a category and see its individual customers, or leave it off to click a category and set it as the page's active filter."
+                  style={{ minHeight: 380 }}
+                  headerActions={<DrillToggle active={categoryDrillMode} onToggle={toggleCategoryDrillMode} />}
+                >
                   {overview.loading ? (
                     <LoadingSkeleton variant="chart" />
                   ) : overview.error ? (
@@ -446,6 +485,7 @@ export default function CustomerGrowthPage() {
                         valueFormatter={formatMillions}
                         tooltipFormatters={{ salesLytm: (v) => formatCurrency(v), salesYtm: (v) => formatCurrency(v) }}
                         onCategoryClick={handleCategoryClick}
+                        highlightedCategory={!drilledCategoryRow && selectedCategory != null ? selectedCategory : null}
                       />
                     </>
                   )}
@@ -727,5 +767,43 @@ function RateCard({
       accentBg={goodBadApplies && bad}
       loading={loading}
     />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Customers Category Performance chart's drill-down mode toggle -- identical shape/styling to
+// Invoices Engine's own Sales Trend DrillToggle (bordered, muted-bg, 6px radius small header
+// control), just re-labeled for this chart's Category -> Customer drill level.
+// ---------------------------------------------------------------------------
+
+function DrillToggle({ active, onToggle }: { active: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={active}
+      title={
+        active
+          ? 'Drill-down mode on — click a category to break it out by customer'
+          : 'Enable drill-down mode (Category → Customer)'
+      }
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '4px 9px',
+        borderRadius: 6,
+        border: `1px solid ${active ? 'var(--ps-color-accent)' : 'var(--ps-color-border)'}`,
+        background: active ? 'var(--ps-color-accent-bg)' : 'var(--ps-color-muted-bg)',
+        color: active ? 'var(--ps-color-accent)' : 'var(--ps-color-muted-text)',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <Layers size={12} />
+      Drill-down
+    </button>
   );
 }

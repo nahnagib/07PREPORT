@@ -87,6 +87,23 @@ export function buildWhereClause(
   return { clause: clauses.join(' AND '), params };
 }
 
+/**
+ * Same as buildWhereClause, but omits channelKeys -- Fact_Lead/Fact_Opportunity/Fact_Delivery (the
+ * CRM/pipeline facts) have no ChannelKey column at all (CRM records aren't tied to a distribution
+ * channel in Odoo, confirmed via SHOW COLUMNS against the live warehouse). Using the regular
+ * buildWhereClause against those tables would emit a `ChannelKey IN (...)` clause that fails with
+ * an unknown-column error. Fact_Sales (the quotation/order funnel fact) DOES carry ChannelKey, so
+ * it keeps using buildWhereClause unchanged -- only the pure Lead/Opportunity/Delivery-grain
+ * queries in measures/pipelineHealth.ts, pipelineTrend.ts and activityMomentum.ts use this.
+ */
+export function buildCrmWhereClause(
+  filters: Filters,
+  tableAlias = '',
+): { clause: string; params: Array<string | number> } {
+  const { channelKeys, ...crmFilters } = filters;
+  return buildWhereClause(crmFilters, tableAlias);
+}
+
 // ---------------------------------------------------------------------------
 // Salesperson RBAC lock (role_tier = 'SALESPERSON')
 // ---------------------------------------------------------------------------

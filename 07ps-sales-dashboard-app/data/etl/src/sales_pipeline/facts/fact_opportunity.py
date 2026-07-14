@@ -51,6 +51,16 @@ class OpportunityFactBuilder:
         "LastQuotationStatus",
         "DaysSinceLastQuotation",
         "OpportunityAge",
+        # Added for the Activity Momentum dashboard page: already computed upstream on the
+        # crm_spine by PipelineFactBuilder (see facts/fact_pipeline.py) and passed through
+        # `out = crm_spine.copy()` above unchanged -- these were simply never selected into this
+        # builder's output before. No new derivation logic; this only exposes existing columns.
+        "ActivityState",
+        "NextActivityDate",
+        "HasNextStep",
+        "HasRecentActivity",
+        "IsInactive",
+        "DaysSinceUpdate",
         "Count",
     ]
 

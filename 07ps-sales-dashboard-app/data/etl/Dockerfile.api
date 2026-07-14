@@ -1,0 +1,37 @@
+# Flask ETL API image (data/etl/api/) - wraps the real pipeline (data/etl/src/sales_pipeline) as
+# an HTTP service. Build context is the repo root (same convention as backend/Dockerfile,
+# frontend/Dockerfile, and backend/Dockerfile.etl-worker) so this can `COPY data/etl ...`.
+#
+# Copies the WHOLE data/etl tree, not just api/ and src/: main.py's subprocess needs config/ (a
+# sibling package - `from config.settings import Settings`) and sitecustomize.py (adds src/ to
+# sys.path) present alongside src/ at its cwd - see job_tracker.py's ETL_ROOT/cwd. Copying only
+# api/+src/ reproduces the exact ModuleNotFoundError this session hit and fixed earlier.
+FROM python:3.11-slim
+WORKDIR /repo/data/etl
+
+# gcc: needed to build a couple of the real pipeline's transitive C-extension dependencies.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY data/etl ./
+
+# Installed into this image's system Python (no separate venv, unlike Dockerfile.etl-worker's
+# Node+Python combo image) - this container is Python-only, so api_config.py's default PYTHON_BIN
+# (sys.executable) already points at the one interpreter with everything installed.
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -e .
+
+WORKDIR /repo/data/etl/api
+EXPOSE 5001
+
+# -w 1: job_tracker.py's JobTracker is an in-memory, per-process singleton - multiple gunicorn
+# workers would each track a different "one run at a time," breaking that invariant.
+# Timeout stays at gunicorn's default: every route here (POST /etl/run, GET /etl/jobs/<id>,
+# POST .../cancel) returns immediately - the pipeline itself runs in a background thread, not the
+# request-handling thread - so no route needs a long per-request timeout.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:5001/health || exit 1
+
+CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5001", "--access-logfile", "-", "--error-logfile", "-", "wsgi:app"]

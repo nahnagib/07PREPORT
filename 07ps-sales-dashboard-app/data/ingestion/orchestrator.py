@@ -32,11 +32,33 @@ import datetime
 import json
 import logging
 import os
+import sys
 import time
 import warnings
+from pathlib import Path
 
 import pandas as pd
 import pymysql
+
+# Ensure vendor/ is importable regardless of external PYTHONPATH (README.md's run instructions
+# set it manually; this makes the module self-sufficient for callers like the Flask ETL API that
+# don't source that README's export line).
+_VENDOR_DIR = Path(__file__).parent / "vendor"
+_VENDOR_SRC_DIR = _VENDOR_DIR / "sales_pipeline_src"
+for _path in (_VENDOR_DIR, _VENDOR_SRC_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
+# The vendored sales_pipeline package imports `from config.settings import Settings` internally
+# (pipeline.py, main.py, staging.py, crm/crm_cleaner.py, export/database_exporter.py) - a name the
+# actual package here is exposed under as `config_src` (see vendor/config_src/). Rather than edit
+# those "zero lines modified" vendored files, alias `config` -> `config_src` in sys.modules before
+# anything imports sales_pipeline.
+import config_src.settings as _config_src_settings  # noqa: E402
+import config_src as _config_src  # noqa: E402
+
+sys.modules.setdefault("config", _config_src)
+sys.modules.setdefault("config.settings", _config_src_settings)
 
 from input_sheets.settings_factory import build_settings
 from odoo.extract import extract_all

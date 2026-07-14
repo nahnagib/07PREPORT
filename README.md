@@ -3,9 +3,11 @@
 Sales and promotion reporting platform for Ben Moussa Holding Group (BMH), covering the **07 Ps**
 web dashboard and the Python ETL pipeline that feeds it from Odoo and reference Excel workbooks.
 
-Phase 1 (the Tachometer dashboard + warehouse + ETL foundation) is functionally complete. This
-repository is the single source of truth for everything needed to run the system: web app, ETL,
-reference data templates, and deployment configuration.
+Phase 1 (the Tachometer dashboard + warehouse + ETL foundation) is functionally complete, and four
+more dashboard pages (Critical Number, Revenue Trend, Invoices Engine, Customer Growth) are
+implemented and wired to the backend as well — see [Status](#status). This repository is the
+single source of truth for everything needed to run the system: web app, ETL, reference data
+templates, and deployment configuration.
 
 ## Repository Layout
 
@@ -16,10 +18,14 @@ reference data templates, and deployment configuration.
 │   ├── backend/                # Node.js/Express API, JWT auth, ETL orchestration
 │   ├── packages/ui/            # @07ps/ui — shared component library
 │   ├── data/etl/               # Python ETL pipeline (Odoo + Excel → MySQL / Excel export)
+│   │   └── api/                #   Flask API wrapping the pipeline as an HTTP service
 │   ├── data/ingestion/         # Earlier/CI-linted ingestion service (mocked-Odoo tests)
 │   ├── data/warehouse/         # MySQL 8 star-schema migrations + KPI measures layer
+│   ├── docker/                 # nginx.conf (VPS reverse proxy + TLS, subdomain routing)
+│   ├── scripts/                # health-check.sh (post-deploy validation)
 │   ├── docs/                   # Detailed, verified technical docs (architecture, ETL, ops)
-│   └── docker-compose.yml      # Production stack: redis, backend, frontend, etl-worker, ingestion
+│   └── docker-compose.yml      # Production stack: redis, backend, frontend, etl-api, etl-worker,
+│                                #   ingestion
 ├── Input/                      # Reference Excel templates the ETL depends on (see below)
 ├── docs/                       # Repo-wide docs (this overview level) + docs/archive/
 ├── assets/brand/               # Raw brand/logo source files (BMH, Majaal, Tika)
@@ -32,9 +38,13 @@ reference data templates, and deployment configuration.
 
 ```
 Next.js frontend  →  Express/Node API  →  MySQL 8 (warehouse)  ←  Python ETL (Odoo + Excel)
-                          │                                            │
-                          └── Redis (BullMQ job queue, ETL only) ──────┘
+                          │                                            ▲
+                          │                                            │ HTTP
+                          └── Redis (BullMQ, ETL queue only) ── etl-worker ── ETL Flask API
 ```
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown of why the ETL runs
+behind its own Flask API rather than being spawned directly.
 
 - **Frontend**: Next.js 14 (App Router), TypeScript, Tailwind CSS, `@07ps/ui` shared components.
 - **Backend**: Node.js/Express (TypeScript), JWT-based auth, role-scoped API middleware.
@@ -166,8 +176,11 @@ for configuration and verification steps.
 ## Deployment
 
 Production target is a Libyan Spider VPS running the whole stack via
-`07ps-sales-dashboard-app/docker-compose.yml` (Redis, backend, frontend, ETL worker, ingestion —
-behind Nginx/TLS). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the repo-level overview and
+`07ps-sales-dashboard-app/docker-compose.yml` (Redis, backend, frontend, ETL Flask API, ETL worker,
+ingestion — behind Nginx/TLS, subdomain-routed). See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for
+the repo-level overview,
+[`07ps-sales-dashboard-app/docs/vps-deployment.md`](07ps-sales-dashboard-app/docs/vps-deployment.md)
+for the full step-by-step VPS walkthrough, and
 [`07ps-sales-dashboard-app/docs/etl-deployment.md`](07ps-sales-dashboard-app/docs/etl-deployment.md)
 for ETL-specific deployment notes.
 
@@ -176,16 +189,19 @@ for ETL-specific deployment notes.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — repo-level architecture summary
 - [`docs/ETL_WORKFLOW.md`](docs/ETL_WORKFLOW.md) — ETL modes, scheduling, monitoring
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — deployment overview
-- [`docs/archive/`](docs/archive/) — historical development notes/status reports from building
-  Phase 1 (kept for reference, not maintained going forward)
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — local development setup, code style, PR process
+- [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) — common development and deployment issues
+- [`CHANGELOG.md`](CHANGELOG.md) — version history
+- [`docs/archive/`](docs/archive/) — historical development notes/status reports (kept for
+  reference, not maintained going forward)
 - [`07ps-sales-dashboard-app/docs/`](07ps-sales-dashboard-app/docs/) — detailed, code-verified
-  technical docs: tech stack decisions, running the project, ETL deployment, standards, migration
-  plan
+  technical docs: tech stack decisions, running the project, ETL deployment, VPS deployment,
+  standards, migration plan
 
 ## Security
 
-- All credentials live in `.env` files (`backend/.env`, `data/ingestion/.env`), never committed —
-  see the root [`.gitignore`](.gitignore).
+- All credentials live in `.env` files (`backend/.env`, `data/etl/.env`, `data/ingestion/.env`),
+  never committed — see the root [`.gitignore`](.gitignore).
 - Copy `*.env.example` → `.env` and fill in real values per environment.
 - If you are cloning this repository from an earlier, informal working copy: **rotate every
   credential that ever appeared in a chat, ticket, or the archived docs under `docs/archive/`**
@@ -194,5 +210,15 @@ for ETL-specific deployment notes.
 ## Status
 
 **Phase 1**: web app foundation (Tachometer dashboard, warehouse, JWT auth, ETL pipeline,
-scheduler) — functionally complete. Later phases (Critical Number, Revenue Trend, Invoices Engine,
-Customer Growth) are not yet built.
+scheduler) — functionally complete, validated against real historical data (see
+[`07ps-sales-dashboard-app/data/ingestion/tachometer_kpi_validation.md`](07ps-sales-dashboard-app/data/ingestion/tachometer_kpi_validation.md)).
+
+**Later pages** (Critical Number, Revenue Trend, Invoices Engine, Customer Growth): frontend pages
+and backend routes are both implemented and wired end-to-end. Unlike Tachometer, these have not
+been through an equivalent real-data reconciliation pass — treat them as implemented but not yet
+independently validated against production Odoo data.
+
+**ETL execution**: the pipeline now runs behind a Flask API (`data/etl/api/`) that the backend
+calls over HTTP, rather than being spawned as a subprocess directly — see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
+[`07ps-sales-dashboard-app/docs/etl-deployment.md`](07ps-sales-dashboard-app/docs/etl-deployment.md).

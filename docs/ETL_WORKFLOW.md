@@ -36,6 +36,16 @@ The scheduler only enqueues jobs on a timer — it never executes the pipeline i
 Redis instance and a running `npm run etl:worker` process are both required for scheduled jobs to
 actually run.
 
+## Execution: the ETL Flask API
+
+`etl:worker` doesn't spawn the Python pipeline directly — it calls a separate Flask API
+(`data/etl/api/`, `pythonRunner.ts` in the backend) over HTTP: `POST /etl/run` starts a run in the
+background and returns a job id immediately, `GET /etl/jobs/<id>` is polled for new log lines and
+the final status, and `POST /etl/jobs/<id>/cancel` backs the Control Center's Cancel button. This
+split means only the `etl-api` container needs Python + the pipeline's dependencies installed —
+`etl-worker` is a plain Node image. See
+[`07ps-sales-dashboard-app/docs/etl-deployment.md`](../07ps-sales-dashboard-app/docs/etl-deployment.md#the-flask-etl-api).
+
 ## Monitoring
 
 - **In-app**: Admin → ETL Runs (`GET /admin/etl-runs/log` / `/audit`) — per-run status, duration,

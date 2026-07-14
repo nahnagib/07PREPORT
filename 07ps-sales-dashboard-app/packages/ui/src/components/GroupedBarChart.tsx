@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 
 export interface GroupedBarSeries {
   key: string;
@@ -26,9 +26,14 @@ export interface GroupedBarChartProps {
   tooltipFormatters?: Record<string, (value: number) => string>;
   height?: number;
   /** The whole plot area becomes clickable (pointer cursor) and invokes this with the clicked
-   * category's `label` -- same convention as ComboChart's onCategoryClick, used here for the
-   * Customers Category Performance drill-down (category -> its individual customers). */
+   * category's `label` -- same convention as ComboChart's onCategoryClick. Used for both the
+   * Customers Category Performance drill-down (category -> its individual customers) and, when
+   * drill-down is off, the click-to-filter page-filter interaction. */
   onCategoryClick?: (label: string) => void;
+  /** Renders every bar in the matching category row with a highlighted outline and full opacity,
+   * while every other row dims -- the "this is the active page filter" affordance, same convention
+   * as ComboChart's highlightedCategory/DonutChart's selectedId. */
+  highlightedCategory?: string | null;
 }
 
 function defaultFormatter(v: number): string {
@@ -56,6 +61,7 @@ export function GroupedBarChart({
   tooltipFormatters,
   height = 280,
   onCategoryClick,
+  highlightedCategory = null,
 }: GroupedBarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -187,7 +193,21 @@ export function GroupedBarChart({
                 radius={[0, 4, 4, 0]}
                 barSize={points.length > 6 ? 12 : 18}
                 isAnimationActive={false}
-              />
+              >
+                {points.map((p) => {
+                  const isSelected = highlightedCategory === p.label;
+                  const dimmed = highlightedCategory != null && !isSelected;
+                  return (
+                    <Cell
+                      key={p.label}
+                      fill={b.color}
+                      fillOpacity={dimmed ? 0.35 : 1}
+                      stroke={isSelected ? 'var(--ps-color-gold)' : 'none'}
+                      strokeWidth={isSelected ? 2 : 0}
+                    />
+                  );
+                })}
+              </Bar>
             ))}
           </BarChart>
         </ResponsiveContainer>

@@ -931,6 +931,7 @@ export interface CustomerTableRow {
 export interface CustomerGrowthOverview {
   anchorDate: string;
   selectedYear: number | null;
+  selectedCategory: string | null;
   kpis: CustomerGrowthKpis;
   rates: CustomerGrowthRates;
   customersTrend: CustomerYearPoint[];
@@ -939,10 +940,12 @@ export interface CustomerGrowthOverview {
   customersTable: CustomerTableRow[];
 }
 
-/** Page-filter scope for the Customers Trend "click a year" interaction -- see
- * backend/src/routes/customerGrowth.ts's header comment for which query honors it. */
+/** Page-filter scope for the Customers Trend "click a year" and Customers Category Performance
+ * "click a category" (when its own drill-down mode is off) interactions -- see
+ * backend/src/routes/customerGrowth.ts's header comment for which query honors each. */
 export interface CustomerGrowthScope {
   selectedYear?: number | null;
+  selectedCategory?: string | null;
 }
 
 export function fetchCustomerGrowthOverview(
@@ -953,5 +956,203 @@ export function fetchCustomerGrowthOverview(
 ): Promise<CustomerGrowthOverview> {
   const params = new URLSearchParams(buildQuery(anchorDate, filters));
   if (scope.selectedYear != null) params.set('selectedYear', String(scope.selectedYear));
+  if (scope.selectedCategory) params.set('selectedCategory', scope.selectedCategory);
   return request(`/customer-growth/overview?${params.toString()}`, token);
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline Health (backend/src/routes/pipelineHealth.ts) -- same 5-dimension filter shape as every
+// other page, but NO anchorDate: this page's figures are all-time (the funnel/benchmark represent
+// the pipeline's overall conversion structure, not a period snapshot), see that route's header
+// comment.
+// ---------------------------------------------------------------------------
+
+/** Same filter-param building as buildQuery, minus anchorDate (this page has none). */
+function buildFilterQuery(filters: TachometerFilters): string {
+  const params = new URLSearchParams();
+  (filters.companyKeys ?? []).forEach((v) => params.append('companyKeys', String(v)));
+  (filters.segmentKeys ?? []).forEach((v) => params.append('segmentKeys', String(v)));
+  (filters.channelKeys ?? []).forEach((v) => params.append('channelKeys', String(v)));
+  (filters.salesTeamKeys ?? []).forEach((v) => params.append('salesTeamKeys', v));
+  (filters.salespersonKeys ?? []).forEach((v) => params.append('salespersonKeys', String(v)));
+  return params.toString();
+}
+
+export interface FunnelCounts {
+  leads: number;
+  opportunities: number;
+  quotations: number;
+  salesOrders: number;
+  deliveries: number;
+}
+
+export interface StageBenchmarkRow {
+  transition: string;
+  actualPct: number | null;
+  targetPct: number;
+  status: TargetStatus;
+  variancePct: number | null;
+}
+
+export interface ExpectedClosureMonthPoint {
+  year: number;
+  month: number;
+  label: string;
+  expectedCount: number;
+  expectedValue: number;
+}
+
+export interface StageValueSlice {
+  stage: string;
+  value: number;
+}
+
+export interface ProbabilityBucketSlice {
+  bucket: string;
+  count: number;
+}
+
+export interface OpportunityDetailRow {
+  opportunityId: string;
+  name: string;
+  customer: string | null;
+  company: string | null;
+  expectedRevenue: number;
+  salesperson: string | null;
+  stage: string | null;
+  createdDate: string | null;
+  expectedCloseMonth: string | null;
+  probabilityBucket: string | null;
+}
+
+export interface PipelineHealthOverview {
+  funnel: FunnelCounts;
+  stageBenchmark: StageBenchmarkRow[];
+  expectedClosureByMonth: ExpectedClosureMonthPoint[];
+  opportunityByStage: StageValueSlice[];
+  probabilityDistribution: ProbabilityBucketSlice[];
+  opportunities: OpportunityDetailRow[];
+}
+
+export function fetchPipelineHealthOverview(token: string, filters: TachometerFilters): Promise<PipelineHealthOverview> {
+  return request(`/pipeline-health/overview?${buildFilterQuery(filters)}`, token);
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline Trend (backend/src/routes/pipelineTrend.ts) -- same 5-dimension filter shape + anchorDate
+// as most other pages. Read-only page, no scope param.
+// ---------------------------------------------------------------------------
+
+export interface QuotationRates {
+  totalQuotations: number;
+  wonQuotations: number;
+  winRatePct: number | null;
+  openQuotations: number;
+  lostQuotations: number;
+  wonLostRatio: number | null;
+}
+
+export interface MonthComparisonPoint {
+  month: number;
+  label: string;
+  countYtd: number;
+  countLytd: number;
+  valueYtd: number;
+  valueLytd: number;
+}
+
+export interface AgingBuckets {
+  b0to30: number;
+  b30to60: number;
+  b60to90: number;
+  b90plus: number;
+}
+
+export interface AgingDistribution {
+  opportunities: AgingBuckets;
+  quotations: AgingBuckets;
+}
+
+export interface PipelineTrendOverview {
+  anchorDate: string;
+  quotationRates: QuotationRates;
+  opportunitiesByMonth: MonthComparisonPoint[];
+  quotationsByMonth: MonthComparisonPoint[];
+  salesOrdersByMonth: MonthComparisonPoint[];
+  aging: AgingDistribution;
+}
+
+export function fetchPipelineTrendOverview(
+  token: string,
+  anchorDate: string,
+  filters: TachometerFilters,
+): Promise<PipelineTrendOverview> {
+  return request(`/pipeline-trend/overview?${buildQuery(anchorDate, filters)}`, token);
+}
+
+// ---------------------------------------------------------------------------
+// Activity Momentum (backend/src/routes/activityMomentum.ts) -- same 5-dimension filter shape +
+// anchorDate as most other pages.
+// ---------------------------------------------------------------------------
+
+export interface OpportunityActivityCounts {
+  totalYtd: number;
+  won: number;
+  withoutActivity: number | null;
+  active: number;
+  lost: number;
+  withoutNextStep: number | null;
+}
+
+export interface ActivityRates {
+  inactiveDealsRatio: number | null;
+  lostDealsRatio: number | null;
+}
+
+export interface LostReasonSlice {
+  reason: string;
+  count: number;
+}
+
+export interface NewOpportunitiesMonthPoint {
+  month: number;
+  label: string;
+  countYtd: number;
+  countLytd: number;
+}
+
+export interface ActivityOpportunityRow {
+  opportunityId: string;
+  name: string;
+  customer: string | null;
+  company: string | null;
+  expectedRevenue: number;
+  salesperson: string | null;
+  stage: string | null;
+  createdDate: string | null;
+  isOpen: boolean;
+  isWon: boolean;
+  isLost: boolean;
+  isActive: boolean;
+  isInactive: boolean | null;
+  isWithoutNextStep: boolean | null;
+  isYtd: boolean;
+}
+
+export interface ActivityMomentumOverview {
+  anchorDate: string;
+  activityColumnsAvailable: boolean;
+  counts: OpportunityActivityCounts;
+  rates: ActivityRates;
+  lostByReason: LostReasonSlice[];
+  newOpportunitiesByMonth: NewOpportunitiesMonthPoint[];
+  opportunities: ActivityOpportunityRow[];
+}
+
+export function fetchActivityMomentumOverview(
+  token: string,
+  anchorDate: string,
+  filters: TachometerFilters,
+): Promise<ActivityMomentumOverview> {
+  return request(`/activity-momentum/overview?${buildQuery(anchorDate, filters)}`, token);
 }

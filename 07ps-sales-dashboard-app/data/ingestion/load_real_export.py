@@ -61,6 +61,32 @@ def build_connection():
     )
 
 
+def load_export(xlsx_path: str):
+    """Core of this module's CLI, extracted so callers other than __main__ (the Flask ETL API's
+    etl_executor.py) can reuse it without a subprocess. Raises ValueError instead of SystemExit on
+    a bad path/missing sheets so callers can turn that into a normal HTTP 400 rather than a
+    process exit.
+    """
+    if not xlsx_path:
+        raise ValueError("xlsx_path is required")
+
+    logger.info("Reading %s ...", xlsx_path)
+    all_sheets = pd.read_excel(xlsx_path, sheet_name=None, engine="openpyxl")
+    missing = [s for s in REQUIRED_SHEETS if s not in all_sheets]
+    if missing:
+        raise ValueError(f"Export is missing required sheet(s): {missing}")
+    sheets = {name: all_sheets[name] for name in REQUIRED_SHEETS}
+    for name, df in sheets.items():
+        logger.info("  %-24s %d rows", name, len(df))
+
+    conn = build_connection()
+    try:
+        loader = StarSchemaLoader(conn)
+        return loader.load_all(sheets)
+    finally:
+        conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -74,21 +100,10 @@ def main():
     if not args.xlsx_path:
         parser.error("Provide the xlsx path as an argument or set EXPORT_XLSX_PATH")
 
-    logger.info("Reading %s ...", args.xlsx_path)
-    all_sheets = pd.read_excel(args.xlsx_path, sheet_name=None, engine="openpyxl")
-    missing = [s for s in REQUIRED_SHEETS if s not in all_sheets]
-    if missing:
-        raise SystemExit(f"Export is missing required sheet(s): {missing}")
-    sheets = {name: all_sheets[name] for name in REQUIRED_SHEETS}
-    for name, df in sheets.items():
-        logger.info("  %-24s %d rows", name, len(df))
-
-    conn = build_connection()
     try:
-        loader = StarSchemaLoader(conn)
-        report = loader.load_all(sheets)
-    finally:
-        conn.close()
+        report = load_export(args.xlsx_path)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
 
     print("\n--- Load report ---")
     for table, count in sorted(report.inserted.items()):

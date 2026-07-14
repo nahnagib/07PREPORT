@@ -1,5 +1,5 @@
-import { spawn } from 'child_process';
-import { buildPythonEnv, getEtlConfig } from '../config/etlConfig';
+import axios, { AxiosInstance } from 'axios';
+import { getEtlConfig } from '../config/etlConfig';
 import { etlLogger } from './etlLogger';
 
 export type LoadMode = 'full' | 'incremental';
@@ -17,13 +17,13 @@ export interface PipelineRunOptions {
   /** Labels this invocation in the orchestration log (e.g. "scheduled-incremental", "customers"
    * alias, "manual"). Does not change what the pipeline actually runs -- see commands/*.ts. */
   label?: string;
-  /** Aborting kills the subprocess (Node's child_process.spawn supports this natively) -- used
-   * by the ETL Control Center's Cancel button, see etl/queue/etlControlChannel.ts. */
+  /** Aborting requests cancellation of the ETL API job (see data/etl/api/app.py's
+   * POST /etl/jobs/<id>/cancel) -- used by the ETL Control Center's Cancel button, see
+   * etl/queue/etlControlChannel.ts. */
   signal?: AbortSignal;
-  /** Called for every non-empty stdout/stderr line, in order, as the subprocess produces them --
+  /** Called for every non-empty stdout/stderr line, in order, as the ETL API reports them --
    * used by runPipelineJob.ts to forward stage/summary lines into BullMQ job progress/logs
-   * without needing to re-parse the orchestration log file. (Same pre-existing ESLint
-   * type-signature gap as etlControlChannel.ts's subscribeToCancelRequests.) */
+   * without needing to re-parse the orchestration log file. */
   onLine?: (line: string, stream: 'stdout' | 'stderr') => void;
 }
 
@@ -37,105 +37,159 @@ export interface PipelineRunResult {
   stderrTail: string;
 }
 
+interface RemoteLogLine {
+  index: number;
+  stream: 'stdout' | 'stderr';
+  text: string;
+}
+
+type RemoteJobStatus = {
+  jobId: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  exitCode: number | null;
+  durationMs: number | null;
+  logLineCount: number;
+  lines: RemoteLogLine[];
+};
+
 const TAIL_LINES = 40;
+const MAX_CONSECUTIVE_POLL_FAILURES = 10;
 
 function tail(lines: string[], n: number): string {
   return lines.slice(-n).join('\n');
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function buildClient(etlApiUrl: string, etlApiKey: string): AxiosInstance {
+  return axios.create({
+    baseURL: etlApiUrl,
+    headers: { Authorization: `Bearer ${etlApiKey}`, 'Content-Type': 'application/json' },
+  });
+}
+
 /**
- * The one place that knows how to invoke the vendored pipeline. Invocation shape (cwd = pipeline
- * root, `python -m sales_pipeline.main ...`) matches exactly what the original `scheduler.py` (the
- * Windows Task Scheduler-launched script this replaces, not vendored here) used in production,
- * including `--output sql --load-mode incremental --fast` as the default scheduled-run args.
+ * Calls the ETL Flask API (data/etl/api/app.py) to run the real vendored pipeline
+ * (data/etl/src/sales_pipeline/main.py) and polls it to completion. Same
+ * PipelineRunOptions/PipelineRunResult contract this function has always had -- only the
+ * transport changed, from spawning `python -m sales_pipeline.main` directly (this process's own
+ * child_process.spawn) to an HTTP call against a Flask service that spawns it instead. That
+ * service split is required because cPanel shared hosting can't run this API process's own
+ * arbitrary Python subprocesses reliably; on cPanel, backend and the ETL Flask API are two
+ * separate apps (see docs/DEPLOYMENT*.md), so the subprocess has to live on the Python side.
  *
- * Resolves (never rejects) on a completed OR cancelled process -- callers decide what a failed
- * run means for them: the BullMQ job processor throws on a genuine failure to trigger a retry,
- * but not on `cancelled` (a deliberate stop shouldn't be retried).
+ * Resolves (never rejects) on a completed OR cancelled run, same as before: the BullMQ job
+ * processor (runPipelineJob.ts) throws on a genuine failure to trigger a retry, but not on
+ * `cancelled` (a deliberate stop shouldn't be retried).
  */
 export async function runPipeline(options: PipelineRunOptions): Promise<PipelineRunResult> {
   const config = getEtlConfig();
-  const args = [
-    '-m',
-    'sales_pipeline.main',
-    '--output',
-    options.outputMode ?? 'sql',
-    '--load-mode',
-    options.loadMode,
-  ];
-  if (options.fast) args.push('--fast');
-  if (options.extraArgs?.length) args.push(...options.extraArgs);
-
+  if (!config.etlApi.url || !config.etlApi.apiKey) {
+    throw new Error(
+      'ETL_API_URL and ETL_API_KEY must be set -- the Node backend now calls the ETL Flask API ' +
+        'over HTTP instead of spawning Python directly (see data/etl/api/app.py).',
+    );
+  }
+  const client = buildClient(config.etlApi.url, config.etlApi.apiKey);
   const label = options.label ?? options.loadMode;
   const startedAt = Date.now();
-  etlLogger.info('ETL run starting', { label, args, cwd: config.pythonDir });
 
-  return new Promise((resolve, reject) => {
-    const child = spawn(config.pythonBin, args, {
-      cwd: config.pythonDir,
-      env: buildPythonEnv(config),
-      signal: options.signal,
+  etlLogger.info('ETL run starting', {
+    label,
+    loadMode: options.loadMode,
+    outputMode: options.outputMode ?? 'sql',
+    fast: options.fast ?? false,
+  });
+
+  let jobId: string;
+  try {
+    const response = await client.post<{ jobId: string }>('/etl/run', {
+      loadMode: options.loadMode,
+      outputMode: options.outputMode ?? 'sql',
+      fast: options.fast ?? false,
+      extraArgs: options.extraArgs ?? [],
+      label,
     });
+    jobId = response.data.jobId;
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 409) {
+      throw new Error(`ETL API reports a run is already active: ${JSON.stringify(err.response.data)}`);
+    }
+    etlLogger.error('ETL run failed to start', { label, error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
 
-    const stdoutLines: string[] = [];
-    const stderrLines: string[] = [];
+  const stdoutLines: string[] = [];
+  const stderrLines: string[] = [];
+  let after = 0;
+  let consecutivePollFailures = 0;
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      const text = chunk.toString();
-      const lines = text.split(/\r?\n/).filter(Boolean);
-      stdoutLines.push(...lines);
-      if (text.trim()) etlLogger.info(text.trim(), { label, stream: 'stdout' });
-      for (const line of lines) options.onLine?.(line, 'stdout');
+  const onAbort = () => {
+    client.post(`/etl/jobs/${jobId}/cancel`).catch((err) => {
+      etlLogger.error('Failed to request ETL job cancellation', {
+        label, jobId, error: err instanceof Error ? err.message : String(err),
+      });
     });
-    child.stderr.on('data', (chunk: Buffer) => {
-      const text = chunk.toString();
-      const lines = text.split(/\r?\n/).filter(Boolean);
-      stderrLines.push(...lines);
-      // Not necessarily a warning: the pipeline's own `logging.basicConfig` (Python's default)
-      // sends every level, including plain INFO, to stderr -- exit code is the real failure
-      // signal (handled below via etlLogger.error with the full stderr tail), not this stream.
-      if (text.trim()) etlLogger.info(text.trim(), { label, stream: 'stderr' });
-      for (const line of lines) options.onLine?.(line, 'stderr');
-    });
+  };
+  options.signal?.addEventListener('abort', onAbort);
 
-    child.on('error', (err) => {
-      const durationMs = Date.now() - startedAt;
-      if (err.name === 'AbortError') {
-        etlLogger.info('ETL run cancelled', { label, durationMs });
-        resolve({
-          exitCode: -1,
-          cancelled: true,
+  try {
+    for (;;) {
+      let data: RemoteJobStatus;
+      try {
+        const response = await client.get<RemoteJobStatus>(`/etl/jobs/${jobId}`, { params: { after } });
+        data = response.data;
+        consecutivePollFailures = 0;
+      } catch (err) {
+        consecutivePollFailures += 1;
+        etlLogger.error('ETL job status poll failed', {
+          label, jobId, attempt: consecutivePollFailures, error: err instanceof Error ? err.message : String(err),
+        });
+        if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+          throw new Error(
+            `Lost contact with the ETL API while polling job ${jobId} after ${consecutivePollFailures} attempts`,
+          );
+        }
+        await sleep(config.etlApi.pollIntervalMs);
+        continue;
+      }
+
+      for (const line of data.lines) {
+        if (line.stream === 'stdout') stdoutLines.push(line.text);
+        else stderrLines.push(line.text);
+        if (line.text.trim()) etlLogger.info(line.text.trim(), { label, stream: line.stream });
+        options.onLine?.(line.text, line.stream);
+      }
+      after = data.logLineCount;
+
+      if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+        const durationMs = data.durationMs ?? Date.now() - startedAt;
+        const result: PipelineRunResult = {
+          exitCode: data.exitCode ?? -1,
+          cancelled: data.status === 'cancelled',
           durationMs,
           stdoutTail: tail(stdoutLines, TAIL_LINES),
           stderrTail: tail(stderrLines, TAIL_LINES),
-        });
-        return;
+        };
+        if (result.cancelled) {
+          etlLogger.info('ETL run cancelled', { label, durationMs });
+        } else if (result.exitCode === 0) {
+          etlLogger.info('ETL run finished', { label, durationMs, exitCode: result.exitCode });
+        } else {
+          etlLogger.error('ETL run exited non-zero', {
+            label, durationMs, exitCode: result.exitCode, stderrTail: result.stderrTail,
+          });
+        }
+        return result;
       }
-      etlLogger.error('ETL run failed to start', { label, error: err.message });
-      reject(err);
-    });
 
-    child.on('close', (code) => {
-      const durationMs = Date.now() - startedAt;
-      const exitCode = code ?? 1;
-      const result: PipelineRunResult = {
-        exitCode,
-        cancelled: false,
-        durationMs,
-        stdoutTail: tail(stdoutLines, TAIL_LINES),
-        stderrTail: tail(stderrLines, TAIL_LINES),
-      };
-      if (exitCode === 0) {
-        etlLogger.info('ETL run finished', { label, durationMs, exitCode });
-      } else {
-        etlLogger.error('ETL run exited non-zero', {
-          label,
-          durationMs,
-          exitCode,
-          stderrTail: result.stderrTail,
-        });
-      }
-      resolve(result);
-    });
-  });
+      await sleep(config.etlApi.pollIntervalMs);
+    }
+  } finally {
+    options.signal?.removeEventListener('abort', onAbort);
+  }
 }

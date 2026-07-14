@@ -8,8 +8,10 @@ __pycache__/
 venv/
 .venv/
 
-# Real credentials -- Node injects these as subprocess env vars at spawn time (see
-# backend/src/etl/services/pythonRunner.ts); this directory should never contain its own .env.
+# Real credentials. The Flask ETL API (data/etl/api/app.py, containerized via
+# data/etl/Dockerfile.api) reads DB_*/ODOO_*/ETL_API_KEY/etc. from its own .env at this root (see
+# data/etl/.env.example) -- unlike the old direct-subprocess design (pythonRunner.ts spawning
+# Python itself), this is now a separate process/container and needs a real .env of its own.
 .env
 
 # Logs (structured run history lives in MySQL: pipeline_run_log/pipeline_run_audit;

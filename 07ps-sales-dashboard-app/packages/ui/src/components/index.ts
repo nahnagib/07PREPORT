@@ -24,6 +24,8 @@ export * from './ChartPanel';
 export * from './ComboChart';
 export * from './GroupedBarChart';
 export * from './DonutChart';
+export * from './FunnelChart';
+export * from './StackedPercentBarChart';
 export * from './BreakdownChart';
 export * from './InsightCard';
 export * from './FilterChip';

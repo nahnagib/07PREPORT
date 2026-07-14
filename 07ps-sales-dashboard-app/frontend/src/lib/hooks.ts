@@ -22,12 +22,18 @@ import {
   fetchCustomerGrowthOverview,
   fetchDistributionChannels,
   fetchInvoicesEngineOverview,
+  fetchActivityMomentumOverview,
+  fetchPipelineHealthOverview,
+  fetchPipelineTrendOverview,
   fetchRefreshStatus,
   fetchRevenueTrendOverview,
   fetchSalespersons,
   fetchTachometerBreakdown,
   fetchTachometerOverview,
   fetchTachometerTrend,
+  ActivityMomentumOverview,
+  PipelineHealthOverview,
+  PipelineTrendOverview,
 } from './api';
 
 interface AsyncState<T> {
@@ -325,7 +331,100 @@ export function useCustomerGrowthOverview(
       .then((data) => setState({ data, loading: false, error: null }))
       .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters), scope.selectedYear]);
+  }, [token, authError, anchorDate, JSON.stringify(filters), scope.selectedYear, scope.selectedCategory]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
+/** Pipeline Health KPI overview (backend's /pipeline-health/overview endpoint). No anchorDate --
+ * this page's figures are all-time, see api.ts's fetchPipelineHealthOverview header comment. Same
+ * authGate/makeRetry template as every other overview hook. */
+export function usePipelineHealthOverview(
+  token: string | null,
+  filters: TachometerFilters,
+  authError: string | null,
+  retryAuth: () => void,
+) {
+  const [state, setState] = useState<AsyncState<PipelineHealthOverview>>({
+    data: null,
+    loading: true,
+    error: null,
+  });
+
+  const load = useCallback(() => {
+    if (authGate(token, authError, setState)) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    fetchPipelineHealthOverview(token as string, filters)
+      .then((data) => setState({ data, loading: false, error: null }))
+      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, authError, JSON.stringify(filters)]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
+/** Pipeline Trend KPI overview (backend's /pipeline-trend/overview endpoint). Same
+ * authGate/makeRetry template as every other overview hook; no scope param -- read-only page. */
+export function usePipelineTrendOverview(
+  token: string | null,
+  anchorDate: string,
+  filters: TachometerFilters,
+  authError: string | null,
+  retryAuth: () => void,
+) {
+  const [state, setState] = useState<AsyncState<PipelineTrendOverview>>({
+    data: null,
+    loading: true,
+    error: null,
+  });
+
+  const load = useCallback(() => {
+    if (authGate(token, authError, setState)) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    fetchPipelineTrendOverview(token as string, anchorDate, filters)
+      .then((data) => setState({ data, loading: false, error: null }))
+      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, authError, anchorDate, JSON.stringify(filters)]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
+/** Activity Momentum KPI overview (backend's /activity-momentum/overview endpoint). Same
+ * authGate/makeRetry template as every other overview hook. */
+export function useActivityMomentumOverview(
+  token: string | null,
+  anchorDate: string,
+  filters: TachometerFilters,
+  authError: string | null,
+  retryAuth: () => void,
+) {
+  const [state, setState] = useState<AsyncState<ActivityMomentumOverview>>({
+    data: null,
+    loading: true,
+    error: null,
+  });
+
+  const load = useCallback(() => {
+    if (authGate(token, authError, setState)) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    fetchActivityMomentumOverview(token as string, anchorDate, filters)
+      .then((data) => setState({ data, loading: false, error: null }))
+      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, authError, anchorDate, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();
