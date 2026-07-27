@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { RefreshCw, Download, Bell } from 'lucide-react';
 import { useBusinessUnit } from './BusinessUnitProvider';
 import { useTheme } from './ThemeProvider';
+import { BASE_PATH } from '../lib/basePath';
 
 /**
  * Logo asset note: the source BMH files ("BenMussa Black.png" / "BenMussa White.png") are named
@@ -13,18 +14,18 @@ import { useTheme } from './ThemeProvider';
  * bmh-mark-light = light ink for dark backgrounds) so this component never has to guess.
  */
 const bmhMark = {
-  light: '/logos/bmh/bmh-mark-dark.png', // dark-ink mark, used on the light theme
-  dark: '/logos/bmh/bmh-mark-light.png', // light-ink mark, used on the dark theme
+  light: `${BASE_PATH}/logos/bmh/bmh-mark-dark.png`, // dark-ink mark, used on the light theme
+  dark: `${BASE_PATH}/logos/bmh/bmh-mark-light.png`, // light-ink mark, used on the dark theme
 };
 
 const buLogo: Record<string, { light: string; dark: string; alt: string } | null> = {
   all: null,
   majaal: {
-    light: '/logos/majaal/majaal-mark-dark.png',
-    dark: '/logos/majaal/majaal-mark-light.jpg',
+    light: `${BASE_PATH}/logos/majaal/majaal-mark-dark.png`,
+    dark: `${BASE_PATH}/logos/majaal/majaal-mark-light.jpg`,
     alt: 'Majaal',
   },
-  tika: { light: '/logos/tika/tikalogo.png', dark: '/logos/tika/tikalogo.png', alt: 'Tika' },
+  tika: { light: `${BASE_PATH}/logos/tika/tikalogo.png`, dark: `${BASE_PATH}/logos/tika/tikalogo.png`, alt: 'Tika' },
 };
 
 /**

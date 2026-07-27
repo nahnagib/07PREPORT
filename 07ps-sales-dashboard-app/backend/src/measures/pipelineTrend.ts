@@ -13,10 +13,17 @@
  * exactly to the "real quotation universe" -- that's the Win Rate denominator. OrderState (the raw
  * Odoo sale.order state: sale/cancel/draft/sent) is reused directly as the Open/Lost signal rather
  * than inventing a new status scheme.
+ *
+ * Lost-exclusion policy: fetchOpportunitiesByMonth (Fact_Opportunity-scoped) excludes closed-lost
+ * opportunities via filters.ts's excludeLostClause -- it's a general creation-volume trend, not a
+ * lost-specific one. Every other query on this page is Fact_Sales-scoped (Quotation Rates,
+ * Quotations/Sales Orders by month, aging), which has no Stage/IsLost concept of its own (its
+ * "lost" signal is OrderState='cancel', already tracked separately as lostQuotations/its own
+ * aging bucket) -- untouched.
  */
 
 import type { Pool } from 'mysql2/promise';
-import { buildCrmWhereClause, buildWhereClause, ytdWindow, type DateWindow, type Filters } from './filters';
+import { buildCrmWhereClause, buildWhereClause, excludeLostClause, ytdWindow, type DateWindow, type Filters } from './filters';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -123,8 +130,12 @@ async function fetchMonthComparison(
   }));
 }
 
+/** Excludes Lost (see filters.ts's excludeLostClause) -- a general opportunity-creation trend, not
+ * a lost-specific one. Fact_Sales-scoped siblings below (Quotations/Sales Orders by month) are
+ * untouched: Fact_Sales has no Stage/IsLost concept of its own, and those documents already
+ * happened regardless of the linked opportunity's current status. */
 export function fetchOpportunitiesByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<MonthComparisonPoint[]> {
-  return fetchMonthComparison(pool, anchor, filters, 'Fact_Opportunity', 'OpportunityCreatedDate', 'ExpectedRevenue', '1=1', true);
+  return fetchMonthComparison(pool, anchor, filters, 'Fact_Opportunity', 'OpportunityCreatedDate', 'ExpectedRevenue', excludeLostClause('t'), true);
 }
 
 /** Same "real quotation universe" (IsRealQuotation=1 OR IsRealSalesOrder=1) as computeQuotationRates,

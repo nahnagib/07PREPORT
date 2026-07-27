@@ -1,39 +1,27 @@
 'use client';
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
+import { FileDown } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useBusinessUnit } from '../../../../components/BusinessUnitProvider';
+import { useFilterState } from '../../../../components/FilterProvider';
 import {
   ChartPanel,
   InsightCard,
   LoadingSkeleton,
   ErrorState,
   TrendChart,
+  exportRowsAsPdf,
   type Column,
   type TrendPoint,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useRevenueTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
-import type { RevenueTrendMonthPoint, RevenueTrendVarianceCard, TachometerFilters } from '../../../../lib/api';
+import { useFilterOptions, useRevenueTrendOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import type { RevenueTrendMonthPoint, RevenueTrendVarianceCard } from '../../../../lib/api';
 import { formatAsp, formatCurrency, formatTimestamp, formatVariance, formatVolume } from '../../../../lib/format';
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
-/** Jan 1 of the current year -- every page's date-range filter defaults to YTD (Jan 1 -> today) on
- * load, not a single-day "today" range; anchorDate itself still drives the actual YTD/MTD window
- * math (ytdWindow/mtdWindow in filters.ts), this only fixes the visible From/To fields to match. */
-const ytdStartIso = () => `${new Date().getUTCFullYear()}-01-01`;
-
-const EMPTY_FILTERS: TachometerFilters = {
-  companyKeys: [],
-  segmentKeys: [],
-  channelKeys: [],
-  salesTeamKeys: [],
-  salespersonKeys: [],
-};
 
 /** Y-axis tick formatter: currency/volume in millions with an "M" suffix (e.g. "5M", "0.3M"),
  * one decimal place unless it rounds to a whole number. */
@@ -77,6 +65,36 @@ function toTableRows(
   });
 }
 
+/** "Export as PDF" header action for a ChartPanel's data table -- same visual shell and
+ * disabled/loading treatment as pipeline-health/page.tsx's own handleDownloadPdf button, so PDF
+ * export reads as one consistent affordance across the app rather than a page-specific one-off. */
+function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => void; downloading: boolean; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={downloading || disabled}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: 11,
+        fontWeight: 600,
+        color: 'var(--ps-color-muted-text)',
+        background: 'var(--ps-color-muted-bg)',
+        border: '1px solid var(--ps-color-border)',
+        borderRadius: 6,
+        padding: '4px 10px',
+        cursor: downloading || disabled ? 'not-allowed' : 'pointer',
+        opacity: downloading || disabled ? 0.5 : 1,
+      }}
+    >
+      <FileDown size={13} />
+      {downloading ? 'Exporting...' : 'Export as PDF'}
+    </button>
+  );
+}
+
 /**
  * Revenue Trend page (Sales, Level 3) -- third live Sales page after Tachometer and Critical
  * Number, built to the exact same architecture (AppHeader + FilterBar + ValidationStatusBar +
@@ -90,43 +108,26 @@ function toTableRows(
  * equivalent Tachometer card for the same anchor/filters.
  */
 export default function RevenueTrendPage() {
-  const { setBusinessUnit } = useBusinessUnit();
-  const { user, isSalesperson, salespersonKey, token, error: authError, retryAuth, logout } = useAuth();
-  const [anchorDate, setAnchorDate] = useState(todayIso());
-  const [dateFromDate, setDateFromDate] = useState(ytdStartIso());
-  const [dateToDate, setDateToDate] = useState(todayIso());
-  const [filters, setFilters] = useState<TachometerFilters>(EMPTY_FILTERS);
-
-  const effectiveFilters = useMemo<TachometerFilters>(
-    () => (isSalesperson ? { ...EMPTY_FILTERS, salespersonKeys: salespersonKey != null ? [salespersonKey] : [] } : filters),
-    [isSalesperson, salespersonKey, filters],
-  );
+  const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
+  const {
+    effectiveFilters,
+    anchorDate,
+    dateFromDate,
+    dateToDate,
+    onFiltersChange,
+    onAnchorDateChange,
+    onDateRangeChange,
+    resetFilters,
+  } = useFilterState();
 
   const filterOptions = useFilterOptions(token, authError, retryAuth);
   const overview = useRevenueTrendOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-
-  function handleFiltersChange(next: TachometerFilters) {
-    setFilters(next);
-    const companyKeys = next.companyKeys ?? [];
-    if (companyKeys.length === 1 && companyKeys[0] === 1) setBusinessUnit('majaal');
-    else if (companyKeys.length === 1 && companyKeys[0] === 2) setBusinessUnit('tika');
-    else setBusinessUnit('all');
-  }
-
-  function handleDateRangeChange(from: string, to: string) {
-    setDateFromDate(from);
-    setDateToDate(to);
-    setAnchorDate(from);
-  }
+  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
+  const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
   function handleReset() {
-    setFilters(EMPTY_FILTERS);
-    setBusinessUnit('all');
-    const today = todayIso();
-    setAnchorDate(today);
-    setDateFromDate(ytdStartIso());
-    setDateToDate(today);
+    resetFilters();
   }
 
   function handleRefresh() {
@@ -148,13 +149,29 @@ export default function RevenueTrendPage() {
 
   const kpis = overview.data?.kpis;
 
+  // Exports the full series (every month, not just what's visible without scrolling) -- same
+  // trendTableColumns/rows the expanded table view renders, so the PDF always matches it exactly.
+  async function handleDownloadTablePdf(key: string, title: string, rows: TrendTableRow[]) {
+    setDownloadingPdf(key);
+    try {
+      await exportRowsAsPdf({
+        title,
+        columns: trendTableColumns.map((c) => ({ header: c.header, align: c.align })),
+        rows: rows.map((row) => [row.month, row.actual, row.lastYear, row.target]),
+        fileName: `${title.toLowerCase().replace(/\s+/g, '-')}`,
+      });
+    } finally {
+      setDownloadingPdf(null);
+    }
+  }
+
   return (
     <PermissionGuard pageKey="revenue_trend">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle="Sales Executive Dashboard"
+          pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           onRefresh={handleRefresh}
           lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
@@ -164,20 +181,24 @@ export default function RevenueTrendPage() {
 
         <FilterBar
           filters={effectiveFilters}
-          onChange={handleFiltersChange}
+          onChange={onFiltersChange}
           onReset={handleReset}
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
           customerGroups={filterOptions.customerGroups.data ?? []}
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
           isSalesperson={isSalesperson}
-          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
+          lastUpdate={refreshStatus.data?.lastUpdate ?? null}
+          lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
-          onDateRangeChange={handleDateRangeChange}
+          onDateRangeChange={onDateRangeChange}
+          onExportReport={exportReport.exportReport}
+          isExporting={exportReport.isExporting}
+          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
@@ -202,6 +223,15 @@ export default function RevenueTrendPage() {
               tableColumns={overview.error ? undefined : trendTableColumns}
               tableRows={overview.error ? undefined : valueTableRows}
               getRowId={(row) => row.month}
+              headerActions={
+                !overview.error && (
+                  <ExportPdfButton
+                    downloading={downloadingPdf === 'value'}
+                    disabled={valueTableRows.length === 0}
+                    onClick={() => handleDownloadTablePdf('value', 'MoM Value', valueTableRows)}
+                  />
+                )
+              }
             >
               {overview.loading ? (
                 <LoadingSkeleton variant="chart" />
@@ -214,6 +244,8 @@ export default function RevenueTrendPage() {
                   points={valuePoints}
                   valueFormatter={formatMillions}
                   tooltipValueFormatter={(v) => formatCurrency(v)}
+                  lastYearColor="var(--ps-color-trend-y1)"
+                  targetColor="var(--ps-color-trend-target)"
                 />
               )}
             </ChartPanel>
@@ -225,6 +257,15 @@ export default function RevenueTrendPage() {
               tableColumns={overview.error ? undefined : trendTableColumns}
               tableRows={overview.error ? undefined : volumeTableRows}
               getRowId={(row) => row.month}
+              headerActions={
+                !overview.error && (
+                  <ExportPdfButton
+                    downloading={downloadingPdf === 'volume'}
+                    disabled={volumeTableRows.length === 0}
+                    onClick={() => handleDownloadTablePdf('volume', 'MoM Volume', volumeTableRows)}
+                  />
+                )
+              }
             >
               {overview.loading ? (
                 <LoadingSkeleton variant="chart" />
@@ -237,6 +278,8 @@ export default function RevenueTrendPage() {
                   points={volumePoints}
                   valueFormatter={formatMillions}
                   tooltipValueFormatter={(v) => formatVolume(v)}
+                  lastYearColor="var(--ps-color-trend-y1)"
+                  targetColor="var(--ps-color-trend-target)"
                 />
               )}
             </ChartPanel>
@@ -248,6 +291,15 @@ export default function RevenueTrendPage() {
               tableColumns={overview.error ? undefined : trendTableColumns}
               tableRows={overview.error ? undefined : aspTableRows}
               getRowId={(row) => row.month}
+              headerActions={
+                !overview.error && (
+                  <ExportPdfButton
+                    downloading={downloadingPdf === 'asp'}
+                    disabled={aspTableRows.length === 0}
+                    onClick={() => handleDownloadTablePdf('asp', 'MoM ASP', aspTableRows)}
+                  />
+                )
+              }
             >
               {overview.loading ? (
                 <LoadingSkeleton variant="chart" />
@@ -260,6 +312,8 @@ export default function RevenueTrendPage() {
                   points={aspPoints}
                   valueFormatter={formatPlainNumber}
                   tooltipValueFormatter={(v) => formatAsp(v)}
+                  lastYearColor="var(--ps-color-trend-y1)"
+                  targetColor="var(--ps-color-trend-target)"
                 />
               )}
             </ChartPanel>
@@ -285,6 +339,7 @@ export default function RevenueTrendPage() {
 
         <RefreshFooter
           lastUpdate={formatTimestamp(refreshStatus.data?.lastUpdate ?? null)}
+          lastOrderCreated={formatTimestamp(refreshStatus.data?.lastOrderCreated ?? null)}
           lastRefreshTime={formatTimestamp(refreshStatus.data?.lastRefreshTime ?? null)}
         />
 

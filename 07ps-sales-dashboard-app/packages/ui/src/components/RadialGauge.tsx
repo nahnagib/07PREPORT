@@ -128,7 +128,11 @@ export function RadialGauge({
   const markerInner = targetAngle !== null ? polarToCartesian(cx, cy, r - trackWidth - 6, targetAngle) : null;
   const markerOuter = targetAngle !== null ? polarToCartesian(cx, cy, r + 6, targetAngle) : null;
   const markerDot = targetAngle !== null ? polarToCartesian(cx, cy, r + 13, targetAngle) : null;
-  const targetLabelPos = targetAngle !== null ? polarToCartesian(cx, cy, 62, targetAngle) : null;
+  // Target label sits right next to the grey tick/dot marker -- same targetAngle those use (NOT
+  // needleAngle -- the needle is a separate, independent marker for the actual value; conflating
+  // the two was the bug in the previous pass). Radius is just past markerDot's own radius (r + 13)
+  // so the label reads as "attached to" the tick, not the needle, regardless of where actual falls.
+  const targetLabelPos = targetAngle !== null ? polarToCartesian(cx, cy, r + 18, targetAngle) : null;
   const targetLabelAnchor: 'start' | 'middle' | 'end' =
     targetAngle === null ? 'middle' : targetAngle > 100 ? 'end' : targetAngle < 80 ? 'start' : 'middle';
   const targetLabelText = targetLabel ?? (hasTarget ? compactAxis(targetToDate as number) : '');
@@ -227,35 +231,18 @@ export function RadialGauge({
         </>
       )}
 
-      {/* Target value label, inside the arc face. */}
-      {targetLabelPos && targetLabelText && (
-        <text
-          x={targetLabelPos.x}
-          y={targetLabelPos.y}
-          textAnchor={targetLabelAnchor}
-          fontSize="11"
-          fontWeight={700}
-          fill="var(--ps-neutral-granite)"
-        >
-          {targetLabelText}
-        </text>
-      )}
-
-      {/* Scale min/max, with an explicit "% of Target" caption so the Target x0.5/x1.5 formula is
-          legible at a glance, not just inferable. Only shown when there's a target. */}
+      {/* Scale min/max numbers stay always-visible; the "50%/150% of Target" explanation moves into
+          a native hover tooltip on each number (via <title>) instead of permanent caption text
+          underneath, keeping the space below the arc clean. Only shown when there's a target. */}
       {hasTarget && (
         <>
-          <text x={cx - r + 4} y={cy + 26} textAnchor="start" fontSize="13" fontWeight={700} fill="var(--ps-color-text)">
+          <text x={cx - r + 4} y={cy + 26} textAnchor="start" fontSize="13" fontWeight={700} fill="var(--ps-color-text)" style={{ cursor: 'help' }}>
             {compactAxis(advertisedScaleMin as number)}
+            <title>{`Min · 50% of Target (${targetLabelText})`}</title>
           </text>
-          <text x={cx - r + 4} y={cy + 41} textAnchor="start" fontSize="9" fill="var(--ps-color-muted-text)">
-            Min · 50% of Target
-          </text>
-          <text x={cx + r - 4} y={cy + 26} textAnchor="end" fontSize="13" fontWeight={700} fill="var(--ps-color-text)">
+          <text x={cx + r - 4} y={cy + 26} textAnchor="end" fontSize="13" fontWeight={700} fill="var(--ps-color-text)" style={{ cursor: 'help' }}>
             {compactAxis(advertisedScaleMax as number)}
-          </text>
-          <text x={cx + r - 4} y={cy + 41} textAnchor="end" fontSize="9" fill="var(--ps-color-muted-text)">
-            Max · 150% of Target
+            <title>{`Max · 150% of Target (${targetLabelText})`}</title>
           </text>
         </>
       )}
@@ -272,6 +259,22 @@ export function RadialGauge({
       />
       <circle cx={cx} cy={cy} r={9} fill={needleColorVar[status]} />
       <circle cx={cx} cy={cy} r={3.5} fill="var(--ps-color-surface)" />
+
+      {/* Target value label -- attached to the grey tick/dot marker (targetAngle), not the needle.
+          Rendered after the needle so it still paints on top in the (rare) case the needle happens
+          to point near the same angle as the target. */}
+      {targetLabelPos && targetLabelText && (
+        <text
+          x={targetLabelPos.x}
+          y={targetLabelPos.y}
+          textAnchor={targetLabelAnchor}
+          fontSize="11"
+          fontWeight={700}
+          fill="var(--ps-neutral-granite)"
+        >
+          {targetLabelText}
+        </text>
+      )}
 
       {/* Large current-value line, with a smaller "Target: X" caption directly beneath it, so the
           gauge is a fully self-contained KPI visual (no external value line required). */}

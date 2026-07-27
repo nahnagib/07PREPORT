@@ -137,6 +137,28 @@ def test_cancel_success(client):
     assert response.get_json()["jobId"] == "job-1"
 
 
+def test_reset_requires_auth(client):
+    response = client.post("/etl/reset")
+    assert response.status_code == 401
+
+
+def test_reset_no_active_job(client):
+    with patch("app.tracker.force_reset", return_value=None):
+        response = client.post("/etl/reset", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["ok"] is True
+    assert body["resetJobId"] is None
+
+
+def test_reset_clears_active_job(client):
+    job = make_job(status="cancelled")
+    with patch("app.tracker.force_reset", return_value=job):
+        response = client.post("/etl/reset", headers=AUTH_HEADERS)
+    assert response.status_code == 200
+    assert response.get_json()["resetJobId"] == "job-1"
+
+
 def test_404_on_unknown_route(client):
     response = client.get("/nope")
     assert response.status_code == 404

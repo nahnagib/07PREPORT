@@ -2384,7 +2384,7 @@ class OffDaysFactBuilder:
         else:
             df["IsActive"] = 1
 
-        df = DataFrameUtils.ensure_columns(df, ["OffDayType", "Country", "Company", "Branch"])
+        df = DataFrameUtils.ensure_columns(df, ["OffDayType", "Country", "Company", "Branch", "HolidayName", "Reason"])
         if country and "Country" in df.columns:
             df = df[df["Country"].astype(str).str.strip().str.lower() == country.strip().lower()].copy()
 
@@ -2395,8 +2395,13 @@ class OffDaysFactBuilder:
         df["Company"] = clean_text(df["Company"])
         df["Branch"] = clean_text(df["Branch"])
         df["OffDayType"] = clean_text(df["OffDayType"]).str.lower()
+        # HolidayName/Reason are free-text HR fields (e.g. Arabic holiday names / closure reasons)
+        # -- optional on the sheet (older exports won't have them), so blank/missing stays NULL
+        # rather than surfacing as the literal string "nan" downstream.
+        df["HolidayName"] = clean_text(df["HolidayName"])
+        df["Reason"] = clean_text(df["Reason"])
 
-        fact = df[["Date", "OffDayType", "Country", "Company", "Branch", "IsActive"]].copy()
+        fact = df[["Date", "OffDayType", "Country", "Company", "Branch", "IsActive", "HolidayName", "Reason"]].copy()
         fact = fact.drop_duplicates(subset=["Date", "OffDayType", "Country", "Company", "Branch"], keep="first")
         fact.insert(0, "DateKey", pd.to_datetime(fact["Date"]).dt.strftime("%Y%m%d").astype("Int64"))
         return fact.sort_values(["Date", "Country", "Company", "Branch", "OffDayType"], na_position="last").reset_index(drop=True)

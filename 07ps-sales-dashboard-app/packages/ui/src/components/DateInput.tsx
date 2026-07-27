@@ -60,6 +60,7 @@ export function DateInput({ label, value, onChange, helperText, disabled }: Date
         <input
           ref={inputRef}
           type="date"
+          className="ps-date-input"
           value={value}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}

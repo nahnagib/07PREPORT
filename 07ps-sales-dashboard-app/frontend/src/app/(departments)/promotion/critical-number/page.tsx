@@ -1,5 +1,5 @@
 'use client';
-import React, { useMemo, useState } from 'react';
+import React from 'react';
 import {
   Target,
   Gauge as GaugeIcon,
@@ -9,33 +9,19 @@ import {
   Coffee,
   TrendingDown,
   TrendingUp,
+  Info,
 } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useBusinessUnit } from '../../../../components/BusinessUnitProvider';
+import { useFilterState } from '../../../../components/FilterProvider';
 import { Card, SemanticBadge, LoadingSkeleton, ErrorState, ProgressBar, Sparkline, CollapsibleSection, type SemanticStatus } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useCriticalNumberOverview, useRefreshStatus } from '../../../../lib/hooks';
-import type { TachometerFilters } from '../../../../lib/api';
-import { toSemanticStatus, formatCompactCurrency, formatCurrency, formatVariance, formatTimestamp } from '../../../../lib/format';
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
-/** Jan 1 of the current year -- every page's date-range filter defaults to YTD (Jan 1 -> today) on
- * load, not a single-day "today" range; anchorDate itself still drives the actual YTD/MTD window
- * math (ytdWindow/mtdWindow in filters.ts), this only fixes the visible From/To fields to match. */
-const ytdStartIso = () => `${new Date().getUTCFullYear()}-01-01`;
-
-const EMPTY_FILTERS: TachometerFilters = {
-  companyKeys: [],
-  segmentKeys: [],
-  channelKeys: [],
-  salesTeamKeys: [],
-  salespersonKeys: [],
-};
+import { useFilterOptions, useCriticalNumberOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import { formatCompactCurrency, formatCurrency, formatVariance, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
 
 // Not in tokens.css (business-unit accent there is charcoal/blue) -- these are the two brand
 // colors used specifically to tell Majaal/Tika apart in the Forced Closures branch breakdown,
@@ -70,43 +56,25 @@ function formatDayCount(n: number): string {
  * path; ValidationStatusBar below states this plainly, same as Tachometer.
  */
 export default function CriticalNumberPage() {
-  const { setBusinessUnit } = useBusinessUnit();
-  const { user, isSalesperson, salespersonKey, token, error: authError, retryAuth, logout } = useAuth();
-  const [anchorDate, setAnchorDate] = useState(todayIso());
-  const [dateFromDate, setDateFromDate] = useState(ytdStartIso());
-  const [dateToDate, setDateToDate] = useState(todayIso());
-  const [filters, setFilters] = useState<TachometerFilters>(EMPTY_FILTERS);
-
-  const effectiveFilters = useMemo<TachometerFilters>(
-    () => (isSalesperson ? { ...EMPTY_FILTERS, salespersonKeys: salespersonKey != null ? [salespersonKey] : [] } : filters),
-    [isSalesperson, salespersonKey, filters],
-  );
+  const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
+  const {
+    effectiveFilters,
+    anchorDate,
+    dateFromDate,
+    dateToDate,
+    onFiltersChange,
+    onAnchorDateChange,
+    onDateRangeChange,
+    resetFilters,
+  } = useFilterState();
 
   const filterOptions = useFilterOptions(token, authError, retryAuth);
   const overview = useCriticalNumberOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-
-  function handleFiltersChange(next: TachometerFilters) {
-    setFilters(next);
-    const companyKeys = next.companyKeys ?? [];
-    if (companyKeys.length === 1 && companyKeys[0] === 1) setBusinessUnit('majaal');
-    else if (companyKeys.length === 1 && companyKeys[0] === 2) setBusinessUnit('tika');
-    else setBusinessUnit('all');
-  }
-
-  function handleDateRangeChange(from: string, to: string) {
-    setDateFromDate(from);
-    setDateToDate(to);
-    setAnchorDate(from);
-  }
+  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
 
   function handleReset() {
-    setFilters(EMPTY_FILTERS);
-    setBusinessUnit('all');
-    const today = todayIso();
-    setAnchorDate(today);
-    setDateFromDate(ytdStartIso());
-    setDateToDate(today);
+    resetFilters();
   }
 
   function handleRefresh() {
@@ -122,9 +90,9 @@ export default function CriticalNumberPage() {
     <PermissionGuard pageKey="critical_number">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle="Sales Executive Dashboard"
+          pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           onRefresh={handleRefresh}
           lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
@@ -134,20 +102,24 @@ export default function CriticalNumberPage() {
 
         <FilterBar
           filters={effectiveFilters}
-          onChange={handleFiltersChange}
+          onChange={onFiltersChange}
           onReset={handleReset}
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
           customerGroups={filterOptions.customerGroups.data ?? []}
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
           isSalesperson={isSalesperson}
-          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
+          lastUpdate={refreshStatus.data?.lastUpdate ?? null}
+          lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
-          onDateRangeChange={handleDateRangeChange}
+          onDateRangeChange={onDateRangeChange}
+          onExportReport={exportReport.exportReport}
+          isExporting={exportReport.isExporting}
+          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
@@ -158,30 +130,22 @@ export default function CriticalNumberPage() {
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
-            {/* Section 1 -- Hero Metrics: Daily Critical Number + Daily Counter gauge on top,
-                Monthly/Yearly working-day-consumption counters centered below. */}
+            {data?.isFallback && (
+              <FallbackDataNotice anchorDate={data.anchorDate} daysAgo={data.fallbackDaysAgo} />
+            )}
+
+            {/* Section 1 -- Hero Metrics: Daily/Monthly/Yearly counters side by side on top, the
+                Daily Critical Number card centered below them. */}
             <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'minmax(260px, 1fr) minmax(260px, 1fr)',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
                   gap: 'var(--ps-space-3, 16px)',
                   alignItems: 'stretch',
                 }}
               >
-                <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
-
                 <DailyCounterCard counter={data?.dailyCounter} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
-              </div>
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 320px))',
-                  gap: 'var(--ps-space-3, 16px)',
-                  justifyContent: 'center',
-                }}
-              >
                 <PeriodCounterCard
                   title="Monthly Counter"
                   counter={data?.monthlyCounter}
@@ -197,6 +161,16 @@ export default function CriticalNumberPage() {
                   onRetry={overview.retry}
                 />
               </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(260px, 480px)',
+                  justifyContent: 'center',
+                }}
+              >
+                <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+              </div>
             </section>
 
             {/* Section 2 -- Working Days: calendar/off-day accounting, YTD. */}
@@ -209,8 +183,6 @@ export default function CriticalNumberPage() {
             >
               <WorkingDaysCard
                 value={data?.workingDaysYtd.value}
-                lastYear={data?.workingDaysYtd.lastYear}
-                variancePct={data?.workingDaysYtd.variancePct ?? null}
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
@@ -228,7 +200,8 @@ export default function CriticalNumberPage() {
               />
             </section>
 
-            {/* Section 3 -- Impact Analysis: missing days / missing value YTD. */}
+            {/* Section 3 -- Impact Analysis: missing value / missing days YTD. Value-first order
+                (LYD amount before the day count) per the dashboard revision pass. */}
             <section
               style={{
                 display: 'grid',
@@ -237,24 +210,26 @@ export default function CriticalNumberPage() {
               }}
             >
               <ImpactCard
-                title="Missing Days YTD"
-                description="Working days where actual value fell short of the daily critical number"
-                valueLabel={data ? formatDayCount(data.missingDaysYtd.value) : '—'}
-                trendValues={data?.missingDaysYtd.trendValues ?? []}
-                trendPct={data?.missingDaysYtd.trendPct ?? null}
-                sparklineLabel="Missing-day rate, last 30 days"
+                title="Missing Value YTD"
+                description="Net shortfall vs. pace: (Working Days YTD x Daily Critical Number) minus Actual YTD Value, floored at zero -- surplus days offset shortfall days"
+                valueLabel={data ? formatCompactCurrency(data.missingValueYtd.value) : '—'}
+                valueFullLabel={data ? formatCurrency(data.missingValueYtd.value) : undefined}
+                trendValues={data?.missingValueYtd.trendValues ?? []}
+                trendPct={data?.missingValueYtd.trendPct ?? null}
+                sparklineLabel="Cumulative missing value, as of each month-end this year"
+                axisTooltip="X-axis: each month of this year, left to right (running total as of that month's end). Y-axis: cumulative missing value (LYD) = (Working Days Elapsed x Daily Critical Number) minus Actual Value to that point, floored at zero -- a running total, not that month's own isolated result."
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
               />
               <ImpactCard
-                title="Missing Value YTD"
-                description="Revenue equivalent lost due to value underperformance"
-                valueLabel={data ? formatCompactCurrency(data.missingValueYtd.value) : '—'}
-                valueFullLabel={data ? formatCurrency(data.missingValueYtd.value) : undefined}
-                trendValues={data?.missingValueYtd.trendValues ?? []}
-                trendPct={data?.missingValueYtd.trendPct ?? null}
-                sparklineLabel="Missing value, month by month this year"
+                title="Missing Days YTD"
+                description="Missing Value YTD expressed in day-equivalents (Missing Value / Daily Critical Number)"
+                valueLabel={data ? formatDayCount(data.missingDaysYtd.value) : '—'}
+                trendValues={data?.missingDaysYtd.trendValues ?? []}
+                trendPct={data?.missingDaysYtd.trendPct ?? null}
+                sparklineLabel="Cumulative days behind pace, last 30 days"
+                axisTooltip="X-axis: each of the last 30 calendar days, left to right (running total as of that day). Y-axis: cumulative shortfall expressed as a number of days at the Daily Critical Number -- a running total, not that single day's own result."
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
@@ -265,12 +240,42 @@ export default function CriticalNumberPage() {
 
         <RefreshFooter
           lastUpdate={formatTimestamp(refreshStatus.data?.lastUpdate ?? null)}
+          lastOrderCreated={formatTimestamp(refreshStatus.data?.lastOrderCreated ?? null)}
           lastRefreshTime={formatTimestamp(refreshStatus.data?.lastRefreshTime ?? null)}
         />
 
         <BottomNavBar active="Critical Number" />
       </div>
     </PermissionGuard>
+  );
+}
+
+/** Shown in place of an error when today's ETL data hasn't landed yet -- the cards below display
+ * the most recent available day's figures instead (see routes/criticalNumber.ts's isFallback
+ * logic), and this banner is what makes that substitution obvious rather than silent. Disappears
+ * on its own next time the page re-fetches once today's data actually arrives -- no manual reset
+ * needed, since isFallback is recomputed fresh on every /overview call. */
+function FallbackDataNotice({ anchorDate, daysAgo }: { anchorDate: string; daysAgo: number }) {
+  return (
+    <div
+      role="note"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '10px 16px',
+        borderRadius: 8,
+        background: 'var(--ps-color-watch)',
+        color: '#1a1a1a',
+        fontSize: 13,
+        fontWeight: 600,
+      }}
+    >
+      <Info size={16} aria-hidden style={{ flexShrink: 0 }} />
+      <span>
+        Showing data from {anchorDate} ({daysAgo} {daysAgo === 1 ? 'day' : 'days'} ago) -- today&apos;s data isn&apos;t available yet.
+      </span>
+    </div>
   );
 }
 
@@ -349,8 +354,8 @@ const rangeBarFillColor: Record<SemanticStatus, string> = {
 
 /** Horizontal linear bar over an arbitrary [min, max] range (not [0, target] like @07ps/ui's
  * ProgressBar) -- same thin-pill visual as ProgressBar/the Monthly-Yearly Counter bars, just with
- * a caller-supplied floor instead of always starting at zero. Used for Daily Counter's
- * 50%-of-target..150%-of-target scale, replacing the old semi-circular gauge. */
+ * a caller-supplied floor instead of always starting at zero. Used for Daily Counter's straight
+ * 0..Daily Critical Number scale, replacing the old semi-circular gauge. */
 function RangeBar({ value, min, max, status }: { value: number; min: number; max: number; status: SemanticStatus }) {
   const span = max - min;
   const ratio = span > 0 ? Math.max(0, Math.min(1, (value - min) / span)) : 0;
@@ -405,8 +410,8 @@ function DailyCounterCard({
   const actual = counter?.actual ?? 0;
   const target = counter?.target ?? null;
   const hasTarget = target != null && target > 0;
-  const min = hasTarget ? target * 0.5 : 0;
-  const max = hasTarget ? target * 1.5 : Math.max(actual, 1);
+  const min = 0;
+  const max = hasTarget ? target : Math.max(actual, 1);
 
   return (
     <Card style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -432,11 +437,11 @@ function DailyCounterCard({
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ps-color-text)' }}>{formatCompactCurrency(min)}</div>
-            <div style={{ fontSize: 9, color: 'var(--ps-color-muted-text)' }}>Min · 50% of Target</div>
+            <div style={{ fontSize: 9, color: 'var(--ps-color-muted-text)' }}>0</div>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ps-color-text)' }}>{formatCompactCurrency(max)}</div>
-            <div style={{ fontSize: 9, color: 'var(--ps-color-muted-text)' }}>Max · 150% of Target</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ps-color-text)' }} title={formatCurrency(max)}>{formatCompactCurrency(max)}</div>
+            <div style={{ fontSize: 9, color: 'var(--ps-color-muted-text)' }}>Critical Number</div>
           </div>
         </div>
       )}
@@ -585,15 +590,11 @@ function PeriodCounterCard({
 
 function WorkingDaysCard({
   value,
-  lastYear,
-  variancePct,
   loading,
   error,
   onRetry,
 }: {
   value?: number;
-  lastYear?: number;
-  variancePct: number | null;
   loading: boolean;
   error?: string;
   onRetry: () => void;
@@ -613,8 +614,6 @@ function WorkingDaysCard({
       </Card>
     );
   }
-  const up = variancePct != null && variancePct >= 0;
-  const TrendIcon = up ? TrendingUp : TrendingDown;
   return (
     <Card style={{ width: '100%', height: '100%', borderLeft: '4px solid var(--ps-color-success)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>
@@ -622,18 +621,7 @@ function WorkingDaysCard({
         <span style={{ fontSize: 13, fontWeight: 600 }}>Working Days YTD</span>
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ps-color-text)' }}>{value ?? '—'}</div>
-      <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>days</div>
-      {lastYear != null && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
-          <span>vs LYTD: {lastYear}</span>
-          {variancePct != null && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: up ? 'var(--ps-color-success)' : 'var(--ps-color-alert)' }}>
-              <TrendIcon size={12} />
-              {formatVariance(variancePct)}
-            </span>
-          )}
-        </div>
-      )}
+      <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>days</div>
     </Card>
   );
 }
@@ -644,7 +632,7 @@ function OfficialHolidaysCard({
   error,
   onRetry,
 }: {
-  data?: { value: number; items: { date: string; company: string | null; branch: string | null }[] };
+  data?: { value: number; items: { date: string; company: string | null; branch: string | null; holidayName: string | null }[] };
   loading: boolean;
   error?: string;
   onRetry: () => void;
@@ -675,10 +663,10 @@ function OfficialHolidaysCard({
       <CollapsibleSection title="Holiday List" defaultOpen={false}>
         {data && data.items.length > 0 ? (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {data.items.map((item) => (
-              <li key={item.date} style={{ fontSize: 12, color: 'var(--ps-color-text)', display: 'flex', justifyContent: 'space-between' }}>
+            {data.items.map((item, i) => (
+              <li key={`${item.date}-${i}`} style={{ fontSize: 12, color: 'var(--ps-color-text)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                 <span>{item.date}</span>
-                <span style={{ color: 'var(--ps-color-muted-text)' }}>Public Holiday</span>
+                <span dir="auto" style={{ color: 'var(--ps-color-muted-text)', textAlign: 'right' }}>{item.holidayName || 'Public Holiday'}</span>
               </li>
             ))}
           </ul>
@@ -690,13 +678,23 @@ function OfficialHolidaysCard({
   );
 }
 
+/** One branch's date+reason to a single hover-tooltip line -- a branch can close on separate
+ * occasions for different reasons, so the tooltip lists every occurrence, most recent first
+ * (already sorted that way by computeForcedClosuresYtd), not just the row's total day count. */
+function occurrencesTooltip(occurrences: { date: string; reason: string | null }[]): string {
+  return occurrences.map((o) => `${o.date} — ${o.reason || 'No reason recorded'}`).join('\n');
+}
+
 function ForcedClosuresCard({
   data,
   loading,
   error,
   onRetry,
 }: {
-  data?: { value: number; branches: { branch: string; branchName: string; company: string | null; days: number }[] };
+  data?: {
+    value: number;
+    branches: { branch: string; branchName: string; company: string | null; days: number; occurrences: { date: string; reason: string | null }[] }[];
+  };
   loading: boolean;
   error?: string;
   onRetry: () => void;
@@ -727,8 +725,12 @@ function ForcedClosuresCard({
       <CollapsibleSection title="Branch Breakdown" defaultOpen={false}>
         {data && data.branches.length > 0 ? (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {data.branches.map((b) => (
-              <li key={b.branch} style={{ fontSize: 12, color: 'var(--ps-color-text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            {data.branches.map((b, i) => (
+              <li
+                key={`${b.branch}-${i}`}
+                title={occurrencesTooltip(b.occurrences)}
+                style={{ fontSize: 12, color: 'var(--ps-color-text)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'help' }}
+              >
                 <span aria-hidden style={{ width: 8, height: 8, borderRadius: '50%', background: companyDotColor(b.company), flexShrink: 0 }} />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={b.branch}>
@@ -805,6 +807,7 @@ function ImpactCard({
   trendValues,
   trendPct,
   sparklineLabel,
+  axisTooltip,
   loading,
   error,
   onRetry,
@@ -816,6 +819,10 @@ function ImpactCard({
   trendValues: number[];
   trendPct: number | null;
   sparklineLabel: string;
+  /** Hover tooltip (native title attribute) on the trend chart, explaining what its X and Y axes
+   * plot -- the sparkline itself is axis-less by design, so this is the only place that meaning is
+   * surfaced. */
+  axisTooltip: string;
   loading: boolean;
   error?: string;
   onRetry: () => void;
@@ -843,10 +850,15 @@ function ImpactCard({
   return (
     <Card style={{ width: '100%', borderLeft: `4px solid var(--ps-color-alert)` }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>{title}</div>
-      <div style={{ fontSize: 30, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 6 }} title={valueFullLabel}>
+      <div style={{ fontSize: 30, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 10 }} title={valueFullLabel}>
         {valueLabel}
       </div>
-      <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>{description}</div>
+
+      {trendValues.length > 1 && (
+        <div style={{ borderTop: '1px solid var(--ps-color-border)', paddingTop: 10, marginBottom: 10 }} title={axisTooltip}>
+          <Sparkline values={trendValues} status={trendStatus as any} label={sparklineLabel} width={260} height={44} />
+        </div>
+      )}
 
       {trendPct != null && (
         <div
@@ -865,11 +877,7 @@ function ImpactCard({
         </div>
       )}
 
-      {trendValues.length > 1 && (
-        <div style={{ borderTop: '1px solid var(--ps-color-border)', paddingTop: 10 }}>
-          <Sparkline values={trendValues} status={trendStatus as any} label={sparklineLabel} width={260} height={44} />
-        </div>
-      )}
+      <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>{description}</div>
     </Card>
   );
 }

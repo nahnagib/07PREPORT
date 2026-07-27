@@ -22,6 +22,15 @@
   --ps-color-alert: #cc0033;
   --ps-color-last-year: #8c8c8c;
 
+  /* Revenue Trend chart palette: Y-1/Target need to read as clearly distinct series (not two
+     grayscale line styles told apart only by dash pattern), without borrowing the success/watch/
+     alert hues -- those are reserved for KPI status elsewhere and would misleadingly imply
+     good/bad here. One warm, one cool, same "vivid mid-tone" family as the existing Majaal/Tika
+     purple-orange pairing (see critical-number/page.tsx's COMPANY_DOT_COLOR) so it reads as
+     consistent with the rest of the app rather than a one-off palette. */
+  --ps-color-trend-y1: #f2994a;
+  --ps-color-trend-target: #8b5cf6;
+
   /* Light theme surface/text */
   --ps-color-page-bg: #f5f6f8;
   --ps-color-gold: #b8860b;
@@ -140,6 +149,14 @@
 }
 [data-theme='dark'][data-business-unit='tika'] {
   --ps-color-accent: #4d88c4;
+}
+/* Majaal's light-mode accent (--ps-neutral-charcoal, near-black) is invisible against the dark
+   theme's surfaces -- without this override, [data-business-unit='majaal'] above wins by source
+   order over [data-theme='dark']'s own accent and silences the checkmark/highlight on every
+   selected filter dropdown item (Select.tsx) whenever Majaal is the active company. Re-applies the
+   same legible dark-mode accent [data-theme='dark'] already sets by default. */
+[data-theme='dark'][data-business-unit='majaal'] {
+  --ps-color-accent: #6f9ceb;
 }
 
 .ps-skeleton {

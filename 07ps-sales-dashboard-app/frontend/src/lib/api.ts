@@ -8,7 +8,7 @@
  * client or the UI should ever claim otherwise.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4000';
 
 export class ApiError extends Error {
   status: number;
@@ -87,6 +87,9 @@ export interface TachometerCard {
 export interface AspCard {
   actualAsp: number | null;
   targetAsp: number | null;
+  /** Same-period-last-year ASP (LYTD ASP for the YTD card, LMTD ASP for the MTD card) -- powers
+   * the "Variance vs LY" reference-metric tile. */
+  lastYearAsp: number | null;
   status: TargetStatus;
 }
 
@@ -136,6 +139,9 @@ export function fetchSalespersons(token: string) {
 
 export interface RefreshStatus {
   lastUpdate: string | null;
+  /** Odoo sale.order.create_date (record creation), distinct from lastUpdate (date_order --
+   * the order/confirmation date). Can point at a different order than lastUpdate. */
+  lastOrderCreated: string | null;
   lastRefreshTime: string | null;
   isStale: boolean;
   isInverted: boolean;
@@ -375,6 +381,21 @@ export const adminApi = {
       body: JSON.stringify({ pageKey, action, allowed }),
     }),
 
+  addRoleDataScope: (
+    token: string,
+    roleId: number,
+    dimension: string,
+    value: string,
+  ): Promise<RolePermissionMatrix> =>
+    request(`/admin/roles/${roleId}/data-scope`, token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dimension, value }),
+    }),
+
+  removeRoleDataScope: (token: string, roleId: number, scopeId: number): Promise<RolePermissionMatrix> =>
+    request(`/admin/roles/${roleId}/data-scope/${scopeId}`, token, { method: 'DELETE' }),
+
   listLoginHistory: (
     token: string,
     params: { userId?: number; eventType?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number } = {},
@@ -429,6 +450,12 @@ export const adminApi = {
 
   cancelEtlRun: (token: string): Promise<{ ok: boolean; message: string }> =>
     request('/admin/etl/cancel', token, { method: 'POST' }),
+
+  forceResetEtlLock: (token: string): Promise<{ ok: boolean; rowsReset: number }> =>
+    request('/admin/etl/force-reset', token, { method: 'POST' }),
+
+  getEtlRunLogLines: (token: string, runId: number): Promise<{ lines: string[] }> =>
+    request(`/admin/etl/runs/${runId}/log`, token),
 };
 
 // --- ETL Control Center types ---
@@ -470,6 +497,14 @@ export interface EtlStatusResponse {
   run: EtlJobRun | null;
   progress: EtlProgress | null;
   recentLog: string[];
+  /** false means the queue backend (Redis) is unreachable right now -- distinct from a genuine
+   * "a run is active" lock, which used to be indistinguishable from this on the frontend. */
+  queueAvailable: boolean;
+  /** false means the queue is reachable but no etl:worker process is currently connected to
+   * consume it -- starting a run in this state would just queue it with nothing to ever pick it
+   * up (the "Queued 34 minutes, 0 log lines" failure mode). Only meaningful when queueAvailable
+   * is true; the backend reports false here too when the queue itself can't be reached. */
+  workerAvailable: boolean;
   elapsedMs: number | null;
   nextIncrementalRun: string | null;
   nextFullRun: string | null;
@@ -554,10 +589,24 @@ export interface RoleMatrixRow {
   role_name: string;
   role_label: string;
 }
+export interface DataScopeDimension {
+  key: string;
+  label: string;
+}
+export interface DataScopeRule {
+  scopeId: number;
+  dimension: string;
+  value: string;
+  label: string;
+}
 export interface RolePermissionMatrix {
   roles: RoleMatrixRow[];
   pages: { page_id: number; page_key: string; page_label: string; nav_group: string | null }[];
   matrix: Record<number, EffectivePermissions>;
+  /** roleId -> its row-level data-scope rules. No entry (or an empty array) means unrestricted. */
+  dataScope: Record<number, DataScopeRule[]>;
+  /** The 5 dimensions a rule can target, for the "Add rule" dimension picker. */
+  dimensions: DataScopeDimension[];
 }
 
 // ---------------------------------------------------------------------------
@@ -670,6 +719,9 @@ export interface OffDayItem {
   date: string;
   company: string | null;
   branch: string | null;
+  /** HR-maintained holiday name (e.g. "عيد الفطر") from Fact_OffDays.HolidayName -- null when not
+   * filled in, in which case the UI falls back to generic label text. */
+  holidayName: string | null;
 }
 
 export interface CriticalNumberHolidaysCard {
@@ -677,11 +729,20 @@ export interface CriticalNumberHolidaysCard {
   items: OffDayItem[];
 }
 
+/** One individual closure day for a branch -- shown in the row's hover/tap detail. */
+export interface ForcedClosureOccurrence {
+  date: string;
+  /** HR-maintained closure reason (e.g. "عاصفة") from Fact_OffDays.Reason -- null when not filled in. */
+  reason: string | null;
+}
+
 export interface ForcedClosureBranchSummary {
   branch: string;
   branchName: string;
   company: string | null;
   days: number;
+  /** Every individual closure day for this branch, most recent first. */
+  occurrences: ForcedClosureOccurrence[];
 }
 
 export interface CriticalNumberForcedClosuresCard {
@@ -697,6 +758,13 @@ export interface CriticalNumberTrendCard {
 
 export interface CriticalNumberOverview {
   anchorDate: string;
+  /** True when today's ETL data hasn't landed yet and the figures below are the most recent
+   * available day's instead -- see backend/src/routes/criticalNumber.ts's fallback logic. */
+  isFallback: boolean;
+  /** How many days before `requestedDate` the shown `anchorDate` is; 0 when isFallback is false. */
+  fallbackDaysAgo: number;
+  /** The date actually requested (normally "today") before any fallback was applied. */
+  requestedDate: string;
   dailyCriticalNumber: number;
   dailyCounter: CriticalNumberDailyCounter;
   monthlyCounter: CriticalNumberPeriodCounter;
@@ -986,6 +1054,47 @@ export interface FunnelCounts {
   deliveries: number;
 }
 
+/** Total monetary value per funnel stage, alongside FunnelCounts -- powers the Full Pipeline
+ * funnel's "count + value" hover/legend. No `leads` figure since Leads isn't plotted on the funnel. */
+export interface FunnelValues {
+  opportunities: number;
+  quotations: number;
+  salesOrders: number;
+  deliveries: number;
+}
+
+export interface FunnelOpportunityIds {
+  leads: string[];
+  opportunities: string[];
+}
+
+export interface FunnelSalesRecord {
+  orderNumber: string;
+  customer: string | null;
+  company: string | null;
+  salesperson: string | null;
+  documentDate: string | null;
+  value: number;
+  /** null = no linked Opportunity ("Tracking > Opportunity" empty on the Odoo form). */
+  opportunityId: string | null;
+}
+
+export interface FunnelDeliveryRecord {
+  orderNumber: string | null;
+  customer: string | null;
+  company: string | null;
+  salesperson: string | null;
+  orderDate: string | null;
+  deliveryStatus: string | null;
+  opportunityId: string | null;
+}
+
+export interface FunnelStageRecords {
+  quotations: FunnelSalesRecord[];
+  salesOrders: FunnelSalesRecord[];
+  deliveries: FunnelDeliveryRecord[];
+}
+
 export interface StageBenchmarkRow {
   transition: string;
   actualPct: number | null;
@@ -1021,12 +1130,19 @@ export interface OpportunityDetailRow {
   salesperson: string | null;
   stage: string | null;
   createdDate: string | null;
+  expectedCloseDate: string | null;
   expectedCloseMonth: string | null;
   probabilityBucket: string | null;
+  /** Neither Won nor Lost. Unfiltered at the API level -- see pipeline-health/page.tsx's
+   * matchesFilter for how each drill-down path applies (or deliberately skips) this. */
+  isOpen: boolean;
 }
 
 export interface PipelineHealthOverview {
   funnel: FunnelCounts;
+  funnelValues: FunnelValues;
+  funnelOpportunityIds: FunnelOpportunityIds;
+  funnelStageRecords: FunnelStageRecords;
   stageBenchmark: StageBenchmarkRow[];
   expectedClosureByMonth: ExpectedClosureMonthPoint[];
   opportunityByStage: StageValueSlice[];
@@ -1155,4 +1271,48 @@ export function fetchActivityMomentumOverview(
   filters: TachometerFilters,
 ): Promise<ActivityMomentumOverview> {
   return request(`/activity-momentum/overview?${buildQuery(anchorDate, filters)}`, token);
+}
+
+// ---------------------------------------------------------------------------
+// Overview Report (backend/src/routes/reports.ts) -- an on-demand PDF snapshot of the CURRENT
+// situation for whatever filters are on screen, aggregating all 8 pages above. NOT the same thing
+// as the Python reporting/ pipeline at the repo root (a separate, scheduled, full-history Sales
+// Predictive Report with forecasting) -- keep these two names/concepts distinct.
+// ---------------------------------------------------------------------------
+
+/** Blob-returning twin of request<T> -- a PDF response can't be res.json()'d. Same auth header
+ * and error-message extraction as request<T>, just a different success-path body read. */
+async function requestBlob(path: string, token: string | null): Promise<Blob> {
+  const url = `${API_BASE}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[api] network failure calling ${url} -- is the backend running on ${API_BASE}? (CORS/port mismatches land here too):`, err);
+    throw new ApiError(0, 'Could not reach the server. It may be offline or unreachable.');
+  }
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try {
+      const rawBody = await res.json();
+      if (rawBody && typeof rawBody === 'object' && 'error' in rawBody) {
+        message = String((rawBody as { error?: unknown }).error);
+      }
+    } catch {
+      // ignore -- keep generic message, never surface raw parse errors (Section 5.9)
+    }
+    throw new ApiError(res.status, message);
+  }
+  return res.blob();
+}
+
+export function fetchOverviewReportPdf(
+  token: string,
+  anchorDate: string,
+  filters: TachometerFilters,
+): Promise<Blob> {
+  return requestBlob(`/reports/overview?${buildQuery(anchorDate, filters)}`, token);
 }

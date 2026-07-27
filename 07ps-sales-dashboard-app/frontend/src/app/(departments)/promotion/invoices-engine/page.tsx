@@ -1,32 +1,18 @@
 'use client';
-import React, { useMemo, useState } from 'react';
-import { Layers } from 'lucide-react';
+import React, { useState } from 'react';
+import { FileDown, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useBusinessUnit } from '../../../../components/BusinessUnitProvider';
-import { Card, ChartPanel, ComboChart, DonutChart, LoadingSkeleton, ErrorState } from '@07ps/ui';
+import { useFilterState } from '../../../../components/FilterProvider';
+import { Card, ChartPanel, ComboChart, DonutChart, LoadingSkeleton, ErrorState, exportRowsAsPdf, type Column } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useInvoicesEngineOverview, useRefreshStatus } from '../../../../lib/hooks';
-import type { InvoiceStats, InvoicesEngineKpis, InvoicesEngineScope, InvoiceYearClassBreakdown, TachometerFilters } from '../../../../lib/api';
+import { useFilterOptions, useInvoicesEngineOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import type { InvoiceStats, InvoicesEngineKpis, InvoicesEngineScope, InvoiceYearClassBreakdown } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVolume } from '../../../../lib/format';
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
-/** Jan 1 of the current year -- every page's date-range filter defaults to YTD (Jan 1 -> today) on
- * load, not a single-day "today" range; anchorDate itself still drives the actual YTD/MTD window
- * math (ytdWindow/mtdWindow in filters.ts), this only fixes the visible From/To fields to match. */
-const ytdStartIso = () => `${new Date().getUTCFullYear()}-01-01`;
-
-const EMPTY_FILTERS: TachometerFilters = {
-  companyKeys: [],
-  segmentKeys: [],
-  channelKeys: [],
-  salesTeamKeys: [],
-  salespersonKeys: [],
-};
 
 const INVOICE_CLASS_LABELS: Record<string, string> = {
   A: 'Class A (> 50K)',
@@ -87,6 +73,110 @@ function formatPlainNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
+// ---------------------------------------------------------------------------
+// PDF summary-table export -- same exportRowsAsPdf mechanism as Revenue Trend, applied to every
+// visual on this page (reused via @07ps/ui, not reimplemented).
+// ---------------------------------------------------------------------------
+
+interface PeriodTableRow extends Record<string, unknown> {
+  id: string;
+  period: string;
+  value: string;
+}
+const periodTableColumns: Column<PeriodTableRow>[] = [
+  { key: 'period', header: 'Period' },
+  { key: 'value', header: 'Value', align: 'right' },
+];
+function toMetricPanelTableRows(
+  kpis: InvoicesEngineKpis | undefined,
+  pick: (stats: InvoiceStats) => number | null,
+  formatter: (value: number | null) => string,
+): PeriodTableRow[] {
+  if (!kpis) return [];
+  return [
+    { id: 'lytd', period: 'LYTD', value: formatter(pick(kpis.lytd)) },
+    { id: 'ytd', period: 'YTD', value: formatter(pick(kpis.ytd)) },
+    { id: 'lmtd', period: 'LMTD', value: formatter(pick(kpis.lmtd)) },
+    { id: 'mtd', period: 'MTD', value: formatter(pick(kpis.mtd)) },
+  ];
+}
+
+interface TotalInvoicesTableRow extends Record<string, unknown> {
+  id: string;
+  period: string;
+  count: string;
+}
+const totalInvoicesTableColumns: Column<TotalInvoicesTableRow>[] = [
+  { key: 'period', header: 'Period' },
+  { key: 'count', header: '# of Invoices', align: 'right' },
+];
+
+interface SalesTrendTableRow extends Record<string, unknown> {
+  id: string;
+  label: string;
+  invoiceSalesValue: string;
+  invoiceCount: number;
+}
+const salesTrendTableColumns: Column<SalesTrendTableRow>[] = [
+  { key: 'label', header: 'Year / Class' },
+  { key: 'invoiceSalesValue', header: 'Invoice Sales Value', align: 'right' },
+  { key: 'invoiceCount', header: '# of Invoices', align: 'right' },
+];
+
+interface InvoicesTrendTableRow extends Record<string, unknown> {
+  id: string;
+  label: string;
+  avgSalesPerInvoice: string;
+  avgLinesPerInvoice: string;
+  avgVolumePerInvoice: string;
+}
+const invoicesTrendTableColumns: Column<InvoicesTrendTableRow>[] = [
+  { key: 'label', header: 'Year' },
+  { key: 'avgSalesPerInvoice', header: 'Avg Sales per Invoice', align: 'right' },
+  { key: 'avgLinesPerInvoice', header: 'Avg Lines per Invoice', align: 'right' },
+  { key: 'avgVolumePerInvoice', header: 'Avg Volume per Invoice', align: 'right' },
+];
+
+interface ClassificationTableRow extends Record<string, unknown> {
+  id: string;
+  label: string;
+  value: string;
+}
+const classificationTableColumns: Column<ClassificationTableRow>[] = [
+  { key: 'label', header: 'Invoice Class' },
+  { key: 'value', header: 'Value', align: 'right' },
+];
+
+/** Same visual shell as Revenue Trend's ExportPdfButton -- copied per-page rather than shared, same
+ * convention that component already established. */
+function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => void; downloading: boolean; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={downloading || disabled}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: 11,
+        fontWeight: 600,
+        color: 'var(--ps-color-muted-text)',
+        background: 'var(--ps-color-muted-bg)',
+        border: '1px solid var(--ps-color-border)',
+        borderRadius: 6,
+        padding: '4px 10px',
+        cursor: downloading || disabled ? 'not-allowed' : 'pointer',
+        opacity: downloading || disabled ? 0.5 : 1,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <FileDown size={13} />
+      {downloading ? 'Exporting...' : 'Export as PDF'}
+    </button>
+  );
+}
+
 /**
  * Invoices Engine page (Sales, Level 3) -- fourth live Sales page after Tachometer, Critical
  * Number and Revenue Trend, built to the exact same architecture (AppHeader + FilterBar +
@@ -116,17 +206,17 @@ function formatPlainNumber(value: number): string {
  * click affordance beyond the standard hover tooltip).
  */
 export default function InvoicesEnginePage() {
-  const { setBusinessUnit } = useBusinessUnit();
-  const { user, isSalesperson, salespersonKey, token, error: authError, retryAuth, logout } = useAuth();
-  const [anchorDate, setAnchorDate] = useState(todayIso());
-  const [dateFromDate, setDateFromDate] = useState(ytdStartIso());
-  const [dateToDate, setDateToDate] = useState(todayIso());
-  const [filters, setFilters] = useState<TachometerFilters>(EMPTY_FILTERS);
-
-  const effectiveFilters = useMemo<TachometerFilters>(
-    () => (isSalesperson ? { ...EMPTY_FILTERS, salespersonKeys: salespersonKey != null ? [salespersonKey] : [] } : filters),
-    [isSalesperson, salespersonKey, filters],
-  );
+  const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
+  const {
+    effectiveFilters,
+    anchorDate,
+    dateFromDate,
+    dateToDate,
+    onFiltersChange,
+    onAnchorDateChange,
+    onDateRangeChange,
+    resetFilters,
+  } = useFilterState();
 
   // Sales Trend chart interaction: drillMode toggles what clicking a year does. Off (default) ->
   // clicking a year sets it as the page's Year filter (selectedYear), re-scoping every other
@@ -145,28 +235,25 @@ export default function InvoicesEnginePage() {
   const filterOptions = useFilterOptions(token, authError, retryAuth);
   const overview = useInvoicesEngineOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
+  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
+  const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
-  function handleFiltersChange(next: TachometerFilters) {
-    setFilters(next);
-    const companyKeys = next.companyKeys ?? [];
-    if (companyKeys.length === 1 && companyKeys[0] === 1) setBusinessUnit('majaal');
-    else if (companyKeys.length === 1 && companyKeys[0] === 2) setBusinessUnit('tika');
-    else setBusinessUnit('all');
-  }
-
-  function handleDateRangeChange(from: string, to: string) {
-    setDateFromDate(from);
-    setDateToDate(to);
-    setAnchorDate(from);
+  async function handleDownloadTablePdf<T extends Record<string, unknown>>(key: string, title: string, columns: Column<T>[], rows: T[]) {
+    setDownloadingPdf(key);
+    try {
+      await exportRowsAsPdf({
+        title,
+        columns: columns.map((c) => ({ header: c.header, align: c.align })),
+        rows: rows.map((row) => columns.map((c) => String(row[c.key] ?? ''))),
+        fileName: title.toLowerCase().replace(/\s+/g, '-'),
+      });
+    } finally {
+      setDownloadingPdf(null);
+    }
   }
 
   function handleReset() {
-    setFilters(EMPTY_FILTERS);
-    setBusinessUnit('all');
-    const today = todayIso();
-    setAnchorDate(today);
-    setDateFromDate(ytdStartIso());
-    setDateToDate(today);
+    resetFilters();
     setDrillMode(false);
     setDrilledYear(null);
     setSelectedYear(null);
@@ -249,13 +336,45 @@ export default function InvoicesEnginePage() {
     color: invoiceClassColor(c.invoiceClass),
   }));
 
+  const linesTableRows = toMetricPanelTableRows(kpis, (s) => s.avgLinesPerInvoice, formatLines);
+  const salesPerInvoiceTableRows = toMetricPanelTableRows(kpis, (s) => s.avgSalesPerInvoice, (v) => (v === null ? '—' : formatCurrency(v)));
+  const volumeTableRows = toMetricPanelTableRows(kpis, (s) => s.avgVolumePerInvoice, formatVolumeOrDash);
+
+  const totalInvoicesTableRows: TotalInvoicesTableRow[] = [
+    { id: 'ytd', period: 'YTD', count: kpis?.ytd.invoiceCount != null ? kpis.ytd.invoiceCount.toLocaleString() : '—' },
+    { id: 'lytd', period: 'LYTD', count: kpis?.lytd.invoiceCount != null ? kpis.lytd.invoiceCount.toLocaleString() : '—' },
+    { id: 'mtd', period: 'MTD', count: kpis?.mtd.invoiceCount != null ? kpis.mtd.invoiceCount.toLocaleString() : '—' },
+    { id: 'lmtd', period: 'LMTD', count: kpis?.lmtd.invoiceCount != null ? kpis.lmtd.invoiceCount.toLocaleString() : '—' },
+  ];
+
+  const salesTrendTableRows: SalesTrendTableRow[] = salesTrendPoints.map((p) => ({
+    id: p.label,
+    label: p.label,
+    invoiceSalesValue: formatCurrency(p.invoiceSalesValue),
+    invoiceCount: p.invoiceCount,
+  }));
+
+  const invoicesTrendTableRows: InvoicesTrendTableRow[] = invoicesTrendPoints.map((p) => ({
+    id: p.label,
+    label: p.label,
+    avgSalesPerInvoice: formatCurrency(p.avgSalesPerInvoice),
+    avgLinesPerInvoice: formatLines(p.avgLinesPerInvoice),
+    avgVolumePerInvoice: formatVolume(p.avgVolumePerInvoice),
+  }));
+
+  const classificationTableRows: ClassificationTableRow[] = classificationSegments.map((s) => ({
+    id: s.id,
+    label: s.label,
+    value: formatInvoiceValue(s.value),
+  }));
+
   return (
     <PermissionGuard pageKey="invoices_engine">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle="Sales Executive Dashboard"
+          pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           onRefresh={handleRefresh}
           lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
@@ -265,20 +384,24 @@ export default function InvoicesEnginePage() {
 
         <FilterBar
           filters={effectiveFilters}
-          onChange={handleFiltersChange}
+          onChange={onFiltersChange}
           onReset={handleReset}
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
           customerGroups={filterOptions.customerGroups.data ?? []}
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
           isSalesperson={isSalesperson}
-          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
+          lastUpdate={refreshStatus.data?.lastUpdate ?? null}
+          lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
-          onDateRangeChange={handleDateRangeChange}
+          onDateRangeChange={onDateRangeChange}
+          onExportReport={exportReport.exportReport}
+          isExporting={exportReport.isExporting}
+          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
@@ -299,6 +422,9 @@ export default function InvoicesEnginePage() {
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
+                tableRows={linesTableRows}
+                downloading={downloadingPdf === 'lines'}
+                onDownloadPdf={() => handleDownloadTablePdf('lines', '# of Lines per Invoice', periodTableColumns, linesTableRows)}
               />
               <MetricPanel
                 title="Sales per Invoice"
@@ -309,6 +435,9 @@ export default function InvoicesEnginePage() {
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
+                tableRows={salesPerInvoiceTableRows}
+                downloading={downloadingPdf === 'salesPerInvoice'}
+                onDownloadPdf={() => handleDownloadTablePdf('salesPerInvoice', 'Sales per Invoice', periodTableColumns, salesPerInvoiceTableRows)}
               />
               <MetricPanel
                 title="Volume per Invoice"
@@ -318,16 +447,33 @@ export default function InvoicesEnginePage() {
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
+                tableRows={volumeTableRows}
+                downloading={downloadingPdf === 'volume'}
+                onDownloadPdf={() => handleDownloadTablePdf('volume', 'Volume per Invoice', periodTableColumns, volumeTableRows)}
               />
             </div>
 
             {/* Zone B -- Sales Trend (left) + Total Invoices KPI cards (right) */}
             <div className="ps-invoices-zone">
-              <ChartPanel
+              <ChartPanel<SalesTrendTableRow>
                 title="Sales Trend"
                 infoText="Invoice Sales Value and # of Invoices by year. Enable drill-down, then click a year to break it out by Invoice Class."
                 style={{ minHeight: 380 }}
-                headerActions={<DrillToggle active={drillMode} onToggle={toggleDrillMode} />}
+                tableColumns={overview.error ? undefined : salesTrendTableColumns}
+                tableRows={overview.error ? undefined : salesTrendTableRows}
+                getRowId={(row) => row.id}
+                headerActions={
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <DrillToggle active={drillMode} onToggle={toggleDrillMode} />
+                    {!overview.error && (
+                      <ExportPdfButton
+                        downloading={downloadingPdf === 'salesTrend'}
+                        disabled={salesTrendTableRows.length === 0}
+                        onClick={() => handleDownloadTablePdf('salesTrend', 'Sales Trend', salesTrendTableColumns, salesTrendTableRows)}
+                      />
+                    )}
+                  </div>
+                }
               >
                 {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
@@ -378,48 +524,75 @@ export default function InvoicesEnginePage() {
                 )}
               </ChartPanel>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(2, 1fr)',
-                  gridTemplateRows: 'repeat(2, 1fr)',
-                  gap: 'var(--ps-space-3, 16px)',
-                }}
-              >
-                <TotalInvoicesCard
-                  label="YTD Total # of Invoices"
-                  value={kpis?.ytd.invoiceCount}
-                  loading={overview.loading}
-                  error={overview.error ?? undefined}
-                  onRetry={overview.retry}
-                />
-                <TotalInvoicesCard
-                  label="LYTD Total # of Invoices"
-                  value={kpis?.lytd.invoiceCount}
-                  loading={overview.loading}
-                  error={overview.error ?? undefined}
-                  onRetry={overview.retry}
-                />
-                <TotalInvoicesCard
-                  label="MTD Total # of Invoices"
-                  value={kpis?.mtd.invoiceCount}
-                  loading={overview.loading}
-                  error={overview.error ?? undefined}
-                  onRetry={overview.retry}
-                />
-                <TotalInvoicesCard
-                  label="LMTD Total # of Invoices"
-                  value={kpis?.lmtd.invoiceCount}
-                  loading={overview.loading}
-                  error={overview.error ?? undefined}
-                  onRetry={overview.retry}
-                />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-2, 8px)' }}>
+                {!overview.error && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <ExportPdfButton
+                      downloading={downloadingPdf === 'totalInvoices'}
+                      disabled={totalInvoicesTableRows.length === 0}
+                      onClick={() => handleDownloadTablePdf('totalInvoices', 'Total Invoices', totalInvoicesTableColumns, totalInvoicesTableRows)}
+                    />
+                  </div>
+                )}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
+                    gridTemplateRows: 'repeat(2, 1fr)',
+                    gap: 'var(--ps-space-3, 16px)',
+                    flex: 1,
+                  }}
+                >
+                  <TotalInvoicesCard
+                    label="YTD Total # of Invoices"
+                    value={kpis?.ytd.invoiceCount}
+                    loading={overview.loading}
+                    error={overview.error ?? undefined}
+                    onRetry={overview.retry}
+                  />
+                  <TotalInvoicesCard
+                    label="LYTD Total # of Invoices"
+                    value={kpis?.lytd.invoiceCount}
+                    loading={overview.loading}
+                    error={overview.error ?? undefined}
+                    onRetry={overview.retry}
+                  />
+                  <TotalInvoicesCard
+                    label="MTD Total # of Invoices"
+                    value={kpis?.mtd.invoiceCount}
+                    loading={overview.loading}
+                    error={overview.error ?? undefined}
+                    onRetry={overview.retry}
+                  />
+                  <TotalInvoicesCard
+                    label="LMTD Total # of Invoices"
+                    value={kpis?.lmtd.invoiceCount}
+                    loading={overview.loading}
+                    error={overview.error ?? undefined}
+                    onRetry={overview.retry}
+                  />
+                </div>
               </div>
             </div>
 
             {/* Zone C -- Invoices Trend (left) + Invoices Classification donut (right) */}
             <div className="ps-invoices-zone">
-              <ChartPanel title="Invoices Trend" style={{ minHeight: 380 }}>
+              <ChartPanel<InvoicesTrendTableRow>
+                title="Invoices Trend"
+                style={{ minHeight: 380 }}
+                tableColumns={overview.error ? undefined : invoicesTrendTableColumns}
+                tableRows={overview.error ? undefined : invoicesTrendTableRows}
+                getRowId={(row) => row.id}
+                headerActions={
+                  !overview.error && (
+                    <ExportPdfButton
+                      downloading={downloadingPdf === 'invoicesTrend'}
+                      disabled={invoicesTrendTableRows.length === 0}
+                      onClick={() => handleDownloadTablePdf('invoicesTrend', 'Invoices Trend', invoicesTrendTableColumns, invoicesTrendTableRows)}
+                    />
+                  )
+                }
+              >
                 {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
                 ) : overview.error ? (
@@ -445,7 +618,23 @@ export default function InvoicesEnginePage() {
                 )}
               </ChartPanel>
 
-              <ChartPanel title="Invoices Classification" infoText="Invoice value by Invoice Class, year-to-date." style={{ minHeight: 380 }}>
+              <ChartPanel<ClassificationTableRow>
+                title="Invoices Classification"
+                infoText="Invoice value by Invoice Class, year-to-date."
+                style={{ minHeight: 380 }}
+                tableColumns={overview.error ? undefined : classificationTableColumns}
+                tableRows={overview.error ? undefined : classificationTableRows}
+                getRowId={(row) => row.id}
+                headerActions={
+                  !overview.error && (
+                    <ExportPdfButton
+                      downloading={downloadingPdf === 'classification'}
+                      disabled={classificationTableRows.length === 0}
+                      onClick={() => handleDownloadTablePdf('classification', 'Invoices Classification', classificationTableColumns, classificationTableRows)}
+                    />
+                  )
+                }
+              >
                 {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
                 ) : overview.error ? (
@@ -468,6 +657,7 @@ export default function InvoicesEnginePage() {
 
         <RefreshFooter
           lastUpdate={formatTimestamp(refreshStatus.data?.lastUpdate ?? null)}
+          lastOrderCreated={formatTimestamp(refreshStatus.data?.lastOrderCreated ?? null)}
           lastRefreshTime={formatTimestamp(refreshStatus.data?.lastRefreshTime ?? null)}
         />
 
@@ -490,6 +680,9 @@ function MetricPanel({
   loading,
   error,
   onRetry,
+  tableRows,
+  downloading,
+  onDownloadPdf,
 }: {
   title: string;
   kpis?: InvoicesEngineKpis;
@@ -499,6 +692,9 @@ function MetricPanel({
   loading: boolean;
   error?: string;
   onRetry: () => void;
+  tableRows?: PeriodTableRow[];
+  downloading?: boolean;
+  onDownloadPdf?: () => void;
 }) {
   if (loading) {
     return (
@@ -525,7 +721,12 @@ function MetricPanel({
 
   return (
     <Card style={{ width: '100%', height: '100%' }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 'var(--ps-space-2, 8px)' }}>{title}</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--ps-space-2, 8px)', gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>
+        {onDownloadPdf && (
+          <ExportPdfButton downloading={!!downloading} disabled={!tableRows || tableRows.length === 0} onClick={onDownloadPdf} />
+        )}
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         {tiles.map((t) => (
           <div

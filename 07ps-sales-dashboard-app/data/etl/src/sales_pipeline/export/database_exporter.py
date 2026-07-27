@@ -4,9 +4,10 @@ import logging
 import hashlib
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Iterator
 from decimal import Decimal, ROUND_HALF_UP
 
 import numpy as np
@@ -55,10 +56,72 @@ class DatabaseExporter:
         "Fact_Opportunity",
     }
 
+    # Name of the MySQL advisory lock (GET_LOCK/RELEASE_LOCK) held for the duration of a SQL
+    # table load. See _exclusive_run_lock for why this exists.
+    PIPELINE_LOCK_NAME = "sales_pipeline_full_load"
+    PIPELINE_LOCK_TIMEOUT_SECONDS = 30
+    # Upper bound on how long the *holder's* connection may sit idle once GET_LOCK succeeds.
+    # try/finally guarantees RELEASE_LOCK runs on any Python-level exception, but a hard process
+    # kill (SIGKILL, OOM) skips Python entirely -- no finally runs, and the lock only goes away
+    # once MySQL notices the TCP connection is gone, which can take far longer than this run ever
+    # would (OS-level keepalive defaults are measured in hours). Capping this connection's own
+    # wait_timeout means MySQL itself reaps it -- and releases the lock as a side effect -- well
+    # before that, independent of the client-side crash ever being detected. 2h is generous headroom
+    # over the ~30-60 minute runs this pipeline normally takes (see runPipelineJob.ts's comment).
+    PIPELINE_LOCK_SESSION_MAX_SECONDS = 2 * 60 * 60
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.logger = logging.getLogger(__name__)
         self.engine = create_engine(settings.sqlalchemy_url, pool_pre_ping=True, future=True)
+
+    @contextmanager
+    def _exclusive_run_lock(self) -> Iterator[None]:
+        """Serializes SQL table writes across every process that can start a pipeline run.
+
+        Node's BullMQ queue (concurrency: 1, hasActiveEtlRun) and the Flask job_tracker
+        (job_tracker.py's "only one job may be active" guard) each stop a *second run from that
+        same entry point*, but neither guard is visible to the other, and neither is visible to a
+        `python -m sales_pipeline.main` run started directly from a shell -- this pipeline has
+        always been runnable standalone. None of those in-memory guards matter to MySQL: two
+        overlapping full-mode exports racing their per-table TRUNCATE-then-INSERT sequences is
+        exactly how a table ends up at 2x its row count (both runs' inserts land before either
+        truncate) or short (one run's truncate fires while the other's chunked insert is still in
+        flight when the count is read) -- the exact shapes of SQL row-count validation failures
+        this closes off. A MySQL named lock is server-side and visible to every connection
+        regardless of process/host, so it closes that gap completely instead of adding yet another
+        in-memory guard.
+
+        Non-MySQL engines (sqlite in tests) have no GET_LOCK/RELEASE_LOCK and don't need this --
+        those callers are single-process already.
+        """
+        if self.engine.dialect.name != "mysql":
+            yield
+            return
+        conn = self.engine.connect()
+        try:
+            conn.execute(
+                text("SET SESSION wait_timeout = :t"),
+                {"t": self.PIPELINE_LOCK_SESSION_MAX_SECONDS},
+            )
+            acquired = conn.execute(
+                text("SELECT GET_LOCK(:name, :timeout)"),
+                {"name": self.PIPELINE_LOCK_NAME, "timeout": self.PIPELINE_LOCK_TIMEOUT_SECONDS},
+            ).scalar_one()
+            if acquired != 1:
+                raise RuntimeError(
+                    f"Could not acquire SQL load lock '{self.PIPELINE_LOCK_NAME}' within "
+                    f"{self.PIPELINE_LOCK_TIMEOUT_SECONDS}s. Another pipeline run appears to be "
+                    "writing to this database right now; refusing to start a second, concurrent "
+                    "SQL load, since that is what corrupts row counts (see "
+                    "DatabaseExporter._exclusive_run_lock)."
+                )
+            try:
+                yield
+            finally:
+                conn.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": self.PIPELINE_LOCK_NAME})
+        finally:
+            conn.close()
 
     def export(self, tables: dict[str, pd.DataFrame]) -> SQLExportResult:
         self._prepare_schema(self.engine)
@@ -68,10 +131,11 @@ class DatabaseExporter:
         self._drop_retired_fact_tables()
         table_counts: dict[str, int] = {}
 
-        for table_name, df in tables.items():
-            self.logger.info("Writing SQL table %s rows=%s", table_name, f"{len(df):,}")
-            self._write_table(table_name, df)
-            table_counts[table_name] = self._count_rows(table_name)
+        with self._exclusive_run_lock():
+            for table_name, df in tables.items():
+                self.logger.info("Writing SQL table %s rows=%s", table_name, f"{len(df):,}")
+                self._write_table(table_name, df)
+                table_counts[table_name] = self._count_rows(table_name)
 
         validation = self.validate_counts(tables, table_counts)
         mismatch_count = int((~validation["Matches"]).sum()) if not validation.empty else 0
@@ -93,57 +157,58 @@ class DatabaseExporter:
         cutoff = pd.Timestamp(cutoff_local).to_pydatetime()
         table_counts: dict[str, int] = {}
         validation_rows: list[dict[str, Any]] = []
-        for table_name, df in tables.items():
-            table_started = time.perf_counter()
-            if table_name == "Fact_SalesLines":
-                self._delete_insert_window(table_name, df, "order_date", cutoff)
-                validation_rows.append(self._window_validation_row(table_name, df, "order_date", cutoff))
-            elif table_name == "Fact_Orders":
-                self._delete_insert_window(table_name, df, "OrderDateTime", cutoff, dedup_key="order_number")
-                self._delete_older_duplicate_rows_by_key(table_name, "order_number", "OrderDateTime")
-                validation_rows.append(self._window_validation_row(table_name, df, "OrderDateTime", cutoff))
-            elif table_name == "Fact_Sales":
-                self._log_fact_sales_duplicate_key_diagnostics(df)
-                changed = self._write_table_if_changed(table_name, df)
-                scope = "full_table_replaced" if changed else "full_table_unchanged_skipped"
-                validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope=scope))
-            elif table_name == "Fact_Delivery":
-                changed = self._write_table_if_changed(table_name, df)
-                scope = "full_table_replaced" if changed else "full_table_unchanged_skipped"
-                validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope=scope))
-            elif table_name in {"Fact_Targets", "Fact_OffDays"} and self._table_exists(table_name):
-                self.logger.info("Skipping unchanged SQL table %s in incremental mode", table_name)
-                validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope="skipped_unchanged_full_table"))
-            elif table_name in self.STRICT_INCREMENTAL_KEY_TABLES:
-                key = self._default_key_for_table(table_name)
-                table_existed = self._table_exists(table_name)
-                if key is not None and key in df.columns and df[key].isna().any():
-                    self.logger.warning("Replacing SQL table %s in incremental mode; key %s contains nulls so stale rows cannot be pruned safely", table_name, key)
+        with self._exclusive_run_lock():
+            for table_name, df in tables.items():
+                table_started = time.perf_counter()
+                if table_name == "Fact_SalesLines":
+                    self._delete_insert_window(table_name, df, "order_date", cutoff)
+                    validation_rows.append(self._window_validation_row(table_name, df, "order_date", cutoff))
+                elif table_name == "Fact_Orders":
+                    self._delete_insert_window(table_name, df, "OrderDateTime", cutoff, dedup_key="order_number")
+                    self._delete_older_duplicate_rows_by_key(table_name, "order_number", "OrderDateTime")
+                    validation_rows.append(self._window_validation_row(table_name, df, "OrderDateTime", cutoff))
+                elif table_name == "Fact_Sales":
+                    self._log_fact_sales_duplicate_key_diagnostics(df)
+                    changed = self._write_table_if_changed(table_name, df)
+                    scope = "full_table_replaced" if changed else "full_table_unchanged_skipped"
+                    validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope=scope))
+                elif table_name == "Fact_Delivery":
+                    changed = self._write_table_if_changed(table_name, df)
+                    scope = "full_table_replaced" if changed else "full_table_unchanged_skipped"
+                    validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope=scope))
+                elif table_name in {"Fact_Targets", "Fact_OffDays"} and self._table_exists(table_name):
+                    self.logger.info("Skipping unchanged SQL table %s in incremental mode", table_name)
+                    validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope="skipped_unchanged_full_table"))
+                elif table_name in self.STRICT_INCREMENTAL_KEY_TABLES:
+                    key = self._default_key_for_table(table_name)
+                    table_existed = self._table_exists(table_name)
+                    if key is not None and key in df.columns and df[key].isna().any():
+                        self.logger.warning("Replacing SQL table %s in incremental mode; key %s contains nulls so stale rows cannot be pruned safely", table_name, key)
+                        self._write_table(table_name, df)
+                        validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope=f"full_table_replaced_null_key:{key}"))
+                    else:
+                        self._delete_insert_by_key(table_name, df, key)
+                        if table_name in self.STALE_CLEANUP_TABLES and key is not None and key in df.columns:
+                            self._delete_stale_rows_not_in_dataframe(table_name, df, key)
+                        validation_rows.append(self._key_validation_row(table_name, df, key, table_existed))
+                elif table_name in {"QA_CRM_MissingLinks", "QA_CRM_DataQuality", "QA_CRM_UnmappedKeys"}:
+                    self.logger.info("Replacing QA table %s rows=%s in incremental mode", table_name, f"{len(df):,}")
                     self._write_table(table_name, df)
-                    validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope=f"full_table_replaced_null_key:{key}"))
+                    validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope="full_table_replaced"))
                 else:
-                    self._delete_insert_by_key(table_name, df, key)
-                    if table_name in self.STALE_CLEANUP_TABLES and key is not None and key in df.columns:
-                        self._delete_stale_rows_not_in_dataframe(table_name, df, key)
-                    validation_rows.append(self._key_validation_row(table_name, df, key, table_existed))
-            elif table_name in {"QA_CRM_MissingLinks", "QA_CRM_DataQuality", "QA_CRM_UnmappedKeys"}:
-                self.logger.info("Replacing QA table %s rows=%s in incremental mode", table_name, f"{len(df):,}")
-                self._write_table(table_name, df)
-                validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope="full_table_replaced"))
-            else:
-                self.logger.info("Replacing SQL table %s rows=%s in incremental mode", table_name, f"{len(df):,}")
-                self._write_table(table_name, df)
-                validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope="full_table_replaced"))
-            table_counts[table_name] = self._count_rows(table_name)
-            latest_validation = validation_rows[-1] if validation_rows else {}
-            self.logger.info(
-                "Incremental SQL table %s completed scope=%s export_rows=%s sql_rows=%s duration_seconds=%.2f",
-                table_name,
-                latest_validation.get("ValidationScope", "unknown"),
-                len(df),
-                table_counts[table_name],
-                time.perf_counter() - table_started,
-            )
+                    self.logger.info("Replacing SQL table %s rows=%s in incremental mode", table_name, f"{len(df):,}")
+                    self._write_table(table_name, df)
+                    validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope="full_table_replaced"))
+                table_counts[table_name] = self._count_rows(table_name)
+                latest_validation = validation_rows[-1] if validation_rows else {}
+                self.logger.info(
+                    "Incremental SQL table %s completed scope=%s export_rows=%s sql_rows=%s duration_seconds=%.2f",
+                    table_name,
+                    latest_validation.get("ValidationScope", "unknown"),
+                    len(df),
+                    table_counts[table_name],
+                    time.perf_counter() - table_started,
+                )
 
         validation = pd.DataFrame(validation_rows)
         mismatch_count = int((~validation["Matches"]).sum()) if not validation.empty else 0

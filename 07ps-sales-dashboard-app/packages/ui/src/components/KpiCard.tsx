@@ -237,8 +237,14 @@ export function KpiCard({
           so nothing here duplicates the headline value or the target. Design System Enforcement
           pass: size now reads from theme.metricCard (gaugeSize/bulletWidth) -- the single place
           that controls "how big is a primary metric card's visual" for every KpiCard everywhere,
-          so Standardize gauge components across the app just falls out of using one component. */}
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: '0 1 auto', margin: '-4px 0' }}>
+          so Standardize gauge components across the app just falls out of using one component.
+          marginTop was -4px (pulling the gauge up against the headline value) -- RadialGauge's own
+          grey target label now sits near the top of its arc (tracking the target's tick mark, not
+          the needle), which put it right up against the headline text above with almost no gap.
+          A few px of positive top margin here restores clear separation between the two values,
+          without touching RadialGauge's internal geometry (which has very little spare vertical
+          room before the colored track begins). */}
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: '0 1 auto', marginTop: 6, marginBottom: -4 }}>
         {variant === 'bullet' ? (
           <BulletChart
             actual={actual}

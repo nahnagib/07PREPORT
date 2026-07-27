@@ -3,22 +3,41 @@
  *
  * "Opportunities Without Activity" / "Opportunities Without Next Step" / the Rates panel's
  * "Inactive Opportunities" need real CRM activity-tracking data. That data is computed by the
- * Python ETL (PipelineFactBuilder, data/etl/src/sales_pipeline/facts/fact_pipeline.py) but was
- * never exported onto the live Fact_Opportunity table -- confirmed by reading the ETL source and
- * querying information_schema against the live warehouse this session. The 6 missing columns
- * (ActivityState, NextActivityDate, HasNextStep, HasRecentActivity, IsInactive, DaysSinceUpdate)
- * were added to OpportunityFactBuilder.COLUMNS this session (see that file), but the ETL was
- * deliberately NOT re-run -- doing so hits live production Odoo and rewrites the whole shared
- * warehouse, the user's own call to make, not this session's.
+ * Python ETL (PipelineFactBuilder, data/etl/src/sales_pipeline/facts/fact_pipeline.py). The 6
+ * columns (ActivityState, NextActivityDate, HasNextStep, HasRecentActivity, IsInactive,
+ * DaysSinceUpdate) were added to OpportunityFactBuilder.COLUMNS in an earlier session, and a
+ * schema migration has since landed the columns on the live Fact_Opportunity table -- but as of
+ * this session, re-querying the live warehouse directly shows every row's value for all 6 columns
+ * is NULL (256/256 opportunities, 219/219 open YTD). The migration ran; the ETL pass that actually
+ * *computes* these fields for existing rows has not (or hasn't reached this table yet).
  *
- * Every query below therefore checks checkActivityColumnsAvailable() first and degrades
- * gracefully: the 3 activity-dependent figures resolve to `null` (rendered as "--" on the
- * frontend) rather than throwing a SQL "unknown column" error, until the user runs their own ETL
- * refresh -- at which point these start returning real numbers with no further code changes.
+ * That distinction matters because `SUM(CASE WHEN col = 1 THEN 1 ELSE 0 END)` treats a NULL column
+ * exactly like a real 0 -- silently. A naive "does the column exist" check (the original form of
+ * checkActivityColumnsAvailable()) would report the data as available and let #W/O Activity,
+ * #W/O Next Step, and Inactive Deals Ratio all render a false "0" / "+0.00%" instead of the honest
+ * "--" placeholder the null-gating below was built for. checkActivityColumnsAvailable() therefore
+ * also requires at least one populated row, not just a present column, before flipping on.
+ *
+ * Every query below checks checkActivityColumnsAvailable() first and degrades gracefully: the 3
+ * activity-dependent figures resolve to `null` (rendered as "--" on the frontend) rather than a
+ * false zero or a SQL "unknown column" error, until the ETL actually populates these columns --
+ * at which point these start returning real numbers with no further code changes.
+ *
+ * Lost-exclusion policy (see filters.ts's excludeLostClause): `totalYtd` (the #YTD tile) and
+ * fetchNewOpportunitiesByMonth (New Opportunities chart) exclude closed-lost opportunities -- both
+ * are general "how much pipeline volume" figures, not lost-specific ones. `won`/`active`/
+ * `withoutActivity`/`withoutNextStep` need no change: `IsOpen = 1` already implies not-lost by
+ * construction (crm_status_classifier.py: is_open = not is_won and not is_lost). `lost`/
+ * lostDealsRatio/lostByReason ARE the lost-specific widgets and stay fully unfiltered, including
+ * lostDealsRatio's own denominator (see OpportunityActivityCountsInternal's comment -- it does NOT
+ * reuse the now-Lost-excluding `totalYtd`). fetchActivityOpportunities also stays unfiltered: its
+ * one shared array backs the Details view's Activity Filter panel, whose "Lost" option needs those
+ * rows to exist -- the frontend's default (no filter selected) view is what excludes Lost, via
+ * matchesActivityFilter in activity-momentum/page.tsx.
  */
 
 import type { Pool } from 'mysql2/promise';
-import { buildCrmWhereClause, ytdWindow, type Filters } from './filters';
+import { buildCrmWhereClause, excludeLostClause, ytdWindow, type Filters } from './filters';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -45,11 +64,22 @@ export async function checkActivityColumnsAvailable(pool: Pool): Promise<boolean
   const now = Date.now();
   if (now - cachedAt < CACHE_TTL_MS) return cachedAvailable;
   try {
-    const [rows] = await pool.query(
+    const [colRows] = await pool.query(
       `SELECT COUNT(*) AS cnt FROM information_schema.columns
        WHERE table_schema = DATABASE() AND table_name = 'Fact_Opportunity' AND column_name = 'HasNextStep'`,
     );
-    cachedAvailable = Number((rows as any[])[0].cnt) > 0;
+    const columnExists = Number((colRows as any[])[0].cnt) > 0;
+    if (!columnExists) {
+      cachedAvailable = false;
+    } else {
+      // Column existing isn't enough -- see module header. Require at least one row where the
+      // ETL has actually computed a value, not just a migrated-but-unpopulated column, or every
+      // activity-dependent figure silently renders as a false 0 instead of "--".
+      const [dataRows] = await pool.query(
+        `SELECT COUNT(*) AS cnt FROM Fact_Opportunity WHERE HasNextStep IS NOT NULL LIMIT 1`,
+      );
+      cachedAvailable = Number((dataRows as any[])[0].cnt) > 0;
+    }
   } catch {
     cachedAvailable = false;
   }
@@ -70,17 +100,34 @@ export interface OpportunityActivityCounts {
   withoutNextStep: number | null;
 }
 
+/** Internal-only extension of OpportunityActivityCounts: totalYtdAll (every YTD opportunity
+ * regardless of status) is never rendered on the frontend -- it exists purely so
+ * computeActivityRates below can keep Lost Deals Ratio's denominator as the true, unfiltered YTD
+ * total (its original, correct meaning: Lost ÷ ALL YTD opportunities) even though the *displayed*
+ * `totalYtd` field now excludes Lost (see selectParts below). Without this split, excluding Lost
+ * from `totalYtd` would silently shrink the ratio's own denominator and inflate it. */
+interface OpportunityActivityCountsInternal extends OpportunityActivityCounts {
+  totalYtdAll: number;
+}
+
+/** `totalYtd` excludes Lost (see filters.ts's excludeLostClause) -- it's a general "how many
+ * opportunities are in this YTD cohort" figure, not a lost-specific one, same policy as every
+ * other general widget on the Pipeline pages. `won`/`lost`/`active`/`withoutActivity`/
+ * `withoutNextStep` are untouched: `lost` is the lost-specific counter itself, and the other three
+ * already exclude Lost by construction (IsOpen=1 implies not-lost, see
+ * crm_status_classifier.py's is_open = not is_won and not is_lost). */
 async function computeOpportunityActivityCounts(
   pool: Pool,
   anchor: Date,
   filters: Filters,
   activityAvailable: boolean,
-): Promise<OpportunityActivityCounts> {
+): Promise<OpportunityActivityCountsInternal> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
 
   const selectParts = [
-    'COUNT(*) AS totalYtd',
+    'COUNT(*) AS totalYtdAll',
+    `SUM(CASE WHEN ${excludeLostClause('fo')} THEN 1 ELSE 0 END) AS totalYtd`,
     'SUM(CASE WHEN fo.IsWon = 1 THEN 1 ELSE 0 END) AS won',
     'SUM(CASE WHEN fo.IsLost = 1 THEN 1 ELSE 0 END) AS lost',
   ];
@@ -103,6 +150,7 @@ async function computeOpportunityActivityCounts(
   const row = (rows as any[])[0];
   return {
     totalYtd: Number(row.totalYtd ?? 0),
+    totalYtdAll: Number(row.totalYtdAll ?? 0),
     won: Number(row.won ?? 0),
     lost: Number(row.lost ?? 0),
     active: Number(row.active ?? 0),
@@ -125,9 +173,13 @@ async function computeActivityRates(
   anchor: Date,
   filters: Filters,
   activityAvailable: boolean,
-  counts: OpportunityActivityCounts,
+  counts: OpportunityActivityCountsInternal,
 ): Promise<ActivityRates> {
-  const lostDealsRatio = safeDiv(counts.lost, counts.totalYtd);
+  // Lost ÷ ALL YTD opportunities (totalYtdAll, not the now-Lost-excluding totalYtd) -- this ratio
+  // IS the lost-specific widget, so its own denominator must keep counting Lost rows, unaffected
+  // by the Lost-exclusion policy applied to totalYtd for display elsewhere. See
+  // OpportunityActivityCountsInternal's comment.
+  const lostDealsRatio = safeDiv(counts.lost, counts.totalYtdAll);
   if (!activityAvailable) return { inactiveDealsRatio: null, lostDealsRatio };
 
   const window = ytdWindow(anchor);
@@ -188,6 +240,8 @@ export interface NewOpportunitiesMonthPoint {
   countLytd: number;
 }
 
+/** Excludes Lost (see filters.ts's excludeLostClause) -- a general creation-volume trend, not a
+ * lost-specific one. */
 async function fetchNewOpportunitiesByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<NewOpportunitiesMonthPoint[]> {
   const year = anchor.getUTCFullYear();
   const throughMonth = anchor.getUTCMonth() + 1;
@@ -195,7 +249,7 @@ async function fetchNewOpportunitiesByMonth(pool: Pool, anchor: Date, filters: F
   const sql = `
     SELECT YEAR(fo.OpportunityCreatedDate) AS yr, MONTH(fo.OpportunityCreatedDate) AS mo, COUNT(*) AS cnt
     FROM Fact_Opportunity fo
-    WHERE YEAR(fo.OpportunityCreatedDate) IN (?, ?) AND ${clause}
+    WHERE YEAR(fo.OpportunityCreatedDate) IN (?, ?) AND ${clause} AND ${excludeLostClause('fo')}
     GROUP BY YEAR(fo.OpportunityCreatedDate), MONTH(fo.OpportunityCreatedDate)
   `;
   const [rows] = await pool.query(sql, [year, year - 1, ...params]);

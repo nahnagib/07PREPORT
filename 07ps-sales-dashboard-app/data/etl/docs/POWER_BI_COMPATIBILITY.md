@@ -16,7 +16,7 @@ Power Query steps and model relationships often reference exact column names. Th
 
 ## Date Handling Rule
 
-Odoo API datetime values are treated as UTC and converted to the configured business timezone before any reporting dates are derived. If `TIMEZONE` is not configured, the code default is `Asia/Riyadh`; this installation uses the value in `.env`.
+Odoo API datetime values are treated as UTC and converted to the configured business timezone before any reporting dates are derived. If `TIMEZONE` is not configured, the code default is `Africa/Tripoli`; this installation also sets it explicitly in `.env`.
 
 For sales facts, keep these fields separate:
 

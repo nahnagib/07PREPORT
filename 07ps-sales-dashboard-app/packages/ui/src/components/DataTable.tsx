@@ -15,6 +15,10 @@ export interface DataTableProps<T> {
   /** Section 3.8: a totals row, where meaningful, is pinned to the bottom, bold + shaded. */
   totalsRow?: Partial<T>;
   getRowId: (row: T) => string;
+  /** Optional -- when set, every row becomes clickable (pointer cursor + hover affordance) and
+   * calls back with the clicked row. Every existing caller that omits this keeps rendering plain,
+   * non-interactive rows exactly as before. */
+  onRowClick?: (row: T) => void;
 }
 
 /**
@@ -27,6 +31,7 @@ export function DataTable<T extends Record<string, unknown>>({
   rows,
   totalsRow,
   getRowId,
+  onRowClick,
 }: DataTableProps<T>) {
   return (
     <div style={{ overflow: 'auto', maxHeight: 480 }}>
@@ -54,7 +59,12 @@ export function DataTable<T extends Record<string, unknown>>({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={getRowId(row)} className="ps-datatable-row">
+            <tr
+              key={getRowId(row)}
+              className="ps-datatable-row"
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              style={onRowClick ? { cursor: 'pointer' } : undefined}
+            >
               {columns.map((col, i) => (
                 <td
                   key={String(col.key)}

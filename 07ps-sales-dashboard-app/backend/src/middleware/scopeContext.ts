@@ -1,10 +1,13 @@
 import { NextFunction, Request, Response } from 'express';
 import {
+  DataScopeError,
   Filters,
   SalespersonLockError,
   UserContext,
+  applyRoleDataScope,
   applySalespersonLock,
 } from '../measures/filters';
+import { getRoleDataScopeRules } from '../services/dataScopeService';
 
 /**
  * Application-level scope enforcement, replacing the previous Postgres-native Row-Level-Security
@@ -23,6 +26,13 @@ import {
  * redirecting or silently substituting the caller's own scope, exactly per the port's
  * requirement -- see filters.ts's applySalespersonLock for the actual enforcement logic (ported
  * 1:1 from the validated Python filters.py, same 5 RBAC test cases).
+ *
+ * The same choke point also applies each user's business role's row-level data scope (the
+ * role_data_scope table, admin-editable on the Role & Permission Management page) via
+ * filters.ts's applyRoleDataScope -- a generalized version of the salesperson lock that can
+ * restrict any of the 5 filter dimensions to an admin-assigned set of values, same "force if
+ * unrequested, reject if requested-but-disallowed" contract, same 403-not-silent-substitution
+ * behavior on a scope-escape attempt.
  */
 
 declare global {
@@ -44,8 +54,14 @@ declare global {
  * backend/src/middleware/auth.ts and the 0009_auth_identity.sql migration. A SALESPERSON-tier
  * user with no salesperson_key assigned resolves to `null`, which applySalespersonLock below
  * still locks correctly (locked to nothing rather than accidentally unscoped).
+ *
+ * Also loads the user's business role's row-level data-scope rules (role_data_scope, see
+ * dataScopeService.ts) here rather than in resolveScopedFilters, specifically so
+ * resolveScopedFilters itself can stay synchronous (its own test suite calls it without awaiting
+ * and asserts req.scopedFilters synchronously). Async here, not wrapped in try/catch, matching the
+ * existing style of requireAuth/requirePermission's own DB calls.
  */
-export function attachUserContext(req: Request, res: Response, next: NextFunction): void {
+export async function attachUserContext(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!req.user) {
     res.status(401).json({ error: 'Unauthenticated' });
     return;
@@ -55,9 +71,13 @@ export function attachUserContext(req: Request, res: Response, next: NextFunctio
     return;
   }
 
+  const dataScopeRules = await getRoleDataScopeRules(req.user.roleId);
+
   req.userContext = {
     roleCode: req.user.roleTierCode,
+    roleId: req.user.roleId,
     salespersonKey: req.user.salespersonKey,
+    dataScopeRules,
   };
   next();
 }
@@ -100,9 +120,10 @@ export function resolveScopedFilters(req: Request, res: Response, next: NextFunc
   };
 
   try {
-    req.scopedFilters = applySalespersonLock(rawFilters, req.userContext);
+    const roleScoped = applyRoleDataScope(rawFilters, req.userContext.dataScopeRules ?? []);
+    req.scopedFilters = applySalespersonLock(roleScoped, req.userContext);
   } catch (err) {
-    if (err instanceof SalespersonLockError) {
+    if (err instanceof SalespersonLockError || err instanceof DataScopeError) {
       res.status(403).json({ error: 'Forbidden: request is outside your assigned scope.' });
       return;
     }

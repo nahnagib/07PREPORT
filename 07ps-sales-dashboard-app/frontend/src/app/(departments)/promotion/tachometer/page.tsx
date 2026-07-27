@@ -1,5 +1,5 @@
 'use client';
-import React, { useMemo, useState } from 'react';
+import React from 'react';
 import { useRouter } from 'next/navigation';
 import { Wallet, Package, TrendingUp } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
@@ -7,7 +7,7 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useBusinessUnit } from '../../../../components/BusinessUnitProvider';
+import { useFilterState } from '../../../../components/FilterProvider';
 import {
   KpiCard,
   PerformanceReportTable,
@@ -17,12 +17,11 @@ import {
   LoadingSkeleton,
   Sparkline,
   type ReferenceMetric,
-  type KpiTrend,
   type PerformanceReportRow,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useTachometerOverview, useTachometerTrend, useRefreshStatus } from '../../../../lib/hooks';
+import { useFilterOptions, useTachometerOverview, useTachometerTrend, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
 import type { TachometerFilters, TachometerCard, AspCard, TachometerMetricKey } from '../../../../lib/api';
 import {
   toSemanticStatus,
@@ -35,20 +34,6 @@ import {
   formatTimestamp,
 } from '../../../../lib/format';
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
-/** Jan 1 of the current year -- every page's date-range filter defaults to YTD (Jan 1 -> today) on
- * load, not a single-day "today" range; anchorDate itself still drives the actual YTD/MTD window
- * math (ytdWindow/mtdWindow in filters.ts), this only fixes the visible From/To fields to match. */
-const ytdStartIso = () => `${new Date().getUTCFullYear()}-01-01`;
-
-const EMPTY_FILTERS: TachometerFilters = {
-  companyKeys: [],
-  segmentKeys: [],
-  channelKeys: [],
-  salesTeamKeys: [],
-  salespersonKeys: [],
-};
-
 /* Cards now fill their grid cells without constraint. Grid proportions (1.5fr 260px 1.5fr)
    ensure consistent sizing across viewport widths. */
 const CARD_BOX: React.CSSProperties = {
@@ -56,37 +41,47 @@ const CARD_BOX: React.CSSProperties = {
   width: '100%',
 };
 
-function cardToReferenceMetrics(card: TachometerCard, unit: 'value' | 'volume'): ReferenceMetric[] {
+/**
+ * Shared bottom-row tiles for all 4 gauge cards (YTD Value, YTD Volume, MTD Value, MTD Volume) --
+ * LYTD/LFY/FYT/Variance for YTD cards, LMTD/LFM/FMT/Variance for MTD cards. One function, not one
+ * per card: TachometerCard's shape (and every field these tiles read) is identical regardless of
+ * period or metric -- computeYtdCard/computeMtdCard both populate lastYearSamePeriod (LYTD for YTD
+ * cards, LMTD for MTD cards, via lytdWindow/lmtdWindow respectively), fullLastPeriodActual (Full
+ * Last Year for YTD cards via flyWindow, Full Last Month for MTD cards via flmWindow), and
+ * fullPeriodTarget (current year's full annual target for YTD cards, current month's full target
+ * for MTD cards) -- see backend/src/measures/tachometer.ts's computeCard/computeYtdCard/
+ * computeMtdCard. No backend change needed for any of the 4 cards; only the labels differ by
+ * period, which is exactly what the `period` param selects here.
+ */
+function gaugeCardReferenceMetrics(card: TachometerCard, unit: 'value' | 'volume', period: 'ytd' | 'mtd'): ReferenceMetric[] {
   const fmt = unit === 'value' ? formatCompactCurrency : formatCompactVolume;
   const fmtFull = unit === 'value' ? formatCurrency : formatVolume;
+  const labels = period === 'ytd' ? { ly: 'LYTD', full: 'LFY', target: 'FYT' } : { ly: 'LMTD', full: 'LFM', target: 'FMT' };
   return [
-    {
-      label: 'Target',
-      value: card.targetToDate != null ? fmt(card.targetToDate) : '—',
-      fullValue: card.targetToDate != null ? fmtFull(card.targetToDate) : undefined,
-    },
-    { label: 'Variance', value: formatVariance(card.variancePct) ?? '—' },
-    { label: 'Last Year', value: fmt(card.lastYearSamePeriod), fullValue: fmtFull(card.lastYearSamePeriod) },
+    { label: labels.ly, value: fmt(card.lastYearSamePeriod), fullValue: fmtFull(card.lastYearSamePeriod) },
+    { label: labels.full, value: fmt(card.fullLastPeriodActual), fullValue: fmtFull(card.fullLastPeriodActual) },
+    { label: labels.target, value: fmt(card.fullPeriodTarget), fullValue: fmtFull(card.fullPeriodTarget) },
+    // Variance vs same-period-last-year (not vs Target -- the achievement progress bar above
+    // already covers actual-vs-target).
+    { label: 'Variance', value: formatVariance(lyVariancePct(card.actual, card.lastYearSamePeriod)) ?? '—' },
   ];
 }
 
-function cardTrend(card: TachometerCard): KpiTrend | undefined {
-  if (!card.lastYearSamePeriod || card.lastYearSamePeriod <= 0) return undefined;
-  const pct = (card.actual - card.lastYearSamePeriod) / card.lastYearSamePeriod;
-  const direction: KpiTrend['direction'] = pct > 0.005 ? 'up' : pct < -0.005 ? 'down' : 'flat';
-  return { direction, label: `${formatVariance(pct)} vs LY` };
-}
-
-function aspCardToReferenceMetrics(actual: number | null, target: number | null): ReferenceMetric[] {
+/** ASP cards are back to their own bespoke non-gauge layout (see the JSX below) -- no natural
+ * min/max range for an average-selling-price figure, so they never should have gotten
+ * RadialGauge's Target x0.5/x1.5 scale. Kept as a 2-tile (Target, Variance) row, distinct from the
+ * 4-tile gaugeCardReferenceMetrics above. */
+function aspCardToReferenceMetrics(actual: number | null, target: number | null, lastYearAsp: number | null): ReferenceMetric[] {
   if (actual === null || target === null || target <= 0) return [];
-  const variance = (actual - target) / target;
   return [
     {
       label: 'Target',
       value: formatAsp(target),
       fullValue: formatAsp(target),
     },
-    { label: 'Variance', value: formatVariance(variance) ?? '—' },
+    // Variance vs LY ASP (LYTD ASP for the YTD card, LMTD ASP for the MTD card), not vs Target --
+    // same convention as the gauge cards.
+    { label: 'Variance', value: formatVariance(lyVariancePct(actual, lastYearAsp ?? 0)) ?? '—' },
   ];
 }
 
@@ -142,25 +137,18 @@ function buildBreakdownHref(metric: TachometerMetricKey, anchorDate: string, fil
  */
 export default function TachometerPage() {
   const router = useRouter();
-  const { setBusinessUnit } = useBusinessUnit();
+  const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
   const {
-    user,
-    isSalesperson,
-    salespersonKey,
-    token,
-    error: authError,
-    retryAuth,
-    logout,
-  } = useAuth();
-  const [anchorDate, setAnchorDate] = useState(todayIso());
-  const [dateFromDate, setDateFromDate] = useState(ytdStartIso());
-  const [dateToDate, setDateToDate] = useState(todayIso());
-  const [filters, setFilters] = useState<TachometerFilters>(EMPTY_FILTERS);
-
-  const effectiveFilters = useMemo<TachometerFilters>(
-    () => (isSalesperson ? { ...EMPTY_FILTERS, salespersonKeys: salespersonKey != null ? [salespersonKey] : [] } : filters),
-    [isSalesperson, salespersonKey, filters],
-  );
+    filters,
+    effectiveFilters,
+    anchorDate,
+    dateFromDate,
+    dateToDate,
+    onFiltersChange,
+    onAnchorDateChange,
+    onDateRangeChange,
+    resetFilters,
+  } = useFilterState();
 
   // Eternal-skeleton fix: every one of these now also gets devAuth's own error/retry, so if the
   // dev-session token mint itself failed (e.g. backend unreachable), these resolve to that same
@@ -169,29 +157,10 @@ export default function TachometerPage() {
   const overview = useTachometerOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const trend = useTachometerTrend(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-
-  function handleFiltersChange(next: TachometerFilters) {
-    setFilters(next);
-    const companyKeys = next.companyKeys ?? [];
-    if (companyKeys.length === 1 && companyKeys[0] === 1) setBusinessUnit('majaal');
-    else if (companyKeys.length === 1 && companyKeys[0] === 2) setBusinessUnit('tika');
-    else setBusinessUnit('all');
-  }
-
-  function handleDateRangeChange(from: string, to: string) {
-    setDateFromDate(from);
-    setDateToDate(to);
-    // Update anchor date to the from date for compatibility with current API
-    setAnchorDate(from);
-  }
+  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
 
   function handleReset() {
-    setFilters(EMPTY_FILTERS);
-    setBusinessUnit('all');
-    const today = todayIso();
-    setAnchorDate(today);
-    setDateFromDate(ytdStartIso());
-    setDateToDate(today);
+    resetFilters();
   }
 
   function handleRefresh() {
@@ -528,9 +497,9 @@ export default function TachometerPage() {
     <PermissionGuard pageKey="tachometer">
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
       <AppHeader
-        pageTitle="Sales Executive Dashboard"
+        pageTitle="Promotion Dashboard"
         anchorDate={anchorDate}
-        onAnchorDateChange={setAnchorDate}
+        onAnchorDateChange={onAnchorDateChange}
         onRefresh={handleRefresh}
         lastRefreshTime={lastRefreshLabel}
         roleLabel={roleLabel}
@@ -540,20 +509,24 @@ export default function TachometerPage() {
 
       <FilterBar
         filters={effectiveFilters}
-        onChange={handleFiltersChange}
+        onChange={onFiltersChange}
         onReset={handleReset}
         anchorDate={anchorDate}
-        onAnchorDateChange={setAnchorDate}
+        onAnchorDateChange={onAnchorDateChange}
         businessUnits={filterOptions.businessUnits.data ?? []}
         customerGroups={filterOptions.customerGroups.data ?? []}
         distributionChannels={filterOptions.distributionChannels.data ?? []}
         branches={filterOptions.branches.data ?? []}
         salespersons={filterOptions.salespersons.data ?? []}
         isSalesperson={isSalesperson}
-        lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
+        lastUpdate={refreshStatus.data?.lastUpdate ?? null}
+        lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
         dateFromDate={dateFromDate}
         dateToDate={dateToDate}
-        onDateRangeChange={handleDateRangeChange}
+        onDateRangeChange={onDateRangeChange}
+        onExportReport={exportReport.exportReport}
+        isExporting={exportReport.isExporting}
+        exportError={exportReport.error}
       />
 
       {/* Status-check requirement: this must never read as "connected to production". */}
@@ -569,11 +542,14 @@ export default function TachometerPage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
             {/* Metrics grid - Layout Matrix: Value (left) | ASP column (center) | Volume (right),
-                YTD on top row, MTD on bottom row. Option A implementation: all 6 cards use the
-                same KpiCard component with gauges. Grid widened: Value/Volume columns increased
-                from 1fr to 1.5fr so they're visibly larger (primary KPIs per the manual), while
-                ASP in the middle remains a supporting indicator. All cards use align-items: stretch
-                for uniform height within each row. */}
+                YTD on top row, MTD on bottom row. The 4 Value/Volume cards use KpiCard's gauge
+                variant; the 2 ASP cards are their own bespoke non-gauge layout (see below -- ASP
+                has no natural min/max range the way a currency/volume total does, so it never
+                should have been forced onto RadialGauge's Target x0.5/x1.5 scale; reverted after
+                trying that). Grid widened: Value/Volume columns increased from 1fr to 1.5fr so
+                they're visibly larger (primary KPIs per the manual), while the middle ASP column
+                stays at 260px, sized for its own non-gauge content. All cards use align-items:
+                stretch for uniform height within each row. */}
             <div
               className="ps-metrics-grid"
               style={{
@@ -595,8 +571,7 @@ export default function TachometerPage() {
                   actualLabel={formatCompactCurrency(data?.ytdValue.actual ?? 0)}
                   actualFullValue={formatCurrency(data?.ytdValue.actual ?? 0)}
                   targetLabel={data?.ytdValue.targetToDate != null ? formatCompactCurrency(data.ytdValue.targetToDate) : undefined}
-                  referenceMetrics={data ? cardToReferenceMetrics(data.ytdValue, 'value') : []}
-                  trend={data ? cardTrend(data.ytdValue) : undefined}
+                  referenceMetrics={data ? gaugeCardReferenceMetrics(data.ytdValue, 'value', 'ytd') : []}
                   sparklineValues={revenueTrendValues}
                   loading={overview.loading}
                   error={overview.error ?? undefined}
@@ -607,7 +582,9 @@ export default function TachometerPage() {
 
               {/* ASP cards: non-gauge, compact, sized to content. Icon + title + status badge
                   (shared template shell), then: headline value + Target/Variance stat row + trend
-                  sparkline. No gauge, no progress bar, no padding to match taller cards. */}
+                  sparkline. No gauge, no progress bar, no padding to match taller cards -- reverted
+                  from a brief attempt to standardize these onto RadialGauge, since ASP has no
+                  natural min/max range the way a currency/volume total does. */}
               <div style={{ gridColumn: '2', gridRow: '1', ...CARD_BOX }}>
                 {overview.loading ? (
                   <Card style={{ width: '100%' }}>
@@ -634,9 +611,9 @@ export default function TachometerPage() {
                     </div>
 
                     {/* Stats row: Target + Variance */}
-                    {data && aspCardToReferenceMetrics(data.aspYtd.actualAsp, data.aspYtd.targetAsp).length > 0 && (
+                    {data && aspCardToReferenceMetrics(data.aspYtd.actualAsp, data.aspYtd.targetAsp, data.aspYtd.lastYearAsp).length > 0 && (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-2, 8px)', marginBottom: 'var(--ps-space-3, 16px)', borderTop: '1px solid var(--ps-color-border)', paddingTop: 'var(--ps-space-2, 8px)' }}>
-                        {aspCardToReferenceMetrics(data.aspYtd.actualAsp, data.aspYtd.targetAsp).map((m) => (
+                        {aspCardToReferenceMetrics(data.aspYtd.actualAsp, data.aspYtd.targetAsp, data.aspYtd.lastYearAsp).map((m) => (
                           <div key={m.label} style={{ textAlign: 'center' }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-text)' }}>{m.value}</div>
                             <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{m.label}</div>
@@ -681,9 +658,9 @@ export default function TachometerPage() {
                     </div>
 
                     {/* Stats row: Target + Variance */}
-                    {data && aspCardToReferenceMetrics(data.aspMtd.actualAsp, data.aspMtd.targetAsp).length > 0 && (
+                    {data && aspCardToReferenceMetrics(data.aspMtd.actualAsp, data.aspMtd.targetAsp, data.aspMtd.lastYearAsp).length > 0 && (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-2, 8px)', marginBottom: 'var(--ps-space-3, 16px)', borderTop: '1px solid var(--ps-color-border)', paddingTop: 'var(--ps-space-2, 8px)' }}>
-                        {aspCardToReferenceMetrics(data.aspMtd.actualAsp, data.aspMtd.targetAsp).map((m) => (
+                        {aspCardToReferenceMetrics(data.aspMtd.actualAsp, data.aspMtd.targetAsp, data.aspMtd.lastYearAsp).map((m) => (
                           <div key={m.label} style={{ textAlign: 'center' }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-text)' }}>{m.value}</div>
                             <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{m.label}</div>
@@ -713,8 +690,7 @@ export default function TachometerPage() {
                   actualLabel={formatCompactVolume(data?.ytdVolume.actual ?? 0)}
                   actualFullValue={formatVolume(data?.ytdVolume.actual ?? 0)}
                   targetLabel={data?.ytdVolume.targetToDate != null ? formatCompactVolume(data.ytdVolume.targetToDate) : undefined}
-                  referenceMetrics={data ? cardToReferenceMetrics(data.ytdVolume, 'volume') : []}
-                  trend={data ? cardTrend(data.ytdVolume) : undefined}
+                  referenceMetrics={data ? gaugeCardReferenceMetrics(data.ytdVolume, 'volume', 'ytd') : []}
                   sparklineValues={volumeTrendValues}
                   loading={overview.loading}
                   error={overview.error ?? undefined}
@@ -734,8 +710,7 @@ export default function TachometerPage() {
                   actualLabel={formatCompactCurrency(data?.mtdValue.actual ?? 0)}
                   actualFullValue={formatCurrency(data?.mtdValue.actual ?? 0)}
                   targetLabel={data?.mtdValue.targetToDate != null ? formatCompactCurrency(data.mtdValue.targetToDate) : undefined}
-                  referenceMetrics={data ? cardToReferenceMetrics(data.mtdValue, 'value') : []}
-                  trend={data ? cardTrend(data.mtdValue) : undefined}
+                  referenceMetrics={data ? gaugeCardReferenceMetrics(data.mtdValue, 'value', 'mtd') : []}
                   sparklineValues={revenueTrendValues}
                   loading={overview.loading}
                   error={overview.error ?? undefined}
@@ -755,8 +730,7 @@ export default function TachometerPage() {
                   actualLabel={formatCompactVolume(data?.mtdVolume.actual ?? 0)}
                   actualFullValue={formatVolume(data?.mtdVolume.actual ?? 0)}
                   targetLabel={data?.mtdVolume.targetToDate != null ? formatCompactVolume(data.mtdVolume.targetToDate) : undefined}
-                  referenceMetrics={data ? cardToReferenceMetrics(data.mtdVolume, 'volume') : []}
-                  trend={data ? cardTrend(data.mtdVolume) : undefined}
+                  referenceMetrics={data ? gaugeCardReferenceMetrics(data.mtdVolume, 'volume', 'mtd') : []}
                   sparklineValues={volumeTrendValues}
                   loading={overview.loading}
                   error={overview.error ?? undefined}
@@ -794,6 +768,7 @@ export default function TachometerPage() {
 
       <RefreshFooter
         lastUpdate={formatTimestamp(refreshStatus.data?.lastUpdate ?? null)}
+        lastOrderCreated={formatTimestamp(refreshStatus.data?.lastOrderCreated ?? null)}
         lastRefreshTime={formatTimestamp(refreshStatus.data?.lastRefreshTime ?? null)}
       />
 

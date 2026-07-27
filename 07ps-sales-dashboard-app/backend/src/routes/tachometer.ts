@@ -16,7 +16,7 @@ import {
   type Metric,
   type Period,
 } from '../measures/tachometer';
-import { mtdWindow, ytdWindow } from '../measures/filters';
+import { lmtdWindow, lytdWindow, mtdWindow, ytdWindow } from '../measures/filters';
 
 /**
  * Tachometer page KPI endpoints. Every query goes through resolveScopedFilters (Standards Section
@@ -64,17 +64,23 @@ tachometerRouter.get('/overview', async (req, res, next) => {
       computeMtdCard(pool, anchor, filters, 'volume'),
     ]);
 
-    const [ytdVV, ytdTarget, mtdVV, mtdTarget] = await Promise.all([
+    const [ytdVV, ytdTarget, mtdVV, mtdTarget, lytdVV, lmtdVV] = await Promise.all([
       fetchValueVolume(pool, ytdWindow(anchor), filters),
       fetchTargetForMonths(pool, anchor.getUTCFullYear(), filters),
       fetchValueVolume(pool, mtdWindow(anchor), filters),
       fetchTargetForMonths(pool, anchor.getUTCFullYear(), filters, {
         month: anchor.getUTCMonth() + 1,
       }),
+      // Same-period-last-year value/volume, purely for AspCard.lastYearAsp (the "Variance vs LY"
+      // tile) -- ytdValue/mtdValue above already fetch this window for the currency/volume cards,
+      // but ASP needs its own value+volume pair (not just the pre-computed lastYearSamePeriod
+      // currency total) to derive last year's ASP the same JS-side value/volume way actualAsp is.
+      fetchValueVolume(pool, lytdWindow(anchor), filters),
+      fetchValueVolume(pool, lmtdWindow(anchor), filters),
     ]);
 
-    const aspYtd = computeAspCard(ytdVV, ytdTarget);
-    const aspMtd = computeAspCard(mtdVV, mtdTarget);
+    const aspYtd = computeAspCard(ytdVV, ytdTarget, lytdVV);
+    const aspMtd = computeAspCard(mtdVV, mtdTarget, lmtdVV);
 
     res.json({
       anchorDate: anchor.toISOString().slice(0, 10),

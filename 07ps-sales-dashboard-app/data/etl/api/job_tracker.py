@@ -200,6 +200,34 @@ class JobTracker:
             job.process.terminate()
         return job
 
+    def force_reset(self) -> Optional[Job]:
+        """Admin override for a stuck "active job" slot -- the Python-side mirror of Node's
+        forceResetActiveEtlRuns (backend/src/etl/services/etlRunTracker.ts). Node's own reset only
+        ever cleared its own etl_job_runs rows and BullMQ job; it had no way to reach this process's
+        in-memory tracker, so if THIS was what was actually stuck (e.g. a subprocess wedged on
+        something that never returns, or a request that died between starting the thread and this
+        process being told about it), the Node-side reset alone freed nothing here and the very
+        next enqueued run would immediately 409 against this tracker again. Terminates the tracked
+        subprocess if it's still alive and immediately frees the "only one job active" slot -- does
+        not wait for _run_job's background thread to notice the process exited on its own, since an
+        admin invoking this wants the block gone now, not after that thread's next poll.
+        """
+        with self._lock:
+            job = self._active_job_locked()
+            if job is None:
+                return None
+            job.cancel_requested = True
+            if job.process is not None and job.process.poll() is None:
+                try:
+                    job.process.terminate()
+                except Exception:  # noqa: BLE001 - best effort; tracker state is cleared below regardless
+                    pass
+            if job.status not in TERMINAL_STATUSES:
+                job.status = "cancelled"
+                job.finished_at = datetime.now(timezone.utc)
+            self._active_job_id = None
+            return job
+
 
 # Module-level singleton - one Flask process, one tracker, matching the "only one run at a time"
 # invariant the whole system (BullMQ concurrency:1, this tracker) enforces at every layer.

@@ -15,6 +15,7 @@ import {
   computeMissingSummary,
   weeklyRestDaysYtd,
   fetchCompanyNamesByKey,
+  fetchLastAvailableDate,
 } from '../measures/criticalNumber';
 
 /**
@@ -38,19 +39,37 @@ criticalNumberRouter.use(
   resolveScopedFilters,
 );
 
+function todayUTC(): Date {
+  const now = new Date();
+  return dateOnlyUTC(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+}
+
 function parseAnchorDate(raw: unknown): Date {
   if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    const now = new Date();
-    return dateOnlyUTC(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+    return todayUTC();
   }
   const [y, m, d] = raw.split('-').map(Number);
   return dateOnlyUTC(y, m, d);
 }
 
+const MS_PER_DAY = 86_400_000;
+
 criticalNumberRouter.get('/overview', async (req, res, next) => {
   try {
     const filters = req.scopedFilters!;
-    const anchor = parseAnchorDate(req.query.anchorDate);
+    const requestedAnchor = parseAnchorDate(req.query.anchorDate);
+
+    // Fallback: if the caller is asking for today specifically (no explicit historical date was
+    // picked) and the ETL hasn't loaded today's data yet, show the most recent available day's
+    // figures instead of an empty/zeroed-out "today" -- see fetchLastAvailableDate's docstring.
+    // A deliberately-picked historical date with genuinely no data is left alone: that's a real
+    // "no data on this date" answer, not an ETL-lag artifact.
+    const isRequestingToday = requestedAnchor.getTime() === todayUTC().getTime();
+    const lastAvailableDate = isRequestingToday ? await fetchLastAvailableDate(pool) : null;
+    const isFallback =
+      isRequestingToday && lastAvailableDate !== null && lastAvailableDate.getTime() < requestedAnchor.getTime();
+    const anchor = isFallback ? (lastAvailableDate as Date) : requestedAnchor;
+    const fallbackDaysAgo = isFallback ? Math.round((requestedAnchor.getTime() - anchor.getTime()) / MS_PER_DAY) : 0;
 
     const companyNamesByKey = await fetchCompanyNamesByKey(pool);
     const dailyCriticalNumber = await computeDailyCriticalNumber(pool, anchor, filters, companyNamesByKey);
@@ -75,6 +94,9 @@ criticalNumberRouter.get('/overview', async (req, res, next) => {
 
     res.json({
       anchorDate: anchor.toISOString().slice(0, 10),
+      isFallback,
+      fallbackDaysAgo,
+      requestedDate: requestedAnchor.toISOString().slice(0, 10),
       dailyCriticalNumber,
       dailyCounter,
       monthlyCounter,

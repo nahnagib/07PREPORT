@@ -16,15 +16,6 @@ import { runPipeline } from '../services/pythonRunner';
  * process that receives the "Cancel" click is a different OS process from this one. */
 const activeControllers = new Map<string, AbortController>();
 
-/** Lines forwarded into BullMQ's persisted job log (queue.getJobLogs) for the Control Center's
- * live log tail. A 30-60 minute run produces thousands of per-batch fetch lines -- only stage
- * boundaries, summaries, and errors are kept so the stored log stays small and useful. */
-function isSignificantLine(line: string): boolean {
-  return /Pipeline step|ERROR|Total duration|Final run summary|Output row counts|SQL output complete|Odoo extraction \w+ rows=|CRM validation summary|Rows (loaded|transformed|exported)/i.test(
-    line,
-  );
-}
-
 const STAGE_PATTERN = /Pipeline step (\S+) (started|completed|failed)/;
 
 async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
@@ -37,6 +28,16 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
 
   const controller = new AbortController();
   activeControllers.set(String(job.id), controller);
+
+  // Set right before/with each of the three finishRun() calls below (cancelled / exitCode!==0 /
+  // success) -- lets the catch block tell "a terminal status was already recorded" apart from "we
+  // never got that far", without which it would either double-finish a row that already has a good
+  // error message (clobbering result.stderrTail with a generic rethrown message) or -- the actual
+  // bug this closes -- leave a row stuck at markRunStarted's 'running' forever whenever
+  // runPipeline() itself throws before ever producing a result (ETL API unreachable, DNS failure,
+  // a stale 409 from a stuck Flask-side tracker). That gap is exactly how run ids 59/60 ended up
+  // wedged at status='running' with hasActiveEtlRun() blocking every subsequent run.
+  let recordedTerminalStatus = false;
 
   try {
     const result = await runPipeline({
@@ -51,9 +52,12 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
         if (stageMatch) {
           void job.updateProgress({ stage: stageMatch[1], stageStatus: stageMatch[2] });
         }
-        if (isSignificantLine(line)) {
-          void job.log(line);
-        }
+        // Every line is persisted (previously only stage boundaries/summaries/errors survived an
+        // isSignificantLine() filter) -- the Control Center's log view is meant to match the full
+        // detail of a raw run_pipeline.py log file (per-batch fetch progress, warnings, validation
+        // tables, tracebacks included), not a curated summary. See docs/commands.md for the raw log
+        // file's format this now mirrors.
+        void job.log(line);
       },
     });
 
@@ -64,6 +68,7 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
       outputMode !== 'excel' ? await correlateLatestPipelineRunLog(pipelineRunLogBaseline) : null;
 
     if (result.cancelled) {
+      recordedTerminalStatus = true;
       await finishRun(runId, {
         status: 'cancelled',
         exitCode: result.exitCode,
@@ -78,6 +83,7 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
     }
 
     if (result.exitCode !== 0) {
+      recordedTerminalStatus = true;
       await finishRun(runId, {
         status: 'failed',
         exitCode: result.exitCode,
@@ -95,6 +101,7 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
       );
     }
 
+    recordedTerminalStatus = true;
     await finishRun(runId, {
       status: 'success',
       exitCode: result.exitCode,
@@ -103,6 +110,21 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
       dbLoadedCount: correlated?.dbLoadedCount,
       qaIssuesCount: correlated?.qaIssuesCount,
     });
+  } catch (err) {
+    // Only reached for (a) the exitCode!==0 rethrow above, which already recorded its own more
+    // detailed finishRun and just needs to keep propagating for BullMQ's retry/backoff, or (b)
+    // something that escaped all three of the explicit finishRun calls above entirely -- most
+    // notably runPipeline() itself throwing before ever producing a result. Guarding on
+    // recordedTerminalStatus is what tells those apart: without it, case (a) would get finished
+    // twice, clobbering result.stderrTail with this generic message.
+    if (!recordedTerminalStatus) {
+      await finishRun(runId, {
+        status: 'failed',
+        exitCode: null,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+    }
+    throw err;
   } finally {
     activeControllers.delete(String(job.id));
   }

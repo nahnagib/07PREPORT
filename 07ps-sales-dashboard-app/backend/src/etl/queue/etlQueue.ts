@@ -30,9 +30,60 @@ export function getEtlQueue(): Queue {
     // An unhandled 'error' event on a Node EventEmitter is fatal (crashes the process) -- without
     // this listener, Redis being unreachable (e.g. not started yet in local dev) would take down
     // the whole API process, not just the ETL scheduling feature.
-    queue.on('error', (err) => etlLogger.error('ETL queue connection error', { error: err.message }));
+    // err.code/err.stack are logged alongside err.message -- some ioredis/BullMQ error types carry
+    // no useful message, and message-only logging then looks like a silently-swallowed error.
+    queue.on('error', (err) =>
+      etlLogger.error('ETL queue connection error', { error: err.message, code: (err as NodeJS.ErrnoException).code, stack: err.stack }),
+    );
   }
   return queue;
+}
+
+/** BullMQ's underlying ioredis connection retries forever with no effective per-command cap
+ * (tested: neither a bounded `maxRetriesPerRequest` nor the default retry strategy makes a
+ * command reject on its own), so `queue.add()` against an unreachable Redis never resolves *or*
+ * rejects -- it just hangs. Left unguarded, that leaves the caller's tracking row (created by
+ * `createQueuedRun` before this is called) stuck in 'queued' forever, since the code that marks
+ * it 'failed' below never runs. This timeout is purely an application-level escape hatch around
+ * that one call; it doesn't touch the Queue's own (intentionally unbounded) reconnect behavior,
+ * so the connection still recovers on its own once Redis comes back for the *next* enqueue.
+ */
+const ENQUEUE_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms (queue unreachable)`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
+const WORKER_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Is there actually an `etl:worker` process (etl/commands/worker.ts) connected and consuming this
+ * queue right now? Redis being reachable and a job being enqueued don't imply this -- the worker
+ * is a separate long-running process from the API server (see worker.ts's header), started
+ * separately, and nothing before this restarted it or noticed it was gone. If it's crashed, never
+ * deployed, or still starting up, jobs queue in Redis exactly as if everything were fine and just
+ * sit there: `hasActiveEtlRun()` only checks the DB row's status, not whether anything will ever
+ * pick the job up, so a run can go "Queued" and never progress with no error anywhere -- the
+ * "queued 34 minutes, 0 log lines" failure mode this closes off. `getWorkers()` is BullMQ's own
+ * CLIENT LIST-backed API for "which worker processes are currently connected to this queue" and
+ * is the only source of truth for this that isn't guessing from job state.
+ */
+export async function hasActiveWorker(): Promise<boolean> {
+  try {
+    const workers = await withTimeout(getEtlQueue().getWorkers(), WORKER_PROBE_TIMEOUT_MS, 'getWorkers()');
+    return workers.length > 0;
+  } catch (err) {
+    etlLogger.error('ETL worker liveness check failed; assuming no worker is available', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
 }
 
 export interface EtlJobData {
@@ -111,13 +162,17 @@ export async function enqueuePipelineRun(input: EnqueuePipelineRunInput) {
   };
 
   try {
-    const job = await getEtlQueue().add(input.label, data, {
-      jobId,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 30_000 },
-      removeOnComplete: { count: 100 },
-      removeOnFail: { count: 200 },
-    });
+    const job = await withTimeout(
+      getEtlQueue().add(input.label, data, {
+        jobId,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: { count: 100 },
+        removeOnFail: { count: 200 },
+      }),
+      ENQUEUE_TIMEOUT_MS,
+      'ETL queue add()',
+    );
     return { job, runId };
   } catch (err) {
     // Without this, a BullMQ/Redis failure here (e.g. Redis unreachable) would leave the row

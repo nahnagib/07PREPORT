@@ -12,6 +12,7 @@ import {
   Brush,
 } from 'recharts';
 import type { SemanticStatus } from './KpiTile';
+import { exportSvgAsImage } from '../chartExport';
 
 export interface BreakdownChartRow {
   id: string;
@@ -81,79 +82,7 @@ export function BreakdownChart({
   };
 
   const handleExportImage = () => {
-    const container = containerRef.current;
-    if (!container) return;
-    const svg = container.querySelector('svg');
-    if (!svg) return;
-    try {
-      const clone = svg.cloneNode(true) as SVGSVGElement;
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-
-      // Resolve CSS variables to inline styles so they're preserved in the export
-      const root = document.documentElement;
-      const styles = getComputedStyle(root);
-      const colorMap: Record<string, string> = {
-        '--ps-color-success': styles.getPropertyValue('--ps-color-success').trim() || '#10b981',
-        '--ps-color-watch': styles.getPropertyValue('--ps-color-watch').trim() || '#f59e0b',
-        '--ps-color-alert': styles.getPropertyValue('--ps-color-alert').trim() || '#ef4444',
-        '--ps-color-neutral-text': styles.getPropertyValue('--ps-color-neutral-text').trim() || '#6b7280',
-        '--ps-color-border': styles.getPropertyValue('--ps-color-border').trim() || '#e5e7eb',
-        '--ps-color-muted-text': styles.getPropertyValue('--ps-color-muted-text').trim() || '#9ca3af',
-        '--ps-color-text': styles.getPropertyValue('--ps-color-text').trim() || '#111827',
-        '--ps-neutral-granite': styles.getPropertyValue('--ps-neutral-granite').trim() || '#9ca3af',
-      };
-
-      // Apply inline fill styles to all elements that reference CSS variables
-      clone.querySelectorAll('[fill]').forEach((el) => {
-        const fill = el.getAttribute('fill');
-        if (fill && fill.includes('var(')) {
-          const varName = fill.match(/var\((--[^)]+)\)/)?.[1];
-          if (varName && colorMap[varName]) {
-            el.setAttribute('fill', colorMap[varName]);
-          }
-        }
-      });
-      clone.querySelectorAll('[stroke]').forEach((el) => {
-        const stroke = el.getAttribute('stroke');
-        if (stroke && stroke.includes('var(')) {
-          const varName = stroke.match(/var\((--[^)]+)\)/)?.[1];
-          if (varName && colorMap[varName]) {
-            el.setAttribute('stroke', colorMap[varName]);
-          }
-        }
-      });
-
-      const bg = window.getComputedStyle(document.body).getPropertyValue('background-color') || '#ffffff';
-      const serialized = new XMLSerializer().serializeToString(clone);
-      const svgBlob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(svgBlob);
-      const img = new Image();
-      img.onload = () => {
-        const width = svg.clientWidth || 800;
-        const heightPx = svg.clientHeight || 400;
-        const canvas = document.createElement('canvas');
-        canvas.width = width * 2;
-        canvas.height = heightPx * 2;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.scale(2, 2);
-        ctx.fillStyle = bg || '#ffffff';
-        ctx.fillRect(0, 0, width, heightPx);
-        ctx.drawImage(img, 0, 0, width, heightPx);
-        URL.revokeObjectURL(url);
-        canvas.toBlob((blob) => {
-          if (!blob) return;
-          const link = document.createElement('a');
-          link.href = URL.createObjectURL(blob);
-          link.download = `${(title ?? 'breakdown-chart').replace(/\s+/g, '-').toLowerCase()}.png`;
-          link.click();
-          setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-        });
-      };
-      img.src = url;
-    } catch {
-      // Export is a convenience action -- fail silently rather than surfacing a console-only error.
-    }
+    exportSvgAsImage(containerRef.current, (title ?? 'breakdown-chart').replace(/\s+/g, '-').toLowerCase());
   };
 
   const chartHeight = height ?? Math.max(260, rows.length * 46);

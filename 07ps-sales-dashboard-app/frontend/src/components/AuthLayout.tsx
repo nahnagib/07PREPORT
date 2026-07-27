@@ -3,10 +3,11 @@ import React from 'react';
 import Image from 'next/image';
 import { Card } from '@07ps/ui';
 import { useTheme } from './ThemeProvider';
+import { BASE_PATH } from '../lib/basePath';
 
 const bmhMark = {
-  light: '/logos/bmh/bmh-mark-dark.png',
-  dark: '/logos/bmh/bmh-mark-light.png',
+  light: `${BASE_PATH}/logos/bmh/bmh-mark-dark.png`,
+  dark: `${BASE_PATH}/logos/bmh/bmh-mark-light.png`,
 };
 
 /** Shared centered-card scaffold for every unauthenticated auth screen (login, forgot/reset

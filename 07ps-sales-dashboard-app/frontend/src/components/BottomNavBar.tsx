@@ -55,7 +55,7 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
               gap: 3,
               padding: '2px 6px 6px',
               borderBottom: isActive ? '2px solid var(--ps-color-gold)' : '2px solid transparent',
-              color: isActive ? '#ffffff' : 'var(--ps-color-muted-text)',
+              color: isActive ? 'var(--ps-color-text)' : 'var(--ps-color-muted-text)',
               opacity: href ? 1 : 0.55,
             }}
           >
@@ -95,7 +95,7 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
               gap: 3,
               padding: '2px 6px 6px',
               borderBottom: active === 'Admin' ? '2px solid var(--ps-color-gold)' : '2px solid transparent',
-              color: active === 'Admin' ? '#ffffff' : 'var(--ps-color-muted-text)',
+              color: active === 'Admin' ? 'var(--ps-color-text)' : 'var(--ps-color-muted-text)',
             }}
           >
             <ADMIN_NAV_ITEM.icon size={18} />

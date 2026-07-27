@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Button, Card, ConfirmDialog, DataTable, EmptyState, ErrorState, LoadingSkeleton, type Column } from '@07ps/ui';
 import { AdminLayout } from '../../../components/AdminLayout';
+import { EtlLogPanel } from '../../../components/EtlLogPanel';
 import { useAuth } from '../../../lib/AuthProvider';
 import {
   adminApi,
@@ -125,9 +126,12 @@ function formatElapsed(ms: number | null): string {
   return formatDuration(Math.floor(ms / 1000));
 }
 
+/** Pinned to Libya time (IANA identifier, not a hardcoded offset) -- these are ETL run times for a
+ * Libya-based operation, so they must read the same regardless of the viewer's own browser/OS
+ * timezone. See frontend/src/lib/format.ts's formatTimestamp for the same rule applied elsewhere. */
 function formatDateTime(value: string | null): string {
   if (!value) return '—';
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString(undefined, { timeZone: 'Africa/Tripoli' });
 }
 
 function formatCount(value: number | null): string {
@@ -198,6 +202,8 @@ function EtlControlBody() {
   const [cancelling, setCancelling] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const [confirmForceReset, setConfirmForceReset] = useState(false);
+  const [forceResetting, setForceResetting] = useState(false);
 
   const loadStatus = useCallback(() => {
     if (!token) return;
@@ -224,6 +230,12 @@ function EtlControlBody() {
 
   const run = status?.run ?? null;
   const isActive = run?.status === 'queued' || run?.status === 'running';
+  // Defaults true while the first status load is still in flight, so the panel doesn't flash a
+  // false "queue unavailable" warning before it actually knows.
+  const queueAvailable = status?.queueAvailable ?? true;
+  // Same reasoning as queueAvailable's default -- and only meaningful once the queue itself is up,
+  // so a queue outage shows its own banner instead of stacking a second, redundant one.
+  const workerAvailable = status?.workerAvailable ?? true;
   const displayStatus: DisplayStatus = run ? run.status : 'idle';
 
   async function handleConfirmStart() {
@@ -256,6 +268,22 @@ function EtlControlBody() {
     }
   }
 
+  async function handleForceReset() {
+    if (!token) return;
+    setForceResetting(true);
+    setActionError(null);
+    try {
+      await adminApi.forceResetEtlLock(token);
+      setConfirmForceReset(false);
+      loadStatus();
+      setHistoryRefreshKey((k) => k + 1);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'Failed to reset the ETL lock.');
+    } finally {
+      setForceResetting(false);
+    }
+  }
+
   const activeModeConfig = confirmMode ? MANUAL_MODES.find((m) => m.mode === confirmMode) : null;
 
   return (
@@ -267,6 +295,54 @@ function EtlControlBody() {
 
       {/* --- Current Status --- */}
       <Card>
+        {!queueAvailable && (
+          <div
+            style={{
+              padding: 10,
+              marginBottom: 16,
+              borderRadius: 8,
+              background: 'var(--ps-color-alert-bg, #fdecea)',
+              border: '1px solid var(--ps-color-alert-border, #f0868b)',
+              color: 'var(--ps-color-alert)',
+              fontSize: 13,
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <span>
+              Queue unavailable &mdash; the ETL queue backend (Redis) can&apos;t be reached right now. New runs can&apos;t be
+              started until connectivity is restored.
+            </span>
+          </div>
+        )}
+        {queueAvailable && !workerAvailable && (
+          <div
+            style={{
+              padding: 10,
+              marginBottom: 16,
+              borderRadius: 8,
+              background: 'var(--ps-color-alert-bg, #fdecea)',
+              border: '1px solid var(--ps-color-alert-border, #f0868b)',
+              color: 'var(--ps-color-alert)',
+              fontSize: 13,
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <span>
+              No ETL worker is currently connected &mdash; the queue is up, but nothing is consuming it. A new run would
+              sit &quot;Queued&quot; indefinitely. Check that the etl:worker process is running before starting a run.
+            </span>
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--ps-color-muted-text)', marginBottom: 6 }}>
@@ -288,32 +364,34 @@ function EtlControlBody() {
               <Button variant="danger" onClick={handleCancel} disabled={cancelling}>
                 {cancelling ? 'Cancelling...' : 'Cancel Run'}
               </Button>
+              <Button variant="secondary" onClick={() => setConfirmForceReset(true)}>
+                Force Reset ETL Lock
+              </Button>
             </div>
           )}
         </div>
+        <p style={{ fontSize: 11.5, color: 'var(--ps-color-muted-text)', margin: '6px 0 0' }}>
+          Cancel Run stops an in-progress job; use Force Reset ETL Lock instead if a run is stuck (e.g. still
+          &quot;Queued&quot; with no progress -- Cancel has no effect until a worker has actually picked it up).
+        </p>
 
-        {isActive && status && status.recentLog.length > 0 && (
-          <div
-            style={{
-              marginTop: 16,
-              padding: 12,
-              borderRadius: 8,
-              background: 'var(--ps-color-muted-bg)',
-              border: '1px solid var(--ps-color-border)',
-              maxHeight: 220,
-              overflowY: 'auto',
-              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-              fontSize: 12,
-              color: 'var(--ps-color-text)',
-              whiteSpace: 'pre-wrap',
-            }}
-          >
-            {status.recentLog.map((line, i) => (
-              <div key={i}>{line}</div>
-            ))}
+        {isActive && run && token && (
+          <div style={{ marginTop: 16 }}>
+            <EtlLogPanel token={token} runId={run.id} live />
           </div>
         )}
       </Card>
+
+      <ConfirmDialog
+        open={confirmForceReset}
+        title="Force Reset ETL Lock?"
+        message="This marks every currently queued/running ETL run as Failed, freeing up the lock so a new run can start. Only do this if you've confirmed the queue is genuinely stuck (e.g. unreachable), not just a run that's legitimately still in progress. This is logged with your name and the time."
+        confirmLabel="Force Reset"
+        confirmVariant="danger"
+        busy={forceResetting}
+        onConfirm={handleForceReset}
+        onCancel={() => setConfirmForceReset(false)}
+      />
 
       {/* --- Last Run Info + Next Scheduled Run --- */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--ps-space-4, 24px)' }}>
@@ -355,21 +433,53 @@ function EtlControlBody() {
         <p style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', margin: '0 0 16px' }}>
           Job type: <strong>Odoo Sales &amp; CRM Sync</strong>
         </p>
-        {isActive && (
+        {!queueAvailable ? (
           <div
             style={{
               padding: 10,
               marginBottom: 16,
               borderRadius: 8,
-              background: 'var(--ps-color-watch-bg)',
-              border: '1px solid var(--ps-color-watch-border)',
-              color: 'var(--ps-color-watch)',
+              background: 'var(--ps-color-alert-bg, #fdecea)',
+              border: '1px solid var(--ps-color-alert-border, #f0868b)',
+              color: 'var(--ps-color-alert)',
               fontSize: 13,
               fontWeight: 600,
             }}
           >
-            An ETL process is already running.
+            Queue unavailable &mdash; cannot start a new run until the queue backend is reachable again.
           </div>
+        ) : !workerAvailable ? (
+          <div
+            style={{
+              padding: 10,
+              marginBottom: 16,
+              borderRadius: 8,
+              background: 'var(--ps-color-alert-bg, #fdecea)',
+              border: '1px solid var(--ps-color-alert-border, #f0868b)',
+              color: 'var(--ps-color-alert)',
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+          >
+            No ETL worker is connected &mdash; cannot start a new run until the etl:worker process is back up.
+          </div>
+        ) : (
+          isActive && (
+            <div
+              style={{
+                padding: 10,
+                marginBottom: 16,
+                borderRadius: 8,
+                background: 'var(--ps-color-watch-bg)',
+                border: '1px solid var(--ps-color-watch-border)',
+                color: 'var(--ps-color-watch)',
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              An ETL process is already running.
+            </div>
+          )
         )}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
           {MANUAL_MODES.map((m) => (
@@ -386,7 +496,11 @@ function EtlControlBody() {
             >
               <strong style={{ fontSize: 14 }}>{m.label}</strong>
               <p style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', margin: 0, flex: 1 }}>{m.description}</p>
-              <Button variant={m.variant ?? 'secondary'} disabled={isActive} onClick={() => setConfirmMode(m.mode)}>
+              <Button
+                variant={m.variant ?? 'secondary'}
+                disabled={isActive || !queueAvailable || !workerAvailable}
+                onClick={() => setConfirmMode(m.mode)}
+              >
                 Run
               </Button>
             </div>
@@ -479,6 +593,7 @@ function RunHistorySection({ token, refreshKey }: { token: string | null; refres
   const [toDate, setToDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedRun, setSelectedRun] = useState<EtlJobRun | null>(null);
   const pageSize = 25;
 
   const load = useCallback(() => {
@@ -525,7 +640,7 @@ function RunHistorySection({ token, refreshKey }: { token: string | null; refres
       <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>Run History</h3>
       <p style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', margin: '0 0 16px' }}>
         Every scheduled and manually-triggered run (including from the CLI) appears here. Runs started with{' '}
-        <code>--sync</code> from a terminal bypass the queue and are not tracked here.
+        <code>--sync</code> from a terminal bypass the queue and are not tracked here. Click a row to view its log.
       </p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16, alignItems: 'flex-end' }}>
@@ -576,7 +691,24 @@ function RunHistorySection({ token, refreshKey }: { token: string | null; refres
         <EmptyState message="No ETL runs match these filters." />
       ) : (
         <>
-          <DataTable columns={columns} rows={rows} getRowId={(r) => String(r.id)} />
+          <DataTable columns={columns} rows={rows} getRowId={(r) => String(r.id)} onRowClick={setSelectedRun} />
+          {selectedRun && token && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)' }}>
+                  Log for run #{selectedRun.id} &middot; {MODE_LABEL[selectedRun.mode] ?? selectedRun.mode} &middot;{' '}
+                  {formatDateTime(selectedRun.queued_at)}
+                </span>
+                <button
+                  onClick={() => setSelectedRun(null)}
+                  style={{ border: 'none', background: 'none', color: 'var(--ps-color-muted-text)', cursor: 'pointer', fontSize: 12.5 }}
+                >
+                  Close ✕
+                </button>
+              </div>
+              <EtlLogPanel token={token} runId={selectedRun.id} live={false} />
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}

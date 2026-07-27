@@ -36,11 +36,17 @@ export function formatVariance(pct: number | null): string | undefined {
   return `${sign}${(pct * 100).toFixed(2)}%`;
 }
 
+/** Every timestamp in this app describes a Libya business event (an Odoo order, an ETL run) --
+ * it must always read as Libya time, regardless of which timezone the viewer's own browser/OS
+ * happens to be set to. `timeZone: 'Africa/Tripoli'` is an IANA identifier, so this stays correct
+ * even if Libya's offset rules ever change; it's resolved by the runtime's own tz database, not
+ * hardcoded here. */
 export function formatTimestamp(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleString(undefined, {
+    timeZone: 'Africa/Tripoli',
     year: 'numeric',
     month: 'short',
     day: 'numeric',

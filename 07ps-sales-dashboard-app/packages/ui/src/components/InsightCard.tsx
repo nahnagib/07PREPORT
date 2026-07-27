@@ -1,4 +1,5 @@
 import React from 'react';
+import { Info } from 'lucide-react';
 import { Card } from './Card';
 import type { SemanticStatus } from './KpiTile';
 
@@ -10,6 +11,9 @@ export interface InsightCardProps {
   value: string;
   /** Optional secondary line under the value, e.g. "66% of tracked metrics". */
   caption?: string;
+  /** Short explanatory text shown via an info icon next to the label -- same native-tooltip
+   * pattern as ChartPanel's `infoText`. */
+  infoText?: string;
   /** Drives the icon-badge color and (unless accentBg=false) a soft tinted card background, using
    * the redesign pass's --ps-color-success-bg/-watch-bg/-alert-bg tokens (see tokens.css) rather
    * than a heavy saturated fill. */
@@ -53,6 +57,7 @@ export function InsightCard({
   label,
   value,
   caption,
+  infoText,
   status = 'neutral',
   accentBg = true,
   loading,
@@ -105,7 +110,18 @@ export function InsightCard({
       >
         {value}
       </div>
-      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ps-color-muted-text)', marginTop: 3 }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{label}</span>
+        {infoText && (
+          <span
+            title={infoText}
+            aria-label={infoText}
+            style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}
+          >
+            <Info size={12} />
+          </span>
+        )}
+      </div>
       {caption && (
         <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>{caption}</div>
       )}

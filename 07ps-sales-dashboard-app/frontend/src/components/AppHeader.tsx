@@ -1,10 +1,11 @@
 'use client';
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { RefreshCw, Download, Bell, User, LogOut } from 'lucide-react';
+import { RefreshCw, Bell, User, LogOut, Sun, Moon } from 'lucide-react';
 import { DateInput } from '@07ps/ui';
 import { useBusinessUnit } from './BusinessUnitProvider';
 import { useTheme } from './ThemeProvider';
+import { BASE_PATH } from '../lib/basePath';
 
 /**
  * Logo asset note: the source BMH files ("BenMussa Black.png" / "BenMussa White.png") are named
@@ -14,18 +15,18 @@ import { useTheme } from './ThemeProvider';
  * bmh-mark-light = light ink for dark backgrounds) so this component never has to guess.
  */
 const bmhMark = {
-  light: '/logos/bmh/bmh-mark-dark.png',
-  dark: '/logos/bmh/bmh-mark-light.png',
+  light: `${BASE_PATH}/logos/bmh/bmh-mark-dark.png`,
+  dark: `${BASE_PATH}/logos/bmh/bmh-mark-light.png`,
 };
 
 const buLogo: Record<string, { light: string; dark: string; alt: string } | null> = {
   all: null,
   majaal: {
-    light: '/logos/majaal/majaal-mark-dark.png',
-    dark: '/logos/majaal/majaal-mark-light.jpg',
+    light: `${BASE_PATH}/logos/majaal/majaal-mark-dark.png`,
+    dark: `${BASE_PATH}/logos/majaal/majaal-mark-light.jpg`,
     alt: 'Majaal',
   },
-  tika: { light: '/logos/tika/tikalogo.png', dark: '/logos/tika/tikalogo.png', alt: 'Tika' },
+  tika: { light: `${BASE_PATH}/logos/tika/tikalogo.png`, dark: `${BASE_PATH}/logos/tika/tikalogo.png`, alt: 'Tika' },
 };
 
 export interface AppHeaderProps {
@@ -38,7 +39,6 @@ export interface AppHeaderProps {
   /** Signed-in user's display label (role or full name), shown in the profile chip. */
   roleLabel?: string;
   notificationCount?: number;
-  onExport?: () => void;
   /** Present once a real session exists -- renders a Log out action next to the profile chip. */
   onLogout?: () => void;
   /** Tachometer rebuild (dark-theme pass): hides the inline date selector when a FilterBar below
@@ -70,7 +70,6 @@ export function AppHeader({
   lastRefreshTime,
   roleLabel,
   notificationCount = 0,
-  onExport,
   onLogout,
   showDateInput = true,
 }: AppHeaderProps) {
@@ -145,25 +144,24 @@ export function AppHeader({
           </div>
         )}
 
-        <div className="hidden md:flex items-center gap-2" aria-label="Partner logos" style={{ opacity: 0.7 }}>
-          <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>ATHENS</span>
-          <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>SMG</span>
-        </div>
-
         <button
           onClick={toggle}
-          aria-label="Toggle dark mode"
+          aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
           style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             border: '1px solid var(--ps-color-border)',
             borderRadius: 6,
-            padding: '4px 10px',
+            width: 30,
+            height: 30,
             background: 'transparent',
             color: 'var(--ps-color-text)',
-            fontSize: 12,
             cursor: 'pointer',
           }}
         >
-          {theme === 'light' ? 'Dark mode' : 'Light mode'}
+          {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
         </button>
 
         <button
@@ -217,28 +215,6 @@ export function AppHeader({
               {notificationCount > 9 ? '9+' : notificationCount}
             </span>
           )}
-        </button>
-
-        <button
-          onClick={onExport}
-          aria-label="Export"
-          title="Export (PDF / Excel / CSV)"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '6px 14px',
-            borderRadius: 999,
-            border: 'none',
-            background: 'var(--ps-color-nav-rail-bg)',
-            color: '#ffffff',
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          <Download size={14} />
-          Export
         </button>
 
         <span aria-hidden style={{ color: 'var(--ps-color-border)' }}>

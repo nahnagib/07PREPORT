@@ -78,3 +78,56 @@ describe('resolveScopedFilters -- default "All filters" baseline', () => {
     });
   });
 });
+
+describe('resolveScopedFilters -- role data scope (role_data_scope rules)', () => {
+  it('stays synchronous: req.scopedFilters is set and next() called before the function returns', () => {
+    // Guards the design constraint the whole feature depends on: attachUserContext (which loads
+    // dataScopeRules from the DB) runs before this, so resolveScopedFilters itself must remain a
+    // plain sync function -- no `await resolveScopedFilters(...)` anywhere in the route chain.
+    const req = makeReq(
+      {},
+      { roleCode: 'BI00_EXECUTIVE', dataScopeRules: [{ dimension: 'segmentKeys', value: '1' }] },
+    );
+    const res = makeRes();
+    const next = vi.fn();
+
+    resolveScopedFilters(req, res, next);
+
+    expect(next).toHaveBeenCalledWith();
+    expect(req.scopedFilters?.segmentKeys).toEqual([1]);
+  });
+
+  it('a dimension not requested is forced to the role-scoped set (B2B Director case)', () => {
+    const req = makeReq(
+      { companyKeys: '1' },
+      { roleCode: 'BI01_DIRECTOR_B2B', dataScopeRules: [{ dimension: 'segmentKeys', value: '1' }] },
+    );
+    const res = makeRes();
+    const next = vi.fn();
+
+    resolveScopedFilters(req, res, next);
+
+    expect(req.scopedFilters).toEqual({
+      companyKeys: [1],
+      segmentKeys: [1],
+      channelKeys: [],
+      salesTeamKeys: [],
+      salespersonKeys: [],
+    });
+  });
+
+  it('requesting a segment outside the role scope is rejected with 403, not silently overridden', () => {
+    const req = makeReq(
+      { segmentKeys: '2' },
+      { roleCode: 'BI01_DIRECTOR_B2B', dataScopeRules: [{ dimension: 'segmentKeys', value: '1' }] },
+    );
+    const res = makeRes();
+    const next = vi.fn();
+
+    resolveScopedFilters(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+    expect(req.scopedFilters).toBeUndefined();
+  });
+});

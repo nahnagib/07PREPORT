@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DataScopeError,
   EMPTY_FILTERS,
   SalespersonLockError,
+  applyRoleDataScope,
   applySalespersonLock,
   buildWhereClause,
   dateOnlyUTC,
@@ -14,6 +16,7 @@ import {
   prorateMtdTarget,
   prorateYtdTarget,
   ytdWindow,
+  type DataScopeRule,
   type Filters,
   type UserContext,
 } from '../filters';
@@ -175,5 +178,52 @@ describe('Salesperson RBAC lock', () => {
     const filters: Filters = {};
     const user: UserContext = { roleCode: 'SALESPERSON', salespersonKey: null };
     expect(() => applySalespersonLock(filters, user)).toThrow(SalespersonLockError);
+  });
+});
+
+describe('Role data scope (generic role_data_scope rules)', () => {
+  it('no rules leaves filters unchanged', () => {
+    const filters: Filters = { companyKeys: [1], segmentKeys: [2] };
+    expect(applyRoleDataScope(filters, [])).toEqual(filters);
+  });
+
+  it('a restricted dimension not requested is forced to the allowed set (B2B Director case)', () => {
+    const filters: Filters = { companyKeys: [1] };
+    const rules: DataScopeRule[] = [{ dimension: 'segmentKeys', value: '1' }];
+    const scoped = applyRoleDataScope(filters, rules);
+    expect(scoped).toEqual({ companyKeys: [1], segmentKeys: [1] });
+  });
+
+  it('a requested value inside the allowed set is intersected, not force-replaced', () => {
+    const filters: Filters = { segmentKeys: [1] };
+    const rules: DataScopeRule[] = [
+      { dimension: 'segmentKeys', value: '1' },
+      { dimension: 'segmentKeys', value: '2' },
+    ];
+    const scoped = applyRoleDataScope(filters, rules);
+    expect(scoped.segmentKeys).toEqual([1]);
+  });
+
+  it('a requested value outside the allowed set throws DataScopeError', () => {
+    const filters: Filters = { segmentKeys: [2] };
+    const rules: DataScopeRule[] = [{ dimension: 'segmentKeys', value: '1' }];
+    expect(() => applyRoleDataScope(filters, rules)).toThrow(DataScopeError);
+  });
+
+  it('a multi-value dimension (Branch IN [X, Y]) with nothing requested is forced to both', () => {
+    const filters: Filters = {};
+    const rules: DataScopeRule[] = [
+      { dimension: 'salesTeamKeys', value: 'TK-X' },
+      { dimension: 'salesTeamKeys', value: 'TK-Y' },
+    ];
+    const scoped = applyRoleDataScope(filters, rules);
+    expect(scoped.salesTeamKeys).toEqual(['TK-X', 'TK-Y']);
+  });
+
+  it('dimensions with no rules pass through untouched alongside a restricted one', () => {
+    const filters: Filters = { companyKeys: [1], channelKeys: [3] };
+    const rules: DataScopeRule[] = [{ dimension: 'segmentKeys', value: '1' }];
+    const scoped = applyRoleDataScope(filters, rules);
+    expect(scoped).toEqual({ companyKeys: [1], channelKeys: [3], segmentKeys: [1] });
   });
 });

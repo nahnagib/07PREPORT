@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
+import { exportSvgAsImage } from '../chartExport';
 
 export interface DonutSegment {
   id: string;
@@ -57,44 +58,7 @@ export function DonutChart({
   const total = segments.reduce((sum, s) => sum + s.value, 0);
 
   const handleExportImage = () => {
-    const container = containerRef.current;
-    if (!container) return;
-    const svg = container.querySelector('svg');
-    if (!svg) return;
-    try {
-      const clone = svg.cloneNode(true) as SVGSVGElement;
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      const bg = window.getComputedStyle(document.body).getPropertyValue('background-color') || '#ffffff';
-      const serialized = new XMLSerializer().serializeToString(clone);
-      const svgBlob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(svgBlob);
-      const img = new Image();
-      img.onload = () => {
-        const width = svg.clientWidth || 400;
-        const heightPx = svg.clientHeight || 280;
-        const canvas = document.createElement('canvas');
-        canvas.width = width * 2;
-        canvas.height = heightPx * 2;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.scale(2, 2);
-        ctx.fillStyle = bg || '#ffffff';
-        ctx.fillRect(0, 0, width, heightPx);
-        ctx.drawImage(img, 0, 0, width, heightPx);
-        URL.revokeObjectURL(url);
-        canvas.toBlob((blob) => {
-          if (!blob) return;
-          const link = document.createElement('a');
-          link.href = URL.createObjectURL(blob);
-          link.download = `${(title ?? 'donut-chart').replace(/\s+/g, '-').toLowerCase()}.png`;
-          link.click();
-          setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-        });
-      };
-      img.src = url;
-    } catch {
-      // Export is a convenience action -- fail silently rather than surfacing a console-only error.
-    }
+    exportSvgAsImage(containerRef.current, (title ?? 'donut-chart').replace(/\s+/g, '-').toLowerCase());
   };
 
   if (segments.length === 0 || total === 0) {

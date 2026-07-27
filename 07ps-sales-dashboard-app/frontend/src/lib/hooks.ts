@@ -34,6 +34,7 @@ import {
   ActivityMomentumOverview,
   PipelineHealthOverview,
   PipelineTrendOverview,
+  fetchOverviewReportPdf,
 } from './api';
 
 interface AsyncState<T> {
@@ -457,4 +458,46 @@ export function useTachometerTrend(
   }, [load]);
 
   return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
+/**
+ * Export Overview Report (backend/src/routes/reports.ts) -- an on-demand PDF snapshot of the
+ * CURRENT situation for whatever filters are on screen. Action-triggered, not auto-fetch-on-mount
+ * like every other hook above, so it follows Pipeline Health's existing `handleDownloadPdf`
+ * local-state convention (isExporting boolean + label swap) instead of the authGate/AsyncState
+ * template -- generalized into one shared hook so the same button works on all 8 pages without
+ * duplicating this 8 times. Unlike that existing precedent, this surfaces failures via `error`
+ * rather than silently swallowing them.
+ */
+export function useExportOverviewReport(token: string | null, anchorDate: string, filters: TachometerFilters) {
+  const [isExporting, setIsExporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const exportReport = useCallback(async () => {
+    if (!token) {
+      setError('You must be signed in to export a report.');
+      return;
+    }
+    setIsExporting(true);
+    setError(null);
+    try {
+      const blob = await fetchOverviewReportPdf(token, anchorDate, filters);
+      const url = URL.createObjectURL(blob);
+      const generatedTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Promotion_Overview_${anchorDate}_${generatedTimestamp}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to export the report.');
+    } finally {
+      setIsExporting(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, anchorDate, JSON.stringify(filters)]);
+
+  return { isExporting, error, exportReport };
 }

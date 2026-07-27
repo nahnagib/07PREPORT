@@ -95,7 +95,7 @@ class Settings:
             inventory_validation_file=os.getenv("INVENTORY_VALIDATION_FILE", "Inventory_Validation.xlsx"),
             unmapped_products_file=os.getenv("UNMAPPED_PRODUCTS_FILE", "Unmapped_Products.xlsx"),
             batch_size=int(os.getenv("BATCH_SIZE", "500")),
-            timezone=os.getenv("TIMEZONE", "Asia/Riyadh"),
+            timezone=os.getenv("TIMEZONE", "Africa/Tripoli"),
             assume_utc_for_naive=_bool_env("ASSUME_UTC_FOR_NAIVE", False),
             crm_inactive_days_threshold=int(os.getenv("CRM_INACTIVE_DAYS_THRESHOLD", "30")),
             crm_recent_activity_days=int(os.getenv("CRM_RECENT_ACTIVITY_DAYS", "14")),

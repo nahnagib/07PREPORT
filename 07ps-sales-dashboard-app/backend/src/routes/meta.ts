@@ -22,6 +22,7 @@ metaRouter.get('/refresh-status', async (_req, res, next) => {
     const status = await fetchRefreshStatus(pool);
     res.json({
       lastUpdate: status.lastUpdate,
+      lastOrderCreated: status.lastOrderCreated,
       lastRefreshTime: status.lastRefreshTime,
       isStale: status.isStale,
       isInverted: status.isInverted,

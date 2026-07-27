@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // vitest hoists vi.mock(...) calls above this import automatically, so runPipeline still picks up
 // the mocked axios/etlConfig/etlLogger declared below.
-import { runPipeline } from '../pythonRunner';
+import { resetEtlApi, runPipeline } from '../pythonRunner';
 
 const hoisted = vi.hoisted(() => ({
   postMock: vi.fn(),
@@ -139,5 +139,41 @@ describe('pythonRunner.runPipeline', () => {
     hoisted.getMock.mockRejectedValue(new Error('network blip'));
 
     await expect(runPipeline({ loadMode: 'incremental' })).rejects.toThrow(/Lost contact/);
+  });
+});
+
+describe('pythonRunner.resetEtlApi', () => {
+  beforeEach(() => {
+    hoisted.postMock.mockReset();
+    hoisted.getMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('posts to /etl/reset and returns the resetJobId', async () => {
+    hoisted.postMock.mockResolvedValueOnce({ data: { ok: true, resetJobId: 'stuck-job' } });
+
+    const result = await resetEtlApi();
+
+    expect(hoisted.postMock).toHaveBeenCalledWith('/etl/reset');
+    expect(result).toEqual({ ok: true, resetJobId: 'stuck-job' });
+  });
+
+  it('returns resetJobId: null when nothing was active on the tracker', async () => {
+    hoisted.postMock.mockResolvedValueOnce({ data: { ok: true, resetJobId: null } });
+
+    const result = await resetEtlApi();
+
+    expect(result?.resetJobId).toBeNull();
+  });
+
+  it('returns null (never throws) when the ETL API is unreachable', async () => {
+    hoisted.postMock.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+
+    const result = await resetEtlApi();
+
+    expect(result).toBeNull();
   });
 });

@@ -1,32 +1,18 @@
 'use client';
-import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Info } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowLeft, FileDown, Info } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useBusinessUnit } from '../../../../components/BusinessUnitProvider';
-import { Card, ChartPanel, DonutChart, TrendChart, DataTable, Select, Button, InsightCard, LoadingSkeleton, ErrorState, type Column } from '@07ps/ui';
+import { useFilterState } from '../../../../components/FilterProvider';
+import { Card, ChartPanel, DonutChart, TrendChart, DataTable, Select, Button, InsightCard, LoadingSkeleton, ErrorState, exportRowsAsPdf, type Column } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useActivityMomentumOverview, useFilterOptions, useRefreshStatus } from '../../../../lib/hooks';
-import type { ActivityOpportunityRow, TachometerFilters } from '../../../../lib/api';
+import { useActivityMomentumOverview, useFilterOptions, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import type { ActivityOpportunityRow, LostReasonSlice, NewOpportunitiesMonthPoint, OpportunityActivityCounts, ActivityRates } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVariance } from '../../../../lib/format';
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
-/** Jan 1 of the current year -- every page's date-range filter defaults to YTD (Jan 1 -> today) on
- * load, not a single-day "today" range; anchorDate itself still drives the actual YTD/MTD window
- * math (ytdWindow/mtdWindow in filters.ts), this only fixes the visible From/To fields to match. */
-const ytdStartIso = () => `${new Date().getUTCFullYear()}-01-01`;
-
-const EMPTY_FILTERS: TachometerFilters = {
-  companyKeys: [],
-  segmentKeys: [],
-  channelKeys: [],
-  salesTeamKeys: [],
-  salespersonKeys: [],
-};
 
 const CATEGORY_PALETTE = [
   'var(--ps-color-accent)',
@@ -44,14 +30,118 @@ function formatCountOrDash(v: number | null | undefined): string {
   return v != null ? v.toLocaleString() : '—';
 }
 
+// ---------------------------------------------------------------------------
+// PDF summary-table export -- same exportRowsAsPdf mechanism as Revenue Trend, applied to every
+// visual on this page. The Opportunity Activities table explicitly includes #Won/#Lost, and Total
+// Lost Opportunity by Reason is Lost-specific, so Won/Lost data is covered even though the on-screen
+// New Opportunities trend (like elsewhere on this page) excludes Lost by design.
+// ---------------------------------------------------------------------------
+
+interface MetricValueRow extends Record<string, unknown> {
+  id: string;
+  metric: string;
+  value: string;
+}
+const metricValueColumns: Column<MetricValueRow>[] = [
+  { key: 'metric', header: 'Metric' },
+  { key: 'value', header: 'Value', align: 'right' },
+];
+function toCountsTableRows(counts?: OpportunityActivityCounts): MetricValueRow[] {
+  if (!counts) return [];
+  return [
+    { id: 'ytd', metric: '#YTD', value: formatCountOrDash(counts.totalYtd) },
+    { id: 'won', metric: '#Won', value: formatCountOrDash(counts.won) },
+    { id: 'withoutActivity', metric: '#W/O Activity', value: formatCountOrDash(counts.withoutActivity) },
+    { id: 'active', metric: '#Active', value: formatCountOrDash(counts.active) },
+    { id: 'lost', metric: '#Lost', value: formatCountOrDash(counts.lost) },
+    { id: 'withoutNextStep', metric: '#W/O Next Step', value: formatCountOrDash(counts.withoutNextStep) },
+  ];
+}
+function toRatesTableRows(rates?: ActivityRates): MetricValueRow[] {
+  if (!rates) return [];
+  return [
+    { id: 'inactive', metric: 'Inactive Deals Ratio', value: rates.inactiveDealsRatio != null ? formatVariance(rates.inactiveDealsRatio) ?? '—' : '—' },
+    { id: 'lost', metric: 'Lost Deals Ratio', value: rates.lostDealsRatio != null ? formatVariance(rates.lostDealsRatio) ?? '—' : '—' },
+  ];
+}
+
+interface ReasonTableRow extends Record<string, unknown> {
+  id: string;
+  reason: string;
+  count: number;
+}
+const reasonTableColumns: Column<ReasonTableRow>[] = [
+  { key: 'reason', header: 'Reason' },
+  { key: 'count', header: 'Count', align: 'right' },
+];
+function toReasonTableRows(rows?: LostReasonSlice[]): ReasonTableRow[] {
+  return (rows ?? []).map((r) => ({ id: r.reason, reason: r.reason, count: r.count }));
+}
+
+interface NewOppTableRow extends Record<string, unknown> {
+  id: string;
+  month: string;
+  countYtd: number;
+  countLytd: number;
+}
+const newOppTableColumns: Column<NewOppTableRow>[] = [
+  { key: 'month', header: 'Month' },
+  { key: 'countYtd', header: '#YTD', align: 'right' },
+  { key: 'countLytd', header: '#LYTD', align: 'right' },
+];
+function toNewOppTableRows(rows?: NewOpportunitiesMonthPoint[]): NewOppTableRow[] {
+  return (rows ?? []).map((p) => ({ id: p.label, month: p.label, countYtd: p.countYtd, countLytd: p.countLytd }));
+}
+
+/** Resolves each column's formatted string, falling back to the render function -- same convention
+ * as pipeline-health/page.tsx's PDF exports, copied per-page rather than shared. */
+function rowsToPdfRows<T extends Record<string, unknown>>(columns: Column<T>[], rows: T[]): string[][] {
+  return rows.map((row) => columns.map((c) => (c.render ? String(c.render(row)) : String(row[c.key] ?? ''))));
+}
+
+/** Same visual shell as Revenue Trend's ExportPdfButton -- copied per-page rather than shared, same
+ * convention that component already established. */
+function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => void; downloading: boolean; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={downloading || disabled}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: 11,
+        fontWeight: 600,
+        color: 'var(--ps-color-muted-text)',
+        background: 'var(--ps-color-muted-bg)',
+        border: '1px solid var(--ps-color-border)',
+        borderRadius: 6,
+        padding: '4px 10px',
+        cursor: downloading || disabled ? 'not-allowed' : 'pointer',
+        opacity: downloading || disabled ? 0.5 : 1,
+      }}
+    >
+      <FileDown size={13} />
+      {downloading ? 'Exporting...' : 'Export as PDF'}
+    </button>
+  );
+}
+
+/** Lost-exclusion policy: the default view (no filter selected -- a general, not lost-specific
+ * listing) and the 'ytd' filter (mirrors the #YTD tile, which now excludes Lost too, see
+ * activityMomentum.ts's module header) both exclude Lost. 'active'/'won'/'inactive'/
+ * 'withoutNextStep' need no extra check: 'active'/'inactive'/'withoutNextStep' already imply
+ * IsOpen, which is mutually exclusive with Lost by construction, and 'won' can't overlap Lost
+ * either. 'lost' is the lost-specific filter and stays exactly as-is. */
 function matchesActivityFilter(o: ActivityOpportunityRow, key: ActivityFilterKey | null): boolean {
-  if (!key) return true;
+  if (!key) return !o.isLost;
   if (key === 'active') return o.isActive;
   if (key === 'lost') return o.isLost;
   if (key === 'won') return o.isWon;
   if (key === 'inactive') return o.isInactive === true;
   if (key === 'withoutNextStep') return o.isOpen && o.isWithoutNextStep === true;
-  return o.isYtd;
+  return o.isYtd && !o.isLost;
 }
 
 interface OpportunityTableRow extends Record<string, unknown> {
@@ -103,17 +193,17 @@ function toTableRow(o: ActivityOpportunityRow): OpportunityTableRow {
  * always return zero rows.
  */
 export default function ActivityMomentumPage() {
-  const { setBusinessUnit } = useBusinessUnit();
-  const { user, isSalesperson, salespersonKey, token, error: authError, retryAuth, logout } = useAuth();
-  const [anchorDate, setAnchorDate] = useState(todayIso());
-  const [dateFromDate, setDateFromDate] = useState(ytdStartIso());
-  const [dateToDate, setDateToDate] = useState(todayIso());
-  const [filters, setFilters] = useState<TachometerFilters>(EMPTY_FILTERS);
-
-  const effectiveFilters = useMemo<TachometerFilters>(
-    () => (isSalesperson ? { ...EMPTY_FILTERS, salespersonKeys: salespersonKey != null ? [salespersonKey] : [] } : filters),
-    [isSalesperson, salespersonKey, filters],
-  );
+  const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
+  const {
+    effectiveFilters,
+    anchorDate,
+    dateFromDate,
+    dateToDate,
+    onFiltersChange,
+    onAnchorDateChange,
+    onDateRangeChange,
+    resetFilters,
+  } = useFilterState();
 
   const [view, setView] = useState<'summary' | 'details'>('summary');
   const [activityFilter, setActivityFilter] = useState<ActivityFilterKey | null>(null);
@@ -121,28 +211,25 @@ export default function ActivityMomentumPage() {
   const filterOptions = useFilterOptions(token, authError, retryAuth);
   const overview = useActivityMomentumOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
+  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
+  const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
-  function handleFiltersChange(next: TachometerFilters) {
-    setFilters(next);
-    const companyKeys = next.companyKeys ?? [];
-    if (companyKeys.length === 1 && companyKeys[0] === 1) setBusinessUnit('majaal');
-    else if (companyKeys.length === 1 && companyKeys[0] === 2) setBusinessUnit('tika');
-    else setBusinessUnit('all');
-  }
-
-  function handleDateRangeChange(from: string, to: string) {
-    setDateFromDate(from);
-    setDateToDate(to);
-    setAnchorDate(from);
+  async function handleDownloadTablePdf<T extends Record<string, unknown>>(key: string, title: string, columns: Column<T>[], rows: T[]) {
+    setDownloadingPdf(key);
+    try {
+      await exportRowsAsPdf({
+        title,
+        columns: columns.map((c) => ({ header: c.header, align: c.align })),
+        rows: rowsToPdfRows(columns, rows),
+        fileName: title.toLowerCase().replace(/\s+/g, '-'),
+      });
+    } finally {
+      setDownloadingPdf(null);
+    }
   }
 
   function handleReset() {
-    setFilters(EMPTY_FILTERS);
-    setBusinessUnit('all');
-    const today = todayIso();
-    setAnchorDate(today);
-    setDateFromDate(ytdStartIso());
-    setDateToDate(today);
+    resetFilters();
     setView('summary');
     setActivityFilter(null);
   }
@@ -190,13 +277,19 @@ export default function ActivityMomentumPage() {
     expectedRevenue: filteredOpportunities.reduce((sum, r) => sum + r.expectedRevenue, 0),
   };
 
+  // Counts + Rates combined into one "Opportunity Activities" export (both are Zone A KPI figures,
+  // including #Won/#Lost) rather than a separate button for the two floating Rate InsightCards.
+  const countsAndRatesTableRows = [...toCountsTableRows(data?.counts), ...toRatesTableRows(data?.rates)];
+  const reasonTableRows = toReasonTableRows(data?.lostByReason);
+  const newOppTableRows = toNewOppTableRows(data?.newOpportunitiesByMonth);
+
   return (
     <PermissionGuard pageKey="activity_momentum">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle="Sales Executive Dashboard"
+          pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           onRefresh={handleRefresh}
           lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
@@ -206,20 +299,24 @@ export default function ActivityMomentumPage() {
 
         <FilterBar
           filters={effectiveFilters}
-          onChange={handleFiltersChange}
+          onChange={onFiltersChange}
           onReset={handleReset}
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
           customerGroups={filterOptions.customerGroups.data ?? []}
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
           isSalesperson={isSalesperson}
-          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
+          lastUpdate={refreshStatus.data?.lastUpdate ?? null}
+          lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
-          onDateRangeChange={handleDateRangeChange}
+          onDateRangeChange={onDateRangeChange}
+          onExportReport={exportReport.exportReport}
+          isExporting={exportReport.isExporting}
+          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
@@ -240,12 +337,15 @@ export default function ActivityMomentumPage() {
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
                   onTitleClick={() => setView('details')}
+                  downloading={downloadingPdf === 'counts'}
+                  onDownloadPdf={() => handleDownloadTablePdf('counts', 'Opportunity Activities', metricValueColumns, countsAndRatesTableRows)}
                 />
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr', gridTemplateRows: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
                   <InsightCard
                     label="Inactive Deals Ratio"
                     value={data?.rates.inactiveDealsRatio != null ? formatVariance(data.rates.inactiveDealsRatio) ?? '—' : '—'}
+                    infoText="Measures the percentage of open opportunities that are considered at risk due to inactivity. Formula: (Inactive Opportunities + Opportunities Without Next Step) ÷ Open Opportunities YTD."
                     status={data?.rates.inactiveDealsRatio != null && data.rates.inactiveDealsRatio > 0.5 ? 'alert' : 'neutral'}
                     accentBg={data?.rates.inactiveDealsRatio != null && data.rates.inactiveDealsRatio > 0.5}
                     loading={overview.loading}
@@ -262,7 +362,22 @@ export default function ActivityMomentumPage() {
 
               {/* Zone B -- Total Lost Opportunity by Reason (left) + New Opportunities (right) */}
               <div className="ps-invoices-zone">
-                <ChartPanel title="Total Lost Opportunity by Reason" style={{ minHeight: 360 }}>
+                <ChartPanel<ReasonTableRow>
+                  title="Total Lost Opportunity by Reason"
+                  style={{ minHeight: 360 }}
+                  tableColumns={overview.error ? undefined : reasonTableColumns}
+                  tableRows={overview.error ? undefined : reasonTableRows}
+                  getRowId={(row) => row.id}
+                  headerActions={
+                    !overview.error && (
+                      <ExportPdfButton
+                        downloading={downloadingPdf === 'reason'}
+                        disabled={reasonTableRows.length === 0}
+                        onClick={() => handleDownloadTablePdf('reason', 'Total Lost Opportunity by Reason', reasonTableColumns, reasonTableRows)}
+                      />
+                    )
+                  }
+                >
                   {overview.loading ? (
                     <LoadingSkeleton variant="chart" />
                   ) : overview.error ? (
@@ -272,7 +387,22 @@ export default function ActivityMomentumPage() {
                   )}
                 </ChartPanel>
 
-                <ChartPanel title="New Opportunities" style={{ minHeight: 360 }}>
+                <ChartPanel<NewOppTableRow>
+                  title="New Opportunities"
+                  style={{ minHeight: 360 }}
+                  tableColumns={overview.error ? undefined : newOppTableColumns}
+                  tableRows={overview.error ? undefined : newOppTableRows}
+                  getRowId={(row) => row.id}
+                  headerActions={
+                    !overview.error && (
+                      <ExportPdfButton
+                        downloading={downloadingPdf === 'newOpp'}
+                        disabled={newOppTableRows.length === 0}
+                        onClick={() => handleDownloadTablePdf('newOpp', 'New Opportunities', newOppTableColumns, newOppTableRows)}
+                      />
+                    )
+                  }
+                >
                   {overview.loading ? (
                     <LoadingSkeleton variant="chart" />
                   ) : overview.error ? (
@@ -299,6 +429,8 @@ export default function ActivityMomentumPage() {
                   loading={overview.loading}
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
+                  downloading={downloadingPdf === 'counts'}
+                  onDownloadPdf={() => handleDownloadTablePdf('counts', 'Opportunity Activities', metricValueColumns, countsAndRatesTableRows)}
                 />
 
                 <Card>
@@ -315,7 +447,26 @@ export default function ActivityMomentumPage() {
                 </Card>
               </div>
 
-              <ChartPanel title="Opportunity Table" style={{ minHeight: 480 }}>
+              <ChartPanel
+                title="Opportunity Table"
+                style={{ minHeight: 480 }}
+                headerActions={
+                  !overview.error && (
+                    <ExportPdfButton
+                      downloading={downloadingPdf === 'table'}
+                      disabled={filteredOpportunities.length === 0}
+                      onClick={() =>
+                        handleDownloadTablePdf(
+                          'table',
+                          `Opportunity Table${activityFilter ? ` — ${activityFilter}` : ''}`,
+                          opportunityColumns,
+                          filteredOpportunities,
+                        )
+                      }
+                    />
+                  )
+                }
+              >
                 {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
                 ) : overview.error ? (
@@ -337,6 +488,7 @@ export default function ActivityMomentumPage() {
 
         <RefreshFooter
           lastUpdate={formatTimestamp(refreshStatus.data?.lastUpdate ?? null)}
+          lastOrderCreated={formatTimestamp(refreshStatus.data?.lastOrderCreated ?? null)}
           lastRefreshTime={formatTimestamp(refreshStatus.data?.lastRefreshTime ?? null)}
         />
 
@@ -359,6 +511,8 @@ function ActivityCountsPanel({
   error,
   onRetry,
   onTitleClick,
+  downloading,
+  onDownloadPdf,
 }: {
   counts?: { totalYtd: number; won: number; withoutActivity: number | null; active: number; lost: number; withoutNextStep: number | null };
   activityAvailable: boolean;
@@ -366,6 +520,8 @@ function ActivityCountsPanel({
   error?: string;
   onRetry: () => void;
   onTitleClick?: () => void;
+  downloading?: boolean;
+  onDownloadPdf?: () => void;
 }) {
   if (loading) {
     return (
@@ -386,53 +542,66 @@ function ActivityCountsPanel({
   const tiles = [
     { label: '#YTD', value: counts?.totalYtd },
     { label: '#Won', value: counts?.won },
-    { label: '#W/O Activity', value: counts?.withoutActivity },
+    {
+      label: '#W/O Activity',
+      value: counts?.withoutActivity,
+      infoText: 'Open opportunities that have exceeded the inactivity threshold without sufficient sales activity.',
+    },
     { label: '#Active', value: counts?.active },
     { label: '#Lost', value: counts?.lost },
-    { label: '#W/O Next Step', value: counts?.withoutNextStep },
+    {
+      label: '#W/O Next Step',
+      value: counts?.withoutNextStep,
+      infoText: 'Open opportunities that have an existing quotation but no meaningful follow-up action for an extended period.',
+    },
   ];
 
   return (
     <Card style={{ width: '100%', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 'var(--ps-space-2, 8px)' }}>
-        {onTitleClick ? (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 'var(--ps-space-2, 8px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          {onTitleClick ? (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={onTitleClick}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onTitleClick();
+                }
+              }}
+              title="View Opportunity Activities details"
+              style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)', cursor: 'pointer' }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = 'var(--ps-color-accent)';
+                e.currentTarget.style.textDecoration = 'underline';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--ps-color-text)';
+                e.currentTarget.style.textDecoration = 'none';
+              }}
+            >
+              Opportunity Activities
+            </span>
+          ) : (
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Opportunity Activities</span>
+          )}
           <span
-            role="button"
-            tabIndex={0}
-            onClick={onTitleClick}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onTitleClick();
-              }
-            }}
-            title="View Opportunity Activities details"
-            style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)', cursor: 'pointer' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = 'var(--ps-color-accent)';
-              e.currentTarget.style.textDecoration = 'underline';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = 'var(--ps-color-text)';
-              e.currentTarget.style.textDecoration = 'none';
-            }}
+            title={
+              activityAvailable
+                ? 'YTD opportunity counts by activity status.'
+                : 'YTD opportunity counts by activity status. #W/O Activity and #W/O Next Step need a data refresh not yet run -- they show — until then.'
+            }
+            aria-label="Opportunity Activities definitions"
+            style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}
           >
-            Opportunity Activities
+            <Info size={13} />
           </span>
-        ) : (
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Opportunity Activities</span>
+        </div>
+        {onDownloadPdf && (
+          <ExportPdfButton downloading={!!downloading} disabled={!counts} onClick={onDownloadPdf} />
         )}
-        <span
-          title={
-            activityAvailable
-              ? 'YTD opportunity counts by activity status.'
-              : 'YTD opportunity counts by activity status. #W/O Activity and #W/O Next Step need a data refresh not yet run -- they show — until then.'
-          }
-          aria-label="Opportunity Activities definitions"
-          style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help' }}
-        >
-          <Info size={13} />
-        </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         {tiles.map((t) => (
@@ -440,7 +609,18 @@ function ActivityCountsPanel({
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
               {formatCountOrDash(t.value)}
             </div>
-            <div style={{ fontSize: 10, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{t.label}</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, marginTop: 2 }}>
+              <span style={{ fontSize: 10, color: 'var(--ps-color-muted-text)' }}>{t.label}</span>
+              {'infoText' in t && t.infoText && (
+                <span
+                  title={t.infoText}
+                  aria-label={t.infoText}
+                  style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help' }}
+                >
+                  <Info size={10} />
+                </span>
+              )}
+            </div>
           </div>
         ))}
       </div>

@@ -283,6 +283,12 @@ export async function computeYtdCard(
 export interface AspCard {
   actualAsp: number | null;
   targetAsp: number | null;
+  /** Same-period-last-year ASP (LYTD ASP for the YTD card, LMTD ASP for the MTD card) -- derived
+   * the same way actualAsp is (value/volume, JS-side to avoid a SQL divide-by-zero), from a
+   * last-year ValueVolume fetch the caller already needs to make (see routes/tachometer.ts). Powers
+   * the "Variance vs LY" reference-metric tile, matching the Value/Volume gauge cards' own
+   * lastYearSamePeriod-based variance. */
+  lastYearAsp: number | null;
   status: TargetStatus;
 }
 
@@ -292,12 +298,17 @@ export interface AspCard {
  * target_revenue/target_volume ratio, i.e. the target's implied ASP, not the actual period's
  * volume mixed with the target's revenue.
  */
-export function computeAspCard(valueVolume: ValueVolume, targetFigures: TargetFigures): AspCard {
+export function computeAspCard(
+  valueVolume: ValueVolume,
+  targetFigures: TargetFigures,
+  lastYearValueVolume?: ValueVolume,
+): AspCard {
   const actualAsp = asp(valueVolume);
   const targetAsp = targetFigures.targetVolume ? targetFigures.targetRevenue / targetFigures.targetVolume : null;
   return {
     actualAsp,
     targetAsp,
+    lastYearAsp: lastYearValueVolume ? asp(lastYearValueVolume) : null,
     status: classifyVsTarget(actualAsp, targetAsp),
   };
 }

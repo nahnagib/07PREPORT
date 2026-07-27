@@ -1,12 +1,12 @@
 'use client';
-import React, { useMemo, useState } from 'react';
-import { ArrowLeft, Info, Layers } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowLeft, FileDown, Info, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useBusinessUnit } from '../../../../components/BusinessUnitProvider';
+import { useFilterState } from '../../../../components/FilterProvider';
 import {
   Card,
   ChartPanel,
@@ -19,33 +19,20 @@ import {
   InsightCard,
   LoadingSkeleton,
   ErrorState,
+  exportRowsAsPdf,
+  type Column,
   type DataGridColumn,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useCustomerGrowthOverview, useRefreshStatus } from '../../../../lib/hooks';
+import { useFilterOptions, useCustomerGrowthOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
 import type {
   CustomerGrowthPeriodCounts,
   CustomerGrowthScope,
   CustomerStatusCounts,
   CustomerStatusLabel,
-  TachometerFilters,
 } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVariance } from '../../../../lib/format';
-
-const todayIso = () => new Date().toISOString().slice(0, 10);
-/** Jan 1 of the current year -- every page's date-range filter defaults to YTD (Jan 1 -> today) on
- * load, not a single-day "today" range; anchorDate itself still drives the actual YTD/MTD window
- * math (ytdWindow/mtdWindow in filters.ts), this only fixes the visible From/To fields to match. */
-const ytdStartIso = () => `${new Date().getUTCFullYear()}-01-01`;
-
-const EMPTY_FILTERS: TachometerFilters = {
-  companyKeys: [],
-  segmentKeys: [],
-  channelKeys: [],
-  salesTeamKeys: [],
-  salespersonKeys: [],
-};
 
 const CATEGORY_LETTERS = new Set(['A', 'B', 'C', 'D']);
 
@@ -70,6 +57,114 @@ function formatPlainNumber(value: number): string {
 
 function formatCountOrDash(value: number | undefined): string {
   return value != null ? value.toLocaleString() : '—';
+}
+
+// ---------------------------------------------------------------------------
+// PDF summary-table export -- same exportRowsAsPdf mechanism as Revenue Trend, applied to every
+// summary-view visual (the Details view's Customers Table already has its own DataGrid-built-in PDF
+// export, untouched here).
+// ---------------------------------------------------------------------------
+
+interface PeriodCountTableRow extends Record<string, unknown> {
+  id: string;
+  period: string;
+  value: string;
+}
+const periodCountTableColumns: Column<PeriodCountTableRow>[] = [
+  { key: 'period', header: 'Period' },
+  { key: 'value', header: 'Value', align: 'right' },
+];
+function toPeriodCountTableRows(counts?: CustomerGrowthPeriodCounts): PeriodCountTableRow[] {
+  if (!counts) return [];
+  return [
+    { id: 'lytd', period: 'LYTD', value: formatCountOrDash(counts.lytd) },
+    { id: 'ytd', period: 'YTD', value: formatCountOrDash(counts.ytd) },
+    { id: 'lmtd', period: 'LMTD', value: formatCountOrDash(counts.lmtd) },
+    { id: 'mtd', period: 'MTD', value: formatCountOrDash(counts.mtd) },
+  ];
+}
+function toCustomerStatusTableRows(counts?: CustomerStatusCounts): PeriodCountTableRow[] {
+  if (!counts) return [];
+  return [
+    { id: 'activeRetained', period: 'Active Retained', value: formatCountOrDash(counts.activeRetained) },
+    { id: 'nonActive', period: 'Inactive / Non-Active', value: formatCountOrDash(counts.nonActive) },
+    { id: 'blocked', period: 'Blocked', value: formatCountOrDash(counts.blocked) },
+    { id: 'reactivated', period: 'Reactivated', value: formatCountOrDash(counts.reactivated) },
+  ];
+}
+
+interface TrendTableRow extends Record<string, unknown> {
+  id: string;
+  year: string;
+  totalSalesValue: string;
+  customerCount: number;
+}
+const trendTableColumns: Column<TrendTableRow>[] = [
+  { key: 'year', header: 'Year' },
+  { key: 'totalSalesValue', header: 'Total Sales Value', align: 'right' },
+  { key: 'customerCount', header: 'Customer Count', align: 'right' },
+];
+
+interface RateTableRow extends Record<string, unknown> {
+  id: string;
+  metric: string;
+  value: string;
+}
+const rateTableColumns: Column<RateTableRow>[] = [
+  { key: 'metric', header: 'Metric' },
+  { key: 'value', header: 'Value', align: 'right' },
+];
+
+interface ContributionTableRow extends Record<string, unknown> {
+  id: string;
+  label: string;
+  value: string;
+}
+const contributionTableColumns: Column<ContributionTableRow>[] = [
+  { key: 'label', header: 'Group / Customer' },
+  { key: 'value', header: 'Value', align: 'right' },
+];
+
+interface CategoryTableRow extends Record<string, unknown> {
+  id: string;
+  label: string;
+  salesLytm: string;
+  salesYtm: string;
+}
+const categoryTableColumns: Column<CategoryTableRow>[] = [
+  { key: 'label', header: 'Category / Customer' },
+  { key: 'salesLytm', header: 'Sales LYTD', align: 'right' },
+  { key: 'salesYtm', header: 'Sales YTD', align: 'right' },
+];
+
+/** Same visual shell as Revenue Trend's ExportPdfButton -- copied per-page rather than shared, same
+ * convention that component already established. */
+function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => void; downloading: boolean; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={downloading || disabled}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: 11,
+        fontWeight: 600,
+        color: 'var(--ps-color-muted-text)',
+        background: 'var(--ps-color-muted-bg)',
+        border: '1px solid var(--ps-color-border)',
+        borderRadius: 6,
+        padding: '4px 10px',
+        cursor: downloading || disabled ? 'not-allowed' : 'pointer',
+        opacity: downloading || disabled ? 0.5 : 1,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <FileDown size={13} />
+      {downloading ? 'Exporting...' : 'Export as PDF'}
+    </button>
+  );
 }
 
 /**
@@ -97,17 +192,17 @@ function formatCountOrDash(value: number | undefined): string {
  *      are mutually exclusive, same as Invoices Engine's drillMode/selectedYear split.
  */
 export default function CustomerGrowthPage() {
-  const { setBusinessUnit } = useBusinessUnit();
-  const { user, isSalesperson, salespersonKey, token, error: authError, retryAuth, logout } = useAuth();
-  const [anchorDate, setAnchorDate] = useState(todayIso());
-  const [dateFromDate, setDateFromDate] = useState(ytdStartIso());
-  const [dateToDate, setDateToDate] = useState(todayIso());
-  const [filters, setFilters] = useState<TachometerFilters>(EMPTY_FILTERS);
-
-  const effectiveFilters = useMemo<TachometerFilters>(
-    () => (isSalesperson ? { ...EMPTY_FILTERS, salespersonKeys: salespersonKey != null ? [salespersonKey] : [] } : filters),
-    [isSalesperson, salespersonKey, filters],
-  );
+  const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
+  const {
+    effectiveFilters,
+    anchorDate,
+    dateFromDate,
+    dateToDate,
+    onFiltersChange,
+    onAnchorDateChange,
+    onDateRangeChange,
+    resetFilters,
+  } = useFilterState();
 
   const [view, setView] = useState<'summary' | 'details'>('summary');
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
@@ -121,34 +216,37 @@ export default function CustomerGrowthPage() {
   const [categoryDrill, setCategoryDrill] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<CustomerStatusLabel | null>(null);
+  // Customer filter: unlike the other 5 FilterBar dimensions, this isn't backend-wired (no Customer
+  // dimension in the shared filter-options endpoint -- see FilterBar.tsx's fallback) -- it's built
+  // client-side from this page's own customersTable response and narrows the two per-customer-list
+  // visuals below (Customer Details table, Customers Contribution donut) rather than triggering a
+  // re-fetch. Page-local, not synced through FilterProvider, since no other page has this dimension.
+  const [selectedCustomerKeys, setSelectedCustomerKeys] = useState<string[]>([]);
 
   const scope: CustomerGrowthScope = { selectedYear, selectedCategory };
 
   const filterOptions = useFilterOptions(token, authError, retryAuth);
   const overview = useCustomerGrowthOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
+  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
+  const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
-  function handleFiltersChange(next: TachometerFilters) {
-    setFilters(next);
-    const companyKeys = next.companyKeys ?? [];
-    if (companyKeys.length === 1 && companyKeys[0] === 1) setBusinessUnit('majaal');
-    else if (companyKeys.length === 1 && companyKeys[0] === 2) setBusinessUnit('tika');
-    else setBusinessUnit('all');
-  }
-
-  function handleDateRangeChange(from: string, to: string) {
-    setDateFromDate(from);
-    setDateToDate(to);
-    setAnchorDate(from);
+  async function handleDownloadTablePdf<T extends Record<string, unknown>>(key: string, title: string, columns: Column<T>[], rows: T[]) {
+    setDownloadingPdf(key);
+    try {
+      await exportRowsAsPdf({
+        title,
+        columns: columns.map((c) => ({ header: c.header, align: c.align })),
+        rows: rows.map((row) => columns.map((c) => String(row[c.key] ?? ''))),
+        fileName: title.toLowerCase().replace(/\s+/g, '-'),
+      });
+    } finally {
+      setDownloadingPdf(null);
+    }
   }
 
   function handleReset() {
-    setFilters(EMPTY_FILTERS);
-    setBusinessUnit('all');
-    const today = todayIso();
-    setAnchorDate(today);
-    setDateFromDate(ytdStartIso());
-    setDateToDate(today);
+    resetFilters();
     setView('summary');
     setSelectedYear(null);
     setContributionDrill(null);
@@ -156,6 +254,7 @@ export default function CustomerGrowthPage() {
     setCategoryDrill(null);
     setSelectedCategory(null);
     setStatusFilter(null);
+    setSelectedCustomerKeys([]);
   }
 
   function handleRefresh() {
@@ -226,12 +325,24 @@ export default function CustomerGrowthPage() {
     customerCount: y.customerCount,
   }));
 
+  // Customer filter options: built from this page's own customer list (no shared Customer
+  // dimension exists -- see FilterBar's fallback), sorted for a stable, scannable dropdown.
+  const customerOptions = (data?.customersTable ?? [])
+    .map((r) => ({ value: String(r.customerKey), label: r.name }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const hasCustomerSelection = selectedCustomerKeys.length > 0;
+
   const contribution = data?.customersContribution;
-  const contributionCustomers = contribution?.customers ?? [];
+  const contributionCustomers = (contribution?.customers ?? []).filter(
+    (c) => !hasCustomerSelection || selectedCustomerKeys.includes(String(c.customerKey)),
+  );
   const top10 = contributionCustomers.slice(0, 10);
   const otherIndividual = contributionCustomers.slice(10);
   const top10Total = top10.reduce((sum, c) => sum + c.value, 0);
-  const otherTotal = otherIndividual.reduce((sum, c) => sum + c.value, 0) + (contribution?.remainderValue ?? 0);
+  // The remainder bucket (customers beyond what the backend's ranked list returns) has no
+  // per-customer breakdown to filter against, so it's only folded in when no Customer selection is
+  // active -- otherwise "Other Customers" would silently include customers outside the selection.
+  const otherTotal = otherIndividual.reduce((sum, c) => sum + c.value, 0) + (hasCustomerSelection ? 0 : contribution?.remainderValue ?? 0);
 
   const contributionSegments =
     contributionDrill === null
@@ -243,7 +354,7 @@ export default function CustomerGrowthPage() {
       ? top10.map((c) => ({ id: String(c.customerKey), label: c.name, value: c.value, color: 'var(--ps-color-accent)' }))
       : [
           ...otherIndividual.map((c) => ({ id: String(c.customerKey), label: c.name, value: c.value, color: 'var(--ps-color-last-year)' })),
-          ...(contribution && contribution.remainderCount > 0
+          ...(!hasCustomerSelection && contribution && contribution.remainderCount > 0
             ? [{ id: 'remainder', label: `+${contribution.remainderCount} more`, value: contribution.remainderValue, color: 'var(--ps-color-watch)' }]
             : []),
         ];
@@ -256,6 +367,7 @@ export default function CustomerGrowthPage() {
 
   const tableRows = (data?.customersTable ?? [])
     .filter((r) => !statusFilter || r.status === statusFilter)
+    .filter((r) => !hasCustomerSelection || selectedCustomerKeys.includes(String(r.customerKey)))
     .map((r) => ({
       customerKey: r.customerKey,
       name: r.name,
@@ -265,13 +377,44 @@ export default function CustomerGrowthPage() {
       groupClass: `${r.customerSegment ?? '—'} / ${r.customerClass ?? '—'}`,
     }));
 
+  const newCustomersTableRows = toPeriodCountTableRows(kpis?.newCustomers);
+  const totalCustomersTableRows = toPeriodCountTableRows(kpis?.totalCustomers);
+  const customerStatusTableRows = toCustomerStatusTableRows(kpis?.customerStatus);
+
+  const trendTableRows: TrendTableRow[] = trendPoints.map((p) => ({
+    id: p.label,
+    year: p.label,
+    totalSalesValue: formatCurrency(p.totalSalesValue),
+    customerCount: p.customerCount,
+  }));
+
+  const rateTableRows: RateTableRow[] = [
+    { id: 'acquisition', metric: 'Customer Acquisition', value: data?.rates.customerAcquisitionPct != null ? formatVariance(data.rates.customerAcquisitionPct) ?? '—' : '—' },
+    { id: 'growth', metric: 'Customer Growth', value: data?.rates.customerGrowthPct != null ? formatVariance(data.rates.customerGrowthPct) ?? '—' : '—' },
+    { id: 'retention', metric: 'Retention Rate', value: data?.rates.retentionRatePct != null ? formatVariance(data.rates.retentionRatePct) ?? '—' : '—' },
+    { id: 'churn', metric: 'Churn Rate', value: data?.rates.churnRatePct != null ? formatVariance(data.rates.churnRatePct) ?? '—' : '—' },
+  ];
+
+  const contributionTableRows: ContributionTableRow[] = contributionSegments.map((s) => ({
+    id: s.id,
+    label: s.label,
+    value: formatCurrency(s.value),
+  }));
+
+  const categoryTableRows: CategoryTableRow[] = categoryChartPoints.map((p, i) => ({
+    id: `${p.label}-${i}`,
+    label: p.label,
+    salesLytm: formatCurrency(p.salesLytm),
+    salesYtm: formatCurrency(p.salesYtm),
+  }));
+
   return (
     <PermissionGuard pageKey="customer_growth">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle="Sales Executive Dashboard"
+          pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           onRefresh={handleRefresh}
           lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
@@ -281,20 +424,27 @@ export default function CustomerGrowthPage() {
 
         <FilterBar
           filters={effectiveFilters}
-          onChange={handleFiltersChange}
+          onChange={onFiltersChange}
           onReset={handleReset}
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
           customerGroups={filterOptions.customerGroups.data ?? []}
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
           isSalesperson={isSalesperson}
-          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
+          lastUpdate={refreshStatus.data?.lastUpdate ?? null}
+          lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
-          onDateRangeChange={handleDateRangeChange}
+          onDateRangeChange={onDateRangeChange}
+          customerOptions={customerOptions}
+          customerValue={selectedCustomerKeys}
+          onCustomerChange={setSelectedCustomerKeys}
+          onExportReport={exportReport.exportReport}
+          isExporting={exportReport.isExporting}
+          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
@@ -314,6 +464,9 @@ export default function CustomerGrowthPage() {
                   loading={overview.loading}
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
+                  tableRows={newCustomersTableRows}
+                  downloading={downloadingPdf === 'newCustomers'}
+                  onDownloadPdf={() => handleDownloadTablePdf('newCustomers', 'New Customers', periodCountTableColumns, newCustomersTableRows)}
                 />
                 <CountMetricPanel
                   title="Total Customers"
@@ -321,6 +474,9 @@ export default function CustomerGrowthPage() {
                   loading={overview.loading}
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
+                  tableRows={totalCustomersTableRows}
+                  downloading={downloadingPdf === 'totalCustomers'}
+                  onDownloadPdf={() => handleDownloadTablePdf('totalCustomers', 'Total Customers', periodCountTableColumns, totalCustomersTableRows)}
                 />
                 <CustomerStatusPanel
                   counts={kpis?.customerStatus}
@@ -328,15 +484,29 @@ export default function CustomerGrowthPage() {
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
                   onTitleClick={() => setView('details')}
+                  downloading={downloadingPdf === 'customerStatus'}
+                  onDownloadPdf={() => handleDownloadTablePdf('customerStatus', 'Customer Status', periodCountTableColumns, customerStatusTableRows)}
                 />
               </div>
 
               {/* Zone B -- Customers Trend (left) + Rates (right) */}
               <div className="ps-invoices-zone">
-                <ChartPanel
+                <ChartPanel<TrendTableRow>
                   title="Customers Trend"
                   infoText="Total Sales Value and Customer Count by year. Click a year to set it as the page's active filter; click it again to clear."
                   style={{ minHeight: 380 }}
+                  tableColumns={overview.error ? undefined : trendTableColumns}
+                  tableRows={overview.error ? undefined : trendTableRows}
+                  getRowId={(row) => row.id}
+                  headerActions={
+                    !overview.error && (
+                      <ExportPdfButton
+                        downloading={downloadingPdf === 'trend'}
+                        disabled={trendTableRows.length === 0}
+                        onClick={() => handleDownloadTablePdf('trend', 'Customers Trend', trendTableColumns, trendTableRows)}
+                      />
+                    )
+                  }
                 >
                   {overview.loading ? (
                     <LoadingSkeleton variant="chart" />
@@ -362,44 +532,75 @@ export default function CustomerGrowthPage() {
                   )}
                 </ChartPanel>
 
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(2, 1fr)',
-                    gridTemplateRows: 'repeat(2, 1fr)',
-                    gap: 'var(--ps-space-3, 16px)',
-                  }}
-                >
-                  <RateCard
-                    label="Customer Acquisition"
-                    pct={data?.rates.customerAcquisitionPct ?? null}
-                    goodBadApplies
-                    loading={overview.loading}
-                  />
-                  <RateCard
-                    label="Customer Growth"
-                    pct={data?.rates.customerGrowthPct ?? null}
-                    goodBadApplies
-                    loading={overview.loading}
-                  />
-                  <RateCard
-                    label="Retention Rate"
-                    pct={data?.rates.retentionRatePct ?? null}
-                    goodBadApplies={false}
-                    loading={overview.loading}
-                  />
-                  <RateCard
-                    label="Churn Rate"
-                    pct={data?.rates.churnRatePct ?? null}
-                    goodBadApplies={false}
-                    loading={overview.loading}
-                  />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-2, 8px)' }}>
+                  {!overview.error && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <ExportPdfButton
+                        downloading={downloadingPdf === 'rates'}
+                        disabled={rateTableRows.length === 0}
+                        onClick={() => handleDownloadTablePdf('rates', 'Rates', rateTableColumns, rateTableRows)}
+                      />
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(2, 1fr)',
+                      gridTemplateRows: 'repeat(2, 1fr)',
+                      gap: 'var(--ps-space-3, 16px)',
+                      flex: 1,
+                    }}
+                  >
+                    <RateCard
+                      label="Customer Acquisition"
+                      pct={data?.rates.customerAcquisitionPct ?? null}
+                      goodBadApplies
+                      loading={overview.loading}
+                    />
+                    <RateCard
+                      label="Customer Growth"
+                      pct={data?.rates.customerGrowthPct ?? null}
+                      goodBadApplies
+                      loading={overview.loading}
+                    />
+                    <RateCard
+                      label="Retention Rate"
+                      pct={data?.rates.retentionRatePct ?? null}
+                      goodBadApplies={false}
+                      loading={overview.loading}
+                    />
+                    <RateCard
+                      label="Churn Rate"
+                      pct={data?.rates.churnRatePct ?? null}
+                      goodBadApplies={false}
+                      loading={overview.loading}
+                    />
+                  </div>
                 </div>
               </div>
 
               {/* Zone C -- Customers Contribution (left) + Customers Category Performance (right) */}
               <div className="ps-invoices-zone">
-                <ChartPanel title="Customers Contribution" infoText="Share of total sales value contributed by the Top 10 customers vs. every other customer, year-to-date." style={{ minHeight: 380 }}>
+                <ChartPanel<ContributionTableRow>
+                  title="Customers Contribution"
+                  infoText="Share of total sales value contributed by the Top 10 customers vs. every other customer, year-to-date."
+                  style={{ minHeight: 380 }}
+                  tableColumns={overview.error ? undefined : contributionTableColumns}
+                  tableRows={overview.error ? undefined : contributionTableRows}
+                  getRowId={(row) => row.id}
+                  headerActions={
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <DrillIndicator hint="Click Top 10 or Other to drill into that group's customers" />
+                      {!overview.error && (
+                        <ExportPdfButton
+                          downloading={downloadingPdf === 'contribution'}
+                          disabled={contributionTableRows.length === 0}
+                          onClick={() => handleDownloadTablePdf('contribution', 'Customers Contribution', contributionTableColumns, contributionTableRows)}
+                        />
+                      )}
+                    </div>
+                  }
+                >
                   {overview.loading ? (
                     <LoadingSkeleton variant="chart" />
                   ) : overview.error ? (
@@ -441,11 +642,25 @@ export default function CustomerGrowthPage() {
                   )}
                 </ChartPanel>
 
-                <ChartPanel
+                <ChartPanel<CategoryTableRow>
                   title="Customers Category Performance"
                   infoText="Sales LYTD vs. Sales YTD by Customer Category (A highest value - D lowest). Enable drill-down to click a category and see its individual customers, or leave it off to click a category and set it as the page's active filter."
                   style={{ minHeight: 380 }}
-                  headerActions={<DrillToggle active={categoryDrillMode} onToggle={toggleCategoryDrillMode} />}
+                  tableColumns={overview.error ? undefined : categoryTableColumns}
+                  tableRows={overview.error ? undefined : categoryTableRows}
+                  getRowId={(row) => row.id}
+                  headerActions={
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <DrillToggle active={categoryDrillMode} onToggle={toggleCategoryDrillMode} />
+                      {!overview.error && (
+                        <ExportPdfButton
+                          downloading={downloadingPdf === 'category'}
+                          disabled={categoryTableRows.length === 0}
+                          onClick={() => handleDownloadTablePdf('category', 'Customers Category Performance', categoryTableColumns, categoryTableRows)}
+                        />
+                      )}
+                    </div>
+                  }
                 >
                   {overview.loading ? (
                     <LoadingSkeleton variant="chart" />
@@ -510,6 +725,8 @@ export default function CustomerGrowthPage() {
                   loading={overview.loading}
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
+                  downloading={downloadingPdf === 'customerStatus'}
+                  onDownloadPdf={() => handleDownloadTablePdf('customerStatus', 'Customer Status', periodCountTableColumns, customerStatusTableRows)}
                 />
 
                 <Card>
@@ -536,6 +753,7 @@ export default function CustomerGrowthPage() {
 
         <RefreshFooter
           lastUpdate={formatTimestamp(refreshStatus.data?.lastUpdate ?? null)}
+          lastOrderCreated={formatTimestamp(refreshStatus.data?.lastOrderCreated ?? null)}
           lastRefreshTime={formatTimestamp(refreshStatus.data?.lastRefreshTime ?? null)}
         />
 
@@ -578,6 +796,9 @@ function CountMetricPanel({
   loading,
   error,
   onRetry,
+  tableRows,
+  downloading,
+  onDownloadPdf,
 }: {
   title: string;
   infoText?: string;
@@ -585,6 +806,9 @@ function CountMetricPanel({
   loading: boolean;
   error?: string;
   onRetry: () => void;
+  tableRows?: PeriodCountTableRow[];
+  downloading?: boolean;
+  onDownloadPdf?: () => void;
 }) {
   if (loading) {
     return (
@@ -611,12 +835,17 @@ function CountMetricPanel({
 
   return (
     <Card style={{ width: '100%', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 'var(--ps-space-2, 8px)' }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>
-        {infoText && (
-          <span title={infoText} aria-label={infoText} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help' }}>
-            <Info size={13} />
-          </span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 'var(--ps-space-2, 8px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>
+          {infoText && (
+            <span title={infoText} aria-label={infoText} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
+              <Info size={13} />
+            </span>
+          )}
+        </div>
+        {onDownloadPdf && (
+          <ExportPdfButton downloading={!!downloading} disabled={!tableRows || tableRows.length === 0} onClick={onDownloadPdf} />
         )}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -655,12 +884,16 @@ function CustomerStatusPanel({
   error,
   onRetry,
   onTitleClick,
+  downloading,
+  onDownloadPdf,
 }: {
   counts?: CustomerStatusCounts;
   loading: boolean;
   error?: string;
   onRetry: () => void;
   onTitleClick?: () => void;
+  downloading?: boolean;
+  onDownloadPdf?: () => void;
 }) {
   if (loading) {
     return (
@@ -687,37 +920,42 @@ function CustomerStatusPanel({
 
   return (
     <Card style={{ width: '100%', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 'var(--ps-space-2, 8px)' }}>
-        {onTitleClick ? (
-          <span
-            role="button"
-            tabIndex={0}
-            onClick={onTitleClick}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onTitleClick();
-              }
-            }}
-            title="View Customer Status details"
-            style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)', cursor: 'pointer' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = 'var(--ps-color-accent)';
-              e.currentTarget.style.textDecoration = 'underline';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = 'var(--ps-color-text)';
-              e.currentTarget.style.textDecoration = 'none';
-            }}
-          >
-            Customer Status
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 'var(--ps-space-2, 8px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          {onTitleClick ? (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={onTitleClick}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onTitleClick();
+                }
+              }}
+              title="View Customer Status details"
+              style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)', cursor: 'pointer' }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = 'var(--ps-color-accent)';
+                e.currentTarget.style.textDecoration = 'underline';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--ps-color-text)';
+                e.currentTarget.style.textDecoration = 'none';
+              }}
+            >
+              Customer Status
+            </span>
+          ) : (
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Customer Status</span>
+          )}
+          <span title={CUSTOMER_STATUS_INFO} aria-label={CUSTOMER_STATUS_INFO} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
+            <Info size={13} />
           </span>
-        ) : (
-          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Customer Status</span>
+        </div>
+        {onDownloadPdf && (
+          <ExportPdfButton downloading={!!downloading} disabled={!counts} onClick={onDownloadPdf} />
         )}
-        <span title={CUSTOMER_STATUS_INFO} aria-label={CUSTOMER_STATUS_INFO} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help' }}>
-          <Info size={13} />
-        </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         {tiles.map((t) => (
@@ -805,5 +1043,38 @@ function DrillToggle({ active, onToggle }: { active: boolean; onToggle: () => vo
       <Layers size={12} />
       Drill-down
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Customers Contribution donut's drill-down affordance -- same icon/label/sizing as DrillToggle
+// above, but a static indicator rather than a mode toggle: the donut drills straight into Top 10 /
+// Other on click already, with no separate enable-drill-mode step, so there's no on/off state for
+// a button to control. This just signals the chart is clickable, matching Sales Trend's pattern.
+// ---------------------------------------------------------------------------
+
+function DrillIndicator({ hint }: { hint: string }) {
+  return (
+    <span
+      title={hint}
+      aria-label={hint}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '4px 9px',
+        borderRadius: 6,
+        border: '1px solid var(--ps-color-border)',
+        background: 'var(--ps-color-muted-bg)',
+        color: 'var(--ps-color-muted-text)',
+        cursor: 'help',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <Layers size={12} />
+      Drill-down
+    </span>
   );
 }

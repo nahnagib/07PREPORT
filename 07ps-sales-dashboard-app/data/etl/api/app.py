@@ -9,6 +9,8 @@ Endpoints:
                                       fetch, matching how pythonRunner.ts's polling loop tracks
                                       how many lines it has already consumed)
   POST /etl/jobs/<job_id>/cancel   - terminate the running subprocess
+  POST /etl/reset                  - admin override: clear a stuck "active job" slot on this
+                                      tracker (terminates the tracked subprocess if still alive)
   GET  /health                     - unauthenticated
 
 Local dev: `python app.py`. Production (cPanel/gunicorn): gunicorn against wsgi:app (see wsgi.py).
@@ -124,6 +126,22 @@ def etl_job_cancel(job_id: str):
 
     logger.info("Cancel requested for ETL job %s", job.job_id)
     return jsonify({"jobId": job.job_id, "status": job.status}), 200
+
+
+@app.route("/etl/reset", methods=["POST"])
+@require_api_key
+def etl_reset():
+    """Admin override for a stuck "active job" slot on THIS tracker -- called by Node's
+    POST /admin/etl/force-reset alongside its own etl_job_runs/BullMQ reset (see
+    backend/src/routes/admin/etlControl.ts). Node's reset has no visibility into this process's
+    in-memory JobTracker, so without this endpoint a stuck tracker here would keep 409-ing every
+    run Node enqueues after its own reset, with nothing in the Node-side state showing why.
+    """
+    job = tracker.force_reset()
+    if job is None:
+        return jsonify({"ok": True, "resetJobId": None, "message": "No active job to reset."}), 200
+    logger.warning("Force-reset: cleared active ETL job %s (was status=%s)", job.job_id, job.status)
+    return jsonify({"ok": True, "resetJobId": job.job_id}), 200
 
 
 @app.errorhandler(404)

@@ -105,11 +105,19 @@ interface OffDayRow {
   date: Date;
   company: string | null;
   branch: string | null;
+  holidayName: string | null;
+  reason: string | null;
 }
 
 async function fetchOffDayRows(pool: Pool, type: OffDayType, window: DateWindow): Promise<OffDayRow[]> {
+  // HolidayName/Reason now exist on fact_offdays (confirmed via SHOW COLUMNS against the live
+  // warehouse after the latest OffDays.xlsx resync) -- previously this table only had
+  // DateKey/Date/OffDayType/Country/Company/Branch/IsActive, so these were hardcoded to null here
+  // to avoid an "Unknown column" error on every request. Selected directly now; still nullable
+  // (HR may leave either blank for a given row), which every consumer already handles by falling
+  // back to generic label text.
   const sql = `
-    SELECT Date AS date, Company AS company, Branch AS branch
+    SELECT Date AS date, Company AS company, Branch AS branch, HolidayName AS holidayName, Reason AS reason
     FROM fact_offdays
     WHERE OffDayType = ? AND IsActive = 1 AND Date BETWEEN ? AND ?
   `;
@@ -118,7 +126,25 @@ async function fetchOffDayRows(pool: Pool, type: OffDayType, window: DateWindow)
     date: new Date(Date.UTC(r.date.getFullYear(), r.date.getMonth(), r.date.getDate())),
     company: r.company,
     branch: r.branch,
+    holidayName: r.holidayName ?? null,
+    reason: r.reason ?? null,
   }));
+}
+
+/**
+ * Most recent calendar date the ETL has actually loaded (Dim_Date is built incrementally as data
+ * lands -- see this file's header note -- so its MAX(Date) is a direct signal of "how far the
+ * pipeline has caught up", independent of any Company/Branch filter scope). Used by the
+ * /critical-number/overview route to detect "today hasn't loaded yet" and fall back to the last
+ * available day instead of showing today's (empty) figures. Returns null only for a completely
+ * empty warehouse (no Dim_Date rows at all).
+ */
+export async function fetchLastAvailableDate(pool: Pool): Promise<Date | null> {
+  const [rows] = await pool.query('SELECT MAX(Date) AS lastDate FROM dim_date');
+  const row = (rows as any[])[0];
+  if (!row?.lastDate) return null;
+  const d = row.lastDate as Date;
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
 }
 
 async function fetchCompanyNamesByKey(pool: Pool): Promise<Map<number, string>> {
@@ -315,6 +341,9 @@ export interface OffDayItem {
   date: string;
   company: string | null;
   branch: string | null;
+  /** HR-maintained holiday name (e.g. "Eid al-Fitr") from Fact_OffDays.HolidayName -- null when HR
+   * hasn't filled it in for that row yet, in which case the frontend falls back to a generic label. */
+  holidayName: string | null;
 }
 
 export interface OfficialHolidaysCard {
@@ -334,9 +363,17 @@ export async function computeOfficialHolidaysYtd(
   return {
     value: rows.length,
     items: rows
-      .map((r) => ({ date: toDateOnlyString(r.date), company: r.company, branch: r.branch }))
+      .map((r) => ({ date: toDateOnlyString(r.date), company: r.company, branch: r.branch, holidayName: r.holidayName }))
       .sort((a, b) => a.date.localeCompare(b.date)),
   };
+}
+
+/** One individual closure day within a branch's group -- the hover/tap detail the frontend shows
+ * per row, since a branch can be closed on different dates for different reasons (e.g. a storm one
+ * week, a road closure another). */
+export interface ForcedClosureOccurrence {
+  date: string;
+  reason: string | null;
 }
 
 export interface ForcedClosureBranchSummary {
@@ -347,6 +384,11 @@ export interface ForcedClosureBranchSummary {
   branchName: string;
   company: string | null;
   days: number;
+  /** Every individual closure day for this branch, most recent first -- the reason text moved here
+   * (out of an always-visible line) since a branch repeating in the list once per distinct reason
+   * read as noisy/repetitive; the frontend now shows one row per branch and surfaces this list in a
+   * hover/tap tooltip instead. */
+  occurrences: ForcedClosureOccurrence[];
 }
 
 export interface ForcedClosuresCard {
@@ -377,14 +419,35 @@ export async function computeForcedClosuresYtd(
     fetchBranchNamesByKey(pool),
   ]);
   const rows = rowsRaw.filter((r) => offDayMatchesScope(r, filters, companyNamesByKey));
-  const byBranch = new Map<string, ForcedClosureBranchSummary>();
+  // Grouped by branch alone (one row per branch, not per branch+reason) -- every individual
+  // closure day (with its own date + reason) is collected into `occurrences` for that branch, so
+  // the summary list doesn't repeat the same branch once per distinct reason.
+  const byBranch = new Map<string, ForcedClosureBranchSummary & { occurrenceObjs: { date: Date; reason: string | null }[] }>();
   for (const r of rows) {
-    const key = r.branch ?? 'Unassigned';
-    const existing = byBranch.get(key);
-    if (existing) existing.days += 1;
-    else byBranch.set(key, { branch: key, branchName: branchNamesByKey.get(key) ?? key, company: r.company, days: 1 });
+    const branch = r.branch ?? 'Unassigned';
+    const existing = byBranch.get(branch);
+    if (existing) {
+      existing.days += 1;
+      existing.occurrenceObjs.push({ date: r.date, reason: r.reason ?? null });
+    } else {
+      byBranch.set(branch, {
+        branch,
+        branchName: branchNamesByKey.get(branch) ?? branch,
+        company: r.company,
+        days: 1,
+        occurrences: [],
+        occurrenceObjs: [{ date: r.date, reason: r.reason ?? null }],
+      });
+    }
   }
-  const branches = Array.from(byBranch.values()).sort((a, b) => b.days - a.days);
+  const branches = Array.from(byBranch.values())
+    .sort((a, b) => b.days - a.days)
+    .map(({ occurrenceObjs, ...summary }) => ({
+      ...summary,
+      occurrences: occurrenceObjs
+        .sort((a, b) => b.date.getTime() - a.date.getTime())
+        .map((o) => ({ date: toDateOnlyString(o.date), reason: o.reason })),
+    }));
   return { value: rows.length, branches };
 }
 
@@ -444,11 +507,21 @@ export interface MissingSummary {
 }
 
 /**
- * Walks every working day of the YTD window (excluding weekly rest + scope-matched official
- * holidays -- same working-day definition as everywhere else on this page) and compares that
- * day's actual value against the Daily Critical Number. A "missing day" is a working day where
- * actual < target; Missing Value YTD is the sum of those shortfalls (never netted against days
- * that exceeded target, since it represents cumulative ground lost, not a running average).
+ * Net-aggregate shortfall against the flat Daily Critical Number (dashboard revision pass --
+ * replaces an earlier unnetted per-day-shortfall sum, which read as far worse than actual YTD
+ * performance because it never let surplus days offset shortfall days):
+ *
+ *   Total Expected YTD = Working Days YTD x Daily Critical Number
+ *   Missing Value YTD  = max(0, Total Expected YTD - Actual YTD Value)
+ *   Missing Days YTD   = Missing Value YTD / Daily Critical Number
+ *
+ * Actual YTD Value is the full-window actual (every calendar day, matching the Yearly Counter's
+ * own actualValue) -- pace is measured cumulatively, not day by day, so a big sales day fully
+ * offsets a slow one instead of being invisible to this metric.
+ *
+ * Trend series are the running value of this same net formula evaluated as of each earlier
+ * point (last 30 calendar days for Missing Days, each month-end for Missing Value) -- a
+ * cumulative-so-far reading, not that single day/month's own isolated result.
  */
 export async function computeMissingSummary(
   pool: Pool,
@@ -466,34 +539,31 @@ export async function computeMissingSummary(
     officialRows.filter((r) => offDayMatchesScope(r, filters, companyNamesByKey)).map((r) => dateKeyOf(r.date)),
   );
 
-  let missingDays = 0;
-  let missingValue = 0;
-  // last-30-calendar-day shortfall ratio, for the sparkline (0 on non-working days -- nothing was
-  // expected of them, so there's nothing to be "missing").
-  const dailyShortfallRatios: number[] = [];
-  const monthlyMissingValue = new Map<string, number>(); // 'YYYY-MM' -> shortfall sum
+  let cumWorkingDays = 0;
+  let cumActual = 0;
+  const dailyRunningMissingDays: number[] = [];
+  const monthlyRunningMissingValue = new Map<string, number>(); // 'YYYY-MM' -> running value as of that month's last walked day
 
   for (let cur = ytd.start; cur.getTime() <= ytd.end.getTime(); cur = addDaysUTC(cur, 1)) {
     const key = dateKeyOf(cur);
     const isWorkingDay = !isFriday(cur) && !scopedHolidayDateKeys.has(key);
     const actual = dailyActuals.get(key) ?? 0;
-    let shortfallRatio = 0;
+    cumActual += actual;
+    if (isWorkingDay) cumWorkingDays += 1;
 
-    if (isWorkingDay && dailyCriticalNumber > 0) {
-      const shortfall = dailyCriticalNumber - actual;
-      if (shortfall > 0) {
-        missingDays += 1;
-        missingValue += shortfall;
-        shortfallRatio = Math.min(1, shortfall / dailyCriticalNumber);
-        const monthKey = `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, '0')}`;
-        monthlyMissingValue.set(monthKey, (monthlyMissingValue.get(monthKey) ?? 0) + shortfall);
-      }
-    }
-    dailyShortfallRatios.push(shortfallRatio);
+    const runningMissingValue = dailyCriticalNumber > 0 ? Math.max(0, cumWorkingDays * dailyCriticalNumber - cumActual) : 0;
+    const runningMissingDays = dailyCriticalNumber > 0 ? runningMissingValue / dailyCriticalNumber : 0;
+
+    dailyRunningMissingDays.push(runningMissingDays);
+    const monthKey = `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, '0')}`;
+    monthlyRunningMissingValue.set(monthKey, runningMissingValue);
   }
 
-  const last30 = dailyShortfallRatios.slice(-30);
-  const monthlySeries = Array.from(monthlyMissingValue.entries())
+  const missingValue = dailyCriticalNumber > 0 ? Math.max(0, cumWorkingDays * dailyCriticalNumber - cumActual) : 0;
+  const missingDays = dailyCriticalNumber > 0 ? Math.round(missingValue / dailyCriticalNumber) : 0;
+
+  const last30 = dailyRunningMissingDays.slice(-30);
+  const monthlySeries = Array.from(monthlyRunningMissingValue.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, v]) => v);
 

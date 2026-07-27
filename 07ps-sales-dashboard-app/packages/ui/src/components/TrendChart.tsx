@@ -10,6 +10,7 @@ import {
   Legend,
   Brush,
 } from 'recharts';
+import { exportSvgAsImage } from '../chartExport';
 
 export interface TrendPoint {
   label: string;
@@ -40,6 +41,10 @@ export interface TrendChartProps {
   color?: string;
   /** Color for the prior-year line. Defaults to the dashboard's "last year" semantic token. */
   lastYearColor?: string;
+  /** Color for the target line. Defaults to the dashboard's neutral-granite token (unchanged
+   * default so existing callers keep their current look) -- pass a distinct hue when Y-1 and
+   * Target need to read apart from each other, not just from Actual. */
+  targetColor?: string;
   /** Set false to suppress the internal title text (still renders the Export image button) --
    * for callers that already show the title in their own surrounding chart-card chrome (e.g.
    * @07ps/ui's ChartPanel), so the title isn't rendered twice. Defaults to true. */
@@ -79,6 +84,7 @@ export function TrendChart({
   height = 280,
   color = 'var(--ps-color-accent)',
   lastYearColor = 'var(--ps-color-last-year)',
+  targetColor = 'var(--ps-neutral-granite)',
   showTitle = true,
 }: TrendChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -96,45 +102,7 @@ export function TrendChart({
   };
 
   const handleExportImage = () => {
-    const container = containerRef.current;
-    if (!container) return;
-    const svg = container.querySelector('svg');
-    if (!svg) return;
-    try {
-      const clone = svg.cloneNode(true) as SVGSVGElement;
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      const bg = window.getComputedStyle(document.body).getPropertyValue('background-color') || '#ffffff';
-      const serialized = new XMLSerializer().serializeToString(clone);
-      const svgBlob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(svgBlob);
-      const img = new Image();
-      img.onload = () => {
-        const width = svg.clientWidth || 800;
-        const heightPx = svg.clientHeight || 400;
-        const canvas = document.createElement('canvas');
-        canvas.width = width * 2;
-        canvas.height = heightPx * 2;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.scale(2, 2);
-        ctx.fillStyle = bg || '#ffffff';
-        ctx.fillRect(0, 0, width, heightPx);
-        ctx.drawImage(img, 0, 0, width, heightPx);
-        URL.revokeObjectURL(url);
-        canvas.toBlob((blob) => {
-          if (!blob) return;
-          const link = document.createElement('a');
-          link.href = URL.createObjectURL(blob);
-          link.download = `${title.replace(/\s+/g, '-').toLowerCase()}.png`;
-          link.click();
-          setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-        });
-      };
-      img.src = url;
-    } catch {
-      // Export is a convenience action, not core functionality -- fail silently rather than
-      // surfacing a console-only error to the whole dashboard.
-    }
+    exportSvgAsImage(containerRef.current, title.replace(/\s+/g, '-').toLowerCase());
   };
 
   return (
@@ -216,7 +184,7 @@ export function TrendChart({
               type="monotone"
               dataKey="target"
               name={targetLabel}
-              stroke="var(--ps-neutral-granite)"
+              stroke={targetColor}
               strokeWidth={2}
               strokeDasharray="5 4"
               dot={false}

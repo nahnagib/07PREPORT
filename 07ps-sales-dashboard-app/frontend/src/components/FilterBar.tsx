@@ -1,7 +1,7 @@
 'use client';
-import React from 'react';
-import { RotateCcw } from 'lucide-react';
-import { Select, DateInput, Button } from '@07ps/ui';
+import React, { useState } from 'react';
+import { RotateCcw, FileDown, SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { Select, DateInput, Button, type SelectOption } from '@07ps/ui';
 import type { DimOption, TachometerFilters } from '../lib/api';
 import { formatTimestamp } from '../lib/format';
 
@@ -17,10 +17,28 @@ export interface FilterBarProps {
   branches: DimOption[];
   salespersons: DimOption[];
   isSalesperson: boolean;
-  lastRefreshTime: string | null;
+  /** MAX(Fact_Orders.OrderDateTime) -- the actual last confirmed Sales Order timestamp, not the
+   * ETL's own refresh-completion time (that's shown separately at the bottom of the page by
+   * AppSidebar/SidebarFilters/RefreshFooter as "Last Update"/"Last Refresh Time"). */
+  lastUpdate: string | null;
+  /** MAX(Fact_Orders.CreatedDateTime) -- Odoo create_date (record creation), distinct from
+   * lastUpdate above (date_order, the order/confirmation date). Optional so callers that haven't
+   * wired refreshStatus.lastOrderCreated through yet just don't render this field. */
+  lastOrderCreated?: string | null;
   dateFromDate?: string;
   dateToDate?: string;
   onDateRangeChange?: (from: string, to: string) => void;
+  /** Customer Growth-only: no other page has a Customer dimension loaded in the warehouse (see the
+   * "Not available in the current data model" fallback rendered when these are omitted), so this
+   * filter only becomes a real, enabled control when a caller opts in by passing all three. */
+  customerOptions?: SelectOption[];
+  customerValue?: string[];
+  onCustomerChange?: (value: string[]) => void;
+  /** Export Overview Report (backend/src/routes/reports.ts) -- optional so a page that hasn't
+   * wired up useExportOverviewReport yet just doesn't render the button, rather than crashing. */
+  onExportReport?: () => void;
+  isExporting?: boolean;
+  exportError?: string | null;
 }
 
 const fieldBox: React.CSSProperties = { width: 152, flexShrink: 0 };
@@ -38,6 +56,11 @@ const labelSpacerStyle: React.CSSProperties = {
  * Tachometer rebuild (dark-theme pass): horizontal global filter strip, replacing AppSidebar's
  * left-column layout for this page per the new mockup (filters now live in a top strip, not a
  * side panel). AppSidebar.tsx is left in place, unused, per this session's convention.
+ *
+ * Dashboard revision pass: collapsed by default behind a "Filters" toggle button so the default
+ * view is clean; the field row below only renders while expanded. Collapse state is local to each
+ * mount (not persisted/shared across pages) -- every page load starts collapsed again, matching
+ * "collapsed by default" rather than remembering the last session's choice.
  *
  * Same 5 real, backend-wired dimensions as AppSidebar (Company, Customer Group/Segment,
  * Distribution Channel, Branch/Sales Team, Salesperson) plus the single anchor date -- this
@@ -60,12 +83,32 @@ export function FilterBar({
   branches,
   salespersons,
   isSalesperson,
-  lastRefreshTime,
+  lastUpdate,
+  lastOrderCreated,
   dateFromDate = anchorDate,
   dateToDate = anchorDate,
   onDateRangeChange,
+  customerOptions,
+  customerValue,
+  onCustomerChange,
+  onExportReport,
+  isExporting = false,
+  exportError = null,
 }: FilterBarProps) {
+  const customerFilterEnabled = customerOptions != null && customerValue != null && onCustomerChange != null;
   const lockedReason = isSalesperson ? 'Locked to your assigned scope' : undefined;
+
+  // Collapsed by default so the page opens on a clean view; each page mount starts collapsed
+  // again (no cross-page persistence needed -- "collapsed by default" per the revision request).
+  const [isOpen, setIsOpen] = useState(false);
+
+  const activeFilterCount =
+    (filters.companyKeys?.length ?? 0) +
+    (filters.segmentKeys?.length ?? 0) +
+    (filters.channelKeys?.length ?? 0) +
+    (filters.salesTeamKeys?.length ?? 0) +
+    (filters.salespersonKeys?.length ?? 0) +
+    (customerFilterEnabled && customerValue ? customerValue.length : 0);
 
   const handleFromDateChange = (date: string) => {
     if (onDateRangeChange) {
@@ -80,17 +123,59 @@ export function FilterBar({
   };
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        flexWrap: 'wrap',
-        gap: 'var(--ps-space-2, 8px)',
-        padding: 'var(--ps-space-3, 16px) var(--ps-space-4, 24px)',
-        background: 'var(--ps-color-surface)',
-        borderBottom: '1px solid var(--ps-color-border)',
-      }}
-    >
+    <div style={{ background: 'var(--ps-color-surface)', borderBottom: '1px solid var(--ps-color-border)' }}>
+      <button
+        type="button"
+        onClick={() => setIsOpen((o) => !o)}
+        aria-expanded={isOpen}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          padding: 'var(--ps-space-2, 8px) var(--ps-space-4, 24px)',
+          color: 'var(--ps-color-text)',
+        }}
+      >
+        <SlidersHorizontal size={14} />
+        <span style={{ fontSize: 13, fontWeight: 600 }}>Filters</span>
+        {activeFilterCount > 0 && (
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minWidth: 18,
+              height: 18,
+              padding: '0 5px',
+              borderRadius: 999,
+              fontSize: 11,
+              fontWeight: 700,
+              color: 'var(--ps-color-on-accent)',
+              background: 'var(--ps-color-accent)',
+            }}
+          >
+            {activeFilterCount}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>{isOpen ? 'Hide filters' : 'Show filters'}</span>
+        <ChevronDown size={14} style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }} />
+      </button>
+
+      {isOpen && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            flexWrap: 'wrap',
+            gap: 'var(--ps-space-2, 8px)',
+            padding: '0 var(--ps-space-4, 24px) var(--ps-space-3, 16px)',
+          }}
+        >
       <div style={fieldBox}>
         <DateInput label="From Date" value={dateFromDate} onChange={handleFromDateChange} />
       </div>
@@ -160,9 +245,22 @@ export function FilterBar({
         />
       </div>
 
-      <div style={fieldBox} title="Not available in the current data model -- no Customer dimension is loaded in this warehouse.">
-        <Select label="Customer" options={[]} value={[]} onChange={() => {}} disabled lockedReason="Not available yet" />
-      </div>
+      {customerFilterEnabled ? (
+        <div style={fieldBox}>
+          <Select
+            label="Customer"
+            options={customerOptions}
+            value={customerValue}
+            onChange={onCustomerChange}
+            multiSelect
+            searchable
+          />
+        </div>
+      ) : (
+        <div style={fieldBox} title="Not available in the current data model -- no Customer dimension is loaded in this warehouse.">
+          <Select label="Customer" options={[]} value={[]} onChange={() => {}} disabled lockedReason="Not available yet" />
+        </div>
+      )}
 
       {/* Invisible label-height spacer keeps this button's top edge aligned with every field's
           input, even though it has no label of its own above it. */}
@@ -179,6 +277,26 @@ export function FilterBar({
         </Button>
       </div>
 
+      {onExportReport ? (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span aria-hidden style={labelSpacerStyle}>&nbsp;</span>
+          <Button
+            variant="secondary"
+            onClick={onExportReport}
+            disabled={isExporting}
+            style={{ height: 38, boxSizing: 'border-box', padding: '0 14px', whiteSpace: 'nowrap' }}
+          >
+            <FileDown size={14} />
+            {isExporting ? 'Exporting...' : 'Export Overview Report'}
+          </Button>
+          {exportError ? (
+            <span style={{ fontSize: 11, color: 'var(--ps-color-danger, #cf222e)', marginTop: 4, maxWidth: 220 }}>
+              {exportError}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       <div style={{ flex: 1 }} />
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
@@ -193,9 +311,25 @@ export function FilterBar({
             whiteSpace: 'nowrap',
           }}
         >
-          Last Refreshed: {formatTimestamp(lastRefreshTime)}
+          Last Order Date: {formatTimestamp(lastUpdate)}
         </div>
+        {lastOrderCreated !== undefined ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              height: 16,
+              fontSize: 11,
+              color: 'var(--ps-color-muted-text)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Last Order Created: {formatTimestamp(lastOrderCreated)}
+          </div>
+        ) : null}
       </div>
+        </div>
+      )}
     </div>
   );
 }

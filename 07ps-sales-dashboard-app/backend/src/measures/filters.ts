@@ -104,6 +104,27 @@ export function buildCrmWhereClause(
   return buildWhereClause(crmFilters, tableAlias);
 }
 
+/**
+ * Excludes closed-lost opportunities from a Fact_Opportunity-scoped query. Uses the ETL's own
+ * IsLost flag rather than a literal `Stage = 'Lost'` text match -- IsLost is derived from multiple
+ * signals (a LostReason being set, OR the record going inactive without being won, OR "lost"
+ * appearing in the stage text; see data/etl/src/sales_pipeline/crm/crm_status_classifier.py), so
+ * it's a superset of the literal Stage string and the same flag already used everywhere else in
+ * this codebase for "is this opportunity lost" (#Lost, Lost Deals Ratio, Total Lost Opportunity by
+ * Reason). `COALESCE(...,0) = 0` rather than `<> 1` so a NULL/unclassified IsLost is treated as
+ * "not lost" (the safe default) instead of silently dropping the row -- in SQL's three-valued
+ * logic, `col <> 1` evaluates to NULL (excluded by WHERE) when col is NULL.
+ *
+ * Apply this to every general/summary Pipeline widget (charts, drill-downs, KPI counts) that isn't
+ * itself about measuring lost deals. Do NOT apply it to widgets that ARE specifically about lost
+ * opportunities (#Lost, Lost Deals Ratio, Total Lost Opportunity by Reason, or any future "lost"
+ * breakdown) -- those need every lost row to stay meaningful.
+ */
+export function excludeLostClause(alias: string): string {
+  const prefix = alias ? `${alias}.` : '';
+  return `COALESCE(${prefix}IsLost, 0) = 0`;
+}
+
 // ---------------------------------------------------------------------------
 // Salesperson RBAC lock (role_tier = 'SALESPERSON')
 // ---------------------------------------------------------------------------
@@ -111,6 +132,11 @@ export function buildCrmWhereClause(
 export interface UserContext {
   roleCode: string;
   salespersonKey?: number | null;
+  /** Business role id (roles.role_id) and its role_data_scope rules -- optional so existing
+   * UserContext literals across the test suite keep compiling/behaving unchanged; absent/empty
+   * means "no role-level data scope restriction," same as today. */
+  roleId?: number | null;
+  dataScopeRules?: DataScopeRule[];
 }
 
 export class SalespersonLockError extends Error {
@@ -165,6 +191,80 @@ export function applySalespersonLock(filters: Filters, user: UserContext): Filte
     salesTeamKeys: [],
     salespersonKeys: [user.salespersonKey],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Generic role-based data scope (role_data_scope table)
+// ---------------------------------------------------------------------------
+
+/** One (dimension, value) row from role_data_scope. `value` is always the stringified filter key
+ * -- e.g. `{ dimension: 'segmentKeys', value: '1' }` for Customer Group = B2B. */
+export interface DataScopeRule {
+  dimension: keyof Filters;
+  value: string;
+}
+
+export class DataScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DataScopeError';
+  }
+}
+
+/** salesTeamKeys is the one Filters field that's string-typed; every other field is numeric. */
+function castScopeValue(dimension: keyof Filters, value: string): string | number {
+  return dimension === 'salesTeamKeys' ? value : Number(value);
+}
+
+/**
+ * Generalized version of applySalespersonLock: a role can carry zero or more data-scope rules per
+ * dimension (role_data_scope table), grouped here into an "allowed set" per dimension. For each
+ * dimension that has rules:
+ *   - if the caller didn't request that dimension at all, force it to the allowed set (same "force
+ *     rather than leave unrestricted" behavior as the salesperson lock);
+ *   - if the caller did request specific values, intersect with the allowed set -- a caller may
+ *     narrow further (e.g. a B2B Director filtering down to one branch within B2B), but requesting
+ *     a value entirely outside the allowed set is a scope-escape attempt and throws, exactly like
+ *     applySalespersonLock does for a mismatched salespersonKey, rather than silently dropping it.
+ *
+ * A dimension with no rules for this role passes through untouched. No rules at all (the common
+ * case today) returns filters unchanged. This only ever restricts, never expands, a caller's
+ * filters -- same contract as applySalespersonLock.
+ */
+export function applyRoleDataScope(filters: Filters, rules: DataScopeRule[]): Filters {
+  if (!rules || rules.length === 0) {
+    return filters;
+  }
+
+  const allowedByDimension = new Map<keyof Filters, DataScopeRule[]>();
+  for (const rule of rules) {
+    const existing = allowedByDimension.get(rule.dimension);
+    if (existing) existing.push(rule);
+    else allowedByDimension.set(rule.dimension, [rule]);
+  }
+
+  const result: Filters = { ...filters };
+
+  for (const [dimension, dimensionRules] of allowedByDimension) {
+    const allowed = dimensionRules.map((r) => castScopeValue(dimension, r.value));
+    const requested = filters[dimension] as Array<string | number> | undefined;
+
+    if (!requested || requested.length === 0) {
+      (result[dimension] as Array<string | number>) = allowed;
+      continue;
+    }
+
+    const intersected = requested.filter((v) => allowed.includes(v));
+    if (intersected.length === 0) {
+      throw new DataScopeError(
+        `Requested ${dimension}=[${requested.join(', ')}] is outside this role's permitted data scope ` +
+          `(${dimension} restricted to [${allowed.join(', ')}]).`,
+      );
+    }
+    (result[dimension] as Array<string | number>) = intersected;
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------

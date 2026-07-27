@@ -382,6 +382,7 @@ class PowerBISalesPipeline:
                     stock_quants_raw=stock_quants_raw,
                     stock_locations_raw=stock_locations_raw,
                     inventory_companies_raw=inventory_companies_raw,
+                    sale_orders_raw=sale_orders_raw,
                 )
                 if metadata_exporter is not None:
                     self._write_excel_source_metadata(metadata_exporter, load_mode)
@@ -562,6 +563,7 @@ class PowerBISalesPipeline:
         stock_quants_raw: pd.DataFrame | None = None,
         stock_locations_raw: pd.DataFrame | None = None,
         inventory_companies_raw: pd.DataFrame | None = None,
+        sale_orders_raw: pd.DataFrame | None = None,
     ) -> dict[str, pd.DataFrame]:
         _t0 = time.perf_counter()
         sales = self._normalize_sales_export(sales_raw)
@@ -738,6 +740,7 @@ class PowerBISalesPipeline:
         _t12 = time.perf_counter()
         fact_orders = OrdersFactBuilder().build(sales)
         fact_orders = self._ensure_fact_orders_order_key(fact_orders)
+        fact_orders = self._attach_order_created_datetime(fact_orders, sale_orders_raw)
         dim_invoice = InvoiceDimensionBuilder().build(fact_orders)
         sales = DataFrameUtils.add_key_from_dimension(sales, "order_number", dim_invoice, "order_number", "InvoiceKey")
         fact_orders = DataFrameUtils.add_key_from_dimension(fact_orders, "order_number", dim_invoice, "order_number", "InvoiceKey")
@@ -1653,6 +1656,27 @@ class PowerBISalesPipeline:
             out.insert(0, "OrderKey", out["order_number"].astype("string"))
         else:
             out.insert(0, "OrderKey", pd.Series([f"ORDER-{idx + 1}" for idx in range(len(out))], index=out.index, dtype="string"))
+        return out
+
+    def _attach_order_created_datetime(self, fact_orders: pd.DataFrame, sale_orders_raw: pd.DataFrame | None) -> pd.DataFrame:
+        """Adds Fact_Orders.CreatedDateTime -- Odoo sale.order.create_date (record creation),
+        distinct from OrderDateTime (sale.order.date_order, the order/confirmation date). sale.report
+        -- the line-level source `sales`/OrdersFactBuilder.build() is otherwise built from -- has no
+        create_date field at all (confirmed against the live Odoo instance), so this is sourced
+        separately from sale_orders_raw (the raw sale.order fetch both the full and incremental
+        extraction paths already pull, see run()'s `sale_orders_raw` variable), joined by order
+        number/name, and converted with the same odoo_utc_datetime_to_local(..., self.settings.timezone)
+        used for order_date so both fields land in Libya local time consistently.
+        """
+        out = fact_orders.copy()
+        if sale_orders_raw is None or sale_orders_raw.empty or "name" not in sale_orders_raw.columns or "create_date" not in sale_orders_raw.columns or "order_number" not in out.columns:
+            out["CreatedDateTime"] = pd.NaT
+            return out
+        created = sale_orders_raw[["name", "create_date"]].copy()
+        created["name"] = created["name"].astype("string").str.strip().str.upper()
+        created = created.dropna(subset=["name"]).drop_duplicates(subset=["name"], keep="first")
+        created["CreatedDateTime"] = odoo_utc_datetime_to_local(created["create_date"], self.settings.timezone)
+        out = out.merge(created[["name", "CreatedDateTime"]], left_on="order_number", right_on="name", how="left").drop(columns=["name"])
         return out
 
     @staticmethod

@@ -54,6 +54,15 @@ type RemoteJobStatus = {
 
 const TAIL_LINES = 40;
 const MAX_CONSECUTIVE_POLL_FAILURES = 10;
+/** Per-request bound for every call to the ETL Flask API. Without this, a single hung request
+ * (Flask process wedged, network partition, etc.) waits forever -- axios has no timeout by
+ * default -- and neither this loop's own MAX_CONSECUTIVE_POLL_FAILURES counter nor BullMQ's job
+ * lock renewal ever sees it, because a promise that never settles never reaches the catch block
+ * that increments the counter. Bounding each individual call turns a silent hang into a failure
+ * that actually surfaces (see the root-cause writeup for the "queued 34 minutes, 0 log lines"
+ * incident this was part of closing). Each poll only needs to return quickly -- the loop itself
+ * runs for the whole pipeline duration by calling this repeatedly, not by keeping one request open. */
+const REQUEST_TIMEOUT_MS = 15_000;
 
 function tail(lines: string[], n: number): string {
   return lines.slice(-n).join('\n');
@@ -69,6 +78,7 @@ function buildClient(etlApiUrl: string, etlApiKey: string): AxiosInstance {
   return axios.create({
     baseURL: etlApiUrl,
     headers: { Authorization: `Bearer ${etlApiKey}`, 'Content-Type': 'application/json' },
+    timeout: REQUEST_TIMEOUT_MS,
   });
 }
 
@@ -191,5 +201,35 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
     }
   } finally {
     options.signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/**
+ * Calls the ETL Flask API's POST /etl/reset (see data/etl/api/app.py) to clear a stuck "active
+ * job" slot on job_tracker.py's in-memory tracker. Node's own force-reset (forceResetActiveEtlRuns
+ * in etlRunTracker.ts) only ever touched this process's own etl_job_runs rows and BullMQ job --
+ * it has no visibility into the Flask API process's in-memory state, so if THAT was what was
+ * actually stuck, the Node-side reset alone freed nothing there, and the next enqueued run would
+ * immediately hit a 409 from the Flask API with no obvious explanation in Node's own logs. Called
+ * from POST /admin/etl/force-reset alongside the existing DB/queue reset; failures here are
+ * logged but never block the rest of that reset, since the Flask API being unreachable is itself
+ * useful information, not a reason to abandon the parts of the reset that already succeeded.
+ */
+export async function resetEtlApi(): Promise<{ ok: boolean; resetJobId: string | null } | null> {
+  const config = getEtlConfig();
+  if (!config.etlApi.url || !config.etlApi.apiKey) {
+    etlLogger.info('ETL API reset skipped: ETL_API_URL/ETL_API_KEY not configured');
+    return null;
+  }
+  const client = buildClient(config.etlApi.url, config.etlApi.apiKey);
+  try {
+    const response = await client.post<{ ok: boolean; resetJobId: string | null }>('/etl/reset');
+    etlLogger.info('ETL API tracker reset', { resetJobId: response.data.resetJobId });
+    return response.data;
+  } catch (err) {
+    etlLogger.error('ETL API tracker reset failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
   }
 }

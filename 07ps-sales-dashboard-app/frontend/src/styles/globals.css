@@ -212,3 +212,33 @@ html, body {
     grid-template-columns: 1fr;
   }
 }
+
+/* DateInput (FilterBar's From/To Date fields): the browser renders its own
+   calendar-picker-indicator icon flush against the input's right edge, sized independently of the
+   flex row/border that contains it -- at the FilterBar's narrow (152px) field width, that unstyled
+   native icon pokes past the rounded border on the right. DateInput already has its own lucide
+   Calendar icon on the left and opens the picker via a whole-box onClick, so rather than removing
+   the native indicator (still a valid native/keyboard click target), it's resized and confined
+   inside the input's own box here -- `right`/`position: absolute` on this pseudo-element are always
+   relative to and clipped by its host input, so this holds at any width or zoom level, not just the
+   152px case that first surfaced it. The matching right-padding keeps typed digits from sitting
+   under the icon. */
+.ps-date-input {
+  padding-right: 22px;
+}
+/* DateInput already renders its own labeled lucide Calendar icon on the left and opens the native
+   picker via the surrounding box's onClick (inputRef.current?.showPicker?.()) -- so the browser's
+   own calendar-picker-indicator icon on the right is a redundant, unlabeled second calendar icon
+   with no independent purpose of its own. Kept as a full-size, fully transparent overlay (rather
+   than removed outright) so it's still a valid native/keyboard click target, just no longer
+   visible as a stray icon. */
+.ps-date-input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  right: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
