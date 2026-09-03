@@ -11,3 +11,4 @@ python-dotenv>=1.0
 # ETL Flask API (app.py/wsgi.py) - the api-etl.<domain> side of the split cPanel deployment.
 Flask>=3.0
 gunicorn>=21.2
+sqlalchemy>=2.0
