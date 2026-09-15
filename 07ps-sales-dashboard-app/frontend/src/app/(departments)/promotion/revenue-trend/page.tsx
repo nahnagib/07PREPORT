@@ -1,6 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { FileDown } from 'lucide-react';
+import { FileDown, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
@@ -8,13 +8,16 @@ import { ValidationStatusBar } from '../../../../components/ValidationStatusBar'
 import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { useFilterState } from '../../../../components/FilterProvider';
 import {
+  Card,
   ChartPanel,
   InsightCard,
   LoadingSkeleton,
   ErrorState,
   TrendChart,
+  DataGrid,
   exportRowsAsPdf,
   type Column,
+  type DataGridColumn,
   type TrendPoint,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
@@ -63,6 +66,140 @@ function toTableRows(
     const { actual, lastYear, target } = pick(p);
     return { month: p.label, actual: formatter(actual), lastYear: formatter(lastYear), target: formatter(target) };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Performance Summary tables (Value / Volume / ASP) -- one row per month, actual vs. target with
+// variance, a status classification, and a MoM direction arrow. Built on the same series data the
+// three trend charts above already render, so a table row can never disagree with its chart.
+// ---------------------------------------------------------------------------
+
+interface PerfSummaryRow extends Record<string, unknown> {
+  id: string;
+  month: string;
+  actual: number | null;
+  target: number | null;
+  variance: number | null;
+  variancePct: number | null;
+  status: 'Ahead' | 'On Track' | 'Behind' | 'No Target';
+  trend: 'up' | 'down' | 'flat';
+}
+
+/** Same Ahead/On Track/Behind boundary the rest of the platform already draws its Green/Yellow/Red
+ * zones at (classifyVsTarget in backend/src/measures/classify.ts: >= target is "good", within 10%
+ * under is a soft warning, beyond that is a hard miss) -- just re-labeled as three plain-English
+ * words per this table's own spec, with "Ahead"/"On Track" splitting the existing "good" zone at
+ * target itself instead of introducing a second, unrelated threshold. */
+function perfStatus(variancePct: number | null): PerfSummaryRow['status'] {
+  if (variancePct === null) return 'No Target';
+  if (variancePct > 0.0005) return 'Ahead';
+  if (variancePct < -0.0005) return 'Behind';
+  return 'On Track';
+}
+
+function perfSummaryRows(series: RevenueTrendMonthPoint[], pick: (p: RevenueTrendMonthPoint) => { actual: number | null; target: number | null }): PerfSummaryRow[] {
+  let prevActual: number | null = null;
+  return series.map((p) => {
+    const { actual, target } = pick(p);
+    const variance = actual !== null && target !== null ? actual - target : null;
+    const variancePct = actual !== null && target !== null && target > 0 ? (actual - target) / target : null;
+    const trend: PerfSummaryRow['trend'] =
+      prevActual === null || actual === null ? 'flat' : actual > prevActual ? 'up' : actual < prevActual ? 'down' : 'flat';
+    prevActual = actual;
+    return { id: p.label, month: p.label, actual, target, variance, variancePct, status: perfStatus(variancePct), trend };
+  });
+}
+
+const PERF_STATUS_COLOR: Record<PerfSummaryRow['status'], string> = {
+  Ahead: 'var(--ps-color-accent)',
+  'On Track': 'var(--ps-color-success)',
+  Behind: 'var(--ps-color-alert)',
+  'No Target': 'var(--ps-color-muted-text)',
+};
+
+function PerfStatusPill({ status }: { status: PerfSummaryRow['status'] }) {
+  const color = PERF_STATUS_COLOR[status];
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 600,
+        color,
+        border: `1px solid ${color}`,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
+      {status}
+    </span>
+  );
+}
+
+function TrendArrow({ trend }: { trend: PerfSummaryRow['trend'] }) {
+  const color = trend === 'up' ? 'var(--ps-color-success)' : trend === 'down' ? 'var(--ps-color-alert)' : 'var(--ps-color-muted-text)';
+  const Icon = trend === 'up' ? ArrowUp : trend === 'down' ? ArrowDown : Minus;
+  return (
+    <span style={{ display: 'inline-flex', color }}>
+      <Icon size={14} />
+    </span>
+  );
+}
+
+function perfSummaryColumns(unitLabel: string, formatter: (v: number | null) => string): DataGridColumn<PerfSummaryRow>[] {
+  return [
+    { key: 'month', header: 'Month', width: 90 },
+    { key: 'actual', header: `Actual ${unitLabel}`, align: 'right', render: (r) => formatter(r.actual), rawValue: (r) => r.actual ?? '' },
+    { key: 'target', header: `Target ${unitLabel}`, align: 'right', render: (r) => formatter(r.target), rawValue: (r) => r.target ?? '' },
+    { key: 'variance', header: `Variance ${unitLabel}`, align: 'right', render: (r) => (r.variance === null ? '—' : formatter(r.variance)), rawValue: (r) => r.variance ?? '' },
+    {
+      key: 'variancePct',
+      header: 'Variance %',
+      align: 'right',
+      render: (r) => (r.variancePct === null ? '—' : formatVariance(r.variancePct)),
+      rawValue: (r) => (r.variancePct ?? 0) * 100,
+    },
+    { key: 'status', header: 'Status', align: 'left', render: (r) => <PerfStatusPill status={r.status} />, rawValue: (r) => r.status, width: 110 },
+    { key: 'trend', header: 'Trend', align: 'left', render: (r) => <TrendArrow trend={r.trend} />, rawValue: (r) => r.trend, width: 70 },
+  ];
+}
+
+/** Monthly average + YTD cumulative total footer, shown under each Performance Summary grid --
+ * DataGrid's own sortable/filterable rows aren't the right place for a pinned summary line (it
+ * would sort/filter like any other row), so this renders as a small separate strip instead. */
+function PerfSummaryFooter({ rows, formatter }: { rows: PerfSummaryRow[]; formatter: (v: number | null) => string }) {
+  const actualValues = rows.map((r) => r.actual).filter((v): v is number => v !== null);
+  const targetValues = rows.map((r) => r.target).filter((v): v is number => v !== null);
+  const actualTotal = actualValues.reduce((sum, v) => sum + v, 0);
+  const targetTotal = targetValues.reduce((sum, v) => sum + v, 0);
+  const actualAvg = actualValues.length > 0 ? actualTotal / actualValues.length : null;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 'var(--ps-space-4, 24px)',
+        marginTop: 10,
+        padding: '8px 12px',
+        borderRadius: 'var(--ps-card-radius-sm, 10px)',
+        background: 'var(--ps-color-muted-bg)',
+        fontSize: 12,
+      }}
+    >
+      <span>
+        <strong>Monthly Avg (Actual):</strong> {actualValues.length > 0 ? formatter(actualAvg) : '—'}
+      </span>
+      <span>
+        <strong>YTD Total (Actual):</strong> {actualValues.length > 0 ? formatter(actualTotal) : '—'}
+      </span>
+      <span>
+        <strong>YTD Total (Target):</strong> {targetValues.length > 0 ? formatter(targetTotal) : '—'}
+      </span>
+    </div>
+  );
 }
 
 /** "Export as PDF" header action for a ChartPanel's data table -- same visual shell and
@@ -120,7 +257,7 @@ export default function RevenueTrendPage() {
     resetFilters,
   } = useFilterState();
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth);
+  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
   const overview = useRevenueTrendOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
@@ -146,6 +283,10 @@ export default function RevenueTrendPage() {
   const valueTableRows = toTableRows(series, (p) => ({ actual: p.value, lastYear: p.lastYearValue, target: p.targetValue }), (v) => (v === null ? '—' : formatCurrency(v)));
   const volumeTableRows = toTableRows(series, (p) => ({ actual: p.volume, lastYear: p.lastYearVolume, target: p.targetVolume }), (v) => (v === null ? '—' : formatVolume(v)));
   const aspTableRows = toTableRows(series, (p) => ({ actual: p.asp, lastYear: p.lastYearAsp, target: p.targetAsp }), formatAspOrDash);
+
+  const valuePerfRows = perfSummaryRows(series, (p) => ({ actual: p.value, target: p.targetValue }));
+  const volumePerfRows = perfSummaryRows(series, (p) => ({ actual: p.volume, target: p.targetVolume }));
+  const aspPerfRows = perfSummaryRows(series, (p) => ({ actual: p.asp, target: p.targetAsp }));
 
   const kpis = overview.data?.kpis;
 
@@ -190,6 +331,10 @@ export default function RevenueTrendPage() {
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
+          customerGroupsLoading={filterOptions.customerGroups.loading}
+          distributionChannelsLoading={filterOptions.distributionChannels.loading}
+          branchesLoading={filterOptions.branches.loading}
+          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
@@ -335,6 +480,21 @@ export default function RevenueTrendPage() {
               <VarianceCard title="ASP Variance to MTD Target" card={kpis?.aspVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
             </div>
           </div>
+
+          {!overview.loading && !overview.error && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
+                gap: 'var(--ps-space-3, 16px)',
+                marginTop: 'var(--ps-space-4, 24px)',
+              }}
+            >
+              <PerfSummaryPanel title="Value Performance Summary" rows={valuePerfRows} formatter={(v) => (v === null ? '—' : formatCurrency(v))} unitLabel="(LYD)" />
+              <PerfSummaryPanel title="Volume Performance Summary" rows={volumePerfRows} formatter={(v) => (v === null ? '—' : formatVolume(v))} unitLabel="(Units)" />
+              <PerfSummaryPanel title="ASP Performance Summary" rows={aspPerfRows} formatter={(v) => (v === null ? '—' : formatAsp(v))} unitLabel="(LYD)" />
+            </div>
+          )}
         </main>
 
         <RefreshFooter
@@ -346,6 +506,38 @@ export default function RevenueTrendPage() {
         <BottomNavBar active="Revenue Trend" />
       </div>
     </PermissionGuard>
+  );
+}
+
+/**
+ * One Performance Summary table (Value/Volume/ASP) -- month-by-month DataGrid (sortable, searchable,
+ * PDF/CSV export, per @07ps/ui's own DataGrid) plus a monthly-average/YTD-total footer strip.
+ */
+function PerfSummaryPanel({
+  title,
+  rows,
+  formatter,
+  unitLabel,
+}: {
+  title: string;
+  rows: PerfSummaryRow[];
+  formatter: (v: number | null) => string;
+  unitLabel: string;
+}) {
+  const columns = perfSummaryColumns(unitLabel, formatter);
+  return (
+    <Card>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 'var(--ps-space-2, 8px)' }}>{title}</div>
+      <DataGrid
+        columns={columns}
+        rows={rows}
+        getRowId={(r) => r.id}
+        fileName={title.toLowerCase().replace(/\s+/g, '-')}
+        pageSize={12}
+        maxBodyHeight={360}
+      />
+      <PerfSummaryFooter rows={rows} formatter={formatter} />
+    </Card>
   );
 }
 

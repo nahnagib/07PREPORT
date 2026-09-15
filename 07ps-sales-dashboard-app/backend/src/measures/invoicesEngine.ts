@@ -293,6 +293,7 @@ export async function fetchSalesTrendByYearClass(
 export interface InvoiceYearEfficiencyPoint {
   year: number;
   label: string;
+  invoiceCount: number;
   avgSalesPerInvoice: number | null;
   avgLinesPerInvoice: number | null;
   avgVolumePerInvoice: number | null;
@@ -333,6 +334,7 @@ export async function fetchInvoicesTrendByYear(
     return {
       year: Number(r.year),
       label: String(r.year),
+      invoiceCount,
       avgSalesPerInvoice: invoiceCount > 0 ? totalValue / invoiceCount : null,
       avgLinesPerInvoice: invoiceCount > 0 ? lineCount / invoiceCount : null,
       avgVolumePerInvoice: invoiceCount > 0 ? totalVolume / invoiceCount : null,
@@ -348,6 +350,7 @@ export async function fetchInvoicesTrendByYear(
 export interface InvoiceClassificationSlice {
   invoiceClass: string;
   value: number;
+  invoiceCount: number;
 }
 
 /** Deliberately ignores `scope.invoiceClass`: this chart is what *produces* the Class page-filter,
@@ -370,7 +373,8 @@ export async function fetchInvoiceClassificationYtd(
   const sql = `
     SELECT
       fsl.\`Invoice Class\`                AS invoiceClass,
-      COALESCE(SUM(fsl.Value), 0)          AS value
+      COALESCE(SUM(fsl.Value), 0)          AS value,
+      COUNT(DISTINCT fsl.InvoiceKey)       AS invoiceCount
     FROM Fact_SalesLines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date BETWEEN ? AND ? AND ${clause}
@@ -384,9 +388,14 @@ export async function fetchInvoiceClassificationYtd(
   for (const r of rows as any[]) {
     const invoiceClass = normalizeInvoiceClass(r.invoiceClass);
     const value = Number(r.value);
+    const invoiceCount = Number(r.invoiceCount);
     const existing = byClass.get(invoiceClass);
-    if (existing) existing.value += value;
-    else byClass.set(invoiceClass, { invoiceClass, value });
+    if (existing) {
+      existing.value += value;
+      existing.invoiceCount += invoiceCount;
+    } else {
+      byClass.set(invoiceClass, { invoiceClass, value, invoiceCount });
+    }
   }
 
   return Array.from(byClass.values()).sort((a, b) => {

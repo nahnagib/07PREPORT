@@ -7,6 +7,10 @@ export interface DonutSegment {
   label: string;
   value: number;
   color: string;
+  /** Optional item count backing this segment's value (e.g. number of invoices) -- shown alongside
+   * the percentage in the tooltip when present. Purely additive: omit for every existing caller
+   * that has no such count to show. */
+  count?: number;
 }
 
 export interface DonutChartProps {
@@ -29,6 +33,18 @@ export interface DonutChartProps {
    * dimmed -- the "this is the active page filter" affordance, same convention as ComboChart's
    * highlightedCategory. */
   selectedId?: string | null;
+  /** Optional text centered in the ring's hole, e.g. "Today" or "12 / 26" -- opt-in (undefined
+   * renders nothing extra, so every existing caller is unaffected). Built for Critical Number
+   * page's Daily/Monthly/Yearly counters; generic enough for any donut that wants a headline
+   * figure in the middle instead of only a surrounding legend. */
+  centerLabel?: string;
+  /** Small caption under centerLabel, e.g. "Working Days". Ignored if centerLabel is unset. */
+  centerSubLabel?: string;
+  /** Renders each segment's share of the whole directly on the ring (outside small slices, with a
+   * leader line, per Recharts' own label positioning) in addition to the existing legend
+   * percentages. Opt-in -- defaults to false so every existing caller's ring stays exactly as
+   * before. */
+  showPercentLabels?: boolean;
 }
 
 function defaultFormatter(v: number): string {
@@ -36,6 +52,29 @@ function defaultFormatter(v: number): string {
   if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
   return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+/** Recharts `<Pie label>` renderer: each segment's share of the whole, placed just outside the
+ * ring at that slice's midpoint angle -- same polar-coordinate approach Recharts' own docs use for
+ * outside pie labels. Kept as a plain function (not a component) since Recharts calls it directly
+ * with its own props shape rather than mounting it as JSX. */
+function renderPercentLabel(props: any): React.ReactElement {
+  const { cx, cy, midAngle, outerRadius, percent } = props;
+  const RADIAN = Math.PI / 180;
+  const radius = outerRadius + 16;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor={x > cx ? 'start' : 'end'}
+      dominantBaseline="central"
+      style={{ fontSize: 11, fontWeight: 700, fill: 'var(--ps-color-text)' }}
+    >
+      {`${(percent * 100).toFixed(1)}%`}
+    </text>
+  );
 }
 
 /**
@@ -53,6 +92,9 @@ export function DonutChart({
   height = 280,
   onSegmentClick,
   selectedId = null,
+  centerLabel,
+  centerSubLabel,
+  showPercentLabels = false,
 }: DonutChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const total = segments.reduce((sum, s) => sum + s.value, 0);
@@ -95,7 +137,27 @@ export function DonutChart({
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--ps-space-2, 8px)' }}>
-        <div ref={containerRef} style={{ width: '100%' }}>
+        <div ref={containerRef} style={{ width: '100%', position: 'relative' }}>
+          {centerLabel && (
+            <div
+              aria-hidden
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                pointerEvents: 'none',
+                textAlign: 'center',
+              }}
+            >
+              <span style={{ fontSize: 20, fontWeight: 700, color: 'var(--ps-color-text)', lineHeight: 1.15 }}>{centerLabel}</span>
+              {centerSubLabel && (
+                <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{centerSubLabel}</span>
+              )}
+            </div>
+          )}
           <ResponsiveContainer width="100%" height={height}>
             <PieChart>
               <Pie
@@ -103,10 +165,12 @@ export function DonutChart({
                 dataKey="value"
                 nameKey="label"
                 innerRadius="60%"
-                outerRadius="88%"
+                outerRadius={showPercentLabels ? '76%' : '88%'}
                 paddingAngle={2}
                 isAnimationActive={false}
                 onClick={onSegmentClick ? (d: any) => onSegmentClick(d?.id ?? d?.payload?.id) : undefined}
+                label={showPercentLabels ? renderPercentLabel : undefined}
+                labelLine={showPercentLabels ? { stroke: 'var(--ps-color-muted-text)' } : false}
               >
                 {segments.map((s) => {
                   const isSelected = selectedId === s.id;
@@ -124,10 +188,12 @@ export function DonutChart({
                 })}
               </Pie>
               <Tooltip
-                formatter={(value: number, name: string) => [
-                  `${valueFormatter(value)} (${((value / total) * 100).toFixed(2)}%)`,
-                  name,
-                ]}
+                formatter={(value: number, name: string, entry: any) => {
+                  const count = entry?.payload?.count;
+                  const pct = `${((value / total) * 100).toFixed(2)}%`;
+                  const countText = typeof count === 'number' ? ` (${count.toLocaleString()} invoice${count === 1 ? '' : 's'})` : '';
+                  return [`${valueFormatter(value)} -- ${pct}${countText}`, name];
+                }}
                 contentStyle={{
                   borderRadius: 10,
                   border: '1px solid var(--ps-color-border)',
@@ -173,7 +239,7 @@ export function DonutChart({
                     {s.label}
                   </span>
                   <span style={{ color: 'var(--ps-color-muted-text)', fontWeight: 600, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-                    {valueFormatter(s.value)} ({((s.value / total) * 100).toFixed(2)}%)
+                    {valueFormatter(s.value)} ({((s.value / total) * 100).toFixed(2)}%{typeof s.count === 'number' ? `, ${s.count.toLocaleString()}` : ''})
                   </span>
                 </>
               );

@@ -1,35 +1,60 @@
 'use client';
 import React, { useState } from 'react';
-import { FileDown, Layers } from 'lucide-react';
+import { FileDown, Layers, ArrowUp, ArrowDown, Minus } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { useFilterState } from '../../../../components/FilterProvider';
-import { Card, ChartPanel, ComboChart, DonutChart, LoadingSkeleton, ErrorState, exportRowsAsPdf, type Column } from '@07ps/ui';
+import { Card, ChartPanel, ComboChart, DonutChart, DataGrid, LoadingSkeleton, ErrorState, exportRowsAsPdf, type Column, type DataGridColumn } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterOptions, useInvoicesEngineOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
 import type { InvoiceStats, InvoicesEngineKpis, InvoicesEngineScope, InvoiceYearClassBreakdown } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVolume } from '../../../../lib/format';
 
+// Value-tier labels (renamed from the bare A/B/C/D codes the ETL/warehouse still store -- see
+// backend/src/measures/invoicesEngine.ts's normalizeInvoiceClass). Thresholds are unchanged from
+// the live classification (data/etl/src/sales_pipeline/legacy_transform.py's _classify_invoice);
+// only the display wording changed, so a tier here always matches the exact same invoices the old
+// "Class A/B/C/D" labels did.
 const INVOICE_CLASS_LABELS: Record<string, string> = {
-  A: 'Class A (> 50K)',
-  B: 'Class B (25K – 50K)',
-  C: 'Class C (5K – 25K)',
-  D: 'Class D (< 5K)',
+  A: 'High Value',
+  B: 'Upper-Mid Value',
+  C: 'Medium Value',
+  D: 'Low Value',
+  Unclassified: 'Unclassified',
 };
+
+const INVOICE_CLASS_RANGE: Record<string, string> = {
+  A: '> 50K LYD',
+  B: '25K – 50K LYD',
+  C: '5K – 25K LYD',
+  D: '< 5K LYD',
+  Unclassified: 'no invoiced value',
+};
+
+/** Full "High Value (> 50K LYD)"-style label -- used in the donut/table where the range adds
+ * useful context; the bare tier name (INVOICE_CLASS_LABELS) is used where space is tight (e.g.
+ * legend rows, filter chips). */
+function invoiceClassFullLabel(cls: string): string {
+  const label = INVOICE_CLASS_LABELS[cls] ?? cls;
+  const range = INVOICE_CLASS_RANGE[cls];
+  return range ? `${label} (${range})` : label;
+}
 
 // Categorical (non-status) reuse of existing brand hues -- Invoice Class is a size segment, not a
 // good/bad signal, so this deliberately avoids --ps-color-alert (reserved for "bad" everywhere
 // else on the platform). Same "borrow a couple of brand hues for a category dimension that has no
-// dedicated token" convention as Critical Number page's COMPANY_DOT_COLOR.
+// dedicated token" convention as Critical Number page's COMPANY_DOT_COLOR. High Value gets the
+// deepest/most premium hue, Low Value the plainest; Unclassified falls through to
+// invoiceClassColor's own neutral default.
 const INVOICE_CLASS_COLOR: Record<string, string> = {
-  A: 'var(--ps-color-accent)',
-  B: 'var(--ps-color-gold)',
-  C: 'var(--ps-color-success)',
-  D: 'var(--ps-color-watch)',
+  A: 'var(--ps-color-trend-target)',
+  B: 'var(--ps-color-accent)',
+  C: 'var(--ps-color-gold)',
+  D: 'var(--ps-color-muted-text)',
 };
 
 function invoiceClassColor(cls: string): string {
@@ -147,6 +172,214 @@ const classificationTableColumns: Column<ClassificationTableRow>[] = [
   { key: 'value', header: 'Value', align: 'right' },
 ];
 
+// ---------------------------------------------------------------------------
+// Detail analysis tables (Issue #3) -- one persistent, sortable/exportable DataGrid per chart,
+// shown below Zones B/C rather than only behind ChartPanel's expand-to-table modal. Same
+// TrendArrow/status-pill visual language as Revenue Trend's own Performance Summary tables
+// (packages/ui doesn't have a shared version of these -- small enough, and page-specific enough in
+// exact wording, to duplicate per that page's own established convention).
+// ---------------------------------------------------------------------------
+
+type TrendDirection = 'up' | 'down' | 'flat';
+
+function trendFromValues(prev: number | undefined, current: number): TrendDirection {
+  if (prev === undefined) return 'flat';
+  if (current > prev) return 'up';
+  if (current < prev) return 'down';
+  return 'flat';
+}
+
+function TrendIcon({ trend }: { trend: TrendDirection }) {
+  const color = trend === 'up' ? 'var(--ps-color-success)' : trend === 'down' ? 'var(--ps-color-alert)' : 'var(--ps-color-muted-text)';
+  const Icon = trend === 'up' ? ArrowUp : trend === 'down' ? ArrowDown : Minus;
+  return (
+    <span style={{ display: 'inline-flex', color }}>
+      <Icon size={14} />
+    </span>
+  );
+}
+
+function StatusPill({ label, color }: { label: string; color: string }) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 600,
+        color,
+        border: `1px solid ${color}`,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
+      {label}
+    </span>
+  );
+}
+
+function formatSignedPct(v: number | null): string {
+  if (v === null) return '—';
+  const pct = v * 100;
+  return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+}
+
+// --- Table 1: Sales Performance by Year (below Sales Trend) ----------------
+
+interface SalesPerformanceRow extends Record<string, unknown> {
+  id: string;
+  year: string;
+  invoiceSalesValue: number;
+  invoiceCount: number;
+  avgValuePerInvoice: number | null;
+  variancePct: number | null;
+  trend: TrendDirection;
+}
+
+function buildSalesPerformanceRows(byYear: { year: number; label: string; invoiceSalesValue: number; invoiceCount: number }[]): SalesPerformanceRow[] {
+  const sorted = [...byYear].sort((a, b) => a.year - b.year);
+  return sorted.map((y, i) => {
+    const prev = sorted[i - 1];
+    const variancePct = prev && prev.invoiceSalesValue > 0 ? (y.invoiceSalesValue - prev.invoiceSalesValue) / prev.invoiceSalesValue : null;
+    return {
+      id: y.label,
+      year: y.label,
+      invoiceSalesValue: y.invoiceSalesValue,
+      invoiceCount: y.invoiceCount,
+      avgValuePerInvoice: y.invoiceCount > 0 ? y.invoiceSalesValue / y.invoiceCount : null,
+      variancePct,
+      trend: trendFromValues(prev?.invoiceSalesValue, y.invoiceSalesValue),
+    };
+  });
+}
+
+const salesPerformanceColumns: DataGridColumn<SalesPerformanceRow>[] = [
+  { key: 'year', header: 'Year', width: 80 },
+  { key: 'invoiceSalesValue', header: 'Invoice Sales Value', align: 'right', render: (r) => formatCurrency(r.invoiceSalesValue) },
+  { key: 'invoiceCount', header: '# of Invoices', align: 'right', render: (r) => r.invoiceCount.toLocaleString() },
+  { key: 'avgValuePerInvoice', header: 'Avg Value per Invoice', align: 'right', render: (r) => (r.avgValuePerInvoice === null ? '—' : formatCurrency(r.avgValuePerInvoice)) },
+  { key: 'variancePct', header: 'Variance vs. Prior Year', align: 'right', render: (r) => formatSignedPct(r.variancePct), rawValue: (r) => (r.variancePct ?? 0) * 100 },
+  { key: 'trend', header: 'Trend', align: 'left', render: (r) => <TrendIcon trend={r.trend} />, rawValue: (r) => r.trend, width: 70 },
+];
+
+// --- Table 2: Invoices Trend Detail (below Invoices Trend) ------------------
+
+interface InvoicesTrendDetailRow extends Record<string, unknown> {
+  id: string;
+  year: string;
+  invoiceCount: number;
+  avgSalesPerInvoice: number | null;
+  avgLinesPerInvoice: number | null;
+  trend: TrendDirection;
+}
+
+function buildInvoicesTrendDetailRows(
+  byYear: { year: number; label: string; invoiceCount: number; avgSalesPerInvoice: number | null; avgLinesPerInvoice: number | null }[],
+): InvoicesTrendDetailRow[] {
+  const sorted = [...byYear].sort((a, b) => a.year - b.year);
+  return sorted.map((y, i) => ({
+    id: y.label,
+    year: y.label,
+    invoiceCount: y.invoiceCount,
+    avgSalesPerInvoice: y.avgSalesPerInvoice,
+    avgLinesPerInvoice: y.avgLinesPerInvoice,
+    trend: trendFromValues(sorted[i - 1]?.avgSalesPerInvoice ?? undefined, y.avgSalesPerInvoice ?? 0),
+  }));
+}
+
+const invoicesTrendDetailColumns: DataGridColumn<InvoicesTrendDetailRow>[] = [
+  { key: 'year', header: 'Year', width: 80 },
+  { key: 'invoiceCount', header: '# of Invoices', align: 'right', render: (r) => r.invoiceCount.toLocaleString() },
+  { key: 'avgSalesPerInvoice', header: 'Avg Sales per Invoice', align: 'right', render: (r) => (r.avgSalesPerInvoice === null ? '—' : formatCurrency(r.avgSalesPerInvoice)) },
+  { key: 'avgLinesPerInvoice', header: 'Avg Lines per Invoice', align: 'right', render: (r) => formatLines(r.avgLinesPerInvoice) },
+  { key: 'trend', header: 'Trend', align: 'left', render: (r) => <TrendIcon trend={r.trend} />, rawValue: (r) => r.trend, width: 70 },
+];
+
+// --- Table 3: Invoices Classification Detail (below the donut) -------------
+
+interface ClassificationDetailRow extends Record<string, unknown> {
+  id: string;
+  classification: string;
+  count: number;
+  pctOfTotal: number;
+  totalValue: number;
+  avgValuePerInvoice: number | null;
+  trend: TrendDirection;
+  status: 'Active' | 'Inactive';
+}
+
+function buildClassificationDetailRows(
+  classification: { invoiceClass: string; value: number; invoiceCount: number }[],
+  byYearClass: InvoiceYearClassBreakdown[],
+): ClassificationDetailRow[] {
+  const totalValue = classification.reduce((sum, c) => sum + c.value, 0);
+  const yearsAsc = [...byYearClass].sort((a, b) => a.year - b.year);
+  return classification.map((c) => {
+    const perYearValue = yearsAsc.map((y) => y.classes.find((cls) => cls.invoiceClass === c.invoiceClass)?.invoiceSalesValue ?? 0);
+    const trend = trendFromValues(perYearValue[perYearValue.length - 2], perYearValue[perYearValue.length - 1] ?? 0);
+    return {
+      id: c.invoiceClass,
+      classification: invoiceClassFullLabel(c.invoiceClass),
+      count: c.invoiceCount,
+      pctOfTotal: totalValue > 0 ? c.value / totalValue : 0,
+      totalValue: c.value,
+      avgValuePerInvoice: c.invoiceCount > 0 ? c.value / c.invoiceCount : null,
+      trend: perYearValue.length >= 2 ? trend : 'flat',
+      status: c.invoiceCount > 0 ? 'Active' : 'Inactive',
+    };
+  });
+}
+
+const classificationDetailColumns: DataGridColumn<ClassificationDetailRow>[] = [
+  { key: 'classification', header: 'Classification', width: 160 },
+  { key: 'count', header: 'Count', align: 'right', render: (r) => r.count.toLocaleString() },
+  { key: 'pctOfTotal', header: '% of Total', align: 'right', render: (r) => `${(r.pctOfTotal * 100).toFixed(2)}%`, rawValue: (r) => r.pctOfTotal * 100 },
+  { key: 'totalValue', header: 'Total Value', align: 'right', render: (r) => formatCurrency(r.totalValue) },
+  { key: 'avgValuePerInvoice', header: 'Avg Value per Invoice', align: 'right', render: (r) => (r.avgValuePerInvoice === null ? '—' : formatCurrency(r.avgValuePerInvoice)) },
+  { key: 'trend', header: 'Trend', align: 'left', render: (r) => <TrendIcon trend={r.trend} />, rawValue: (r) => r.trend, width: 70 },
+  {
+    key: 'status',
+    header: 'Status',
+    align: 'left',
+    render: (r) => <StatusPill label={r.status} color={r.status === 'Active' ? 'var(--ps-color-success)' : 'var(--ps-color-muted-text)'} />,
+    rawValue: (r) => r.status,
+    width: 100,
+  },
+];
+
+/** Classification Tiers help block -- Issue #1's "Add Classification Definitions" requirement,
+ * plus a plain-language note on what "Unclassified" means (per the investigation in
+ * backend/src/measures/invoicesEngine.ts's normalizeInvoiceClass comment: lines whose order was
+ * never actually invoiced -- e.g. a quotation, or a cancelled/pending order -- rather than a data
+ * error, so there is deliberately no "fix" here beyond labeling it clearly). */
+function ClassificationTiersHelp() {
+  const tiers = ['A', 'B', 'C', 'D', 'Unclassified'];
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        paddingTop: 10,
+        borderTop: '1px solid var(--ps-color-border)',
+        fontSize: 11,
+        color: 'var(--ps-color-muted-text)',
+      }}
+    >
+      <div style={{ fontWeight: 700, marginBottom: 4, color: 'var(--ps-color-text)' }}>Classification Tiers</div>
+      <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {tiers.map((t) => (
+          <li key={t}>
+            <strong style={{ color: 'var(--ps-color-text)' }}>{INVOICE_CLASS_LABELS[t]}</strong>
+            {t !== 'Unclassified' ? `: invoices ${INVOICE_CLASS_RANGE[t]}.` : ': lines whose order was never actually invoiced (e.g. a quotation, or a cancelled/pending order) -- not a data error.'}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Same visual shell as Revenue Trend's ExportPdfButton -- copied per-page rather than shared, same
  * convention that component already established. */
 function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => void; downloading: boolean; disabled?: boolean }) {
@@ -232,7 +465,7 @@ export default function InvoicesEnginePage() {
 
   const scope: InvoicesEngineScope = { selectedYear, selectedInvoiceClass };
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth);
+  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
   const overview = useInvoicesEngineOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
@@ -312,7 +545,7 @@ export default function InvoicesEnginePage() {
 
   const salesTrendPoints = drilledYearData
     ? drilledYearData.classes.map((c) => ({
-        label: INVOICE_CLASS_LABELS[c.invoiceClass]?.split(' (')[0] ?? c.invoiceClass,
+        label: INVOICE_CLASS_LABELS[c.invoiceClass] ?? c.invoiceClass,
         invoiceSalesValue: c.invoiceSalesValue,
         invoiceCount: c.invoiceCount,
       }))
@@ -331,8 +564,9 @@ export default function InvoicesEnginePage() {
 
   const classificationSegments = (data?.classification ?? []).map((c) => ({
     id: c.invoiceClass,
-    label: INVOICE_CLASS_LABELS[c.invoiceClass] ?? c.invoiceClass,
+    label: invoiceClassFullLabel(c.invoiceClass),
     value: c.value,
+    count: c.invoiceCount,
     color: invoiceClassColor(c.invoiceClass),
   }));
 
@@ -368,6 +602,10 @@ export default function InvoicesEnginePage() {
     value: formatInvoiceValue(s.value),
   }));
 
+  const salesPerformanceRows = buildSalesPerformanceRows(data?.salesTrend.byYear ?? []);
+  const invoicesTrendDetailRows = buildInvoicesTrendDetailRows(data?.invoicesTrend ?? []);
+  const classificationDetailRows = buildClassificationDetailRows(data?.classification ?? [], data?.salesTrend.byYearClass ?? []);
+
   return (
     <PermissionGuard pageKey="invoices_engine">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
@@ -393,6 +631,10 @@ export default function InvoicesEnginePage() {
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
+          customerGroupsLoading={filterOptions.customerGroups.loading}
+          distributionChannelsLoading={filterOptions.distributionChannels.loading}
+          branchesLoading={filterOptions.branches.loading}
+          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
@@ -648,10 +890,21 @@ export default function InvoicesEnginePage() {
                     legendTitle="Invoice Class (YTD)"
                     onSegmentClick={handleClassificationSegmentClick}
                     selectedId={selectedInvoiceClass}
+                    showPercentLabels
                   />
                 )}
+                <ClassificationTiersHelp />
               </ChartPanel>
             </div>
+
+            {/* Zone D -- Detail analysis tables, one per chart above (Issue #3). */}
+            {!overview.loading && !overview.error && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
+                <DetailTablePanel title="Sales Performance by Year" subtitle="Detail behind Sales Trend" columns={salesPerformanceColumns} rows={salesPerformanceRows} fileName="sales-performance-by-year" />
+                <DetailTablePanel title="Invoices Trend Detail" subtitle="Detail behind Invoices Trend" columns={invoicesTrendDetailColumns} rows={invoicesTrendDetailRows} fileName="invoices-trend-detail" />
+                <DetailTablePanel title="Invoices Classification Detail" subtitle="Detail behind Invoices Classification" columns={classificationDetailColumns} rows={classificationDetailRows} fileName="invoices-classification-detail" />
+              </div>
+            )}
           </div>
         </main>
 
@@ -664,6 +917,35 @@ export default function InvoicesEnginePage() {
         <BottomNavBar active="Invoices Engine" />
       </div>
     </PermissionGuard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Zone D -- one detail-analysis table: title + @07ps/ui's DataGrid (sortable, searchable, PDF/CSV
+// export built in).
+// ---------------------------------------------------------------------------
+
+function DetailTablePanel<T extends Record<string, unknown>>({
+  title,
+  subtitle,
+  columns,
+  rows,
+  fileName,
+}: {
+  title: string;
+  subtitle: string;
+  columns: DataGridColumn<T>[];
+  rows: T[];
+  fileName: string;
+}) {
+  return (
+    <Card>
+      <div style={{ marginBottom: 'var(--ps-space-2, 8px)' }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>{title}</div>
+        <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>{subtitle}</div>
+      </div>
+      <DataGrid columns={columns} rows={rows} getRowId={(r) => String((r as Record<string, unknown>).id)} fileName={fileName} pageSize={10} maxBodyHeight={340} />
+    </Card>
   );
 }
 

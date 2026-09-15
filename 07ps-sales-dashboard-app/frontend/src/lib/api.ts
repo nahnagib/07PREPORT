@@ -877,6 +877,7 @@ export interface InvoiceYearClassBreakdown {
 export interface InvoiceYearEfficiencyPoint {
   year: number;
   label: string;
+  invoiceCount: number;
   avgSalesPerInvoice: number | null;
   avgLinesPerInvoice: number | null;
   avgVolumePerInvoice: number | null;
@@ -885,6 +886,7 @@ export interface InvoiceYearEfficiencyPoint {
 export interface InvoiceClassificationSlice {
   invoiceClass: string;
   value: number;
+  invoiceCount: number;
 }
 
 export interface InvoicesEngineOverview {

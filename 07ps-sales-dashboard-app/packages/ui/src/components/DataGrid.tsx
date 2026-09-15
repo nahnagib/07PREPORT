@@ -17,7 +17,9 @@ import {
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { ArrowUp, ArrowDown, ArrowUpDown, Pin, PinOff, Search, FileJson } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, Pin, PinOff, Search, FileJson, Download } from 'lucide-react';
+import { SEMANTIC_STATUS_LABEL, SEMANTIC_STATUS_PDF_COLOR } from './SemanticBadge';
+import type { SemanticStatus } from './KpiTile';
 
 export interface DataGridColumn<T> {
   key: keyof T;
@@ -29,6 +31,12 @@ export interface DataGridColumn<T> {
    * a compact "40.4M" but export/sort should use the exact underlying number). Falls back to
    * row[key]. */
   rawValue?: (row: T) => string | number;
+  /** Marks this column as a semantic-status column (e.g. `render` shows a <SemanticBadge>) so the
+   * PDF export -- which rasterizes a plain, detached DOM tree rather than mounting the real React
+   * component -- can reproduce the exact same colored-dot-plus-label look instead of falling back
+   * to whatever raw/rendered text it can scrape out (previously the raw status code, e.g. "red",
+   * with no color at all). Takes priority over `render`/`rawValue` for that one cell in the PDF. */
+  badge?: (row: T) => SemanticStatus | null | undefined;
   /** Initial column width in px - user can resize afterward. */
   width?: number;
 }
@@ -200,6 +208,39 @@ export function DataGrid<T extends Record<string, unknown>>({
         tr.style.backgroundColor = idx % 2 === 0 ? '#ffffff' : '#f7fafc';
         columns.forEach((col) => {
           const td = document.createElement('td');
+          td.style.padding = '10px';
+          td.style.textAlign = col.align ?? 'left';
+          td.style.borderBottom = '1px solid #e2e8f0';
+          td.style.fontSize = '11px';
+          td.style.color = '#1a202c';
+
+          // Semantic-status columns (e.g. a <SemanticBadge> on screen) render as their own colored
+          // dot + label here, matching the dashboard exactly, instead of falling through to the
+          // generic text-extraction below -- which for one of these columns previously produced
+          // either "[object Object]" or the raw, uncolored status code (e.g. "red").
+          const badgeStatus = col.badge?.(row);
+          if (badgeStatus) {
+            const wrap = document.createElement('span');
+            wrap.style.display = 'inline-flex';
+            wrap.style.alignItems = 'center';
+            wrap.style.gap = '6px';
+            const dot = document.createElement('span');
+            dot.style.display = 'inline-block';
+            dot.style.width = '8px';
+            dot.style.height = '8px';
+            dot.style.borderRadius = '50%';
+            dot.style.flexShrink = '0';
+            dot.style.backgroundColor = SEMANTIC_STATUS_PDF_COLOR[badgeStatus];
+            const text = document.createElement('span');
+            text.textContent = SEMANTIC_STATUS_LABEL[badgeStatus];
+            text.style.color = SEMANTIC_STATUS_PDF_COLOR[badgeStatus];
+            text.style.fontWeight = '600';
+            wrap.appendChild(dot);
+            wrap.appendChild(text);
+            td.appendChild(wrap);
+            tr.appendChild(td);
+            return;
+          }
 
           // Extract text content properly - avoid [object object] issues
           let value = '';
@@ -232,11 +273,6 @@ export function DataGrid<T extends Record<string, unknown>>({
           const formattedValue = formatNumberForPdf(rawVal || value);
 
           td.textContent = formattedValue || value;
-          td.style.padding = '10px';
-          td.style.textAlign = col.align ?? 'left';
-          td.style.borderBottom = '1px solid #e2e8f0';
-          td.style.fontSize = '11px';
-          td.style.color = '#1a202c';
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
@@ -274,21 +310,37 @@ export function DataGrid<T extends Record<string, unknown>>({
 
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth - 20; // 10mm margin on each side
+      const marginX = 10; // mm, left/right only -- see note below on why not top/bottom too
+      const imgWidth = pageWidth - marginX * 2;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      // The single tall table image is re-drawn on every page, shifted further up each time, so
+      // each page reveals the next slice purely through the page's own physical boundary --
+      // addImage() never crops, so anything placed above y=0 or below y=pageHeight on a given page
+      // is simply off that page's canvas, nothing more. That means a vertical margin can't actually
+      // be enforced by this technique without cropping the image itself: giving the first page a
+      // 10mm top offset (as this used to) while still drawing the image at full height makes THAT
+      // page display up to `pageHeight - topMargin` of content -- one `topMargin` MORE than the
+      // `pageHeight - 2*margin` the old code assumed per page when decrementing heightLeft -- and
+      // that drift compounds every page break into a growing overlap (the old code's inconsistent
+      // formula for the *next* position, `heightLeft - imgHeight`, made page 2 restart another
+      // `margin` early on top of that, so the very first break alone repeated a full `margin`'s
+      // worth of rows). No vertical margin at all keeps the two numbers below identical and the
+      // slicing seamless: each page shows exactly `pageHeight` of the image, back-to-back, with no
+      // row skipped or repeated. Horizontal margins are unaffected -- imgWidth is a per-page
+      // constant, not something accumulated across pages.
       let heightLeft = imgHeight;
-      let position = 10; // 10mm from top
+      let position = 0;
 
       // First page
-      pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight - 20;
+      pdf.addImage(imgData, 'PNG', marginX, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
 
       // Additional pages
       while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
+        position -= pageHeight;
         pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight - 20;
+        pdf.addImage(imgData, 'PNG', marginX, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
       }
 
       pdf.save(`${fileName}.pdf`);
@@ -297,6 +349,34 @@ export function DataGrid<T extends Record<string, unknown>>({
     } finally {
       setExporting(false);
     }
+  }
+
+  /** Plain-text value for one cell, for CSV export -- same rawValue-first, then-render,
+   * then-raw-column fallback order as exportPdf's cell extraction, minus the PDF-specific number
+   * formatting and badge rasterization (a CSV cell is just text; a spreadsheet does its own number
+   * formatting on open). */
+  function cellTextValue(col: DataGridColumn<T>, row: T): string {
+    if (col.rawValue) return String(col.rawValue(row));
+    if (col.render) {
+      const rendered = col.render(row);
+      if (typeof rendered === 'string') return rendered;
+      if (rendered && typeof rendered === 'object' && isValidElement(rendered) && (rendered.props as any)?.children) {
+        return String((rendered.props as any).children);
+      }
+      return String(row[col.key] ?? '');
+    }
+    return String(row[col.key] ?? '');
+  }
+
+  function csvEscape(value: string): string {
+    return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+  }
+
+  function exportCsv() {
+    if (exportRows.length === 0) return;
+    const header = columns.map((c) => csvEscape(c.header)).join(',');
+    const lines = exportRows.map((row) => columns.map((c) => csvEscape(cellTextValue(c, row))).join(','));
+    downloadBlob([header, ...lines].join('\n'), `${fileName}.csv`, 'text/csv;charset=utf-8;');
   }
 
   function handleHeaderDrop(draggedId: string, targetId: string) {
@@ -354,6 +434,7 @@ export function DataGrid<T extends Record<string, unknown>>({
           />
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <ToolbarButton icon={Download} label="Export CSV" onClick={exportCsv} disabled={exportRows.length === 0} />
           <ToolbarButton
             icon={FileJson}
             label={exporting ? 'Exporting...' : 'Export as PDF'}
