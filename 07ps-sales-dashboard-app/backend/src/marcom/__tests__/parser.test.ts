@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 import ExcelJS from 'exceljs';
-import { parseMarcomWorkbook, parseDate, TemplateStructureError } from '../parser';
+import { parseMarcomWorkbook, parseDate, TemplateStructureError, type Issue } from '../parser';
 import { SHEET_P1, SHEET_P2, SHEET_P3, SHEET_P4, TEMPLATE_VERSION } from '../templateConfig';
 
 const TEMPLATE = path.join(__dirname, '..', '..', '..', 'assets', 'marcom', 'MARCOM_Contribution_Data_Template.xlsx');
@@ -15,8 +15,8 @@ async function buf(wb: ExcelJS.Workbook): Promise<Buffer> {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 const parse = (wb: ExcelJS.Workbook, opts = {}) => buf(wb).then((b) => parseMarcomWorkbook(b, 'x.xlsx', opts));
-const errors = (r: { issues: { severity: string }[] }) => r.issues.filter((i) => i.severity === 'error');
-const warnings = (r: { issues: { severity: string }[] }) => r.issues.filter((i) => i.severity === 'warning');
+const errors = (r: { issues: Issue[] }) => r.issues.filter((i) => i.severity === 'error');
+const warnings = (r: { issues: Issue[] }) => r.issues.filter((i) => i.severity === 'warning');
 
 /** Put a real (non-green, yellow-styled) P1 row at `row`. */
 function p1Row(ws: ExcelJS.Worksheet, row: number, v: (string | number)[]) {
@@ -63,7 +63,7 @@ describe('example-row handling', () => {
     expect(r.tables.spend.rows).toHaveLength(1);
     expect(r.tables.spend.rows[0].data.brand).toBe('Brand B');
     expect(r.exampleRowsSkipped).toBe(6);
-    expect(warnings(r).some((w) => /example colour/.test((w as { message: string }).message))).toBe(true);
+    expect(warnings(r).some((w) => /example colour/.test(w.message))).toBe(true);
   });
 });
 
@@ -75,7 +75,7 @@ describe('validation', () => {
     const p2 = wb.getWorksheet(SHEET_P2)!;
     setRow(p2, 7, ['Camp X', 'Brand A', '2026-05-10', '2026-05-01', 'Ongoing', 100, 200]);
     const r = await parse(wb);
-    const errs = errors(r) as { sheet: string; cell: string; message: string }[];
+    const errs = errors(r);
     expect(errs.find((e) => e.sheet === SHEET_P1 && e.cell === 'B7')?.message).toMatch(/Agust/);
     expect(errs.find((e) => e.sheet === SHEET_P1 && e.cell === 'D7')?.message).toMatch(/negative/);
     expect(errs.find((e) => e.sheet === SHEET_P2 && e.cell === 'D7')?.message).toMatch(/before Start/);
@@ -89,8 +89,8 @@ describe('validation', () => {
     ws.getRow(7).getCell(9).value = 10; ws.getRow(7).getCell(10).value = 20;
     const r = await parse(wb);
     expect(r.tables.trade.rows[0].data.compliancePct).toBe(0.94);
-    expect(warnings(r).some((w) => (w as { cell: string }).cell === 'C7')).toBe(true);
-    expect((errors(r) as { cell: string }[]).some((e) => e.cell === 'G7')).toBe(true);
+    expect(warnings(r).some((w) => w.cell === 'C7')).toBe(true);
+    expect(errors(r).some((e) => e.cell === 'G7')).toBe(true);
   });
 
   it('parses text DD/MM, ISO text and real dates to the same value', async () => {
@@ -109,7 +109,7 @@ describe('validation', () => {
     p1Row(p1, 8, [...P1_VALS.slice(0, 3), '١٢٬٥٠٠', ...P1_VALS.slice(4)]);
     setRow(wb.getWorksheet(SHEET_P2)!, 31, ['Ghost Campaign', '2-Mega Billboards', 3, 10]);
     const r = await parse(wb);
-    const errs = errors(r) as { sheet: string; cell: string; message: string }[];
+    const errs = errors(r);
     expect(errs.find((e) => e.cell === 'A8')?.message).toMatch(/Duplicate/);
     expect(errs.find((e) => e.sheet === SHEET_P2 && e.cell === 'A31')?.message).toMatch(/Ghost Campaign/);
     expect(r.tables.spend.rows[0].data.spend).toBe(10000);
@@ -129,7 +129,7 @@ describe('validation', () => {
     setRow(wb.getWorksheet(SHEET_P4)!, 35, ['Some Event', '4-CSR', 'Brand Z', '2026-03-01', null, 'Planned']);
     const r = await parse(wb, { knownBrands: ['Brand A'] });
     expect(errors(r)).toEqual([]);
-    const msgs = (warnings(r) as { message: string }[]).map((w) => w.message).join('|');
+    const msgs = warnings(r).map((w) => w.message).join('|');
     expect(msgs).toMatch(/Clicks exceed impressions/);
     expect(msgs).toMatch(/engagement exceeds impressions/);
     expect(msgs).toMatch(/New brand "Brand Z"/);
@@ -141,7 +141,7 @@ describe('validation', () => {
     p1Row(wb.getWorksheet(SHEET_P1)!, 7, P1_VALS.slice(0, 3));
     wb.getWorksheet(SHEET_P1)!.getCell('D7').value = { formula: '50000*1.1' } as never;
     const r = await parse(wb);
-    expect((warnings(r) as { message: string }[]).some((w) => /no calculated value/.test(w.message))).toBe(true);
+    expect(warnings(r).some((w) => /no calculated value/.test(w.message))).toBe(true);
   });
 });
 
