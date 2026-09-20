@@ -85,3 +85,17 @@ export async function latestMonth(year?: number): Promise<{ year: number; month:
   const best = Math.max(0, ...results.map((r) => Number(r[0]?.ym ?? 0)));
   return best ? { year: Math.floor(best / 100), month: best % 100 } : null;
 }
+
+/** Every year that has any current MARCOM data (month-keyed tables, plus campaign and event dates), ascending. */
+export async function availableYears(): Promise<number[]> {
+  const parts = [
+    buildCurrentQuery('spend', { select: 'DISTINCT t.year AS y' }),
+    buildCurrentQuery('social', { select: 'DISTINCT t.year AS y' }),
+    buildCurrentQuery('web', { select: 'DISTINCT t.year AS y' }),
+    buildCurrentQuery('trade', { select: 'DISTINCT t.year AS y' }),
+    buildCurrentQuery('campaigns', { select: 'DISTINCT YEAR(t.start_date) AS y' }),
+    buildCurrentQuery('events', { select: 'DISTINCT YEAR(t.planned_date) AS y' }),
+  ];
+  const [rows] = await pool.query(`${parts.map((p) => `(${p.sql})`).join(' UNION ')} ORDER BY y`, parts.flatMap((p) => p.params));
+  return (rows as { y: number }[]).map((r) => Number(r.y));
+}

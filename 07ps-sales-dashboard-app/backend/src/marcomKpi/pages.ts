@@ -1,9 +1,9 @@
 import { DateTime } from 'luxon';
 import { getFreshness } from '../marcom/service';
-import { BRAND_JOIN, listBrands, latestMonth, runCurrent, where } from './db';
+import { BRAND_JOIN, availableYears, listBrands, latestMonth, runCurrent, where } from './db';
 import { applyDefaults, parseBool, parseBrandIds, parseCommonRaw, parsePlatforms, parseStatuses } from './params';
 import { BrandRef } from './common';
-import { PLATFORMS } from '../marcom/templateConfig';
+import { CAMPAIGN_STATUSES, PLATFORMS } from '../marcom/templateConfig';
 import { SpendRow, buildSpending } from './spending';
 import { CampaignRow, MediaRow, buildCampaigns } from './campaigns';
 import { SocialRow, WebRow, buildDigital } from './digital';
@@ -32,13 +32,25 @@ async function resolve(raw: Raw) {
   return { ...applied, brands, brandIds, selected };
 }
 
-async function envelope<T extends { hasData: boolean; meta: { missing: string[] } }>(
-  page: string,
-  filters: Record<string, unknown>,
-  payload: T,
+interface Options { years: number[]; brands: BrandRef[]; platforms?: readonly string[]; statuses?: readonly string[] }
+
+/**
+ * Wraps a page payload with the filters that were applied, the freshness line and the filter
+ * OPTIONS the UI needs (every year with data, every brand, and the page's platform/status lists),
+ * so the frontend never hard-codes them.
+ */
+export function makeEnvelope<T extends { hasData: boolean; meta: { missing: string[] } }>(
+  page: string, filters: Record<string, unknown>, options: Options, freshness: unknown, payload: T,
 ) {
   if (!payload.hasData) payload.meta.missing.push('data');
-  return { page, filters, freshness: await getFreshness(), ...payload };
+  return { page, filters, options, freshness, ...payload };
+}
+
+async function envelope<T extends { hasData: boolean; meta: { missing: string[] } }>(
+  page: string, filters: Record<string, unknown>, brands: BrandRef[], payload: T, extra: Pick<Options, 'platforms' | 'statuses'> = {},
+) {
+  const [freshness, years] = await Promise.all([getFreshness(), availableYears()]);
+  return makeEnvelope(page, filters, { years, brands, ...extra }, freshness, payload);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -59,7 +71,7 @@ export async function spendingPage(raw: Raw) {
     current: rows.filter((x) => x.year === r.year),
     previous: rows.filter((x) => x.year === r.year - 1),
   });
-  return envelope('spending', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected }, payload);
+  return envelope('spending', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected }, r.brands, payload);
 }
 
 export async function campaignsPage(raw: Raw) {
@@ -83,7 +95,7 @@ export async function campaignsPage(raw: Raw) {
       })
     : [];
   const payload = buildCampaigns({ year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, campaigns, media, today: businessToday() });
-  return envelope('campaigns', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected, statuses: statuses ?? [] }, payload);
+  return envelope('campaigns', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected, statuses: statuses ?? [] }, r.brands, payload, { statuses: CAMPAIGN_STATUSES });
 }
 
 export async function digitalPage(raw: Raw) {
@@ -106,7 +118,7 @@ export async function digitalPage(raw: Raw) {
     }),
   ]);
   const payload = buildDigital({ year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, social, web, platforms: selected });
-  return envelope('digital', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, platforms: selected }, payload);
+  return envelope('digital', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, platforms: selected }, r.brands, payload, { platforms: PLATFORMS });
 }
 
 export async function tradePage(raw: Raw) {
@@ -128,5 +140,5 @@ export async function tradePage(raw: Raw) {
     }),
   ]);
   const payload = buildTrade({ year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, trade, events, today: businessToday(), completedOnly });
-  return envelope('trade', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected, completedOnly }, payload);
+  return envelope('trade', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected, completedOnly }, r.brands, payload);
 }

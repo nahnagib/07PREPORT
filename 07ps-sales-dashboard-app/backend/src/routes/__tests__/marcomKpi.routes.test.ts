@@ -117,7 +117,7 @@ describe.skipIf(!RUN_DB)('/marcom/kpi/* (HTTP, DB-backed)', () => {
       const res = await get(`/marcom/kpi/${page}`, 'director');
       expect(res.status).toBe(200);
       const b = await res.json();
-      expect(b).toMatchObject({ page, hasData: false, freshness: { hasData: false } });
+      expect(b).toMatchObject({ page, hasData: false, freshness: { hasData: false }, options: { years: [] } });
       expect(b.meta.missing).toContain('data');
       expect(JSON.stringify(b)).not.toMatch(/NaN|Infinity/);
     });
@@ -196,6 +196,18 @@ describe.skipIf(!RUN_DB)('/marcom/kpi/* (HTTP, DB-backed)', () => {
       const only = await (await get('/marcom/kpi/trade?year=2026&fromMonth=8&toMonth=8&completedOnly=true', 'director')).json();
       expect(only.eventsByTypeMonthly[0].total).toBe(1);
       expect(only.meta.eventsFilter).toBe('completedOnly');
+    });
+
+    it('every page carries the filter options (years with data, all brands; platforms / statuses where they apply)', async () => {
+      const s = await (await get('/marcom/kpi/spending', 'director')).json();
+      expect(s.options.years).toEqual([2026]);
+      expect(s.options.brands).toEqual([{ id: expect.any(Number), name: 'Brand A' }]);
+      expect((await (await get('/marcom/kpi/digital', 'director')).json()).options.platforms).toEqual(['Facebook', 'Google', 'LinkedIn', 'Instagram', 'TikTok']);
+      expect((await (await get('/marcom/kpi/campaigns', 'director')).json()).options.statuses).toEqual(['Planned', 'Ongoing', 'Completed', 'On Hold']);
+      // options list ALL brands even when the request filters to one
+      const [brands] = (await pool.query('SELECT brand_id FROM marcom_brand')) as [{ brand_id: number }[], unknown];
+      const f = await (await get(`/marcom/kpi/trade?brandIds=${brands[0].brand_id}`, 'director')).json();
+      expect(f.options.brands).toHaveLength(1);
     });
 
     it('brand filter narrows the data; an existing brand with no rows in range yields na, not an error', async () => {
@@ -291,7 +303,7 @@ describe.skipIf(!RUN_DB)('/marcom/kpi/* (HTTP, DB-backed)', () => {
       // brand list + 1-3 data queries + freshness (2) -- independent of how many brands/months/campaigns exist.
       const sqls = spy.mock.calls.map((c) => String(c[0]));
       const marcomQueries = sqls.filter((s) => /marcom_/.test(s));
-      expect(marcomQueries.length).toBeLessThanOrEqual(8);
+      expect(marcomQueries.length).toBeLessThanOrEqual(9);
       expect(marcomQueries.every((s) => !/marcom_[a-z_]+ t /.test(s) || /is_current = 1/.test(s))).toBe(true);
       spy.mockRestore();
     });
