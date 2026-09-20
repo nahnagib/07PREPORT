@@ -15,11 +15,12 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import * as XLSX from 'xlsx';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 import { ArrowUp, ArrowDown, ArrowUpDown, Pin, PinOff, Search, FileJson, Download } from 'lucide-react';
 import { SEMANTIC_STATUS_LABEL, SEMANTIC_STATUS_PDF_COLOR } from './SemanticBadge';
 import type { SemanticStatus } from './KpiTile';
+import { chunkRows, PDF_MAX_ROWS } from '../pdfPagination';
+import { assemblePaginatedPdf } from '../pdfPageAssembly';
+import { appendPdfMetaBlock } from '../pdfExportContext';
 
 export interface DataGridColumn<T> {
   key: keyof T;
@@ -54,6 +55,9 @@ export interface DataGridProps<T extends Record<string, unknown>> {
   maxBodyHeight?: number | null;
   /** Optional filter summary to include at top of PDF export - e.g. "Company: Majaal | Date Range: 2026-01-01 to 2026-12-31" */
   filtersSummary?: string;
+  /** Page-local filters (e.g. a page-only Customer slicer) listed in the PDF after the app-wide
+   * filters supplied by the shared export context. */
+  extraFilterParts?: string[];
 }
 
 /**
@@ -85,6 +89,7 @@ export function DataGrid<T extends Record<string, unknown>>({
   pageSize = 10,
   maxBodyHeight = 520,
   filtersSummary,
+  extraFilterParts,
 }: DataGridProps<T>) {
   const tableRef = useRef<HTMLTableElement>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -95,6 +100,7 @@ export function DataGrid<T extends Record<string, unknown>>({
   const [columnPinning, setColumnPinning] = useState<ColumnPinningState>({ left: [], right: [] });
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize });
   const [exporting, setExporting] = useState(false);
+  const [pdfNotice, setPdfNotice] = useState<string | null>(null);
 
   const columnDefs = useMemo<ColumnDef<T>[]>(
     () =>
@@ -141,209 +147,183 @@ export function DataGrid<T extends Record<string, unknown>>({
     return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  /** Builds one <tr> for `row`, same badge / rawValue / render / number-formatting precedence as
+   * the live table -- shared by every page's table in exportPdf below. */
+  function buildExportRow(row: T, idx: number): HTMLTableRowElement {
+    const tr = document.createElement('tr');
+    tr.style.backgroundColor = idx % 2 === 0 ? '#ffffff' : '#f7fafc';
+    columns.forEach((col) => {
+      const td = document.createElement('td');
+      td.style.padding = '10px';
+      td.style.textAlign = col.align ?? 'left';
+      td.style.borderBottom = '1px solid #e2e8f0';
+      td.style.fontSize = '11px';
+      td.style.color = '#1a202c';
+
+      // Semantic-status columns (e.g. a <SemanticBadge> on screen) render as their own colored
+      // dot + label here, matching the dashboard exactly, instead of falling through to the
+      // generic text-extraction below -- which for one of these columns previously produced
+      // either "[object Object]" or the raw, uncolored status code (e.g. "red").
+      const badgeStatus = col.badge?.(row);
+      if (badgeStatus) {
+        const wrap = document.createElement('span');
+        wrap.style.display = 'inline-flex';
+        wrap.style.alignItems = 'center';
+        wrap.style.gap = '6px';
+        const dot = document.createElement('span');
+        dot.style.display = 'inline-block';
+        dot.style.width = '8px';
+        dot.style.height = '8px';
+        dot.style.borderRadius = '50%';
+        dot.style.flexShrink = '0';
+        dot.style.backgroundColor = SEMANTIC_STATUS_PDF_COLOR[badgeStatus];
+        const text = document.createElement('span');
+        text.textContent = SEMANTIC_STATUS_LABEL[badgeStatus];
+        text.style.color = SEMANTIC_STATUS_PDF_COLOR[badgeStatus];
+        text.style.fontWeight = '600';
+        wrap.appendChild(dot);
+        wrap.appendChild(text);
+        td.appendChild(wrap);
+        tr.appendChild(td);
+        return;
+      }
+
+      // Extract text content properly - avoid [object object] issues
+      let value = '';
+      let rawVal: unknown = null;
+
+      if (col.rawValue) {
+        rawVal = col.rawValue(row);
+        value = String(rawVal);
+      } else if (col.render) {
+        // For rendered content, try to extract text from React output
+        const rendered = col.render(row);
+        if (typeof rendered === 'string') {
+          value = rendered;
+        } else if (rendered && typeof rendered === 'object') {
+          // Handle React elements by extracting text content
+          if (isValidElement(rendered) && rendered.props && (rendered.props as any).children) {
+            value = String((rendered.props as any).children);
+          } else {
+            value = String(row[col.key] ?? '');
+          }
+        } else {
+          value = String(rendered ?? '');
+        }
+      } else {
+        rawVal = row[col.key];
+        value = String(rawVal ?? '');
+      }
+
+      // Format numbers with thousand separators and 2 decimal places
+      const formattedValue = formatNumberForPdf(rawVal || value);
+
+      td.textContent = formattedValue || value;
+      tr.appendChild(td);
+    });
+    return tr;
+  }
+
+  /** Builds a page's table: a freshly-built header row (repeated on every page, not just visually
+   * carried over) plus this page's row chunk. */
+  function buildExportTable(rowsForPage: T[]): HTMLTableElement {
+    const table = document.createElement('table');
+    table.style.width = '100%';
+    table.style.borderCollapse = 'collapse';
+    table.style.marginBottom = '20px';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    columns.forEach((col) => {
+      const th = document.createElement('th');
+      th.textContent = col.header;
+      th.style.padding = '12px';
+      th.style.textAlign = col.align ?? 'left';
+      th.style.fontWeight = 'bold';
+      th.style.backgroundColor = '#2d3748';
+      th.style.color = '#ffffff';
+      th.style.borderBottom = '2px solid #1a202c';
+      th.style.fontSize = '12px';
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    rowsForPage.forEach((row, idx) => tbody.appendChild(buildExportRow(row, idx)));
+    table.appendChild(tbody);
+    return table;
+  }
+
+  /**
+   * Rows are split into fixed PDF_TABLE_ROWS_PER_PAGE-row chunks up front (see pdfPagination.ts)
+   * and each chunk is rasterized as its own independent PDF page (see pdfPageAssembly.ts) --
+   * replacing the previous raw pixel slice of one tall canvas, which had no concept of a row
+   * boundary at all and could (and, per real exported PDFs, did) cut a row in half at every page
+   * break.
+   */
   async function exportPdf() {
     if (!tableRef.current || exportRows.length === 0) return;
+    if (exportRows.length > PDF_MAX_ROWS) {
+      setPdfNotice(
+        `PDF export is limited to ${PDF_MAX_ROWS.toLocaleString()} rows, and ${exportRows.length.toLocaleString()} currently match. ` +
+          'Narrow the results with the search box, column filters or the page filters, or use Export CSV for the full list.',
+      );
+      return;
+    }
+    setPdfNotice(null);
     setExporting(true);
     try {
-      // Create a temporary container with proper styling for PDF rendering
-      const tempContainer = document.createElement('div');
-      tempContainer.style.position = 'absolute';
-      tempContainer.style.left = '-9999px';
-      tempContainer.style.width = '1200px';
-      tempContainer.style.background = '#ffffff';
-      tempContainer.style.padding = '30px';
-      tempContainer.style.fontFamily = 'Arial, sans-serif';
-      tempContainer.style.fontSize = '12px';
-      tempContainer.style.color = '#111827';
+      const rowChunks = chunkRows(exportRows);
+      const pageCount = rowChunks.length;
+      const titleText = fileName.replace(/-/g, ' ').toUpperCase();
 
-      // Add title
-      const title = document.createElement('h1');
-      title.textContent = `${fileName.replace(/-/g, ' ').toUpperCase()}`;
-      title.style.fontSize = '18px';
-      title.style.fontWeight = 'bold';
-      title.style.marginBottom = '10px';
-      title.style.color = '#111827';
-      tempContainer.appendChild(title);
+      const pages = rowChunks.map((rowsForPage, pageIndex) => {
+        const container = document.createElement('div');
+        container.style.position = 'absolute';
+        container.style.left = '-9999px';
+        container.style.width = '1200px';
+        container.style.background = '#ffffff';
+        container.style.padding = '30px';
+        container.style.fontFamily = 'Arial, sans-serif';
+        container.style.fontSize = '12px';
+        container.style.color = '#111827';
 
-      // Add filter summary if provided
-      if (filtersSummary) {
-        const filterEl = document.createElement('p');
-        filterEl.textContent = `Filters: ${filtersSummary}`;
-        filterEl.style.fontSize = '11px';
-        filterEl.style.color = '#6b7280';
-        filterEl.style.marginBottom = '20px';
-        filterEl.style.borderBottom = '1px solid #e5e7eb';
-        filterEl.style.paddingBottom = '10px';
-        tempContainer.appendChild(filterEl);
-      }
+        const title = document.createElement('h1');
+        title.textContent = pageCount > 1 ? `${titleText} (PAGE ${pageIndex + 1} OF ${pageCount})` : titleText;
+        title.style.fontSize = '18px';
+        title.style.fontWeight = 'bold';
+        title.style.marginBottom = '10px';
+        title.style.color = '#111827';
+        container.appendChild(title);
 
-      // Create table with all data
-      const table = document.createElement('table');
-      table.style.width = '100%';
-      table.style.borderCollapse = 'collapse';
-      table.style.marginBottom = '20px';
+        if (pageIndex === 0) {
+          // A page-supplied `filtersSummary` ("A | B", or "No filters applied") replaces the
+          // app-wide filter list (for pages whose filters aren't the global ones, e.g. BCG's own
+          // company slicer); otherwise the shared context supplies it.
+          const summaryParts = filtersSummary
+            ? filtersSummary.split(' | ').filter((p) => p && !/^no filters applied/i.test(p))
+            : undefined;
+          appendPdfMetaBlock(container, { filterParts: summaryParts, extraFilterParts });
+        }
 
-      // Header row
-      const thead = document.createElement('thead');
-      const headerRow = document.createElement('tr');
-      columns.forEach((col) => {
-        const th = document.createElement('th');
-        th.textContent = col.header;
-        th.style.padding = '12px';
-        th.style.textAlign = col.align ?? 'left';
-        th.style.fontWeight = 'bold';
-        th.style.backgroundColor = '#2d3748';
-        th.style.color = '#ffffff';
-        th.style.borderBottom = '2px solid #1a202c';
-        th.style.fontSize = '12px';
-        headerRow.appendChild(th);
-      });
-      thead.appendChild(headerRow);
-      table.appendChild(thead);
+        container.appendChild(buildExportTable(rowsForPage));
 
-      // Data rows
-      const tbody = document.createElement('tbody');
-      exportRows.forEach((row, idx) => {
-        const tr = document.createElement('tr');
-        tr.style.backgroundColor = idx % 2 === 0 ? '#ffffff' : '#f7fafc';
-        columns.forEach((col) => {
-          const td = document.createElement('td');
-          td.style.padding = '10px';
-          td.style.textAlign = col.align ?? 'left';
-          td.style.borderBottom = '1px solid #e2e8f0';
-          td.style.fontSize = '11px';
-          td.style.color = '#1a202c';
+        if (pageIndex === pageCount - 1) {
+          const footer = document.createElement('div');
+          footer.style.marginTop = '20px';
+          footer.style.fontSize = '10px';
+          footer.style.color = '#718096';
+          footer.style.borderTop = '1px solid #e2e8f0';
+          footer.style.paddingTop = '10px';
+          footer.textContent = `Exported on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()} | Total rows: ${exportRows.length}`;
+          container.appendChild(footer);
+        }
 
-          // Semantic-status columns (e.g. a <SemanticBadge> on screen) render as their own colored
-          // dot + label here, matching the dashboard exactly, instead of falling through to the
-          // generic text-extraction below -- which for one of these columns previously produced
-          // either "[object Object]" or the raw, uncolored status code (e.g. "red").
-          const badgeStatus = col.badge?.(row);
-          if (badgeStatus) {
-            const wrap = document.createElement('span');
-            wrap.style.display = 'inline-flex';
-            wrap.style.alignItems = 'center';
-            wrap.style.gap = '6px';
-            const dot = document.createElement('span');
-            dot.style.display = 'inline-block';
-            dot.style.width = '8px';
-            dot.style.height = '8px';
-            dot.style.borderRadius = '50%';
-            dot.style.flexShrink = '0';
-            dot.style.backgroundColor = SEMANTIC_STATUS_PDF_COLOR[badgeStatus];
-            const text = document.createElement('span');
-            text.textContent = SEMANTIC_STATUS_LABEL[badgeStatus];
-            text.style.color = SEMANTIC_STATUS_PDF_COLOR[badgeStatus];
-            text.style.fontWeight = '600';
-            wrap.appendChild(dot);
-            wrap.appendChild(text);
-            td.appendChild(wrap);
-            tr.appendChild(td);
-            return;
-          }
-
-          // Extract text content properly - avoid [object object] issues
-          let value = '';
-          let rawVal: unknown = null;
-
-          if (col.rawValue) {
-            rawVal = col.rawValue(row);
-            value = String(rawVal);
-          } else if (col.render) {
-            // For rendered content, try to extract text from React output
-            const rendered = col.render(row);
-            if (typeof rendered === 'string') {
-              value = rendered;
-            } else if (rendered && typeof rendered === 'object') {
-              // Handle React elements by extracting text content
-              if (isValidElement(rendered) && rendered.props && (rendered.props as any).children) {
-                value = String((rendered.props as any).children);
-              } else {
-                value = String(row[col.key] ?? '');
-              }
-            } else {
-              value = String(rendered ?? '');
-            }
-          } else {
-            rawVal = row[col.key];
-            value = String(rawVal ?? '');
-          }
-
-          // Format numbers with thousand separators and 2 decimal places
-          const formattedValue = formatNumberForPdf(rawVal || value);
-
-          td.textContent = formattedValue || value;
-          tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-      });
-      table.appendChild(tbody);
-      tempContainer.appendChild(table);
-
-      // Add footer with export info
-      const footer = document.createElement('div');
-      footer.style.marginTop = '20px';
-      footer.style.fontSize = '10px';
-      footer.style.color = '#718096';
-      footer.style.borderTop = '1px solid #e2e8f0';
-      footer.style.paddingTop = '10px';
-      footer.textContent = `Exported on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()} | Total rows: ${exportRows.length}`;
-      tempContainer.appendChild(footer);
-
-      document.body.appendChild(tempContainer);
-
-      // Convert to canvas with better quality settings
-      const canvas = await html2canvas(tempContainer, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
-      document.body.removeChild(tempContainer);
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'landscape',
-        unit: 'mm',
-        format: 'a4',
+        return container;
       });
 
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const marginX = 10; // mm, left/right only -- see note below on why not top/bottom too
-      const imgWidth = pageWidth - marginX * 2;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      // The single tall table image is re-drawn on every page, shifted further up each time, so
-      // each page reveals the next slice purely through the page's own physical boundary --
-      // addImage() never crops, so anything placed above y=0 or below y=pageHeight on a given page
-      // is simply off that page's canvas, nothing more. That means a vertical margin can't actually
-      // be enforced by this technique without cropping the image itself: giving the first page a
-      // 10mm top offset (as this used to) while still drawing the image at full height makes THAT
-      // page display up to `pageHeight - topMargin` of content -- one `topMargin` MORE than the
-      // `pageHeight - 2*margin` the old code assumed per page when decrementing heightLeft -- and
-      // that drift compounds every page break into a growing overlap (the old code's inconsistent
-      // formula for the *next* position, `heightLeft - imgHeight`, made page 2 restart another
-      // `margin` early on top of that, so the very first break alone repeated a full `margin`'s
-      // worth of rows). No vertical margin at all keeps the two numbers below identical and the
-      // slicing seamless: each page shows exactly `pageHeight` of the image, back-to-back, with no
-      // row skipped or repeated. Horizontal margins are unaffected -- imgWidth is a per-page
-      // constant, not something accumulated across pages.
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      // First page
-      pdf.addImage(imgData, 'PNG', marginX, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-
-      // Additional pages
-      while (heightLeft > 0) {
-        position -= pageHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', marginX, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-      }
-
-      pdf.save(`${fileName}.pdf`);
+      await assemblePaginatedPdf({ pages, fileName });
     } catch (err) {
       console.error('PDF export failed:', err);
     } finally {
@@ -369,14 +349,17 @@ export function DataGrid<T extends Record<string, unknown>>({
   }
 
   function csvEscape(value: string): string {
-    return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+    return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
   }
 
   function exportCsv() {
     if (exportRows.length === 0) return;
     const header = columns.map((c) => csvEscape(c.header)).join(',');
     const lines = exportRows.map((row) => columns.map((c) => csvEscape(cellTextValue(c, row))).join(','));
-    downloadBlob([header, ...lines].join('\n'), `${fileName}.csv`, 'text/csv;charset=utf-8;');
+    // UTF-8 BOM so Excel (and other CSV readers that default to a legacy codepage) detect UTF-8 and
+    // render Arabic / non-Latin customer and salesperson names instead of mojibake. CRLF line
+    // endings are the CSV convention Excel expects.
+    downloadBlob(`﻿${[header, ...lines].join('\r\n')}`, `${fileName}.csv`, 'text/csv;charset=utf-8;');
   }
 
   function handleHeaderDrop(draggedId: string, targetId: string) {
@@ -443,6 +426,23 @@ export function DataGrid<T extends Record<string, unknown>>({
           />
         </div>
       </div>
+
+      {pdfNotice && (
+        <div
+          role="alert"
+          style={{
+            marginBottom: 10,
+            padding: '8px 12px',
+            borderRadius: 8,
+            border: '1px solid var(--ps-color-watch)',
+            background: 'var(--ps-color-muted-bg)',
+            color: 'var(--ps-color-text)',
+            fontSize: 12,
+          }}
+        >
+          {pdfNotice}
+        </div>
+      )}
 
       {/* Table - horizontally (and, up to maxBodyHeight, vertically) scrollable so resized/many
           columns and long result sets never break the page layout. The header stays sticky within

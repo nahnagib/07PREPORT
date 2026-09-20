@@ -7,6 +7,8 @@ from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
+from config.input_check import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, env_dir
+
 
 def _bool_env(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -46,6 +48,9 @@ class Settings:
     max_retries: int = 5
     include_uninvoiced_sales_lines: bool = False
     force_sales_full_refresh: bool = False
+    # Session time_zone applied to every MySQL connection this pipeline opens (DB_SESSION_TIMEZONE).
+    db_session_timezone: str = "+00:00"
+    allow_empty_product_mapping: bool = False
 
     @property
     def output_path(self) -> Path:
@@ -82,15 +87,18 @@ class Settings:
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
         load_dotenv(env_file)
-        defaults_input = "Input"
-        defaults_output = "Exports"
+        # ETL_INPUT_DIR / ETL_OUTPUT_DIR are the environment-independent names (INPUT_DIR / OUTPUT_DIR
+        # still work as fallbacks). Relative values resolve against data/etl/, and a Windows drive path
+        # on Linux raises with the fix instead of silently pointing at a folder that cannot exist.
+        input_dir, _, _ = env_dir(("ETL_INPUT_DIR", "INPUT_DIR"), DEFAULT_INPUT_DIR)
+        output_dir, _, _ = env_dir(("ETL_OUTPUT_DIR", "OUTPUT_DIR"), DEFAULT_OUTPUT_DIR)
         return cls(
             odoo_url=os.getenv("ODOO_URL", "").rstrip("/"),
             odoo_db=os.getenv("ODOO_DB", ""),
             odoo_user=os.getenv("ODOO_USER", ""),
             odoo_api_key=os.getenv("ODOO_API_KEY", ""),
-            input_dir=Path(os.getenv("INPUT_DIR", defaults_input)),
-            output_dir=Path(os.getenv("OUTPUT_DIR", defaults_output)),
+            input_dir=input_dir,
+            output_dir=output_dir,
             output_file=os.getenv("OUTPUT_FILE", "SalesModel_OneOutput.xlsx"),
             inventory_validation_file=os.getenv("INVENTORY_VALIDATION_FILE", "Inventory_Validation.xlsx"),
             unmapped_products_file=os.getenv("UNMAPPED_PRODUCTS_FILE", "Unmapped_Products.xlsx"),
@@ -114,6 +122,8 @@ class Settings:
             max_retries=int(os.getenv("ODOO_MAX_RETRIES", "5")),
             include_uninvoiced_sales_lines=_bool_env("INCLUDE_UNINVOICED_SALES_LINES", False),
             force_sales_full_refresh=_bool_env("FORCE_SALES_FULL_REFRESH", False),
+            db_session_timezone=os.getenv("DB_SESSION_TIMEZONE", "+00:00").strip() or "+00:00",
+            allow_empty_product_mapping=_bool_env("ETL_ALLOW_EMPTY_PRODUCT_MAPPING", False),
         )
 
     @property

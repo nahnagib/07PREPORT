@@ -10,8 +10,9 @@ FROM python:3.11-slim
 WORKDIR /repo/data/etl
 
 # gcc: needed to build a couple of the real pipeline's transitive C-extension dependencies.
+# tzdata: the TZ env var / zoneinfo (TIMEZONE=Africa/Tripoli) need the IANA database.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc curl \
+    && apt-get install -y --no-install-recommends gcc curl tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 COPY data/etl ./

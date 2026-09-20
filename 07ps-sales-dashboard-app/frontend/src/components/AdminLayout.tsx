@@ -9,6 +9,13 @@ import { useAuth } from '../lib/AuthProvider';
 const TABS = [
   { label: 'Users', href: '/admin/users', pageKey: 'admin_users' },
   { label: 'Roles & Permissions', href: '/admin/roles', pageKey: 'admin_roles' },
+  { label: 'Salespersons', href: '/admin/salespersons', pageKey: 'admin_salespersons' },
+  { label: 'Sales Teams', href: '/admin/salesteams', pageKey: 'admin_salesteams' },
+  { label: 'Customer Groups', href: '/admin/customer-groups', pageKey: 'admin_customer_groups' },
+  { label: 'Distribution Channels', href: '/admin/distribution-channels', pageKey: 'admin_distribution_channels' },
+  { label: 'Companies', href: '/admin/companies', pageKey: 'admin_companies' },
+  { label: 'Official Holidays', href: '/admin/holidays', pageKey: 'admin_holidays' },
+  { label: 'Forced Closures', href: '/admin/closures', pageKey: 'admin_closures' },
   { label: 'MARCOM Data Upload', href: '/admin/marcom-upload', pageKey: 'admin_marcom_upload' },
   { label: 'Login History', href: '/admin/login-history', pageKey: 'admin_login_history' },
 ] as const;

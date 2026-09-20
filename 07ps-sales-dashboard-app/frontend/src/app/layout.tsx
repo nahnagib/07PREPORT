@@ -5,6 +5,7 @@ import { BusinessUnitProvider } from '../components/BusinessUnitProvider';
 import { AuthProvider } from '../lib/AuthProvider';
 import { AuthGuard } from '../components/AuthGuard';
 import { FilterProvider } from '../components/FilterProvider';
+import { PdfExportContextBridge } from '../components/PdfExportContextBridge';
 
 export const metadata: Metadata = {
   title: 'BMH – Sales Dashboard', // Section 3.26 naming convention: [Group] – [Department] Dashboard
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <BusinessUnitProvider>
             <AuthProvider>
               <FilterProvider>
+                <PdfExportContextBridge />
                 <AuthGuard>{children}</AuthGuard>
               </FilterProvider>
             </AuthProvider>

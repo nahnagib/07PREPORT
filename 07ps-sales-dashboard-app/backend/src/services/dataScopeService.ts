@@ -16,7 +16,7 @@ const VALID_DIMENSIONS = new Set(DATA_SCOPE_DIMENSIONS.map((d) => d.key));
 
 /** Dim_* lookup table/columns each dimension's value resolves a human-readable label from --
  * same mapping routes/filters.ts's value-list endpoints already use. */
-const DIMENSION_LOOKUP: Record<keyof Filters, { table: string; keyCol: string; labelCol: string }> = {
+const DIMENSION_LOOKUP: Partial<Record<keyof Filters, { table: string; keyCol: string; labelCol: string }>> = {
   companyKeys: { table: 'Dim_Company', keyCol: 'CompanyKey', labelCol: 'Company' },
   segmentKeys: { table: 'Dim_Segment', keyCol: 'SegmentKey', labelCol: 'Segment' },
   channelKeys: { table: 'Dim_DistributionChannel', keyCol: 'ChannelKey', labelCol: 'DistributionChannel' },
@@ -70,6 +70,7 @@ export async function getAllRoleDataScopeRulesWithLabels(): Promise<Record<numbe
   const labelsByDimensionAndValue = new Map<string, string>();
   for (const [dimension, dimensionRows] of rowsByDimension) {
     const lookup = DIMENSION_LOOKUP[dimension];
+    if (!lookup) continue; // not a role-scope dimension (e.g. customerKeys)
     const values = [...new Set(dimensionRows.map((r) => r.value))];
     if (values.length === 0) continue;
     const placeholders = values.map(() => '?').join(', ');

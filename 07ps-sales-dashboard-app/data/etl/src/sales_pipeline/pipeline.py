@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any, Callable, Literal
 import pandas as pd
 from sqlalchemy import inspect, text
 
+from config.input_check import InputValidationError, inspect_input_dir
 from config.settings import Settings
 from sales_pipeline.cleaning import DataFrameUtils, ProductMapper, SalesCleaner, SalesOrgEnricher
 from sales_pipeline.dimensions import (
@@ -59,19 +61,13 @@ from sales_pipeline.legacy_transform import (
 from sales_pipeline.odoo import CrmRepository, OdooClient, ProductCostRepository, SaleOrderLineRepository, SaleOrderRepository, SalesReportRepository, StockMoveRepository, StockPickingRepository
 from sales_pipeline.odoo.sales_report_repository import odoo_utc_datetime_to_local
 from sales_pipeline.qa import QAService
+from sales_pipeline.etl_run_log import EtlRunLog, utc_now
 from sales_pipeline.runtime import PipelineRunContext
 from sales_pipeline.reference_cache import ReferenceDataCache
 from sales_pipeline.staging import StagingStore, odoo_incremental_domain
 from sales_pipeline.validation import ModelValidator
-from sales_pipeline.product_name_mapper import ProductNameMapper
+from sales_pipeline.product_name_mapper import ProductMappingError, ProductNameMapper
 
-
-REQUIRED_INPUT_FILES = [
-    "sales_targets.xlsx",
-    "SalesTeam.xlsx",
-    "OffDays.xlsx",
-    "PRODUCTS.xlsx",
-]
 
 REQUIRED_OUTPUT_SHEETS = [
     "Fact_SalesLines",
@@ -143,13 +139,31 @@ class PowerBISalesPipeline:
         self.pipeline_settings = PipelineSettings(verbose=True)
         self._latest_odoo_sale_order_start: dict[str, Any] = {}
         self._latest_odoo_sale_order_end: dict[str, Any] = {}
-        # Centralized product-name mapper — loaded once, reused every transform run.
-        self.mapper = ProductNameMapper(settings.products_path)
-        self.logger.info(
-            "ProductNameMapper ready — %d Odoo→clean mappings loaded from %s",
-            self.mapper.mapping_count(),
-            settings.products_path,
-        )
+        # Centralized product-name mapper -- built lazily (see `mapper`), after input validation, so
+        # constructing the pipeline never touches files and a bad input dir fails in step one.
+        self._mapper: ProductNameMapper | None = None
+
+    @property
+    def mapper(self) -> ProductNameMapper:
+        if self._mapper is None:
+            self._mapper = ProductNameMapper(self.settings.products_path)
+            self.logger.info(
+                "ProductNameMapper ready — %d Odoo→clean mappings loaded from %s",
+                self._mapper.mapping_count(),
+                self.settings.products_path,
+            )
+            if self._mapper.mapping_count() == 0:
+                message = (
+                    f"ProductNameMapper loaded 0 mappings from {self.settings.products_path}: every product would "
+                    "pass through under its raw Odoo name and corrupt Dim_Product. Check the file is the current "
+                    "PRODUCTS.xlsx (first sheet, OdooProductName + ProductName columns filled). Set "
+                    "ETL_ALLOW_EMPTY_PRODUCT_MAPPING=true only for a brand-new, deliberately empty master."
+                )
+                if not self.settings.allow_empty_product_mapping:
+                    self._mapper = None
+                    raise ProductMappingError(message)
+                self.logger.warning("%s (continuing: ETL_ALLOW_EMPTY_PRODUCT_MAPPING=true)", message)
+        return self._mapper
 
     def run(
         self,
@@ -200,10 +214,29 @@ class PowerBISalesPipeline:
         effective_odoo_cutoff_utc: pd.Timestamp | None = self._parse_odoo_cutoff_utc(odoo_cutoff_utc)
         incremental_since_utc: pd.Timestamp | None = None
         metadata_exporter: DatabaseExporter | None = None
+        etl_log: EtlRunLog | None = None
+        trigger_source = os.getenv("ETL_TRIGGER_SOURCE", "").strip() or "cli"
+
+        def open_etl_log() -> EtlRunLog | None:
+            """Best-effort: opens the UTC etl_run_log row for this run (SQL/both output only)."""
+            nonlocal etl_log
+            if etl_log is not None or output_mode not in {"sql", "both"}:
+                return etl_log
+            try:
+                candidate = EtlRunLog(DatabaseExporter(self.settings).engine, self.settings.timezone)
+                candidate.start(load_mode, output_mode, trigger_source, run_context.start_time)
+                etl_log = candidate
+            except Exception as log_exc:  # noqa: BLE001
+                self.logger.warning("Could not open etl_run_log row; this run will not update Last Refresh: %s", log_exc)
+            return etl_log
+
         try:
             with run_context.step("validate_config_and_inputs"):
-                self.settings.validate(require_database=output_mode in {"sql", "both"} or load_mode == "incremental")
+                # Inputs first: a wrong/unmounted input folder is the cheapest thing to detect, so it
+                # must fail before config checks that lead into DB access or the product mapper.
                 self._validate_inputs()
+                self.settings.validate(require_database=output_mode in {"sql", "both"} or load_mode == "incremental")
+                _ = self.mapper  # raises ProductMappingError if PRODUCTS.xlsx is unreadable
                 self.settings.output_dir.mkdir(parents=True, exist_ok=True)
                 self.logger.info("Pipeline load mode: %s", load_mode.upper())
                 self.logger.info("Pipeline output mode: %s", output_mode.upper())
@@ -211,6 +244,8 @@ class PowerBISalesPipeline:
                 self.logger.info("Pipeline QA outputs enabled: %s", include_qa_outputs)
                 if output_mode == "sql":
                     self.logger.info("SQL-only output selected; skipping Excel workbook export and final Excel/SQL validation")
+
+            open_etl_log()
 
             if output_mode in {"sql", "both"} or load_mode == "incremental":
                 with run_context.step("read_sql_incremental_metadata"):
@@ -458,6 +493,7 @@ class PowerBISalesPipeline:
                     sql_export_started = time.perf_counter()
                     sql_result = exporter.export_incremental(sheets, cutoff_local) if incremental_sql else exporter.export(sheets)
                     self.logger.info("SQL table load phase completed duration_seconds=%.2f", time.perf_counter() - sql_export_started)
+                    exporter.ensure_query_indexes()
                     validation_started = time.perf_counter()
                     self._log_sql_validation(sql_result)
                     if not sql_result.mismatches.empty:
@@ -478,6 +514,28 @@ class PowerBISalesPipeline:
 
             run_context.finish("SUCCESS")
             if output_mode in {"sql", "both"}:
+                if etl_log is None:
+                    open_etl_log()  # one more attempt: the earlier open may have hit a transient DB error
+                if etl_log is None:
+                    raise RuntimeError("Data load finished but etl_run_log has no row for this run, so Last Refresh cannot be recorded")
+                # One transaction: read the watermark back from the loaded tables and flip the row to
+                # `success`. Raising here (rather than warning) is deliberate -- a load whose refresh
+                # metadata was not recorded must show as failed so it is retried, not sit unnoticed.
+                watermark = etl_log.finish_success(
+                    finished_at=run_context.end_time or utc_now(),
+                    started_at=run_context.start_time,
+                    rows_processed=db_loaded_count,
+                    odoo_extract_count=odoo_extract_count,
+                    qa_issues_count=qa_issues_count,
+                )
+                self.logger.info(
+                    "etl_run_log: run %s success finished_at_utc=%s watermark_order_date_utc=%s watermark_order_created_utc=%s order=%s",
+                    etl_log.run_uid,
+                    (run_context.end_time or utc_now()).isoformat(),
+                    watermark.order_date_utc.isoformat() if watermark.order_date_utc else None,
+                    watermark.order_created_utc.isoformat() if watermark.order_created_utc else None,
+                    watermark.order_number,
+                )
                 audit_exporter = DatabaseExporter(self.settings)
                 try:
                     audit_exporter.write_run_audit(
@@ -527,6 +585,16 @@ class PowerBISalesPipeline:
         except Exception as exc:
             run_context.finish("FAILED", str(exc))
             if output_mode in {"sql", "both"}:
+                try:
+                    # A run that failed before the log was opened (e.g. validate_config_and_inputs) is
+                    # still recorded, so "the last run failed" is visible in the same table.
+                    failed_log = open_etl_log()
+                    if failed_log is not None:
+                        failed_log.finish_failed(
+                            run_context.end_time or utc_now(), run_context.start_time, str(exc), data_loaded=sql_result is not None
+                        )
+                except Exception as log_exc:  # noqa: BLE001
+                    self.logger.error("Could not write failed run to etl_run_log: %s", log_exc)
                 try:
                     audit_exporter = DatabaseExporter(self.settings)
                     latest_order_after = self._latest_sql_order_tuple(audit_exporter)
@@ -2586,12 +2654,22 @@ class PowerBISalesPipeline:
         return out.loc[~excluded_mask].copy()
 
     def _validate_inputs(self) -> None:
-        missing = [name for name in REQUIRED_INPUT_FILES if not (self.settings.input_dir / name).exists()]
-        if missing:
-            raise FileNotFoundError(f"Missing required input files in {self.settings.input_dir}: {', '.join(missing)}")
-        if not self.settings.blocked_customers_path.exists():
-            self.logger.warning("BlockedCustomers.xlsx missing; creating empty template at %s", self.settings.blocked_customers_path)
-            BlockedCustomersLoader(self.legacy_logger).export_template(self.settings.blocked_customers_path)
+        report = inspect_input_dir(self.settings.input_dir)
+        self.logger.info("Input directory: %s (exists=%s)", report.input_dir, report.dir_exists)
+        if not report.ok:
+            error = InputValidationError(report)
+            self.logger.error("%s", error)
+            raise error
+        blocked = self.settings.blocked_customers_path
+        if not blocked.exists():
+            self.logger.warning("BlockedCustomers.xlsx missing; creating empty template at %s", blocked)
+            try:
+                BlockedCustomersLoader(self.legacy_logger).export_template(blocked)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"BlockedCustomers.xlsx is missing and could not be created in {blocked.parent} "
+                    f"(is the input folder mounted read-only?): {exc}. Add an empty BlockedCustomers.xlsx there."
+                ) from exc
 
     @staticmethod
     def _validate_output_sheets(sheets: dict[str, pd.DataFrame], include_qa: bool = True) -> None:

@@ -6,11 +6,26 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useFilterState } from '../../../../components/FilterProvider';
-import { Card, ChartPanel, DonutChart, TrendChart, DataTable, Select, Button, InsightCard, LoadingSkeleton, ErrorState, exportRowsAsPdf, type Column } from '@07ps/ui';
+import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
+import {
+  Card,
+  ChartPanel,
+  DonutChart,
+  TrendChart,
+  DataTable,
+  Select,
+  Button,
+  InsightCard,
+  PerformanceReportTable,
+  LoadingSkeleton,
+  ErrorState,
+  exportRowsAsPdf,
+  type Column,
+  type PerformanceReportRow,
+} from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useActivityMomentumOverview, useFilterOptions, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import { useActivityMomentumOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { ActivityOpportunityRow, LostReasonSlice, NewOpportunitiesMonthPoint, OpportunityActivityCounts, ActivityRates } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVariance } from '../../../../lib/format';
 
@@ -62,6 +77,120 @@ function toRatesTableRows(rates?: ActivityRates): MetricValueRow[] {
   return [
     { id: 'inactive', metric: 'Inactive Deals Ratio', value: rates.inactiveDealsRatio != null ? formatVariance(rates.inactiveDealsRatio) ?? '—' : '—' },
     { id: 'lost', metric: 'Lost Deals Ratio', value: rates.lostDealsRatio != null ? formatVariance(rates.lostDealsRatio) ?? '—' : '—' },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// "Executive Summary" -- a C-level scannable rollup (6 rows, plain-English takeaways). Reuses the
+// same 'ratio > 0.5 => alert' threshold already established for the Inactive/Lost Deals Ratio
+// InsightCards above (see their `status={... > 0.5 ? 'alert' : 'neutral'}`), so this table never
+// disagrees with what those cards already show for the same ratios.
+//
+// Formula audit (per KPI, matching backend/src/measures/activityMomentum.ts exactly):
+//  - #YTD / #Active / #Lost: plain counts, always available (no activity-column gate).
+//  - #W/O Next Step, Inactive Deals Ratio: render "—" only when checkActivityColumnsAvailable()
+//    (activityMomentum.ts:63-88) finds the 6 CRM activity columns (HasNextStep/HasRecentActivity/
+//    IsInactive/...) don't exist yet on the live table (ETL population pass not run yet). Both are
+//    all-time snapshots of current pipeline state (not filtered by this year's creation-date
+//    cohort), and Inactive Deals Ratio's numerator is a single distinct at-risk count (Inactive OR
+//    Without Next Step), not a sum of the two -- see activityMomentum.ts's module header ("Cohort
+//    vs. snapshot scoping" / "Ratio double-counting", fixed 2026-09).
+//  - Lost Deals Ratio = #Lost / (#YTD[displayed, Lost-excluded] + #Lost), i.e. Lost / total YTD
+//    opportunities of every status (activityMomentum.ts:178-182's `totalYtdAll`). This ties out
+//    against the example the ratio was flagged with: #Lost=230, displayed #YTD=389 ->
+//    230 / (389 + 230) = 230 / 619 = 37.16%, exactly matching the "+37.16%" on screen. It is
+//    deliberately NOT Lost/(Won+Lost) or Lost/displayed-#YTD -- see that file's header comment for
+//    why the ratio's own denominator must stay Lost-inclusive even though the tile-level #YTD
+//    excludes Lost.
+// ---------------------------------------------------------------------------
+
+const RATIO_ALERT_THRESHOLD = 0.5;
+
+function ratioTakeaway(label: string, ratio: number | null): string {
+  if (ratio == null) return `${label} has no data available yet.`;
+  const pct = formatVariance(ratio) ?? '—';
+  return ratio > RATIO_ALERT_THRESHOLD
+    ? `${label} is ${pct}, above the ${Math.round(RATIO_ALERT_THRESHOLD * 100)}% risk threshold.`
+    : `${label} is ${pct}.`;
+}
+
+function toExecutiveSummaryRows(
+  counts?: OpportunityActivityCounts,
+  rates?: ActivityRates,
+  newOppByMonth?: NewOpportunitiesMonthPoint[],
+): PerformanceReportRow[] {
+  if (!counts || !rates) return [];
+  const series = newOppByMonth ?? [];
+  const sumYtd = series.reduce((s, p) => s + p.countYtd, 0);
+  const sumLytd = series.reduce((s, p) => s + p.countLytd, 0);
+  const ytdVarianceLy = sumLytd > 0 ? (sumYtd - sumLytd) / sumLytd : null;
+
+  return [
+    {
+      id: 'ytd',
+      metric: '#YTD',
+      actualLabel: formatCountOrDash(counts.totalYtd),
+      targetLabel: '—',
+      variancePct: null,
+      varianceLyPct: ytdVarianceLy,
+      status: 'neutral',
+      takeaway: `${formatCountOrDash(counts.totalYtd)} new opportunities created so far this year${
+        ytdVarianceLy != null ? ` (${formatVariance(ytdVarianceLy)} vs last year)` : ''
+      }.`,
+    },
+    {
+      id: 'active',
+      metric: '#Active',
+      actualLabel: formatCountOrDash(counts.active),
+      targetLabel: '—',
+      variancePct: null,
+      varianceLyPct: null,
+      status: 'neutral',
+      takeaway: `${formatCountOrDash(counts.active)} opportunities are currently open and active.`,
+    },
+    {
+      id: 'withoutNextStep',
+      metric: '#W/O Next Step',
+      actualLabel: formatCountOrDash(counts.withoutNextStep),
+      targetLabel: '—',
+      variancePct: null,
+      varianceLyPct: null,
+      status: 'neutral',
+      takeaway:
+        counts.withoutNextStep != null
+          ? `${formatCountOrDash(counts.withoutNextStep)} open opportunities have no next step scheduled.`
+          : 'Next-step tracking data is not yet available.',
+    },
+    {
+      id: 'lost',
+      metric: '#Lost',
+      actualLabel: formatCountOrDash(counts.lost),
+      targetLabel: '—',
+      variancePct: null,
+      varianceLyPct: null,
+      status: 'neutral',
+      takeaway: `${formatCountOrDash(counts.lost)} opportunities lost so far this year.`,
+    },
+    {
+      id: 'inactiveRatio',
+      metric: 'Inactive Deals Ratio',
+      actualLabel: rates.inactiveDealsRatio != null ? formatVariance(rates.inactiveDealsRatio) ?? '—' : '—',
+      targetLabel: `< ${Math.round(RATIO_ALERT_THRESHOLD * 100)}%`,
+      variancePct: null,
+      varianceLyPct: null,
+      status: rates.inactiveDealsRatio != null && rates.inactiveDealsRatio > RATIO_ALERT_THRESHOLD ? 'alert' : 'neutral',
+      takeaway: ratioTakeaway('The share of open deals that are stale or missing a next step', rates.inactiveDealsRatio),
+    },
+    {
+      id: 'lostRatio',
+      metric: 'Lost Deals Ratio',
+      actualLabel: rates.lostDealsRatio != null ? formatVariance(rates.lostDealsRatio) ?? '—' : '—',
+      targetLabel: `< ${Math.round(RATIO_ALERT_THRESHOLD * 100)}%`,
+      variancePct: null,
+      varianceLyPct: null,
+      status: rates.lostDealsRatio != null && rates.lostDealsRatio > RATIO_ALERT_THRESHOLD ? 'alert' : 'neutral',
+      takeaway: ratioTakeaway('The share of this year\'s opportunities that were lost', rates.lostDealsRatio),
+    },
   ];
 }
 
@@ -184,11 +313,13 @@ function toTableRow(o: ActivityOpportunityRow): OpportunityTableRow {
  * Activities Details reached by clicking the "Opportunity Activities" panel title -- same
  * clickable-title convention as Customer Growth's Customer Status panel).
  *
- * `#W/O Activity`, `#W/O Next Step` and the Rates panel's Inactive Deals Ratio depend on 6 columns
- * that were added to the ETL's OpportunityFactBuilder this session but not yet exported to the
- * live warehouse (the ETL wasn't re-run, by design -- see backend/src/measures/activityMomentum.ts's
- * header). `overview.data.activityColumnsAvailable` tells the frontend whether to render those
- * figures or the honest "—" placeholder; the Activity filter panel also hides the 2
+ * `#W/O Activity`, `#W/O Next Step` and the Rates panel's Inactive Deals Ratio are computed from
+ * Fact_Opportunity's quotation-staleness columns (HasQuotation/LastQuotationDate/
+ * DaysSinceLastQuotation/OpportunityAge/SalesSegment) -- see
+ * backend/src/measures/activityMomentum.ts's header for the full definitions and the 2026-09-17
+ * correction (an earlier session built these against a different, never-deployed set of columns).
+ * `overview.data.activityColumnsAvailable` still gates rendering as a defensive check in case those
+ * columns are ever missing from the schema again; the Activity filter panel also hides the 2
  * activity-dependent options entirely while unavailable, rather than offering a filter that would
  * always return zero rows.
  */
@@ -202,16 +333,14 @@ export default function ActivityMomentumPage() {
     onFiltersChange,
     onAnchorDateChange,
     onDateRangeChange,
-    resetFilters,
   } = useFilterState();
 
   const [view, setView] = useState<'summary' | 'details'>('summary');
   const [activityFilter, setActivityFilter] = useState<ActivityFilterKey | null>(null);
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth);
+  const filterOptions = useScopedFilterOptions();
   const overview = useActivityMomentumOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
   async function handleDownloadTablePdf<T extends Record<string, unknown>>(key: string, title: string, columns: Column<T>[], rows: T[]) {
@@ -226,17 +355,6 @@ export default function ActivityMomentumPage() {
     } finally {
       setDownloadingPdf(null);
     }
-  }
-
-  function handleReset() {
-    resetFilters();
-    setView('summary');
-    setActivityFilter(null);
-  }
-
-  function handleRefresh() {
-    overview.retry();
-    refreshStatus.retry();
   }
 
   function handleBackToSummary() {
@@ -290,8 +408,6 @@ export default function ActivityMomentumPage() {
           pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
-          onRefresh={handleRefresh}
-          lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
           onLogout={logout}
           showDateInput={false}
@@ -300,7 +416,6 @@ export default function ActivityMomentumPage() {
         <FilterBar
           filters={effectiveFilters}
           onChange={onFiltersChange}
-          onReset={handleReset}
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
@@ -314,14 +429,12 @@ export default function ActivityMomentumPage() {
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
-          onExportReport={exportReport.exportReport}
-          isExporting={exportReport.isExporting}
-          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
           isStale={refreshStatus.data?.isStale}
           isInverted={refreshStatus.data?.isInverted}
+          refreshCheck={refreshStatus.data?.refreshCheck}
           lastRefreshTime={lastRefreshLabel}
         />
 
@@ -345,7 +458,7 @@ export default function ActivityMomentumPage() {
                   <InsightCard
                     label="Inactive Deals Ratio"
                     value={data?.rates.inactiveDealsRatio != null ? formatVariance(data.rates.inactiveDealsRatio) ?? '—' : '—'}
-                    infoText="Measures the percentage of open opportunities that are considered at risk due to inactivity. Formula: (Inactive Opportunities + Opportunities Without Next Step) ÷ Open Opportunities YTD."
+                    infoText="Measures the share of currently-open opportunities that are stale (inactive) or missing a next step, as of the last data refresh. Formula: distinct count of open opportunities where Inactive OR Without Next Step ÷ Open Opportunities (all-time snapshot, not limited to this year's cohort)."
                     status={data?.rates.inactiveDealsRatio != null && data.rates.inactiveDealsRatio > 0.5 ? 'alert' : 'neutral'}
                     accentBg={data?.rates.inactiveDealsRatio != null && data.rates.inactiveDealsRatio > 0.5}
                     loading={overview.loading}
@@ -383,7 +496,13 @@ export default function ActivityMomentumPage() {
                   ) : overview.error ? (
                     <ErrorState message={overview.error} onRetry={overview.retry} />
                   ) : (
-                    <DonutChart title="Total Lost Opportunity by Reason" showTitle={false} segments={lostByReasonSegments} legendTitle="Reason" />
+                    <DonutChart
+                      title="Total Lost Opportunity by Reason"
+                      showTitle={false}
+                      segments={lostByReasonSegments}
+                      legendTitle="Reason"
+                      showPercentLabels
+                    />
                   )}
                 </ChartPanel>
 
@@ -419,6 +538,15 @@ export default function ActivityMomentumPage() {
                   )}
                 </ChartPanel>
               </div>
+
+              {!overview.loading && !overview.error && (
+                <PerformanceReportTable
+                  title="Performance Details"
+                  rows={toExecutiveSummaryRows(data?.counts, data?.rates, data?.newOpportunitiesByMonth)}
+                  showStatus
+                  showTakeaway
+                />
+              )}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
@@ -545,7 +673,7 @@ function ActivityCountsPanel({
     {
       label: '#W/O Activity',
       value: counts?.withoutActivity,
-      infoText: 'Open opportunities that have exceeded the inactivity threshold without sufficient sales activity.',
+      infoText: 'Open opportunities with no update in the last 14 days (HasRecentActivity). A different, shorter-window signal than the Rates panel\'s "Inactive" (30+ days) -- not the same count.',
     },
     { label: '#Active', value: counts?.active },
     { label: '#Lost', value: counts?.lost },

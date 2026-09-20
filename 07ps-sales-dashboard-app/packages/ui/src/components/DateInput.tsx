@@ -8,6 +8,12 @@ export interface DateInputProps {
   onChange: (value: string) => void;
   helperText?: string;
   disabled?: boolean;
+  /** ISO (yyyy-mm-dd) bounds passed straight through to the native input's min/max -- e.g. a "To
+   * Date" field gets min={fromDate} and a "From Date" field gets max={toDate}, so the browser's
+   * own date-picker popup greys out and refuses invalid selections instead of relying only on the
+   * caller to clamp the value after the fact. */
+  min?: string;
+  max?: string;
 }
 
 /**
@@ -22,7 +28,7 @@ export interface DateInputProps {
  * popup (opened by the native input) is retained, since replacing that specific piece would be
  * the "swap to a different charting/picker approach entirely" case worth flagging before doing.
  */
-export function DateInput({ label, value, onChange, helperText, disabled }: DateInputProps) {
+export function DateInput({ label, value, onChange, helperText, disabled, min, max }: DateInputProps) {
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -62,6 +68,8 @@ export function DateInput({ label, value, onChange, helperText, disabled }: Date
           type="date"
           className="ps-date-input"
           value={value}
+          min={min}
+          max={max}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => setFocused(true)}

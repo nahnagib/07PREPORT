@@ -9,41 +9,46 @@
  * Source tables (confirmed against the live throwaway/validation warehouse, same DB Tachometer
  * reads from -- not a second data source):
  *
- *   Metric                    | Source table(s)                    | How
- *   ---------------------------|-------------------------------------|---------------------------
- *   Daily Critical Number      | Fact_Targets (Target_Revenue)       | FY target (scope-filtered)
- *                               |                                     | / working days in the FY
- *   Daily/Monthly/Yearly       | Fact_SalesLines (value)             | actual value for the day /
- *   Counter actuals            |                                     | MTD / YTD window
- *   Working Days / Weekly Rest | Dim_Date.IsWeeklyRestDay + calendar  | see computeWorkingDays below
- *   Official Holidays /        | Fact_OffDays (OffDayType='official' | Fact_OffDays' Company/Branch
- *   Forced Closures            | / 'unexpected')                     | columns are text, not FKs --
- *                               |                                     | matched against the current
- *                               |                                     | scope in JS, see
- *                               |                                     | offDayMatchesScope below
- *   Missing Days/Value YTD     | derived                             | per working day: actual vs
- *                               |                                     | Daily Critical Number
+ *   Metric                    | Source table(s)                        | How
+ *   ---------------------------|------------------------------------------|---------------------------
+ *   Daily Critical Number      | DAILY_CRITICAL_NUMBER constant (560,000)  | fixed business figure, no
+ *                               |                                            | relation to Fact_Targets --
+ *                               |                                            | see that constant's docstring
+ *   Daily/Monthly/Yearly       | Fact_SalesLines (value)                    | actual value for the day /
+ *   Counter actuals            |                                            | MTD / YTD window
+ *   Working Days / Weekly Rest | Dim_Date.IsWeeklyRestDay + calendar        | see computeWorkingDays below
+ *   Official Holidays /        | official_holidays / forced_closures        | admin-owned tables (Admin
+ *   Forced Closures            | (Admin Panel > Holidays & Closures)        | Panel > Official Holidays /
+ *                               |                                            | Forced Closures) -- Company/
+ *                               |                                            | Branch columns are text, not
+ *                               |                                            | FKs, matched against the
+ *                               |                                            | current scope in JS, see
+ *                               |                                            | offDayMatchesScope below
+ *   Missing Days/Value YTD     | derived                                    | per working day: actual vs
+ *                               |                                            | Daily Critical Number
  *
  * Weekly-rest-day / working-day math is done with plain UTC date arithmetic (isFriday), not a
  * Dim_Date row lookup, because Dim_Date is only populated up to "today" (it's built incrementally
  * as data lands) while a Daily Critical Number needs the FULL calendar year's working-day count,
- * including months that haven't happened yet. Fact_OffDays, by contrast, genuinely does carry
- * future-dated rows (e.g. Aug/Nov holidays already scheduled), so those are read straight from the
- * DB. Confirmed against the live data: every Dim_Date row with IsWeeklyRestDay=1 is a Friday, and
- * Friday is the only weekday ever flagged that way -- isFriday() reproduces that exactly.
+ * including months that haven't happened yet. official_holidays/forced_closures, by contrast,
+ * genuinely carry future-dated rows (e.g. Aug/Nov holidays already scheduled), so those are read
+ * straight from the DB. Confirmed against the live data: every Dim_Date row with
+ * IsWeeklyRestDay=1 is a Friday, and Friday is the only weekday ever flagged that way --
+ * isFriday() reproduces that exactly.
  *
  * Working Days YTD deliberately excludes Weekly Rest Days + Official Holidays (both apply
- * company/enterprise-wide) but NOT Forced Closures (Fact_OffDays 'unexpected' rows are single-
- * branch incidents -- a closure at one branch doesn't close the whole company, so it doesn't
- * reduce the enterprise-wide Working Days count; it's surfaced on its own card instead). This
- * reproduces the reference mockup's numbers exactly against the real warehouse (155 working days
- * YTD = calendar days YTD (192) - weekly rest (28) - official holidays scope-matched (9), as of
- * anchor 2026-07-11).
+ * company/enterprise-wide) but NOT Forced Closures (forced_closures rows are single-branch
+ * incidents -- a closure at one branch doesn't close the whole company, so it doesn't reduce the
+ * enterprise-wide Working Days count; it's surfaced on its own card instead).
+ *
+ * official_holidays/forced_closures replaced fact_offdays as this page's off-day source in the
+ * 2026-09 admin-panel revision pass -- see the "Official Holidays / Forced Closures access"
+ * section below for why (fact_offdays is ETL-owned and gets overwritten on every pipeline run).
  */
 
 import type { Pool } from 'mysql2/promise';
 import { classifyVsTarget, variancePct, TargetStatus } from './classify';
-import { fetchTargetForMonths, fetchValueVolume } from './tachometer';
+import { fetchValueVolume } from './tachometer';
 import {
   buildWhereClause,
   dateOnlyUTC,
@@ -96,7 +101,14 @@ function shiftYearBack(window: DateWindow): DateWindow {
 }
 
 // ---------------------------------------------------------------------------
-// Fact_OffDays access
+// Official Holidays / Forced Closures access
+//
+// Admin-managed (Admin Panel > Official Holidays / Forced Closures) -- these two tables replaced
+// fact_offdays as this page's off-day source in the 2026-09 admin-panel revision pass.
+// fact_offdays is ETL-owned (resynced from OffDays.xlsx every pipeline run), so an admin-added row
+// there would be silently wiped on the next run; official_holidays/forced_closures are plain
+// admin-owned reference tables (see data/warehouse/migrations/0020_holidays_closures_admin.sql)
+// that the ETL never touches, so Admin Panel edits take effect immediately and stay put.
 // ---------------------------------------------------------------------------
 
 export type OffDayType = 'official' | 'unexpected';
@@ -109,26 +121,75 @@ interface OffDayRow {
   reason: string | null;
 }
 
-async function fetchOffDayRows(pool: Pool, type: OffDayType, window: DateWindow): Promise<OffDayRow[]> {
-  // HolidayName/Reason now exist on fact_offdays (confirmed via SHOW COLUMNS against the live
-  // warehouse after the latest OffDays.xlsx resync) -- previously this table only had
-  // DateKey/Date/OffDayType/Country/Company/Branch/IsActive, so these were hardcoded to null here
-  // to avoid an "Unknown column" error on every request. Selected directly now; still nullable
-  // (HR may leave either blank for a given row), which every consumer already handles by falling
-  // back to generic label text.
+/** official_holidays -> OffDayRow, one row per calendar-day occurrence within `window`. A
+ * `recurring` row's stored `holiday_date` is just a reference year -- it's re-anchored to every
+ * calendar year the window spans, matched by (month, day), so e.g. a recurring Jan 1 holiday
+ * stored as 2026-01-01 also fires for a 2027 or 2028 window. */
+async function fetchOfficialHolidayRows(pool: Pool, window: DateWindow): Promise<OffDayRow[]> {
   const sql = `
-    SELECT Date AS date, Company AS company, Branch AS branch, HolidayName AS holidayName, Reason AS reason
-    FROM fact_offdays
-    WHERE OffDayType = ? AND IsActive = 1 AND Date BETWEEN ? AND ?
+    SELECT holiday_name AS holidayName, holiday_date AS holidayDate, recurring, company
+    FROM official_holidays
+    WHERE is_active = 1
+      AND (recurring = 1 OR holiday_date BETWEEN ? AND ?)
   `;
-  const [rows] = await pool.query(sql, [type, toDateOnlyString(window.start), toDateOnlyString(window.end)]);
-  return (rows as any[]).map((r) => ({
-    date: new Date(Date.UTC(r.date.getFullYear(), r.date.getMonth(), r.date.getDate())),
-    company: r.company,
-    branch: r.branch,
-    holidayName: r.holidayName ?? null,
-    reason: r.reason ?? null,
-  }));
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end)]);
+  const out: OffDayRow[] = [];
+  for (const r of rows as any[]) {
+    const stored = r.holidayDate as Date;
+    const toRow = (occurrence: Date): OffDayRow => ({
+      date: occurrence,
+      company: r.company ?? null,
+      branch: null,
+      holidayName: r.holidayName ?? null,
+      reason: null,
+    });
+    if (!r.recurring) {
+      out.push(toRow(new Date(Date.UTC(stored.getFullYear(), stored.getMonth(), stored.getDate()))));
+      continue;
+    }
+    const month = stored.getMonth();
+    const day = stored.getDate();
+    for (let year = window.start.getUTCFullYear(); year <= window.end.getUTCFullYear(); year += 1) {
+      const occurrence = new Date(Date.UTC(year, month, day));
+      if (occurrence.getTime() >= window.start.getTime() && occurrence.getTime() <= window.end.getTime()) {
+        out.push(toRow(occurrence));
+      }
+    }
+  }
+  return out;
+}
+
+/** forced_closures -> OffDayRow, one row per calendar-day occurrence within `window`. A closure
+ * can span multiple days (`duration_days`); each covered day is expanded into its own OffDayRow
+ * (clipped to `window`) so per-day occurrence lists/counts work exactly as before. */
+async function fetchForcedClosureRows(pool: Pool, window: DateWindow): Promise<OffDayRow[]> {
+  // Fetch any closure whose [closure_date, closure_date + duration_days - 1] span could overlap
+  // the window at all, then expand + clip in JS below.
+  const sql = `
+    SELECT branch_key AS branch, company, closure_date AS closureDate, duration_days AS durationDays, reason
+    FROM forced_closures
+    WHERE is_active = 1
+      AND closure_date <= ?
+      AND DATE_ADD(closure_date, INTERVAL duration_days - 1 DAY) >= ?
+  `;
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.end), toDateOnlyString(window.start)]);
+  const out: OffDayRow[] = [];
+  for (const r of rows as any[]) {
+    const start = r.closureDate as Date;
+    const startUtc = new Date(Date.UTC(start.getFullYear(), start.getMonth(), start.getDate()));
+    const duration = Math.max(1, Number(r.durationDays) || 1);
+    for (let i = 0; i < duration; i += 1) {
+      const occurrence = addDaysUTC(startUtc, i);
+      if (occurrence.getTime() >= window.start.getTime() && occurrence.getTime() <= window.end.getTime()) {
+        out.push({ date: occurrence, company: r.company ?? null, branch: r.branch, holidayName: null, reason: r.reason ?? null });
+      }
+    }
+  }
+  return out;
+}
+
+async function fetchOffDayRows(pool: Pool, type: OffDayType, window: DateWindow): Promise<OffDayRow[]> {
+  return type === 'official' ? fetchOfficialHolidayRows(pool, window) : fetchForcedClosureRows(pool, window);
 }
 
 /**
@@ -155,7 +216,7 @@ async function fetchCompanyNamesByKey(pool: Pool): Promise<Map<number, string>> 
 }
 
 /**
- * A Fact_OffDays row applies to the current filter scope if:
+ * An official_holidays/forced_closures row applies to the current filter scope if:
  *  - its Company is null (official, country-wide holidays apply regardless of company filter), OR
  *    it matches one of the selected companyKeys (case-insensitive -- source data mixes "Majaal"
  *    and "TIKA" casing);
@@ -195,25 +256,121 @@ async function computeWorkingDays(
 // ---------------------------------------------------------------------------
 
 /**
- * The required daily value to stay on the current filter scope's annual pace: Full-Year Target
- * Revenue / total working days in the year (weekly rest + official holidays only, per
- * computeWorkingDays). Deliberately static across the year (not re-derived from remaining
- * target/remaining days) -- matches the reference mockup's "updates when Company/Segment filter
- * changes" behavior, not a catch-up-pace number that would also move day to day.
+ * Company-wide daily sales target, LYD 560,000/day -- a fixed business constant, not derived from
+ * Fact_Targets. Confirmed with the business owner (2026-09-14 revision pass): "560 is a critical
+ * number, it has no relation with the target." Previously this was computed as Full-Year Target
+ * Revenue / working days in the year (per-company/segment scope-aware); that formula produced
+ * ~LYD 559K against the live Fact_Targets data, which read as "wrong" because the two numbers were
+ * never meant to be the same thing -- the Critical Number is a flat operational pace goal, the FY
+ * Target is a separate planning figure.
+ *
+ * SUPERSEDED IN PART (2026-09, dynamic Company/Customer Group breakdown pass): this remains the
+ * company-wide *base* figure with no filter applied, but computeDailyCriticalNumber below now
+ * scales it by admin-configured Company/Customer Group percentages when those filters are active
+ * -- see that function's docstring. The working-days denominator downstream (Monthly/Yearly
+ * Counters, Missing Value/Days) was always scope-aware via holiday/closure matching; now the
+ * numerator is too.
+ */
+export const DAILY_CRITICAL_NUMBER = 560_000;
+
+/** Sum of admin_company.critical_number_pct for the given etl_company_keys (active rows only).
+ * Returns 100 (i.e. "no scaling") when companyKeys is empty -- no Company filter means the full
+ * base applies, same as selecting every company whose percentages sum to 100.
+ *
+ * A company_id present in companyKeys but absent from the query result (deactivated, or simply no
+ * admin_company row for that etl_company_key) contributes 0 to the sum by construction -- that's
+ * the intended "default 0% until an admin sets a real percentage" behavior, not an error, so it
+ * needs no special handling here.
+ *
+ * The try/catch below is a *different* case: the query itself failing (e.g. critical_number_pct
+ * not existing yet on this DB -- see migration 0021_critical_number_allocation.sql, which this
+ * column shipped in but that was applied to the warehouse separately from this code going live,
+ * so there was a window where every filtered Critical Number request 500'd). Every widget on the
+ * Critical Number page shares this one dailyCriticalNumber computation (see
+ * routes/criticalNumber.ts's single /overview endpoint), so an uncaught error here previously took
+ * the entire page down instead of just this scaling factor -- degrade to unscaled (100, "ignore
+ * the Company dimension") and log loudly instead.
+ */
+async function sumCompanyPct(pool: Pool, companyKeys: number[]): Promise<number> {
+  if (companyKeys.length === 0) return 100;
+  const placeholders = companyKeys.map(() => '?').join(',');
+  try {
+    const [rows] = await pool.query(
+      `SELECT critical_number_pct AS pct FROM admin_company WHERE is_active = 1 AND etl_company_key IN (${placeholders})`,
+      companyKeys,
+    );
+    return (rows as { pct: number }[]).reduce((sum, r) => sum + Number(r.pct), 0);
+  } catch (err) {
+    console.error(
+      `[criticalNumber] sumCompanyPct failed for companyKeys=${JSON.stringify(companyKeys)}; ` +
+        'falling back to unscaled (100%) rather than failing the whole Critical Number page.',
+      err,
+    );
+    return 100;
+  }
+}
+
+/** Sum of admin_customer_group.critical_number_pct for the given etl_segment_keys (active rows
+ * only). Returns 100 (i.e. "no scaling") when segmentKeys is empty. Same "missing row = 0
+ * contribution by construction, query failure = caught and degraded" split as sumCompanyPct
+ * above. */
+async function sumSegmentPct(pool: Pool, segmentKeys: number[]): Promise<number> {
+  if (segmentKeys.length === 0) return 100;
+  const placeholders = segmentKeys.map(() => '?').join(',');
+  try {
+    const [rows] = await pool.query(
+      `SELECT critical_number_pct AS pct FROM admin_customer_group WHERE is_active = 1 AND etl_segment_key IN (${placeholders})`,
+      segmentKeys,
+    );
+    return (rows as { pct: number }[]).reduce((sum, r) => sum + Number(r.pct), 0);
+  } catch (err) {
+    console.error(
+      `[criticalNumber] sumSegmentPct failed for segmentKeys=${JSON.stringify(segmentKeys)}; ` +
+        'falling back to unscaled (100%) rather than failing the whole Critical Number page.',
+      err,
+    );
+    return 100;
+  }
+}
+
+/**
+ * Daily Critical Number, scaled by the active Company/Customer Group filter selection using the
+ * admin-configured percentage breakdowns (Admin Panel > Companies / Customer Groups,
+ * critical_number_pct column -- see data/warehouse/migrations/0021_critical_number_allocation.sql):
+ *
+ *   No Company filter and no Customer Group filter -> DAILY_CRITICAL_NUMBER unchanged.
+ *   Company filter only                             -> base x (sum of selected companies' pct / 100).
+ *   Customer Group filter only                       -> base x (sum of selected groups' pct / 100).
+ *   Both                                              -> base x companyFactor x groupFactor (the two
+ *                                                        factors cascade/multiply, they don't add).
+ *
+ * Multi-select within one dimension sums that dimension's percentages (e.g. selecting both Majaal
+ * and Tika => 47.44 + 52.56 = 100%, i.e. the same as not filtering by Company at all). A selected
+ * company/group with no admin-configured percentage yet (or none found, e.g. deactivated)
+ * contributes 0 to that sum, per this feature's "default 0% until an admin sets a real percentage"
+ * design -- so filtering to only such a company/group correctly yields a 0 Daily Critical Number
+ * rather than silently falling back to the full base.
+ *
+ * This is the single source computeDailyCounter/computeMonthlyCounter/computeYearlyCounter/
+ * computeMissingSummary all take their `dailyCriticalNumber` argument from (see
+ * routes/criticalNumber.ts), so the scaled figure automatically flows through to every Daily/
+ * Monthly/Yearly Counter, Missing Value/Days YTD, and their variance calculations -- not just the
+ * Daily Critical Number display card.
+ *
+ * Kept async (Promise<number>) so every existing call site (routes/criticalNumber.ts) needs no
+ * signature changes from before this feature.
  */
 export async function computeDailyCriticalNumber(
   pool: Pool,
-  anchor: Date,
+  _anchor: Date,
   filters: Filters,
-  companyNamesByKey: Map<number, string>,
+  _companyNamesByKey: Map<number, string>,
 ): Promise<number> {
-  const year = anchor.getUTCFullYear();
-  const [fyTarget, workingDaysInYear] = await Promise.all([
-    fetchTargetForMonths(pool, year, filters),
-    computeWorkingDays(pool, yearWindow(year), filters, companyNamesByKey),
+  const [companyPct, segmentPct] = await Promise.all([
+    sumCompanyPct(pool, filters.companyKeys ?? []),
+    sumSegmentPct(pool, filters.segmentKeys ?? []),
   ]);
-  if (workingDaysInYear <= 0) return 0;
-  return fyTarget.targetRevenue / workingDaysInYear;
+  return DAILY_CRITICAL_NUMBER * (companyPct / 100) * (segmentPct / 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +409,11 @@ export interface PeriodCounter {
   expectedValue: number;
   /** actualValue - expectedValue: negative = behind pace, positive = ahead of pace. */
   gapValue: number;
+  /** workingDaysTotal * dailyCriticalNumber -- the FULL month/year target (not just the
+   * elapsed-to-date pace target above). Used by the frontend's donut chart to show
+   * Achieved-vs-Remaining against the whole period, distinct from expectedValue/gapValue which
+   * stay elapsed-based for the pace/status badge. */
+  periodTarget: number;
 }
 
 async function computePeriodCounter(
@@ -276,6 +438,7 @@ async function computePeriodCounter(
     actualValue: actualVv.value,
     expectedValue: expectedToDate,
     gapValue: actualVv.value - expectedToDate,
+    periodTarget: workingDaysTotal * dailyCriticalNumber,
   };
 }
 
@@ -457,7 +620,7 @@ export async function computeForcedClosuresYtd(
 
 /** DateKey (YYYYMMDD) -> actual value, for every day with at least one sale in the window. */
 async function fetchDailyActuals(pool: Pool, window: DateWindow, filters: Filters): Promise<Map<number, number>> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const sql = `
     SELECT fsl.DateKey AS dateKey, COALESCE(SUM(fsl.Value), 0) AS value
     FROM fact_saleslines fsl
@@ -481,12 +644,21 @@ export interface MissingDaysCard {
   value: number;
   trendValues: number[];
   trendPct: number | null;
+  /** Working Days YTD (cumWorkingDays as of the anchor date) -- the "expected days consumed"
+   * figure this row's day-equivalent gap is measured against, replacing the old 'On pace' string
+   * placeholder in the Performance Details table's Target column. */
+  expectedValue: number;
 }
 
 export interface MissingValueCard {
   value: number;
   trendValues: number[];
   trendPct: number | null;
+  /** Working Days YTD x Daily Critical Number, as of the anchor date -- same pace-adjusted
+   * "expected value as of today" methodology as PeriodCounter.expectedValue (see that field's
+   * docstring), replacing the old 'On pace' string placeholder in the Performance Details table's
+   * Target column. */
+  expectedValue: number;
 }
 
 function trendPctFromHalves(series: number[]): number | null {
@@ -507,13 +679,19 @@ export interface MissingSummary {
 }
 
 /**
- * Net-aggregate shortfall against the flat Daily Critical Number (dashboard revision pass --
- * replaces an earlier unnetted per-day-shortfall sum, which read as far worse than actual YTD
- * performance because it never let surplus days offset shortfall days):
+ * Net-aggregate gap against the flat Daily Critical Number (dashboard revision pass -- replaces an
+ * earlier unnetted per-day-shortfall sum, which read as far worse than actual YTD performance
+ * because it never let surplus days offset shortfall days):
  *
  *   Total Expected YTD = Working Days YTD x Daily Critical Number
- *   Missing Value YTD  = max(0, Total Expected YTD - Actual YTD Value)
+ *   Missing Value YTD  = Total Expected YTD - Actual YTD Value
  *   Missing Days YTD   = Missing Value YTD / Daily Critical Number
+ *
+ * Signed, not floored at zero (2026-09 revision): a positive value means behind pace (shortfall),
+ * a negative value means ahead of pace (surplus) -- previously both were clamped to
+ * max(0, ...), which made overperformance invisible (always read "0 missing" instead of showing
+ * the surplus). The frontend displays the sign flipped (Actual - Target, so ahead reads positive/
+ * green) to match PeriodCounterCard's gapValue convention.
  *
  * Actual YTD Value is the full-window actual (every calendar day, matching the Yearly Counter's
  * own actualValue) -- pace is measured cumulatively, not day by day, so a big sales day fully
@@ -551,7 +729,7 @@ export async function computeMissingSummary(
     cumActual += actual;
     if (isWorkingDay) cumWorkingDays += 1;
 
-    const runningMissingValue = dailyCriticalNumber > 0 ? Math.max(0, cumWorkingDays * dailyCriticalNumber - cumActual) : 0;
+    const runningMissingValue = dailyCriticalNumber > 0 ? cumWorkingDays * dailyCriticalNumber - cumActual : 0;
     const runningMissingDays = dailyCriticalNumber > 0 ? runningMissingValue / dailyCriticalNumber : 0;
 
     dailyRunningMissingDays.push(runningMissingDays);
@@ -559,7 +737,8 @@ export async function computeMissingSummary(
     monthlyRunningMissingValue.set(monthKey, runningMissingValue);
   }
 
-  const missingValue = dailyCriticalNumber > 0 ? Math.max(0, cumWorkingDays * dailyCriticalNumber - cumActual) : 0;
+  const expectedValueToDate = cumWorkingDays * dailyCriticalNumber;
+  const missingValue = dailyCriticalNumber > 0 ? expectedValueToDate - cumActual : 0;
   const missingDays = dailyCriticalNumber > 0 ? Math.round(missingValue / dailyCriticalNumber) : 0;
 
   const last30 = dailyRunningMissingDays.slice(-30);
@@ -572,11 +751,13 @@ export async function computeMissingSummary(
       value: missingDays,
       trendValues: last30,
       trendPct: trendPctFromHalves(last30),
+      expectedValue: cumWorkingDays,
     },
     missingValue: {
       value: missingValue,
       trendValues: monthlySeries,
       trendPct: trendPctFromHalves(monthlySeries),
+      expectedValue: expectedValueToDate,
     },
   };
 }

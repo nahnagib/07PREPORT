@@ -4,7 +4,7 @@ import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import { dateOnlyUTC } from '../measures/filters';
-import { computeRevenueTrendKpis, fetchRevenueTrendSeries } from '../measures/revenueTrend';
+import { computeRevenueTrendFigures, fetchRevenueTrendSeries } from '../measures/revenueTrend';
 
 /**
  * Revenue Trend page KPI endpoint. Same middleware chain and scoping discipline as
@@ -38,15 +38,16 @@ revenueTrendRouter.get('/overview', async (req, res, next) => {
     const filters = req.scopedFilters!;
     const anchor = parseAnchorDate(req.query.anchorDate);
 
-    const [series, kpis] = await Promise.all([
+    const [series, { kpis, performanceDetails }] = await Promise.all([
       fetchRevenueTrendSeries(pool, anchor, filters),
-      computeRevenueTrendKpis(pool, anchor, filters),
+      computeRevenueTrendFigures(pool, anchor, filters),
     ]);
 
     res.json({
       anchorDate: anchor.toISOString().slice(0, 10),
       series,
       kpis,
+      performanceDetails,
     });
   } catch (err) {
     next(err);

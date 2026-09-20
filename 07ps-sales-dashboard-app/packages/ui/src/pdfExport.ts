@@ -1,5 +1,6 @@
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import { chunkRows } from './pdfPagination';
+import { assemblePaginatedPdf } from './pdfPageAssembly';
+import { appendPdfMetaBlock } from './pdfExportContext';
 
 export interface PdfExportColumn {
   header: string;
@@ -17,35 +18,11 @@ export interface PdfExportOptions {
   rows: string[][];
   /** Base file name (no extension). */
   fileName: string;
+  /** Page-local filters (beyond the app-wide ones the shared export context supplies). */
+  extraFilterParts?: string[];
 }
 
-/**
- * Shared "export this table to a PDF" utility, factored out of DataGrid's own exportPdf method
- * (same technique: build an off-screen styled DOM table, rasterize it with html2canvas, embed the
- * image into a jsPDF document) so every drill-down table on a page can reuse one PDF export
- * instead of each reimplementing DataGrid's full sort/filter/pagination machinery just to get a
- * PDF button. Both dependencies are already used by @07ps/ui (see DataGrid.tsx), so this adds no
- * new dependency.
- */
-export async function exportRowsAsPdf({ title, subtitle, columns, rows, fileName }: PdfExportOptions): Promise<void> {
-  const tempContainer = document.createElement('div');
-  tempContainer.style.position = 'absolute';
-  tempContainer.style.left = '-9999px';
-  tempContainer.style.width = '1200px';
-  tempContainer.style.background = '#ffffff';
-  tempContainer.style.padding = '30px';
-  tempContainer.style.fontFamily = 'Arial, sans-serif';
-  tempContainer.style.fontSize = '12px';
-  tempContainer.style.color = '#111827';
-
-  const titleEl = document.createElement('h1');
-  titleEl.textContent = subtitle ? `${title} — ${subtitle}` : title;
-  titleEl.style.fontSize = '18px';
-  titleEl.style.fontWeight = 'bold';
-  titleEl.style.marginBottom = '16px';
-  titleEl.style.color = '#111827';
-  tempContainer.appendChild(titleEl);
-
+function buildTable(columns: PdfExportColumn[], rows: string[][]): HTMLTableElement {
   const table = document.createElement('table');
   table.style.width = '100%';
   table.style.borderCollapse = 'collapse';
@@ -85,46 +62,71 @@ export async function exportRowsAsPdf({ title, subtitle, columns, rows, fileName
     tbody.appendChild(tr);
   });
   table.appendChild(tbody);
-  tempContainer.appendChild(table);
+  return table;
+}
 
-  const footer = document.createElement('div');
-  footer.style.marginTop = '12px';
-  footer.style.fontSize = '10px';
-  footer.style.color = '#718096';
-  footer.style.borderTop = '1px solid #e2e8f0';
-  footer.style.paddingTop = '10px';
-  footer.textContent = `Exported on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()} | Total rows: ${rows.length}`;
-  tempContainer.appendChild(footer);
+function buildContainer(): HTMLDivElement {
+  const container = document.createElement('div');
+  container.style.position = 'absolute';
+  container.style.left = '-9999px';
+  container.style.width = '1200px';
+  container.style.background = '#ffffff';
+  container.style.padding = '30px';
+  container.style.fontFamily = 'Arial, sans-serif';
+  container.style.fontSize = '12px';
+  container.style.color = '#111827';
+  return container;
+}
 
-  document.body.appendChild(tempContainer);
-  try {
-    const canvas = await html2canvas(tempContainer, {
-      scale: 2,
-      useCORS: true,
-      logging: false,
-      backgroundColor: '#ffffff',
-    });
+/**
+ * Shared "export this table to a PDF" utility, factored out of DataGrid's own exportPdf method
+ * (same technique: build an off-screen styled DOM table, rasterize it with html2canvas, embed the
+ * image into a jsPDF document) so every drill-down table on a page can reuse one PDF export
+ * instead of each reimplementing DataGrid's full sort/filter/pagination machinery just to get a
+ * PDF button. Both dependencies are already used by @07ps/ui (see DataGrid.tsx), so this adds no
+ * new dependency.
+ *
+ * Pagination: see performanceTablePdfExport.ts's docstring / pdfPageAssembly.ts's header comment --
+ * same hard-capped, pre-chunked, one-container-per-page technique, not a measured/sliced single
+ * image.
+ */
+export async function exportRowsAsPdf({ title, subtitle, columns, rows, fileName, extraFilterParts }: PdfExportOptions): Promise<void> {
+  // chunkRows returns [] (zero pages) for zero rows -- this exporter always produces at least one
+  // page (a header-only table), matching its pre-pagination behavior for an empty `rows`.
+  const rowChunks = rows.length === 0 ? [[]] : chunkRows(rows);
+  const pageCount = rowChunks.length;
+  const baseTitle = subtitle ? `${title} — ${subtitle}` : title;
 
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const imgWidth = pageWidth - 20;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-    let heightLeft = imgHeight;
-    let position = 10;
+  const pages = rowChunks.map((chunkOfRows, pageIndex) => {
+    const container = buildContainer();
 
-    pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-    heightLeft -= pageHeight - 20;
-    while (heightLeft > 0) {
-      position = heightLeft - imgHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight - 20;
+    const titleEl = document.createElement('h1');
+    titleEl.textContent = pageCount > 1 ? `${baseTitle} (page ${pageIndex + 1} of ${pageCount})` : baseTitle;
+    titleEl.style.fontSize = '18px';
+    titleEl.style.fontWeight = 'bold';
+    titleEl.style.marginBottom = '16px';
+    titleEl.style.color = '#111827';
+    container.appendChild(titleEl);
+
+    if (pageIndex === 0) {
+      appendPdfMetaBlock(container, { extraFilterParts });
     }
 
-    pdf.save(`${fileName}.pdf`);
-  } finally {
-    document.body.removeChild(tempContainer);
-  }
+    container.appendChild(buildTable(columns, chunkOfRows));
+
+    if (pageIndex === pageCount - 1) {
+      const footer = document.createElement('div');
+      footer.style.marginTop = '12px';
+      footer.style.fontSize = '10px';
+      footer.style.color = '#718096';
+      footer.style.borderTop = '1px solid #e2e8f0';
+      footer.style.paddingTop = '10px';
+      footer.textContent = `Exported on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()} | Total rows: ${rows.length}`;
+      container.appendChild(footer);
+    }
+
+    return container;
+  });
+
+  await assemblePaginatedPdf({ pages, fileName });
 }

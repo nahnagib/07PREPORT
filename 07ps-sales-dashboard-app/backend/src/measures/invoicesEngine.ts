@@ -104,7 +104,7 @@ export interface InvoiceStats {
 }
 
 async function fetchInvoiceStats(pool: Pool, window: DateWindow, filters: Filters, scope: InvoicesEngineScope = {}): Promise<InvoiceStats> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cls = buildInvoiceClassSqlClause(scope.invoiceClass, 'fsl');
   const sql = `
     SELECT
@@ -184,7 +184,7 @@ export async function fetchSalesTrendByYear(
   filters: Filters,
   scope: InvoicesEngineScope = {},
 ): Promise<InvoiceYearPoint[]> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cls = buildInvoiceClassSqlClause(scope.invoiceClass, 'fsl');
   const sql = `
     SELECT
@@ -233,7 +233,7 @@ export async function fetchSalesTrendByYearClass(
   filters: Filters,
   scope: InvoicesEngineScope = {},
 ): Promise<InvoiceYearClassBreakdown[]> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cls = buildInvoiceClassSqlClause(scope.invoiceClass, 'fsl');
   const sql = `
     SELECT
@@ -309,7 +309,7 @@ export async function fetchInvoicesTrendByYear(
   filters: Filters,
   scope: InvoicesEngineScope = {},
 ): Promise<InvoiceYearEfficiencyPoint[]> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cls = buildInvoiceClassSqlClause(scope.invoiceClass, 'fsl');
   const yr = buildYearSqlClause(scope.year, 'dd');
   const sql = `
@@ -368,7 +368,7 @@ export async function fetchInvoiceClassificationYtd(
   filters: Filters,
   scope: InvoicesEngineScope = {},
 ): Promise<InvoiceClassificationSlice[]> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const window = scope.year !== undefined ? fullYearWindow(scope.year) : ytdWindow(anchor);
   const sql = `
     SELECT

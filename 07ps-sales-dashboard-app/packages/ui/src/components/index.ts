@@ -23,6 +23,7 @@ export * from './TrendChart';
 export * from './ChartPanel';
 export * from './ComboChart';
 export * from './GroupedBarChart';
+export * from './BubbleScatterChart';
 export * from './DonutChart';
 export * from './FunnelChart';
 export * from './StackedPercentBarChart';

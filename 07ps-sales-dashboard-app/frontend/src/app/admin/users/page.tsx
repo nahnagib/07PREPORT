@@ -5,7 +5,7 @@ import { Button, Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, Seman
 import { AdminLayout } from '../../../components/AdminLayout';
 import { PermissionGuard } from '../../../components/AuthGuard';
 import { useAuth } from '../../../lib/AuthProvider';
-import { adminApi, AdminRole, AdminUser, UserStatus, ApiError } from '../../../lib/api';
+import { adminApi, AdminRole, AdminUser, SalespersonOption, UserStatus, ApiError } from '../../../lib/api';
 
 const STATUS_TO_SEMANTIC: Record<UserStatus, 'success' | 'watch' | 'alert' | 'neutral'> = {
   ACTIVE: 'success',
@@ -248,6 +248,7 @@ function CreateUserPanel({ roles, onCreated }: { roles: AdminRole[]; onCreated: 
   const [email, setEmail] = useState('');
   const [roleId, setRoleId] = useState<number | ''>('');
   const [salespersonKey, setSalespersonKey] = useState('');
+  const [salespersonOptions, setSalespersonOptions] = useState<SalespersonOption[]>([]);
   const [tempPassword, setTempPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -255,6 +256,14 @@ function CreateUserPanel({ roles, onCreated }: { roles: AdminRole[]; onCreated: 
 
   const selectedRole = roles.find((r) => r.role_id === roleId);
   const isSalesperson = selectedRole?.role_name === 'SALESPERSON';
+
+  // Loaded lazily -- most user creations aren't for the Salesperson role, so there's no need to
+  // fetch all of Dim_Salesperson on every panel open.
+  useEffect(() => {
+    if (!token || !isSalesperson || salespersonOptions.length > 0) return;
+    adminApi.getSalespersonOptions(token).then(setSalespersonOptions).catch(() => setSalespersonOptions([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, isSalesperson]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -324,13 +333,29 @@ function CreateUserPanel({ roles, onCreated }: { roles: AdminRole[]; onCreated: 
           </select>
         </div>
         {isSalesperson && (
-          <TextInput
-            label="Salesperson Key"
-            value={salespersonKey}
-            onChange={(e) => setSalespersonKey(e.target.value)}
-            helperText="The Dim_Salesperson key this user's data is locked to."
-            disabled={submitting}
-          />
+          <div>
+            <label style={{ display: 'block', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--ps-color-muted-text)', marginBottom: 4 }}>
+              Salesperson
+            </label>
+            <select
+              value={salespersonKey}
+              onChange={(e) => setSalespersonKey(e.target.value)}
+              disabled={submitting}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--ps-color-border)', background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', fontSize: 14, boxSizing: 'border-box' }}
+            >
+              <option value="">Select a salesperson</option>
+              {salespersonOptions.map((sp) => (
+                <option key={sp.salesperson_key} value={sp.salesperson_key}>
+                  {sp.salesperson_name}
+                  {sp.sales_team_name ? ` — ${sp.sales_team_name}` : ''}
+                  {sp.distribution_channel ? ` (${sp.distribution_channel})` : ''}
+                </option>
+              ))}
+            </select>
+            <p style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', margin: '4px 0 0' }}>
+              This user&apos;s dashboard data will be locked to this salesperson.
+            </p>
+          </div>
         )}
         <TextInput
           label="Temporary Password"

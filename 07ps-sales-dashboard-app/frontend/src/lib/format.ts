@@ -17,36 +17,45 @@ export function toSemanticStatus(status: TargetStatus): SemanticStatus {
   }
 }
 
-export function formatCurrency(value: number): string {
+/** Guards against non-finite input (null/undefined/NaN) rather than assuming the caller's own
+ * null-check already ran -- every existing caller does check first, but a value that's `undefined`
+ * (an API field omitted from the JSON payload) rather than an explicit `null` slips past a
+ * `=== null` guard and previously reached `.toLocaleString()` unguarded, producing "Cannot read
+ * properties of undefined (reading 'toLocaleString')" instead of a clean fallback. */
+export function formatCurrency(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return `LYD ${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
-export function formatVolume(value: number): string {
+export function formatVolume(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
-export function formatAsp(value: number | null): string {
-  if (value === null) return '—';
+export function formatAsp(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return `LYD ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
-export function formatVariance(pct: number | null): string | undefined {
-  if (pct === null) return undefined;
+export function formatVariance(pct: number | null | undefined): string | undefined {
+  if (pct === null || pct === undefined || !Number.isFinite(pct)) return undefined;
   const sign = pct >= 0 ? '+' : '';
   return `${sign}${(pct * 100).toFixed(2)}%`;
 }
 
 /** Every timestamp in this app describes a Libya business event (an Odoo order, an ETL run) --
  * it must always read as Libya time, regardless of which timezone the viewer's own browser/OS
- * happens to be set to. `timeZone: 'Africa/Tripoli'` is an IANA identifier, so this stays correct
+ * happens to be set to. `timeZone: APP_TIMEZONE` (NEXT_PUBLIC_APP_TIMEZONE, default Africa/Tripoli) is an IANA identifier, so this stays correct
  * even if Libya's offset rules ever change; it's resolved by the runtime's own tz database, not
  * hardcoded here. */
+export const APP_TIMEZONE = process.env.NEXT_PUBLIC_APP_TIMEZONE || 'Africa/Tripoli';
+
 export function formatTimestamp(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleString(undefined, {
-    timeZone: 'Africa/Tripoli',
+    timeZone: APP_TIMEZONE,
     year: 'numeric',
     month: 'short',
     day: 'numeric',

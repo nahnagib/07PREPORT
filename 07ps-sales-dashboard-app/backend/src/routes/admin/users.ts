@@ -9,6 +9,7 @@ import {
   changeUserRole,
   createUser,
   forcePasswordChange,
+  getSalespersonOptions,
   getUserById,
   listRoles,
   listUsers,
@@ -36,6 +37,14 @@ function sanitizeUser(user: Awaited<ReturnType<typeof getUserById>>) {
 adminUsersRouter.get('/meta/roles', async (_req, res, next) => {
   try {
     res.json(await listRoles());
+  } catch (err) {
+    next(err);
+  }
+});
+
+adminUsersRouter.get('/meta/salespersons', async (_req, res, next) => {
+  try {
+    res.json(await getSalespersonOptions());
   } catch (err) {
     next(err);
   }
@@ -73,6 +82,7 @@ adminUsersRouter.post('/', async (req, res, next) => {
       status: status || undefined,
       salespersonKey: salespersonKey !== undefined && salespersonKey !== null ? Number(salespersonKey) : null,
       companyScope: companyScope || undefined,
+      actorUserId: req.user!.id,
     });
     const user = await getUserById(result.userId);
     res.status(201).json({ user: sanitizeUser(user), tempPassword: result.tempPassword });
@@ -116,11 +126,15 @@ adminUsersRouter.patch('/:id', async (req, res, next) => {
   try {
     const userId = Number(req.params.id);
     const { fullName, salespersonKey, companyScope } = req.body ?? {};
-    await updateUser(userId, {
-      fullName,
-      salespersonKey: salespersonKey === undefined ? undefined : salespersonKey === null ? null : Number(salespersonKey),
-      companyScope,
-    });
+    await updateUser(
+      userId,
+      {
+        fullName,
+        salespersonKey: salespersonKey === undefined ? undefined : salespersonKey === null ? null : Number(salespersonKey),
+        companyScope,
+      },
+      req.user!.id,
+    );
     const user = await getUserById(userId);
     res.json({ user: sanitizeUser(user) });
   } catch (err) {

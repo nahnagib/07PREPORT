@@ -1,27 +1,46 @@
 /**
  * Activity Momentum page metric definitions.
  *
- * "Opportunities Without Activity" / "Opportunities Without Next Step" / the Rates panel's
- * "Inactive Opportunities" need real CRM activity-tracking data. That data is computed by the
- * Python ETL (PipelineFactBuilder, data/etl/src/sales_pipeline/facts/fact_pipeline.py). The 6
- * columns (ActivityState, NextActivityDate, HasNextStep, HasRecentActivity, IsInactive,
- * DaysSinceUpdate) were added to OpportunityFactBuilder.COLUMNS in an earlier session, and a
- * schema migration has since landed the columns on the live Fact_Opportunity table -- but as of
- * this session, re-querying the live warehouse directly shows every row's value for all 6 columns
- * is NULL (256/256 opportunities, 219/219 open YTD). The migration ran; the ETL pass that actually
- * *computes* these fields for existing rows has not (or hasn't reached this table yet).
+ * CORRECTED 2026-09-17: an earlier session added ActivityState/NextActivityDate/HasNextStep/
+ * HasRecentActivity/IsInactive/DaysSinceUpdate to OpportunityFactBuilder.COLUMNS
+ * (data/etl/src/sales_pipeline/facts/fact_opportunity.py) and wrote #W/O Activity, #W/O Next Step
+ * and Inactive Deals Ratio against those 6 columns, gated behind checkActivityColumnsAvailable()
+ * so they'd degrade to "--" until a migration + ETL backfill landed them on the live table. That
+ * migration never happened: querying the live `Fact_Opportunity` schema directly
+ * (information_schema.columns) shows those 6 columns do not exist on it at all, and never did --
+ * the OUTPUT_DEFINITION.md / DATA_MODEL.md docs for this table never mention them either. So the
+ * gate was permanently closed, not "pending a backfill."
  *
- * That distinction matters because `SUM(CASE WHEN col = 1 THEN 1 ELSE 0 END)` treats a NULL column
- * exactly like a real 0 -- silently. A naive "does the column exist" check (the original form of
- * checkActivityColumnsAvailable()) would report the data as available and let #W/O Activity,
- * #W/O Next Step, and Inactive Deals Ratio all render a false "0" / "+0.00%" instead of the honest
- * "--" placeholder the null-gating below was built for. checkActivityColumnsAvailable() therefore
- * also requires at least one populated row, not just a present column, before flipping on.
+ * What the live table actually has -- and always has, since OpportunityFactBuilder's original
+ * columns, not a pending addition -- is quotation-based staleness data: `HasQuotation`,
+ * `FirstQuotationDate`, `LastQuotationDate`, `DaysSinceLastQuotation` (latest REAL B2B quotation
+ * only, see OpportunityFactBuilder._attach_latest_quotation and POWER_BI_COMPATIBILITY.md),
+ * `OpportunityAge` (= DaysInPipeline), and `SalesSegment`. These three measures are now computed
+ * from those columns instead:
  *
- * Every query below checks checkActivityColumnsAvailable() first and degrades gracefully: the 3
- * activity-dependent figures resolve to `null` (rendered as "--" on the frontend) rather than a
- * false zero or a SQL "unknown column" error, until the ETL actually populates these columns --
- * at which point these start returning real numbers with no further code changes.
+ *   #W/O Next Step  = open B2B opportunities that DID get a real quotation, but it's gone stale --
+ *                      no forward motion in >=30 days since LastQuotationDate.
+ *   #W/O Activity   = open B2B opportunities that have NEVER had a real quotation, and have sat
+ *                      that way for >=30 days since creation (OpportunityAge). There's no separate
+ *                      activity-log column to check in this schema, so lack of a quotation itself
+ *                      *is* "without activity" here.
+ *   Inactive Deals Ratio = (#W/O Activity ∪ #W/O Next Step), counted once per opportunity, over
+ *                      open B2B opportunities -- same "OR, not sum" shape as the
+ *                      previously-fixed double-counting bug below, just against the real columns.
+ *
+ * The 30-day threshold matches CRM_INACTIVE_DAYS_THRESHOLD's default in the Python ETL's
+ * config/settings.py (crm_inactive_days_threshold = 30) -- the same staleness window this
+ * dashboard already uses elsewhere. The B2B segment scope matches
+ * OpportunityFactBuilder._attach_latest_quotation's own SalesSegment == "B2B" filter: LastQuotationDate/
+ * DaysSinceLastQuotation are only ever populated for B2B-eligible quotations in the first place, so
+ * scoping #W/O Next Step to SalesSegment = 'B2B' just makes that existing constraint explicit; #W/O
+ * Activity and the ratio are scoped to B2B to match (a mixed-segment denominator would understate
+ * the ratio, since non-B2B opportunities can never satisfy either at-risk condition).
+ *
+ * checkActivityColumnsAvailable() still gates these three figures (kept for the same reason the
+ * lostDealsRatio/totalYtdAll split is kept: defense if the schema regresses again), but now checks
+ * for `DaysSinceLastQuotation`/`OpportunityAge` -- columns that have been part of this table from
+ * the start, not a still-pending addition -- so in practice it now returns true.
  *
  * Lost-exclusion policy (see filters.ts's excludeLostClause): `totalYtd` (the #YTD tile) and
  * fetchNewOpportunitiesByMonth (New Opportunities chart) exclude closed-lost opportunities -- both
@@ -34,6 +53,36 @@
  * one shared array backs the Details view's Activity Filter panel, whose "Lost" option needs those
  * rows to exist -- the frontend's default (no filter selected) view is what excludes Lost, via
  * matchesActivityFilter in activity-momentum/page.tsx.
+ *
+ * Cohort vs. snapshot scoping (fixed 2026-09): `totalYtdAll`/`totalYtd`/`won`/`lost` describe *this
+ * year's origination cohort* -- opportunities CREATED in the anchor's YTD window -- so they stay
+ * scoped by `DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ?`, matching pipelineHealth.ts's
+ * documented policy for fetchOpportunitiesCountAndValue (also a creation-volume figure).
+ * `active`/`withoutActivity`/`withoutNextStep`, and the Rates panel's `openCount`/`atRiskCount`,
+ * describe CURRENT PIPELINE STATE (IsOpen, DaysSinceLastQuotation and OpportunityAge are
+ * point-in-time/wall-clock-relative, not flow metrics) and must NOT be filtered by creation date --
+ * an opportunity created in a prior year that is still open and stale today is still part of
+ * "current state." Previously these state figures were incorrectly filtered by the same
+ * OpportunityCreatedDate YTD window as the cohort figures, silently excluding every still-open
+ * opportunity created before the anchor year. They are now computed as an all-time snapshot,
+ * consistent with this file's own fetchActivityOpportunities (explicitly all-time, see its own
+ * comment below) and with pipelineHealth.ts's equivalent snapshot queries (fetchOpportunityByStage,
+ * fetchOpportunityDetails). One consequence: because DaysSinceLastQuotation/OpportunityAge are
+ * computed once per ETL run against wall-clock "now" (see OpportunityFactBuilder._refresh_timestamp
+ * and crm_cleaner.py's `now = pd.Timestamp.now(...)`), these snapshot figures always reflect state
+ * as of the last ETL refresh -- picking a past anchorDate no longer changes them at all (it only
+ * ever changed which rows were *included*, never what "stale" meant for a given row), which is the
+ * honest framing instead of an implied-but-false "as of the selected historical period."
+ *
+ * Ratio double-counting (fixed 2026-09, still holds under the corrected columns): `inactiveDealsRatio`
+ * must not sum `withoutActivityCount + withoutNextStepCount` as its numerator. "No quotation ever,
+ * stale by creation date" (#W/O Activity) and "quotation exists but stale since" (#W/O Next Step)
+ * are mutually exclusive by construction here (HasQuotation = 0 vs. HasQuotation = 1), so they can't
+ * literally double-count the same row the way the old IsInactive/HasNextStep=0 pair could -- but the
+ * OR-based atRiskCount below is kept anyway: it's the correct shape for "count each at-risk
+ * opportunity once," and is what actually protects against a future >100% ratio if the two
+ * conditions ever stop being mutually exclusive. The numerator is a single `atRiskCount`
+ * (`IsOpen = 1 AND SalesSegment = 'B2B' AND (<#W/O Activity condition> OR <#W/O Next Step condition>)`).
  */
 
 import type { Pool } from 'mysql2/promise';
@@ -51,6 +100,20 @@ function safeDiv(numerator: number, denominator: number): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// Shared SQL fragments for the two "at risk" conditions -- see module header for why these use
+// HasQuotation/LastQuotationDate/DaysSinceLastQuotation/OpportunityAge/SalesSegment instead of the
+// non-existent HasNextStep/HasRecentActivity/IsInactive. Every caller still ANDs `fo.IsOpen = 1`
+// itself (kept out of these fragments so the same fragment works in both the aggregate SUM/CASE
+// queries here and per-row in fetchActivityOpportunities below).
+// ---------------------------------------------------------------------------
+
+const STALENESS_DAYS = 30;
+/** Open B2B opportunities that never got a real quotation, stale by time-since-creation. */
+const WITHOUT_ACTIVITY_SQL = `fo.SalesSegment = 'B2B' AND fo.HasQuotation = 0 AND fo.OpportunityAge >= ${STALENESS_DAYS}`;
+/** Open B2B opportunities with a real quotation that's gone stale since. */
+const WITHOUT_NEXT_STEP_SQL = `fo.SalesSegment = 'B2B' AND fo.HasQuotation = 1 AND fo.LastQuotationDate IS NOT NULL AND fo.DaysSinceLastQuotation >= ${STALENESS_DAYS}`;
+
+// ---------------------------------------------------------------------------
 // Activity-column availability check -- cached for 5 minutes so a mid-session ETL refresh is
 // picked up without requiring a backend restart, without re-querying information_schema on every
 // request either.
@@ -64,22 +127,17 @@ export async function checkActivityColumnsAvailable(pool: Pool): Promise<boolean
   const now = Date.now();
   if (now - cachedAt < CACHE_TTL_MS) return cachedAvailable;
   try {
+    // DaysSinceLastQuotation/OpportunityAge are original OpportunityFactBuilder columns (not a
+    // pending addition -- see module header), so this passes in practice. Unlike the old
+    // HasNextStep check, a NULL DaysSinceLastQuotation is a legitimate business state (no real B2B
+    // quotation yet), not "ETL hasn't run," so there's no additional "at least one populated row"
+    // check here -- column presence is the only thing this needs to guard against.
     const [colRows] = await pool.query(
       `SELECT COUNT(*) AS cnt FROM information_schema.columns
-       WHERE table_schema = DATABASE() AND table_name = 'Fact_Opportunity' AND column_name = 'HasNextStep'`,
+       WHERE table_schema = DATABASE() AND table_name = 'Fact_Opportunity'
+         AND column_name IN ('DaysSinceLastQuotation', 'OpportunityAge')`,
     );
-    const columnExists = Number((colRows as any[])[0].cnt) > 0;
-    if (!columnExists) {
-      cachedAvailable = false;
-    } else {
-      // Column existing isn't enough -- see module header. Require at least one row where the
-      // ETL has actually computed a value, not just a migrated-but-unpopulated column, or every
-      // activity-dependent figure silently renders as a false 0 instead of "--".
-      const [dataRows] = await pool.query(
-        `SELECT COUNT(*) AS cnt FROM Fact_Opportunity WHERE HasNextStep IS NOT NULL LIMIT 1`,
-      );
-      cachedAvailable = Number((dataRows as any[])[0].cnt) > 0;
-    }
+    cachedAvailable = Number((colRows as any[])[0].cnt) >= 2;
   } catch {
     cachedAvailable = false;
   }
@@ -106,7 +164,7 @@ export interface OpportunityActivityCounts {
  * total (its original, correct meaning: Lost ÷ ALL YTD opportunities) even though the *displayed*
  * `totalYtd` field now excludes Lost (see selectParts below). Without this split, excluding Lost
  * from `totalYtd` would silently shrink the ratio's own denominator and inflate it. */
-interface OpportunityActivityCountsInternal extends OpportunityActivityCounts {
+export interface OpportunityActivityCountsInternal extends OpportunityActivityCounts {
   totalYtdAll: number;
 }
 
@@ -115,8 +173,12 @@ interface OpportunityActivityCountsInternal extends OpportunityActivityCounts {
  * other general widget on the Pipeline pages. `won`/`lost`/`active`/`withoutActivity`/
  * `withoutNextStep` are untouched: `lost` is the lost-specific counter itself, and the other three
  * already exclude Lost by construction (IsOpen=1 implies not-lost, see
- * crm_status_classifier.py's is_open = not is_won and not is_lost). */
-async function computeOpportunityActivityCounts(
+ * crm_status_classifier.py's is_open = not is_won and not is_lost).
+ *
+ * `totalYtdAll`/`totalYtd`/`won`/`lost` are a creation-date cohort, scoped by the anchor's YTD
+ * window. `active`/`withoutActivity`/`withoutNextStep` are current-state snapshots and are
+ * deliberately NOT date-scoped -- see the module header comment ("Cohort vs. snapshot scoping"). */
+export async function computeOpportunityActivityCounts(
   pool: Pool,
   anchor: Date,
   filters: Filters,
@@ -125,37 +187,47 @@ async function computeOpportunityActivityCounts(
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
 
-  const selectParts = [
-    'COUNT(*) AS totalYtdAll',
-    `SUM(CASE WHEN ${excludeLostClause('fo')} THEN 1 ELSE 0 END) AS totalYtd`,
-    'SUM(CASE WHEN fo.IsWon = 1 THEN 1 ELSE 0 END) AS won',
-    'SUM(CASE WHEN fo.IsLost = 1 THEN 1 ELSE 0 END) AS lost',
-  ];
-  if (activityAvailable) {
-    selectParts.push(
-      'SUM(CASE WHEN fo.IsOpen = 1 AND (fo.IsInactive IS NULL OR fo.IsInactive = 0) THEN 1 ELSE 0 END) AS active',
-      'SUM(CASE WHEN fo.IsOpen = 1 AND fo.HasRecentActivity = 0 THEN 1 ELSE 0 END) AS withoutActivity',
-      'SUM(CASE WHEN fo.IsOpen = 1 AND fo.HasNextStep = 0 THEN 1 ELSE 0 END) AS withoutNextStep',
-    );
-  } else {
-    selectParts.push('SUM(CASE WHEN fo.IsOpen = 1 THEN 1 ELSE 0 END) AS active');
-  }
-
-  const sql = `
-    SELECT ${selectParts.join(', ')}
+  const cohortSql = `
+    SELECT
+      COUNT(*) AS totalYtdAll,
+      SUM(CASE WHEN ${excludeLostClause('fo')} THEN 1 ELSE 0 END) AS totalYtd,
+      SUM(CASE WHEN fo.IsWon = 1 THEN 1 ELSE 0 END) AS won,
+      SUM(CASE WHEN fo.IsLost = 1 THEN 1 ELSE 0 END) AS lost
     FROM Fact_Opportunity fo
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
-  const row = (rows as any[])[0];
+
+  // #Active is deliberately left as plain `IsOpen = 1` regardless of activityAvailable -- it's the
+  // one measure on this page that was already correct before this fix, and nothing above changes
+  // what "active" means for it (there is no live "healthy vs. at-risk" open-opportunity split in
+  // this schema the way the old, never-deployed IsInactive column implied).
+  const snapshotSelectParts = activityAvailable
+    ? [
+        'SUM(CASE WHEN fo.IsOpen = 1 THEN 1 ELSE 0 END) AS active',
+        `SUM(CASE WHEN fo.IsOpen = 1 AND ${WITHOUT_ACTIVITY_SQL} THEN 1 ELSE 0 END) AS withoutActivity`,
+        `SUM(CASE WHEN fo.IsOpen = 1 AND ${WITHOUT_NEXT_STEP_SQL} THEN 1 ELSE 0 END) AS withoutNextStep`,
+      ]
+    : ['SUM(CASE WHEN fo.IsOpen = 1 THEN 1 ELSE 0 END) AS active'];
+  const snapshotSql = `
+    SELECT ${snapshotSelectParts.join(', ')}
+    FROM Fact_Opportunity fo
+    WHERE ${clause}
+  `;
+
+  const [[cohortRows], [snapshotRows]] = await Promise.all([
+    pool.query(cohortSql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]),
+    pool.query(snapshotSql, params),
+  ]);
+  const cohortRow = (cohortRows as any[])[0];
+  const snapshotRow = (snapshotRows as any[])[0];
   return {
-    totalYtd: Number(row.totalYtd ?? 0),
-    totalYtdAll: Number(row.totalYtdAll ?? 0),
-    won: Number(row.won ?? 0),
-    lost: Number(row.lost ?? 0),
-    active: Number(row.active ?? 0),
-    withoutActivity: activityAvailable ? Number(row.withoutActivity ?? 0) : null,
-    withoutNextStep: activityAvailable ? Number(row.withoutNextStep ?? 0) : null,
+    totalYtd: Number(cohortRow.totalYtd ?? 0),
+    totalYtdAll: Number(cohortRow.totalYtdAll ?? 0),
+    won: Number(cohortRow.won ?? 0),
+    lost: Number(cohortRow.lost ?? 0),
+    active: Number(snapshotRow.active ?? 0),
+    withoutActivity: activityAvailable ? Number(snapshotRow.withoutActivity ?? 0) : null,
+    withoutNextStep: activityAvailable ? Number(snapshotRow.withoutNextStep ?? 0) : null,
   };
 }
 
@@ -168,9 +240,8 @@ export interface ActivityRates {
   lostDealsRatio: number | null;
 }
 
-async function computeActivityRates(
+export async function computeActivityRates(
   pool: Pool,
-  anchor: Date,
   filters: Filters,
   activityAvailable: boolean,
   counts: OpportunityActivityCountsInternal,
@@ -179,26 +250,36 @@ async function computeActivityRates(
   // IS the lost-specific widget, so its own denominator must keep counting Lost rows, unaffected
   // by the Lost-exclusion policy applied to totalYtd for display elsewhere. See
   // OpportunityActivityCountsInternal's comment.
+  //
+  // Tie-out example (audited 2026-09): #Lost=230, displayed #YTD (Lost-excluded)=389 ->
+  // totalYtdAll = 389 + 230 = 619 -> 230 / 619 = 0.37158... -> "+37.16%" via formatVariance. That
+  // is the on-screen figure this formula was flagged against -- it ties out exactly, confirming
+  // this is NOT Lost/(Won+Lost) or Lost/displayed-#YTD, both of which would give a different number.
   const lostDealsRatio = safeDiv(counts.lost, counts.totalYtdAll);
   if (!activityAvailable) return { inactiveDealsRatio: null, lostDealsRatio };
 
-  const window = ytdWindow(anchor);
+  // All-time snapshot, matching computeOpportunityActivityCounts's snapshot query above --
+  // openCount/atRiskCount describe current pipeline state, not a creation-date cohort (see the
+  // module header comment). atRiskCount ORs the #W/O Activity and #W/O Next Step conditions rather
+  // than summing their counts, so an opportunity could never be counted twice even if the
+  // HasQuotation=0/HasQuotation=1 split ever stopped being mutually exclusive. Both openCount and
+  // atRiskCount are scoped to SalesSegment = 'B2B' -- matching atRiskCount's own conditions -- so
+  // the ratio's denominator isn't diluted by non-B2B opportunities that could never appear in the
+  // numerator (see module header's "B2B segment scope" note).
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT
-      SUM(CASE WHEN fo.IsOpen = 1 THEN 1 ELSE 0 END) AS openCount,
-      SUM(CASE WHEN fo.IsOpen = 1 AND fo.IsInactive = 1 THEN 1 ELSE 0 END) AS inactiveCount,
-      SUM(CASE WHEN fo.IsOpen = 1 AND fo.HasNextStep = 0 THEN 1 ELSE 0 END) AS withoutNextStepCount
+      SUM(CASE WHEN fo.IsOpen = 1 AND fo.SalesSegment = 'B2B' THEN 1 ELSE 0 END) AS openCount,
+      SUM(CASE WHEN fo.IsOpen = 1 AND (${WITHOUT_ACTIVITY_SQL} OR ${WITHOUT_NEXT_STEP_SQL}) THEN 1 ELSE 0 END) AS atRiskCount
     FROM Fact_Opportunity fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+    WHERE ${clause}
   `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const [rows] = await pool.query(sql, params);
   const row = (rows as any[])[0];
   const openCount = Number(row.openCount ?? 0);
-  const inactiveCount = Number(row.inactiveCount ?? 0);
-  const withoutNextStepCount = Number(row.withoutNextStepCount ?? 0);
+  const atRiskCount = Number(row.atRiskCount ?? 0);
   return {
-    inactiveDealsRatio: safeDiv(inactiveCount + withoutNextStepCount, openCount),
+    inactiveDealsRatio: safeDiv(atRiskCount, openCount),
     lostDealsRatio,
   };
 }
@@ -296,7 +377,7 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
     'fo.Customer AS customer',
     'fo.Company AS company',
     'fo.ExpectedRevenue AS expectedRevenue',
-    'fo.Salesperson AS salesperson',
+    'COALESCE(sap.admin_name_override, fo.Salesperson) AS salesperson',
     'fo.Stage AS stage',
     'fo.OpportunityCreatedDate AS createdDate',
     'fo.IsOpen AS isOpen',
@@ -304,9 +385,17 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
     'fo.IsLost AS isLost',
   ];
   if (activityAvailable) {
-    selectParts.push('fo.IsInactive AS isInactive', 'fo.HasNextStep AS hasNextStep');
+    // Computed in SQL from the same WITHOUT_ACTIVITY_SQL/WITHOUT_NEXT_STEP_SQL fragments the
+    // aggregate counts/rates above use, so the Details view's Inactive / Without Next Step filters
+    // can never disagree with #W/O Activity / #W/O Next Step / Inactive Deals Ratio.
+    selectParts.push(
+      `(fo.IsOpen = 1 AND ${WITHOUT_ACTIVITY_SQL}) AS isInactive`,
+      `(fo.IsOpen = 1 AND ${WITHOUT_NEXT_STEP_SQL}) AS isWithoutNextStep`,
+    );
   }
-  const sql = `SELECT ${selectParts.join(', ')} FROM Fact_Opportunity fo WHERE ${clause}`;
+  const sql = `SELECT ${selectParts.join(', ')} FROM Fact_Opportunity fo
+    LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
+    WHERE ${clause}`;
   const [rows] = await pool.query(sql, params);
 
   const ytdStartStr = toDateOnlyString(window.start);
@@ -315,8 +404,8 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
   return (rows as any[]).map((r) => {
     const createdDate = r.createdDate ? toDateOnlyString(r.createdDate) : null;
     const isOpen = Number(r.isOpen) === 1;
-    const isInactive = activityAvailable ? (r.isInactive == null ? false : Number(r.isInactive) === 1) : null;
-    const hasNextStep = activityAvailable ? (r.hasNextStep == null ? null : Number(r.hasNextStep) === 1) : null;
+    const isInactive = activityAvailable ? Number(r.isInactive) === 1 : null;
+    const isWithoutNextStep = activityAvailable ? Number(r.isWithoutNextStep) === 1 : null;
     return {
       opportunityId: String(r.opportunityId),
       name: String(r.name ?? ''),
@@ -331,7 +420,7 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
       isLost: Number(r.isLost) === 1,
       isActive: isOpen && !(isInactive ?? false),
       isInactive,
-      isWithoutNextStep: hasNextStep == null ? null : !hasNextStep,
+      isWithoutNextStep,
       isYtd: createdDate != null && createdDate >= ytdStartStr && createdDate <= ytdEndStr,
     };
   });
@@ -354,7 +443,7 @@ export async function computeActivityMomentumOverview(pool: Pool, anchor: Date, 
   const activityColumnsAvailable = await checkActivityColumnsAvailable(pool);
   const counts = await computeOpportunityActivityCounts(pool, anchor, filters, activityColumnsAvailable);
   const [rates, lostByReason, newOpportunitiesByMonth, opportunities] = await Promise.all([
-    computeActivityRates(pool, anchor, filters, activityColumnsAvailable, counts),
+    computeActivityRates(pool, filters, activityColumnsAvailable, counts),
     fetchLostByReason(pool, anchor, filters),
     fetchNewOpportunitiesByMonth(pool, anchor, filters),
     fetchActivityOpportunities(pool, anchor, filters, activityColumnsAvailable),

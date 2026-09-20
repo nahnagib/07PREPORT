@@ -6,7 +6,7 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useFilterState } from '../../../../components/FilterProvider';
+import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import {
   Card,
   ChartPanel,
@@ -21,17 +21,24 @@ import {
   LoadingSkeleton,
   ErrorState,
   exportRowsAsPdf,
+  exportPerformanceTablePdf,
+  PerformanceReportTable,
+  SEMANTIC_STATUS_LABEL,
   type Column,
+  type PerformanceReportRow,
+  type PerformanceTablePdfColumn,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, usePipelineHealthOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import { usePipelineHealthOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type {
+  DataQualityOverview,
   FunnelDeliveryRecord,
   FunnelOpportunityIds,
   FunnelSalesRecord,
   FunnelStageRecords,
   OpportunityDetailRow,
+  PipelineHealthOverview,
   StageBenchmarkRow,
 } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
@@ -63,6 +70,117 @@ function formatPlainNumber(value: number): string {
 function formatPct(v: number | null): string {
   return v != null ? `${(v * 100).toFixed(1)}%` : '—';
 }
+
+// ---------------------------------------------------------------------------
+// Performance Details -- the page's single, C-level scannable summary table. Reuses
+// PerformanceReportTable/SemanticBadge exactly like every other status surface on this page; the 3 Stage Benchmark rows and the Data Quality row carry a real,
+// backend-computed status (classifyVsTarget / classifyRate respectively), the rest are
+// informational (no target in this page's data model) and stay 'neutral'.
+// ---------------------------------------------------------------------------
+
+function stageBenchmarkTakeaway(row: StageBenchmarkRow): string {
+  const actual = formatPct(row.actualPct);
+  const target = formatPct(row.targetPct);
+  if (row.status === 'green') return `${row.transition} conversion is on target at ${actual}.`;
+  if (row.status === 'yellow') return `${row.transition} conversion is slightly behind target (${actual} vs ${target}).`;
+  if (row.status === 'red') return `${row.transition} conversion is well behind target (${actual} vs ${target}) and needs attention.`;
+  return `No target set for ${row.transition}.`;
+}
+
+function dataQualityTakeaway(dq: DataQualityOverview): string {
+  const pct = formatPct(dq.dirtyPct);
+  if (dq.status === 'green') return `Pipeline data is clean -- only ${pct} of records have an issue.`;
+  if (dq.status === 'yellow') return `${pct} of pipeline records have a data issue -- worth a look.`;
+  if (dq.status === 'red') return `${pct} of pipeline records have a data issue -- figures on this page may be understated.`;
+  return 'No opportunity records to validate for the current filters.';
+}
+
+function toExecutiveSummaryRows(data?: PipelineHealthOverview | null): PerformanceReportRow[] {
+  if (!data) return [];
+  // "Last" is "—" on every row: this page has no prior-period (LYTD/LMTD) figure -- every funnel
+  // count is a YTD point-in-time figure and the benchmarks are rates against fixed targets -- so
+  // Variance to Last is "—" too (agreed with the business; Last column kept for the shared layout).
+  const funnelRow = (id: string, metric: string, count: number, value: number | null, takeaway: string): PerformanceReportRow => ({
+    id,
+    metric,
+    actualLabel: formatPlainNumber(count),
+    actualFullValue: value != null ? formatCurrency(value) : undefined,
+    targetLabel: '—',
+    variancePct: null,
+    varianceLyPct: null,
+    status: 'neutral',
+    takeaway,
+  });
+  const rows: PerformanceReportRow[] = [
+    funnelRow('leads', 'Leads (YTD, B2B)', data.funnel.leads, null, `${formatPlainNumber(data.funnel.leads)} B2B leads created so far this year.`),
+    funnelRow(
+      'opportunities',
+      'Opportunities (YTD, B2B)',
+      data.funnel.opportunities,
+      data.funnelValues.opportunities,
+      `${formatPlainNumber(data.funnel.opportunities)} opportunities created YTD, worth ${formatCurrency(data.funnelValues.opportunities)}.`,
+    ),
+    funnelRow(
+      'quotations',
+      'Quotations (YTD, B2B)',
+      data.funnel.quotations,
+      data.funnelValues.quotations,
+      `${formatPlainNumber(data.funnel.quotations)} quotations issued YTD, worth ${formatCurrency(data.funnelValues.quotations)}.`,
+    ),
+    funnelRow(
+      'salesOrders',
+      'Sales Orders (YTD, B2B)',
+      data.funnel.salesOrders,
+      data.funnelValues.salesOrders,
+      `${formatPlainNumber(data.funnel.salesOrders)} sales orders YTD, worth ${formatCurrency(data.funnelValues.salesOrders)}.`,
+    ),
+    funnelRow(
+      'deliveries',
+      'Deliveries (YTD, B2B)',
+      data.funnel.deliveries,
+      data.funnelValues.deliveries,
+      `${formatPlainNumber(data.funnel.deliveries)} deliveries YTD, worth ${formatCurrency(data.funnelValues.deliveries)}.`,
+    ),
+  ];
+  for (const b of data.stageBenchmark) {
+    rows.push({
+      id: `benchmark-${b.transition}`,
+      metric: b.transition,
+      actualLabel: formatPct(b.actualPct),
+      targetLabel: formatPct(b.targetPct),
+      variancePct: b.variancePct,
+      varianceLyPct: null,
+      status: toSemanticStatus(b.status),
+      takeaway: stageBenchmarkTakeaway(b),
+    });
+  }
+  rows.push({
+    id: 'dataQuality',
+    metric: 'Data Quality',
+    actualLabel: formatPct(data.dataQuality.dirtyPct),
+    targetLabel: `< ${formatPct(0.02)} dirty`,
+    variancePct: null,
+    varianceLyPct: null,
+    status: toSemanticStatus(data.dataQuality.status),
+    takeaway: dataQualityTakeaway(data.dataQuality),
+  });
+  return rows;
+}
+
+// Matches PerformanceReportTable's showLytdColumn layout so the PDF mirrors the on-screen table.
+function pctLabel(v: number | null): string {
+  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
+}
+const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
+  { header: 'Metric Name', getValue: (row) => row.metric },
+  { header: 'Actual', getValue: (row) => row.actualLabel },
+  { header: 'Last', getValue: (row) => row.lytdLabel ?? '—' },
+  { header: 'Target', getValue: (row) => row.targetLabel },
+  { header: 'Variance to Last', getValue: (row) => pctLabel(row.varianceLyPct) },
+  { header: 'Variance to Target', getValue: (row) => pctLabel(row.variancePct) },
+  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
+  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
+];
 
 type DetailsFilter = { type: 'month' | 'stage' | 'bucket' | 'funnelStage'; value: string } | null;
 
@@ -331,7 +449,6 @@ export default function PipelineHealthPage() {
     onFiltersChange,
     onAnchorDateChange,
     onDateRangeChange,
-    resetFilters,
   } = useFilterState();
 
   const [view, setView] = useState<'summary' | 'details' | 'stageRecords'>('summary');
@@ -341,22 +458,9 @@ export default function PipelineHealthPage() {
   const [downloadingStagePdf, setDownloadingStagePdf] = useState<'linked' | 'unlinked' | null>(null);
   const [downloadingChartPdf, setDownloadingChartPdf] = useState<string | null>(null);
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth);
+  const filterOptions = useScopedFilterOptions();
   const overview = usePipelineHealthOverview(token, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
-
-  function handleReset() {
-    resetFilters();
-    setView('summary');
-    setDetailsFilter(null);
-    setStageRecordKind(null);
-  }
-
-  function handleRefresh() {
-    overview.retry();
-    refreshStatus.retry();
-  }
 
   function openDetails(filter: DetailsFilter) {
     setDetailsFilter(filter);
@@ -428,6 +532,19 @@ export default function PipelineHealthPage() {
   const stageValueTableRows: StageValueTableRow[] = stageSegments.map((s) => ({ id: s.id, stage: s.label, value: s.value }));
   const probabilityTableRows: ProbabilityTableRow[] = probabilityPoints.map((p) => ({ id: p.label, bucket: p.label, count: p.count }));
 
+  // Filters applied / Exported by come from the shared PDF export context (PdfExportContextBridge).
+  async function handleExportPerformanceTablePdf() {
+    try {
+      await exportPerformanceTablePdf({
+        title: 'Performance Details',
+        rows: toExecutiveSummaryRows(data),
+        columns: PERFORMANCE_PDF_COLUMNS,
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    }
+  }
+
   async function handleDownloadChartPdf<T extends Record<string, unknown>>(key: string, title: string, columns: Column<T>[], rows: T[]) {
     setDownloadingChartPdf(key);
     try {
@@ -493,8 +610,6 @@ export default function PipelineHealthPage() {
           pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
-          onRefresh={handleRefresh}
-          lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
           onLogout={logout}
           showDateInput={false}
@@ -503,7 +618,6 @@ export default function PipelineHealthPage() {
         <FilterBar
           filters={effectiveFilters}
           onChange={onFiltersChange}
-          onReset={handleReset}
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
@@ -517,19 +631,20 @@ export default function PipelineHealthPage() {
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
-          onExportReport={exportReport.exportReport}
-          isExporting={exportReport.isExporting}
-          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
           isStale={refreshStatus.data?.isStale}
           isInverted={refreshStatus.data?.isInverted}
+          refreshCheck={refreshStatus.data?.refreshCheck}
           lastRefreshTime={lastRefreshLabel}
         />
 
+        <DataQualityCard dataQuality={overview.data?.dataQuality} loading={overview.loading} />
+
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)' }}>
           {view === 'summary' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
               {/* Top-left -- Full Pipeline Funnel + Stage Benchmark */}
               <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
@@ -669,6 +784,7 @@ export default function PipelineHealthPage() {
                     valueFormatter={(v) => formatCurrency(v)}
                     legendTitle="Stage"
                     onSegmentClick={(id) => openDetails({ type: 'stage', value: id })}
+                    showPercentLabels
                   />
                 )}
               </ChartPanel>
@@ -711,6 +827,19 @@ export default function PipelineHealthPage() {
                   />
                 )}
               </ChartPanel>
+            </div>
+
+            {!overview.loading && !overview.error && (
+              <PerformanceReportTable
+                title="Performance Details"
+                rows={toExecutiveSummaryRows(data)}
+                showLytdColumn
+                lastColumnLabel="Last"
+                showStatus
+                showTakeaway
+                onExportPdf={handleExportPerformanceTablePdf}
+              />
+            )}
             </div>
           ) : view === 'details' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
@@ -877,6 +1006,46 @@ function DrillIndicator({ hint }: { hint: string }) {
 // Stage Benchmark row -- actual vs target %, reusing ProgressBar + SemanticBadge exactly as
 // everywhere else in this app (both driven by the same classifyVsTarget result).
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Data Quality indicator -- surfaces the count/% of Fact_Opportunity records with a broken or
+// missing field (see backend/src/measures/dataQuality.ts). Status/thresholds are computed on the
+// backend (classifyRate against DATA_QUALITY_YELLOW_PCT/RED_PCT), same "backend decides, frontend
+// just relabels" convention as every other status badge on this page.
+// ---------------------------------------------------------------------------
+
+function DataQualityCard({ dataQuality, loading }: { dataQuality?: DataQualityOverview; loading: boolean }) {
+  if (loading && !dataQuality) return null;
+  if (!dataQuality) return null;
+
+  const status = toSemanticStatus(dataQuality.status);
+  const issuesWithCounts = dataQuality.issues.filter((issue) => issue.count > 0);
+
+  return (
+    <div style={{ padding: '0 var(--ps-space-4, 24px)', marginTop: 'var(--ps-space-3, 16px)' }}>
+      <Card>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Data Quality</span>
+            <span style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
+              {dataQuality.dirtyRecords} of {dataQuality.totalRecords} records ({formatPct(dataQuality.dirtyPct)}) have an issue
+            </span>
+          </div>
+          <SemanticBadge status={status} />
+        </div>
+        {issuesWithCounts.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 8, fontSize: 11, color: 'var(--ps-color-muted-text)' }}>
+            {issuesWithCounts.map((issue) => (
+              <span key={issue.key}>
+                {issue.label}: <strong style={{ color: 'var(--ps-color-text)' }}>{issue.count}</strong>
+              </span>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
 
 function BenchmarkRow({ row }: { row: StageBenchmarkRow }) {
   const status = toSemanticStatus(row.status);

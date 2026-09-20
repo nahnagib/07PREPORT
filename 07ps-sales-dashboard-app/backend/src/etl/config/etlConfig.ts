@@ -21,6 +21,10 @@ export interface EtlConfig {
     incrementalEnabled: boolean;
     fullCron: string;
     fullEnabled: boolean;
+    /** IANA zone the cron expressions are read in (ETL_SCHEDULE_TIMEZONE). Unset = the server's own
+     * zone, as before; setting it makes the schedule and the displayed "next run" agree regardless
+     * of where the API process happens to run. */
+    timezone?: string;
   };
   redis: {
     host: string;
@@ -58,6 +62,7 @@ export function getEtlConfig(): EtlConfig {
       incrementalEnabled: bool('ETL_SCHEDULE_INCREMENTAL_ENABLED', true),
       fullCron: process.env.ETL_SCHEDULE_FULL_CRON || '0 2 * * *',
       fullEnabled: bool('ETL_SCHEDULE_FULL_ENABLED', true),
+      timezone: process.env.ETL_SCHEDULE_TIMEZONE || undefined,
     },
     redis: {
       host: process.env.REDIS_HOST || 'localhost',

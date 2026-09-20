@@ -4,11 +4,11 @@ import { requireAuth } from '../../middleware/auth';
 import { requireAdminRole, requirePasswordChangeCleared } from '../../middleware/permission';
 import { getEtlConfig } from '../../etl/config/etlConfig';
 import { computeNextRunTime } from '../../etl/scheduler/nextRunTime';
-import { EtlJobData, enqueuePipelineRun, getEtlQueue, hasActiveEtlRun, hasActiveWorker } from '../../etl/queue/etlQueue';
+import { EtlAlreadyRunningError, EtlJobData, enqueuePipelineRun, getEtlQueue, hasActiveWorker } from '../../etl/queue/etlQueue';
 import { isQueueReachable } from '../../etl/queue/queueHealth';
 import { publishCancelRequest } from '../../etl/queue/etlControlChannel';
 import { etlLogger } from '../../etl/services/etlLogger';
-import { resetEtlApi } from '../../etl/services/pythonRunner';
+import { getEtlPreflight, resetEtlApi } from '../../etl/services/pythonRunner';
 import {
   EtlMode,
   EtlRunStatus,
@@ -35,9 +35,9 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
   try {
     const config = getEtlConfig();
     const nextIncremental = config.schedule.incrementalEnabled
-      ? computeNextRunTime(config.schedule.incrementalCron)
+      ? computeNextRunTime(config.schedule.incrementalCron, config.schedule.timezone)
       : null;
-    const nextFull = config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron) : null;
+    const nextFull = config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null;
 
     // Checked up front so the UI can tell "queue is genuinely unreachable" apart from "a run is
     // genuinely active" -- those used to be indistinguishable (any queued/running row read as
@@ -51,6 +51,9 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
     const workerAvailable = queueAvailable ? await hasActiveWorker() : false;
 
     const active = await getActiveRun();
+    // Always returned separately from `run`: while a run is in flight `run` is that run, but the
+    // "Last Run" panel must keep showing the last run that actually finished.
+    const lastRun = await getLastFinishedRun();
     if (active) {
       let progress: unknown = null;
       let recentLog: string[] = [];
@@ -69,6 +72,7 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       }
       res.json({
         run: active,
+        lastRun,
         progress,
         recentLog,
         queueAvailable,
@@ -80,9 +84,9 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       return;
     }
 
-    const last = await getLastFinishedRun();
     res.json({
-      run: last,
+      run: lastRun,
+      lastRun,
       progress: null,
       recentLog: [],
       queueAvailable,
@@ -91,6 +95,24 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       nextIncrementalRun: nextIncremental,
       nextFullRun: nextFull,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Are the ETL's manual input workbooks reachable and valid from the ETL service's own point of
+ * view? Shown in the ETL panel before Run; `available: false` means the check itself couldn't run
+ * (ETL API unreachable), which is reported but does not by itself block anything.
+ */
+adminEtlControlRouter.get('/preflight', async (_req, res, next) => {
+  try {
+    const result = await getEtlPreflight();
+    if ('error' in result) {
+      res.json({ available: false, error: result.error });
+      return;
+    }
+    res.json({ available: true, ...result.report });
   } catch (err) {
     next(err);
   }
@@ -126,12 +148,12 @@ adminEtlControlRouter.get('/scheduler-config', async (_req, res, next) => {
       incremental: {
         cron: config.schedule.incrementalCron,
         enabled: config.schedule.incrementalEnabled,
-        nextRun: config.schedule.incrementalEnabled ? computeNextRunTime(config.schedule.incrementalCron) : null,
+        nextRun: config.schedule.incrementalEnabled ? computeNextRunTime(config.schedule.incrementalCron, config.schedule.timezone) : null,
       },
       full: {
         cron: config.schedule.fullCron,
         enabled: config.schedule.fullEnabled,
-        nextRun: config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron) : null,
+        nextRun: config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null,
       },
     });
   } catch (err) {
@@ -153,45 +175,80 @@ const START_CONFIGS: Record<'incremental' | 'full' | 'sql' | 'excel', StartConfi
   excel: { mode: 'excel', loadMode: 'full', outputMode: 'excel' },
 };
 
+/** Shared by the start-* routes and retry: preflight checks, then enqueue. Returns true if it
+ * already sent a response (error), false if the caller should send the success response. */
+async function startConfiguredRun(
+  req: Request,
+  res: Response,
+  key: keyof typeof START_CONFIGS,
+  label: string,
+): Promise<{ runId: number; jobId: string | undefined } | null> {
+  // Checked before hasActiveEtlRun so an unreachable queue is reported honestly rather than
+  // as a false "already running" -- a stale queued/running row and a down queue used to be
+  // indistinguishable from the caller's side.
+  if (!(await isQueueReachable())) {
+    res.status(503).json({
+      error: 'ETL queue is currently unreachable. Cannot start a new run until connectivity is restored.',
+    });
+    return null;
+  }
+  // Checked before enqueuing, not after: without this, a run enqueues fine, the DB row goes
+  // 'queued', and then nothing ever happens to it -- no worker means no error, just an
+  // indefinite "Queued" with zero log lines (see hasActiveWorker's header). Failing here
+  // instead turns that silent hang into an honest, immediate error.
+  if (!(await hasActiveWorker())) {
+    res.status(503).json({
+      error: 'No ETL worker process is currently consuming the queue. Starting a run now would '
+        + 'queue it with nothing to pick it up. Check that the etl:worker process is running.',
+    });
+    return null;
+  }
+  // A run against unreachable/invalid inputs is guaranteed to die in step one, after occupying the
+  // lock and the queue -- refuse it up front with the same explanation the panel shows. Only a
+  // definite "checked and bad" blocks; an unreachable ETL API is left to the normal failure path.
+  const preflight = await getEtlPreflight();
+  if ('report' in preflight && !preflight.report.ok) {
+    const r = preflight.report;
+    const problems = r.files.filter((f) => f.required && f.status !== 'ok').map((f) => `${f.name} (${f.status})`);
+    res.status(422).json({
+      error:
+        `ETL inputs are not ready: looked in ${r.input_dir} -- ` +
+        (problems.length ? `problem files: ${problems.join(', ')}. ` : '') +
+        (r.output.writable ? '' : `${r.output.detail} `) +
+        r.hint,
+      preflight: r,
+    });
+    return null;
+  }
+  const cfg = START_CONFIGS[key];
+  try {
+    // enqueuePipelineRun itself re-checks "is a run active" under a cross-process lock, so two
+    // simultaneous clicks can't both get through.
+    const { job, runId } = await enqueuePipelineRun({
+      mode: cfg.mode,
+      loadMode: cfg.loadMode,
+      outputMode: cfg.outputMode,
+      fast: cfg.fast,
+      label,
+      triggerSource: 'manual',
+      triggeredByUserId: req.user!.id,
+      triggeredByUserName: req.user!.fullName,
+    });
+    return { runId, jobId: job.id };
+  } catch (err) {
+    if (err instanceof EtlAlreadyRunningError) {
+      res.status(409).json({ error: 'An ETL process is already running.' });
+      return null;
+    }
+    throw err;
+  }
+}
+
 function makeStartHandler(key: keyof typeof START_CONFIGS) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // Checked before hasActiveEtlRun so an unreachable queue is reported honestly rather than
-      // as a false "already running" -- a stale queued/running row and a down queue used to be
-      // indistinguishable from the caller's side.
-      if (!(await isQueueReachable())) {
-        res.status(503).json({
-          error: 'ETL queue is currently unreachable. Cannot start a new run until connectivity is restored.',
-        });
-        return;
-      }
-      // Checked before enqueuing, not after: without this, a run enqueues fine, the DB row goes
-      // 'queued', and then nothing ever happens to it -- no worker means no error, just an
-      // indefinite "Queued" with zero log lines (see hasActiveWorker's header). Failing here
-      // instead turns that silent hang into an honest, immediate error.
-      if (!(await hasActiveWorker())) {
-        res.status(503).json({
-          error: 'No ETL worker process is currently consuming the queue. Starting a run now would '
-            + 'queue it with nothing to pick it up. Check that the etl:worker process is running.',
-        });
-        return;
-      }
-      if (await hasActiveEtlRun()) {
-        res.status(409).json({ error: 'An ETL process is already running.' });
-        return;
-      }
-      const cfg = START_CONFIGS[key];
-      const { job, runId } = await enqueuePipelineRun({
-        mode: cfg.mode,
-        loadMode: cfg.loadMode,
-        outputMode: cfg.outputMode,
-        fast: cfg.fast,
-        label: `manual-${key}`,
-        triggerSource: 'manual',
-        triggeredByUserId: req.user!.id,
-        triggeredByUserName: req.user!.fullName,
-      });
-      res.status(202).json({ ok: true, runId, jobId: job.id });
+      const started = await startConfiguredRun(req, res, key, `manual-${key}`);
+      if (started) res.status(202).json({ ok: true, ...started });
     } catch (err) {
       next(err);
     }
@@ -202,6 +259,36 @@ adminEtlControlRouter.post('/start/incremental', makeStartHandler('incremental')
 adminEtlControlRouter.post('/start/full', makeStartHandler('full'));
 adminEtlControlRouter.post('/start/sql', makeStartHandler('sql'));
 adminEtlControlRouter.post('/start/excel', makeStartHandler('excel'));
+
+/**
+ * Re-runs a failed/cancelled run with the same mode (the newest one if no runId is given). It is a
+ * brand-new tracked run -- the old row keeps its failure record -- and goes through the same
+ * checks/lock as any manual start. Rerunning is safe: incremental loads delete-and-reinsert their
+ * window per table, and the pipeline holds its own MySQL named lock while writing.
+ */
+adminEtlControlRouter.post('/retry', async (req, res, next) => {
+  try {
+    const requested = req.body?.runId === undefined ? null : Number(req.body.runId);
+    const run = requested === null ? await getLastFinishedRun() : await getRunById(requested);
+    if (!run) {
+      res.status(404).json({ error: 'No run to retry.' });
+      return;
+    }
+    if (run.status !== 'failed' && run.status !== 'cancelled') {
+      res.status(400).json({ error: 'Only a failed or cancelled run can be retried.' });
+      return;
+    }
+    const key = run.mode as keyof typeof START_CONFIGS;
+    if (!START_CONFIGS[key]) {
+      res.status(400).json({ error: `Unsupported mode "${run.mode}" for retry.` });
+      return;
+    }
+    const started = await startConfiguredRun(req, res, key, `retry-${key}-of-${run.id}`);
+    if (started) res.status(202).json({ ok: true, retriedRunId: run.id, ...started });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * Manual override for a stuck "already running" lock (see forceResetActiveEtlRuns's header) --

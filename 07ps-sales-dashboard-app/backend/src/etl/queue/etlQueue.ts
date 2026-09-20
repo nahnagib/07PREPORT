@@ -1,4 +1,5 @@
 import { Queue } from 'bullmq';
+import { pool } from '../../db/pool';
 import { getEtlConfig } from '../config/etlConfig';
 import { etlLogger } from '../services/etlLogger';
 import {
@@ -103,6 +104,40 @@ export interface EtlJobData {
 
 export { hasActiveEtlRun };
 
+/** Thrown by enqueuePipelineRun when another run is already queued/running. */
+export class EtlAlreadyRunningError extends Error {
+  constructor() {
+    super('An ETL process is already running.');
+    this.name = 'EtlAlreadyRunningError';
+  }
+}
+
+const ENQUEUE_LOCK_NAME = 'etl_enqueue_guard';
+const ENQUEUE_LOCK_WAIT_S = 10;
+
+/**
+ * Runs `fn` while holding a MySQL named lock, so "is anything active?" + "insert my queued row"
+ * happen as one step across every process that can enqueue (API routes, the cron scheduler, CLI
+ * commands). Without it two near-simultaneous starts both read "nothing active" and both insert.
+ * The lock lives on one dedicated connection (GET_LOCK is per-session) and is always released.
+ */
+async function withEnqueueGuard<T>(fn: () => Promise<T>): Promise<T> {
+  const conn = await pool.getConnection();
+  try {
+    const [rows] = await conn.query('SELECT GET_LOCK(?, ?) AS got', [ENQUEUE_LOCK_NAME, ENQUEUE_LOCK_WAIT_S]);
+    if (!(rows as { got: number | null }[])[0]?.got) {
+      throw new EtlAlreadyRunningError(); // another start is mid-flight; treat as "already starting"
+    }
+    try {
+      return await fn();
+    } finally {
+      await conn.query('SELECT RELEASE_LOCK(?)', [ENQUEUE_LOCK_NAME]).catch(() => undefined);
+    }
+  } finally {
+    conn.release();
+  }
+}
+
 export interface EnqueuePipelineRunInput {
   mode: EtlMode;
   loadMode: EtlLoadMode;
@@ -135,13 +170,16 @@ function toBullJobId(runId: number): string {
 }
 
 export async function enqueuePipelineRun(input: EnqueuePipelineRunInput) {
-  const runId = await createQueuedRun({
-    mode: input.mode,
-    loadMode: input.loadMode,
-    outputMode: input.outputMode,
-    triggerSource: input.triggerSource,
-    triggeredByUserId: input.triggeredByUserId,
-    triggeredByUserName: input.triggeredByUserName,
+  const runId = await withEnqueueGuard(async () => {
+    if (await hasActiveEtlRun()) throw new EtlAlreadyRunningError();
+    return createQueuedRun({
+      mode: input.mode,
+      loadMode: input.loadMode,
+      outputMode: input.outputMode,
+      triggerSource: input.triggerSource,
+      triggeredByUserId: input.triggeredByUserId,
+      triggeredByUserName: input.triggeredByUserName,
+    });
   });
   const jobId = toBullJobId(runId);
   // Persisted now, not after `queue.add`, so /admin/etl/cancel can always find the job id even if

@@ -44,6 +44,9 @@ export interface Filters {
   channelKeys?: number[]; // Distribution Channel
   salesTeamKeys?: string[]; // Branch
   salespersonKeys?: number[]; // Sales Person
+  /** Customer -- only honored by queries that opt in via buildWhereClause's `supportsCustomer`
+   * (Fact_SalesLines-grain sales measures); Fact_Targets and the CRM facts have no CustomerKey. */
+  customerKeys?: number[];
 }
 
 export const EMPTY_FILTERS: Filters = {};
@@ -56,7 +59,90 @@ const FILTER_COLUMNS: Record<keyof Filters, string> = {
   channelKeys: 'ChannelKey',
   salesTeamKeys: 'SalesTeamKey',
   salespersonKeys: 'SalespersonKey',
+  customerKeys: 'CustomerKey',
 };
+
+/**
+ * Admin-override reclassification (Reports/Dashboards Honor Admin Salesperson Overrides,
+ * 2026-09) -- salesperson_admin_profile.segment_key_override/channel_key_override/
+ * sales_team_key_override let an admin reassign a salesperson's segment/channel/sales-team.
+ * Reversed a previously-documented "annotations only, never feeds a measure" invariant on
+ * explicit request: these three expressions make EVERY filter/GROUP BY on segmentKeys/
+ * channelKeys/salesTeamKeys (via buildWhereClause/buildCrmWhereClause below) resolve each row's
+ * *effective* value through that row's own SalespersonKey first, falling back to the row's real
+ * column -- so a salesperson's revenue/target moves into their overridden bucket everywhere it's
+ * aggregated (team/segment/company totals included), without any per-measure-file change: SQL
+ * aggregation already sums from the row level up, so there is no separate org-chart traversal to
+ * build. CompanyKey is deliberately NOT given an effective-expression -- no override column exists
+ * for it (accepted, confirmed gap, not a missing phase), so Company totals keep using each row's
+ * real CompanyKey unconditionally.
+ *
+ * A correlated subquery (not a JOIN) is used deliberately so no caller's FROM/JOIN clause needs to
+ * change -- salesperson_admin_profile is PK-keyed on salesperson_key and small (one row per
+ * salesperson), so this is a cheap indexed point lookup per distinct SalespersonKey value.
+ */
+export function effectiveSegmentExpr(tableAlias = ''): string {
+  const prefix = tableAlias ? `${tableAlias}.` : '';
+  return `COALESCE(
+    (SELECT sap.segment_key_override FROM salesperson_admin_profile sap WHERE sap.salesperson_key = ${prefix}SalespersonKey),
+    ${prefix}SegmentKey
+  )`;
+}
+
+export function effectiveSalesTeamExpr(tableAlias = ''): string {
+  const prefix = tableAlias ? `${tableAlias}.` : '';
+  return `COALESCE(
+    (SELECT sap.sales_team_key_override FROM salesperson_admin_profile sap WHERE sap.salesperson_key = ${prefix}SalespersonKey),
+    ${prefix}SalesTeamKey
+  )`;
+}
+
+/**
+ * Distribution Channel inference for ChannelKey=1 ("Unknown") rows -- BI Report Enhancement
+ * Brief Tasks #3/#4 ("Unknown Sales" allocation), confirmed against the live warehouse rather
+ * than assumed:
+ *
+ *   - ChannelKey=1 covers 19,748 of 67,294 Fact_Sales rows -- 24.3% of all revenue ($122.4M).
+ *   - CustomerKey is NULL on every one of them, so per-customer purchase history (the most
+ *     reliable real-world signal) can't be used.
+ *   - SegmentKey (Customer Group) IS populated on 98.9% of them, and cross-tabbing the rows
+ *     that already have both a known Channel and a known Segment gives a clear majority-vote
+ *     correlation:
+ *
+ *       Segment          Retail   Projects   Wholesales   Majority
+ *       B2C (2)           79.1%      9.5%       11.3%     Retail (3)
+ *       Backoffice (3)    87.1%      0.0%       12.9%     Retail (3)
+ *       B2B (1)            1.4%     87.1%       11.5%     Projects (2)
+ *       Inter Company (4)  0.0%     89.3%       10.7%     Projects (2)
+ *
+ * Rows where Segment is ALSO Unknown (segment_key=5, ~221 of the 19,748) have no signal at all
+ * -- forcing a guess there would be fabricating data, so they're left at ChannelKey=1 rather
+ * than defaulted into any bucket.
+ *
+ * This is a majority-vote approximation, not a certainty (e.g. ~21% of B2C's Unknown-channel
+ * rows are not actually Retail) -- confirmed acceptable with the business as a query-time
+ * inference rather than a warehouse rewrite specifically so it stays reversible: it never
+ * touches the stored ChannelKey/SegmentKey values, only how a channelKeys filter selects rows,
+ * so the rule can be revised or dropped by editing this one expression.
+ *
+ * An explicit admin channel_key_override wins outright over all of the above (COALESCE short-
+ * circuits before the CASE ever runs). The Unknown-channel inference itself falls back to the
+ * row's *effective* segment (effectiveSegmentExpr), not the raw one -- otherwise a salesperson
+ * reclassified into a different segment would show Unknown-channel rows inferred from their OLD
+ * segment, visibly disagreeing with their own segment-grouped total in the same UI.
+ */
+export function effectiveChannelExpr(tableAlias = ''): string {
+  const prefix = tableAlias ? `${tableAlias}.` : '';
+  return `COALESCE(
+    (SELECT sap.channel_key_override FROM salesperson_admin_profile sap WHERE sap.salesperson_key = ${prefix}SalespersonKey),
+    CASE
+      WHEN ${prefix}ChannelKey <> 1 THEN ${prefix}ChannelKey
+      WHEN ${effectiveSegmentExpr(tableAlias)} IN (2, 3) THEN 3
+      WHEN ${effectiveSegmentExpr(tableAlias)} IN (1, 4) THEN 2
+      ELSE 1
+    END
+  )`;
+}
 
 /**
  * Build a parametrized SQL WHERE fragment (without the leading 'WHERE') and its params.
@@ -64,19 +150,35 @@ const FILTER_COLUMNS: Record<keyof Filters, string> = {
  * Returns ("1=1", []) if no filters are set, so callers can always do
  * `WHERE ${dateClause} AND ${filterClause}` without special-casing "no filters".
  */
+// Fields whose raw column is replaced by an admin-override-aware expression (see the three
+// effective*Expr functions above) -- companyKeys/salespersonKeys have no override concept and
+// always resolve to their plain column.
+const OVERRIDE_EXPR: Partial<Record<keyof Filters, (alias: string) => string>> = {
+  segmentKeys: effectiveSegmentExpr,
+  channelKeys: effectiveChannelExpr,
+  salesTeamKeys: effectiveSalesTeamExpr,
+};
+
 export function buildWhereClause(
   filters: Filters,
   tableAlias = '',
+  supportsCustomer = false,
 ): { clause: string; params: Array<string | number> } {
   const prefix = tableAlias ? `${tableAlias}.` : '';
   const clauses: string[] = [];
   const params: Array<string | number> = [];
 
   (Object.keys(FILTER_COLUMNS) as Array<keyof Filters>).forEach((field) => {
+    if (field === 'customerKeys' && !supportsCustomer) return;
     const values = filters[field];
     if (values && values.length > 0) {
       const placeholders = values.map(() => '?').join(', ');
-      clauses.push(`${prefix}${FILTER_COLUMNS[field]} IN (${placeholders})`);
+      // segmentKeys/channelKeys/salesTeamKeys filter against the effective (override-aware) value,
+      // not the raw column, so a reclassified salesperson's revenue matches the bucket they were
+      // moved into rather than their original ETL value. See OVERRIDE_EXPR/effective*Expr above.
+      const overrideFn = OVERRIDE_EXPR[field];
+      const column = overrideFn ? overrideFn(tableAlias) : `${prefix}${FILTER_COLUMNS[field]}`;
+      clauses.push(`${column} IN (${placeholders})`);
       params.push(...values);
     }
   });
@@ -190,6 +292,7 @@ export function applySalespersonLock(filters: Filters, user: UserContext): Filte
     channelKeys: [],
     salesTeamKeys: [],
     salespersonKeys: [user.salespersonKey],
+    customerKeys: filters.customerKeys,
   };
 }
 

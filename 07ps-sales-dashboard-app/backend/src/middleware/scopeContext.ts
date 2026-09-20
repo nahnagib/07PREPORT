@@ -71,7 +71,19 @@ export async function attachUserContext(req: Request, res: Response, next: NextF
     return;
   }
 
-  const dataScopeRules = await getRoleDataScopeRules(req.user.roleId);
+  // Hardening: this is async Express middleware, so a rejected promise here does NOT get caught
+  // by Express's synchronous error handling -- it becomes an unhandled rejection that crashes the
+  // whole process (Node 15+ default), taking down every other in-flight request too, not just
+  // this one. A missing/renamed role_data_scope table, a DB blip, etc. must degrade to a 500 on
+  // this request, same "never the raw error/stack" contract resolveScopedFilters's catch already
+  // follows below -- not take the server down.
+  let dataScopeRules;
+  try {
+    dataScopeRules = await getRoleDataScopeRules(req.user.roleId);
+  } catch (err) {
+    next(err);
+    return;
+  }
 
   req.userContext = {
     roleCode: req.user.roleTierCode,
@@ -117,6 +129,7 @@ export function resolveScopedFilters(req: Request, res: Response, next: NextFunc
     channelKeys: parseNumberArray(q.channelKeys),
     salesTeamKeys: parseStringArray(q.salesTeamKeys),
     salespersonKeys: parseNumberArray(q.salespersonKeys),
+    customerKeys: parseNumberArray(q.customerKeys),
   };
 
   try {

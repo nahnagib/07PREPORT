@@ -1,7 +1,9 @@
 'use client';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { APP_TIMEZONE } from '../../../lib/format';
 import { Button, Card, ConfirmDialog, DataTable, EmptyState, ErrorState, LoadingSkeleton, type Column } from '@07ps/ui';
 import { AdminLayout } from '../../../components/AdminLayout';
+import { useFilterState } from '../../../components/FilterProvider';
 import { EtlLogPanel } from '../../../components/EtlLogPanel';
 import { useAuth } from '../../../lib/AuthProvider';
 import {
@@ -9,6 +11,7 @@ import {
   ApiError,
   EtlJobRun,
   EtlMode,
+  EtlPreflightResponse,
   EtlRunStatus,
   EtlSchedulerConfigResponse,
   EtlStatusResponse,
@@ -131,7 +134,7 @@ function formatElapsed(ms: number | null): string {
  * timezone. See frontend/src/lib/format.ts's formatTimestamp for the same rule applied elsewhere. */
 function formatDateTime(value: string | null): string {
   if (!value) return '—';
-  return new Date(value).toLocaleString(undefined, { timeZone: 'Africa/Tripoli' });
+  return new Date(value).toLocaleString(undefined, { timeZone: APP_TIMEZONE });
 }
 
 function formatCount(value: number | null): string {
@@ -204,6 +207,12 @@ function EtlControlBody() {
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [confirmForceReset, setConfirmForceReset] = useState(false);
   const [forceResetting, setForceResetting] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [preflight, setPreflight] = useState<EtlPreflightResponse | null>(null);
+  const [failedLog, setFailedLog] = useState<{ runId: number; lines: string[] } | null>(null);
+  const { bumpDataVersion } = useFilterState();
+  // Last seen { id, status } of the run being tracked, to notice the moment it finishes.
+  const seenRun = useRef<{ id: number; status: EtlRunStatus } | null>(null);
 
   const loadStatus = useCallback(() => {
     if (!token) return;
@@ -223,12 +232,39 @@ function EtlControlBody() {
     return () => clearInterval(interval);
   }, [loadStatus]);
 
+  const loadPreflight = useCallback(() => {
+    if (!token) return;
+    adminApi.getEtlPreflight(token).then(setPreflight).catch(() => setPreflight({ available: false, error: 'Could not reach the backend.' }));
+  }, [token]);
+
+  useEffect(() => {
+    loadPreflight();
+    const interval = setInterval(loadPreflight, 15_000);
+    return () => clearInterval(interval);
+  }, [loadPreflight]);
+
   useEffect(() => {
     if (!token) return;
     adminApi.getEtlSchedulerConfig(token).then(setSchedulerConfig).catch(() => {});
   }, [token]);
 
   const run = status?.run ?? null;
+  // "Last Run Information" always describes the last run that FINISHED, never the in-flight one.
+  const lastRun = status?.lastRun ?? null;
+
+  // When the run we were watching flips queued/running -> success, warehouse data just changed:
+  // reload every dashboard hook and the filter options (FilterProvider's dataVersion), and the
+  // run history table here.
+  useEffect(() => {
+    const prev = seenRun.current;
+    if (run) {
+      if (prev && prev.id === run.id && (prev.status === 'queued' || prev.status === 'running') && run.status === 'success') {
+        bumpDataVersion();
+        setHistoryRefreshKey((k) => k + 1);
+      }
+      seenRun.current = { id: run.id, status: run.status };
+    }
+  }, [run, bumpDataVersion]);
   const isActive = run?.status === 'queued' || run?.status === 'running';
   // Defaults true while the first status load is still in flight, so the panel doesn't flash a
   // false "queue unavailable" warning before it actually knows.
@@ -237,6 +273,18 @@ function EtlControlBody() {
   // so a queue outage shows its own banner instead of stacking a second, redundant one.
   const workerAvailable = status?.workerAvailable ?? true;
   const displayStatus: DisplayStatus = run ? run.status : 'idle';
+  // Only a definite "checked and not ready" blocks Run; an unreachable check (available: false) doesn't.
+  const inputsBlocked = preflight?.available === true && preflight.ok === false;
+
+  async function loadFailedLog(runId: number) {
+    if (!token) return;
+    try {
+      const { lines } = await adminApi.getEtlRunLogLines(token, runId);
+      setFailedLog({ runId, lines: lines.slice(-60) });
+    } catch {
+      setFailedLog({ runId, lines: ['(could not load the log for this run)'] });
+    }
+  }
 
   async function handleConfirmStart() {
     if (!token || !confirmMode) return;
@@ -251,6 +299,21 @@ function EtlControlBody() {
       setActionError(err instanceof ApiError ? err.message : 'Failed to start ETL run.');
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function handleRetry() {
+    if (!token) return;
+    setRetrying(true);
+    setActionError(null);
+    try {
+      await adminApi.retryEtlRun(token, lastRun?.id);
+      loadStatus();
+      setHistoryRefreshKey((k) => k + 1);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'Failed to retry the ETL run.');
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -358,6 +421,7 @@ function EtlControlBody() {
                   <>
                     {' '}
                     · Stage: <strong style={{ color: 'var(--ps-color-text)' }}>{status.progress.stage}</strong>
+                    {status.progress.stageStatus ? ` (${status.progress.stageStatus})` : ''}
                   </>
                 )}
               </div>
@@ -397,24 +461,65 @@ function EtlControlBody() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--ps-space-4, 24px)' }}>
         <Card>
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>Last Run Information</h3>
-          {run ? (
+          {lastRun ? (
             <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', fontSize: 13.5 }}>
-              <InfoRow label="Execution mode" value={MODE_LABEL[run.mode] ?? run.mode} />
-              <InfoRow label="Trigger source" value={TRIGGER_LABEL[run.trigger_source] ?? run.trigger_source} />
-              <InfoRow label="Started by" value={run.triggered_by_user_name ?? '—'} />
-              <InfoRow label="Status" value={<StatusBadge status={run.status} />} />
-              <InfoRow label="Started" value={formatDateTime(run.started_at)} />
-              <InfoRow label="Finished" value={formatDateTime(run.finished_at)} />
-              <InfoRow label="Duration" value={formatDuration(run.duration_seconds)} />
-              <InfoRow label="Records extracted" value={formatCount(run.odoo_extract_count)} />
-              <InfoRow label="Records loaded" value={formatCount(run.db_loaded_count)} />
+              <InfoRow label="Execution mode" value={MODE_LABEL[lastRun.mode] ?? lastRun.mode} />
+              <InfoRow label="Trigger source" value={TRIGGER_LABEL[lastRun.trigger_source] ?? lastRun.trigger_source} />
+              <InfoRow label="Started by" value={lastRun.triggered_by_user_name ?? '—'} />
+              <InfoRow label="Status" value={<StatusBadge status={lastRun.status} />} />
+              <InfoRow label="Started" value={formatDateTime(lastRun.started_at)} />
+              <InfoRow label="Finished" value={formatDateTime(lastRun.finished_at)} />
+              <InfoRow label="Duration" value={formatDuration(lastRun.duration_seconds)} />
+              <InfoRow label="Records extracted" value={formatCount(lastRun.odoo_extract_count)} />
+              <InfoRow label="Records loaded" value={formatCount(lastRun.db_loaded_count)} />
               <InfoRow label="Records inserted" value="Not tracked by pipeline" />
               <InfoRow label="Records updated" value="Not tracked by pipeline" />
               <InfoRow label="Records skipped" value="Not tracked by pipeline" />
-              <InfoRow label="Errors" value={run.error_message ?? 'None'} />
+              <InfoRow label="Errors" value={lastRun.error_message ? summarizeError(lastRun.error_message) : 'None'} />
             </dl>
           ) : (
             <EmptyState message="No ETL runs recorded yet." />
+          )}
+          {lastRun && !isActive && (lastRun.status === 'failed' || lastRun.status === 'cancelled') && (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 10,
+                borderRadius: 8,
+                background: 'var(--ps-color-alert-bg, #fdecea)',
+                border: '1px solid var(--ps-color-alert-border, #f0868b)',
+                color: 'var(--ps-color-alert)',
+                fontSize: 13,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <span>
+                {lastRun.status === 'failed' ? 'The last run failed.' : 'The last run was cancelled.'} Re-running is safe: each
+                table load replaces its own window, so nothing is duplicated.
+              </span>
+              <Button variant="secondary" onClick={handleRetry} disabled={retrying || !queueAvailable || !workerAvailable || inputsBlocked}>
+                {retrying ? 'Retrying...' : 'Retry Run'}
+              </Button>
+            </div>
+          )}
+          {lastRun && !isActive && lastRun.status === 'failed' && lastRun.error_message && (
+            <div style={{ marginTop: 10, fontSize: 13 }}>
+              <strong style={{ color: 'var(--ps-color-alert)' }}>Why it failed:</strong> {summarizeError(lastRun.error_message)}
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ cursor: 'pointer', color: 'var(--ps-color-muted-text)' }}>Full error output</summary>
+                <pre style={PRE_STYLE}>{lastRun.error_message}</pre>
+              </details>
+              <div style={{ marginTop: 6 }}>
+                <Button variant="secondary" onClick={() => loadFailedLog(lastRun.id)}>
+                  {failedLog?.runId === lastRun.id ? 'Reload last log lines' : 'Show last log lines'}
+                </Button>
+                {failedLog?.runId === lastRun.id && <pre style={PRE_STYLE}>{failedLog.lines.join('\n') || '(no log lines were kept for this run)'}</pre>}
+              </div>
+            </div>
           )}
         </Card>
 
@@ -426,6 +531,9 @@ function EtlControlBody() {
           </dl>
         </Card>
       </div>
+
+      {/* --- Input files preflight --- */}
+      <PreflightCard preflight={preflight} onRecheck={loadPreflight} />
 
       {/* --- Manual Refresh --- */}
       <Card>
@@ -498,7 +606,7 @@ function EtlControlBody() {
               <p style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', margin: 0, flex: 1 }}>{m.description}</p>
               <Button
                 variant={m.variant ?? 'secondary'}
-                disabled={isActive || !queueAvailable || !workerAvailable}
+                disabled={isActive || !queueAvailable || !workerAvailable || inputsBlocked}
                 onClick={() => setConfirmMode(m.mode)}
               >
                 Run
@@ -775,5 +883,109 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
         style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid var(--ps-color-border)', background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', fontSize: 14 }}
       />
     </div>
+  );
+}
+
+const PRE_STYLE: React.CSSProperties = {
+  margin: '6px 0 0',
+  padding: 10,
+  maxHeight: 260,
+  overflow: 'auto',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
+  fontSize: 11.5,
+  background: 'var(--ps-color-muted-bg)',
+  border: '1px solid var(--ps-color-border)',
+  borderRadius: 6,
+};
+
+/** The last error-looking line of a captured stderr tail (e.g. "FileNotFoundError: ..."), or its
+ * last line -- the traceback above it is available under "Full error output". */
+function summarizeError(message: string): string {
+  const lines = message.split('\n').map((l) => l.trim()).filter(Boolean);
+  const errorLine = [...lines].reverse().find((l) => /(Error|Exception)\b/.test(l));
+  return errorLine ?? lines[lines.length - 1] ?? message;
+}
+
+function formatBytes(n: number | null): string {
+  if (n === null) return '';
+  return n >= 1_048_576 ? `${(n / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+const FILE_STATUS_TEXT: Record<string, string> = {
+  ok: 'Found',
+  missing: 'Missing',
+  unreadable: 'Unreadable',
+  invalid_xlsx: 'Not a valid .xlsx',
+};
+
+/** Shows what the ETL service sees in its input folder, before anyone clicks Run. */
+function PreflightCard({ preflight, onRecheck }: { preflight: EtlPreflightResponse | null; onRecheck: () => void }) {
+  const failing = preflight?.available === true && preflight.ok === false;
+  return (
+    <Card>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Input Files Check</h3>
+        <Button variant="secondary" onClick={onRecheck}>
+          Re-check
+        </Button>
+      </div>
+      {!preflight ? (
+        <LoadingSkeleton variant="kpi" />
+      ) : !preflight.available ? (
+        <p style={{ fontSize: 13, color: 'var(--ps-color-watch)', margin: '10px 0 0' }}>
+          Could not check the input files (the ETL service did not answer: {preflight.error}). Runs are not blocked, but will
+          fail in their first step if the files are unreachable.
+        </p>
+      ) : (
+        <>
+          <p style={{ fontSize: 13, margin: '10px 0 8px', color: failing ? 'var(--ps-color-alert)' : 'var(--ps-color-success)', fontWeight: 600 }}>
+            {failing ? 'Not ready — Run is disabled until this is fixed.' : 'Ready — all required input files were found and are readable.'}
+          </p>
+          <div style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>
+            Looked in <code>{preflight.input_dir}</code> ({preflight.source_var}={preflight.configured_value}
+            {preflight.dir_exists === false ? ', directory does not exist' : ''}) on {preflight.platform}
+          </div>
+          <table style={{ fontSize: 12.5, borderCollapse: 'collapse', width: '100%' }}>
+            <tbody>
+              {(preflight.files ?? []).map((f) => (
+                <tr key={f.name} style={{ borderTop: '1px solid var(--ps-color-border)' }}>
+                  <td style={{ padding: '4px 8px 4px 0', fontWeight: 600 }}>{f.name}</td>
+                  <td
+                    style={{
+                      padding: '4px 8px',
+                      color: f.status === 'ok' ? 'var(--ps-color-success)' : f.required ? 'var(--ps-color-alert)' : 'var(--ps-color-watch)',
+                    }}
+                  >
+                    {FILE_STATUS_TEXT[f.status] ?? f.status}
+                    {f.required ? '' : ' (optional)'}
+                  </td>
+                  <td style={{ padding: '4px 0', color: 'var(--ps-color-muted-text)' }}>
+                    {f.status === 'ok'
+                      ? `${formatBytes(f.size_bytes)} · modified ${f.modified ? new Date(f.modified).toLocaleDateString(undefined, { timeZone: APP_TIMEZONE }) : '—'}`
+                      : f.detail}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {preflight.output && !preflight.output.writable && (
+            <p style={{ fontSize: 12.5, color: 'var(--ps-color-alert)', margin: '8px 0 0' }}>
+              Output folder not writable: {preflight.output.detail}
+            </p>
+          )}
+          {failing && (
+            <>
+              {preflight.hint && <p style={{ fontSize: 13, margin: '10px 0 0' }}>{preflight.hint}</p>}
+              <p style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', margin: '6px 0 0' }}>
+                {(preflight.listing ?? []).length > 0
+                  ? `The folder currently contains: ${(preflight.listing ?? []).join(', ')}${preflight.listing_truncated ? ' …' : ''}`
+                  : 'The folder is empty or not mounted.'}
+              </p>
+            </>
+          )}
+        </>
+      )}
+    </Card>
   );
 }

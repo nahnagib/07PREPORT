@@ -1,18 +1,32 @@
 'use client';
 import React, { useState } from 'react';
-import { FileDown, Layers, ArrowUp, ArrowDown, Minus } from 'lucide-react';
+import { FileDown, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useFilterState } from '../../../../components/FilterProvider';
-import { Card, ChartPanel, ComboChart, DonutChart, DataGrid, LoadingSkeleton, ErrorState, exportRowsAsPdf, type Column, type DataGridColumn } from '@07ps/ui';
+import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
+import {
+  Card,
+  ChartPanel,
+  ComboChart,
+  DonutChart,
+  LoadingSkeleton,
+  ErrorState,
+  exportRowsAsPdf,
+  exportPerformanceTablePdf,
+  PerformanceReportTable,
+  SEMANTIC_STATUS_LABEL,
+  type Column,
+  type PerformanceReportRow,
+  type PerformanceTablePdfColumn,
+} from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useInvoicesEngineOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import { useInvoicesEngineOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { InvoiceStats, InvoicesEngineKpis, InvoicesEngineScope, InvoiceYearClassBreakdown } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, formatVolume } from '../../../../lib/format';
+import { formatCurrency, formatTimestamp, formatVariance, formatVolume } from '../../../../lib/format';
 
 // Value-tier labels (renamed from the bare A/B/C/D codes the ETL/warehouse still store -- see
 // backend/src/measures/invoicesEngine.ts's normalizeInvoiceClass). Thresholds are unchanged from
@@ -65,16 +79,16 @@ function invoiceClassColor(cls: string): string {
  * ("6.10K", "10.46K"), distinct from the shared formatCompactCurrency's 1-decimal/"LYD "-prefixed
  * convention used elsewhere on the platform. Full LYD precision is still always one hover away via
  * the `title` attribute (formatCurrency). */
-function formatInvoiceValue(value: number | null): string {
-  if (value === null) return '—';
+function formatInvoiceValue(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   const abs = Math.abs(value);
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
   if (abs >= 1_000) return `${(value / 1_000).toFixed(2)}K`;
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
-function formatLines(value: number | null): string {
-  if (value === null) return '—';
+function formatLines(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return value.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
@@ -97,6 +111,117 @@ function formatThousands(value: number): string {
 function formatPlainNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
+
+// ---------------------------------------------------------------------------
+// Executive Summary -- no target/benchmark exists anywhere in this page's data model (no
+// Fact_Targets-style figure for invoice counts/lines/volume), so every row compares against the
+// same prior-period figure the KPI cards above already show (YTD vs LYTD, MTD vs LMTD). Invoice
+// Count and Avg Sales per Invoice are revenue-shaped ("more/higher is better"); Avg Lines/Avg
+// Volume per Invoice have no documented "better" direction, so they stay 'neutral'.
+// ---------------------------------------------------------------------------
+
+function periodDeltaPct(current: number, prior: number): number | null {
+  return prior > 0 ? (current - prior) / prior : null;
+}
+
+function statsTakeaway(label: string, current: number | null, deltaPct: number | null, formatValue: (v: number) => string): string {
+  if (current == null) return `No data available for ${label}.`;
+  const deltaLabel = deltaPct != null ? formatVariance(deltaPct) ?? null : null;
+  return `${formatValue(current)} ${label}${deltaLabel ? ` (${deltaLabel} vs prior period)` : ''}.`;
+}
+
+/** "Last" is LYTD on a YTD row and LMTD on an MTD row -- same convention as Revenue Trend's
+ * Performance Details. There is no target for any of these figures, so Target / Variance to Target
+ * are always "—"; Variance to Last and Status come from the period-over-period change. */
+function toExecutiveSummaryRows(kpis?: InvoicesEngineKpis): PerformanceReportRow[] {
+  if (!kpis) return [];
+
+  type Metric = {
+    key: string;
+    name: string;
+    pick: (s: InvoiceStats) => number | null;
+    format: (v: number | null) => string;
+    // "More/higher is better" metrics get green/red status; lines/volume have no documented
+    // direction, so they stay neutral.
+    directional: boolean;
+    takeaway: (period: 'ytd' | 'mtd', current: number | null, deltaPct: number | null) => string;
+  };
+  const periodPhrase = (period: 'ytd' | 'mtd') => (period === 'ytd' ? 'YTD' : 'this month');
+  const metrics: Metric[] = [
+    {
+      key: 'invoiceCount',
+      name: 'Invoice Count',
+      pick: (s) => s.invoiceCount,
+      format: (v) => (v == null ? '—' : formatPlainNumber(v)),
+      directional: true,
+      takeaway: (p, cur, d) => statsTakeaway(p === 'ytd' ? 'invoices YTD' : 'invoices this month', cur, d, formatPlainNumber),
+    },
+    {
+      key: 'avgSalesPerInvoice',
+      name: 'Avg Sales per Invoice',
+      pick: (s) => s.avgSalesPerInvoice,
+      format: formatInvoiceValue,
+      directional: true,
+      takeaway: (p, cur, d) => statsTakeaway(`average sales per invoice ${periodPhrase(p)}`, cur, d, formatInvoiceValue as (v: number) => string),
+    },
+    {
+      key: 'avgLinesPerInvoice',
+      name: 'Avg Lines per Invoice',
+      pick: (s) => s.avgLinesPerInvoice,
+      format: formatLines,
+      directional: false,
+      takeaway: (p, cur) => `${formatLines(cur)} average lines per invoice ${periodPhrase(p)}.`,
+    },
+    {
+      key: 'avgVolumePerInvoice',
+      name: 'Avg Volume per Invoice',
+      pick: (s) => s.avgVolumePerInvoice,
+      format: formatVolumeOrDash,
+      directional: false,
+      takeaway: (p, cur) => `${formatVolumeOrDash(cur)} average volume per invoice ${periodPhrase(p)}.`,
+    },
+  ];
+
+  const rows: PerformanceReportRow[] = [];
+  (['ytd', 'mtd'] as const).forEach((period) => {
+    const current = period === 'ytd' ? kpis.ytd : kpis.mtd;
+    const last = period === 'ytd' ? kpis.lytd : kpis.lmtd;
+    const lastName = period === 'ytd' ? 'LYTD' : 'LMTD';
+    metrics.forEach((m) => {
+      const cur = m.pick(current);
+      const prev = m.pick(last);
+      const delta = cur != null && prev != null ? periodDeltaPct(cur, prev) : null;
+      rows.push({
+        id: `${m.key}${period === 'ytd' ? 'Ytd' : 'Mtd'}`,
+        metric: `${m.name} (${period.toUpperCase()})`,
+        actualLabel: m.format(cur),
+        targetLabel: '—',
+        variancePct: null,
+        varianceLyPct: delta,
+        lytdLabel: m.format(prev),
+        lytdFullValue: `${lastName}: ${m.format(prev)}`,
+        status: !m.directional || delta == null ? 'neutral' : delta < 0 ? 'alert' : 'success',
+        takeaway: m.takeaway(period, cur, delta),
+      });
+    });
+  });
+  return rows;
+}
+
+// Matches PerformanceReportTable's showLytdColumn layout so the PDF mirrors the on-screen table.
+function pctLabel(v: number | null): string {
+  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
+}
+const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
+  { header: 'Metric Name', getValue: (row) => row.metric },
+  { header: 'Actual', getValue: (row) => row.actualLabel },
+  { header: 'Last', getValue: (row) => row.lytdLabel ?? '—' },
+  { header: 'Target', getValue: (row) => row.targetLabel },
+  { header: 'Variance to Last', getValue: (row) => pctLabel(row.varianceLyPct) },
+  { header: 'Variance to Target', getValue: (row) => pctLabel(row.variancePct) },
+  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
+  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
+];
 
 // ---------------------------------------------------------------------------
 // PDF summary-table export -- same exportRowsAsPdf mechanism as Revenue Trend, applied to every
@@ -172,214 +297,6 @@ const classificationTableColumns: Column<ClassificationTableRow>[] = [
   { key: 'value', header: 'Value', align: 'right' },
 ];
 
-// ---------------------------------------------------------------------------
-// Detail analysis tables (Issue #3) -- one persistent, sortable/exportable DataGrid per chart,
-// shown below Zones B/C rather than only behind ChartPanel's expand-to-table modal. Same
-// TrendArrow/status-pill visual language as Revenue Trend's own Performance Summary tables
-// (packages/ui doesn't have a shared version of these -- small enough, and page-specific enough in
-// exact wording, to duplicate per that page's own established convention).
-// ---------------------------------------------------------------------------
-
-type TrendDirection = 'up' | 'down' | 'flat';
-
-function trendFromValues(prev: number | undefined, current: number): TrendDirection {
-  if (prev === undefined) return 'flat';
-  if (current > prev) return 'up';
-  if (current < prev) return 'down';
-  return 'flat';
-}
-
-function TrendIcon({ trend }: { trend: TrendDirection }) {
-  const color = trend === 'up' ? 'var(--ps-color-success)' : trend === 'down' ? 'var(--ps-color-alert)' : 'var(--ps-color-muted-text)';
-  const Icon = trend === 'up' ? ArrowUp : trend === 'down' ? ArrowDown : Minus;
-  return (
-    <span style={{ display: 'inline-flex', color }}>
-      <Icon size={14} />
-    </span>
-  );
-}
-
-function StatusPill({ label, color }: { label: string; color: string }) {
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '2px 8px',
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 600,
-        color,
-        border: `1px solid ${color}`,
-        whiteSpace: 'nowrap',
-      }}
-    >
-      <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
-      {label}
-    </span>
-  );
-}
-
-function formatSignedPct(v: number | null): string {
-  if (v === null) return '—';
-  const pct = v * 100;
-  return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
-}
-
-// --- Table 1: Sales Performance by Year (below Sales Trend) ----------------
-
-interface SalesPerformanceRow extends Record<string, unknown> {
-  id: string;
-  year: string;
-  invoiceSalesValue: number;
-  invoiceCount: number;
-  avgValuePerInvoice: number | null;
-  variancePct: number | null;
-  trend: TrendDirection;
-}
-
-function buildSalesPerformanceRows(byYear: { year: number; label: string; invoiceSalesValue: number; invoiceCount: number }[]): SalesPerformanceRow[] {
-  const sorted = [...byYear].sort((a, b) => a.year - b.year);
-  return sorted.map((y, i) => {
-    const prev = sorted[i - 1];
-    const variancePct = prev && prev.invoiceSalesValue > 0 ? (y.invoiceSalesValue - prev.invoiceSalesValue) / prev.invoiceSalesValue : null;
-    return {
-      id: y.label,
-      year: y.label,
-      invoiceSalesValue: y.invoiceSalesValue,
-      invoiceCount: y.invoiceCount,
-      avgValuePerInvoice: y.invoiceCount > 0 ? y.invoiceSalesValue / y.invoiceCount : null,
-      variancePct,
-      trend: trendFromValues(prev?.invoiceSalesValue, y.invoiceSalesValue),
-    };
-  });
-}
-
-const salesPerformanceColumns: DataGridColumn<SalesPerformanceRow>[] = [
-  { key: 'year', header: 'Year', width: 80 },
-  { key: 'invoiceSalesValue', header: 'Invoice Sales Value', align: 'right', render: (r) => formatCurrency(r.invoiceSalesValue) },
-  { key: 'invoiceCount', header: '# of Invoices', align: 'right', render: (r) => r.invoiceCount.toLocaleString() },
-  { key: 'avgValuePerInvoice', header: 'Avg Value per Invoice', align: 'right', render: (r) => (r.avgValuePerInvoice === null ? '—' : formatCurrency(r.avgValuePerInvoice)) },
-  { key: 'variancePct', header: 'Variance vs. Prior Year', align: 'right', render: (r) => formatSignedPct(r.variancePct), rawValue: (r) => (r.variancePct ?? 0) * 100 },
-  { key: 'trend', header: 'Trend', align: 'left', render: (r) => <TrendIcon trend={r.trend} />, rawValue: (r) => r.trend, width: 70 },
-];
-
-// --- Table 2: Invoices Trend Detail (below Invoices Trend) ------------------
-
-interface InvoicesTrendDetailRow extends Record<string, unknown> {
-  id: string;
-  year: string;
-  invoiceCount: number;
-  avgSalesPerInvoice: number | null;
-  avgLinesPerInvoice: number | null;
-  trend: TrendDirection;
-}
-
-function buildInvoicesTrendDetailRows(
-  byYear: { year: number; label: string; invoiceCount: number; avgSalesPerInvoice: number | null; avgLinesPerInvoice: number | null }[],
-): InvoicesTrendDetailRow[] {
-  const sorted = [...byYear].sort((a, b) => a.year - b.year);
-  return sorted.map((y, i) => ({
-    id: y.label,
-    year: y.label,
-    invoiceCount: y.invoiceCount,
-    avgSalesPerInvoice: y.avgSalesPerInvoice,
-    avgLinesPerInvoice: y.avgLinesPerInvoice,
-    trend: trendFromValues(sorted[i - 1]?.avgSalesPerInvoice ?? undefined, y.avgSalesPerInvoice ?? 0),
-  }));
-}
-
-const invoicesTrendDetailColumns: DataGridColumn<InvoicesTrendDetailRow>[] = [
-  { key: 'year', header: 'Year', width: 80 },
-  { key: 'invoiceCount', header: '# of Invoices', align: 'right', render: (r) => r.invoiceCount.toLocaleString() },
-  { key: 'avgSalesPerInvoice', header: 'Avg Sales per Invoice', align: 'right', render: (r) => (r.avgSalesPerInvoice === null ? '—' : formatCurrency(r.avgSalesPerInvoice)) },
-  { key: 'avgLinesPerInvoice', header: 'Avg Lines per Invoice', align: 'right', render: (r) => formatLines(r.avgLinesPerInvoice) },
-  { key: 'trend', header: 'Trend', align: 'left', render: (r) => <TrendIcon trend={r.trend} />, rawValue: (r) => r.trend, width: 70 },
-];
-
-// --- Table 3: Invoices Classification Detail (below the donut) -------------
-
-interface ClassificationDetailRow extends Record<string, unknown> {
-  id: string;
-  classification: string;
-  count: number;
-  pctOfTotal: number;
-  totalValue: number;
-  avgValuePerInvoice: number | null;
-  trend: TrendDirection;
-  status: 'Active' | 'Inactive';
-}
-
-function buildClassificationDetailRows(
-  classification: { invoiceClass: string; value: number; invoiceCount: number }[],
-  byYearClass: InvoiceYearClassBreakdown[],
-): ClassificationDetailRow[] {
-  const totalValue = classification.reduce((sum, c) => sum + c.value, 0);
-  const yearsAsc = [...byYearClass].sort((a, b) => a.year - b.year);
-  return classification.map((c) => {
-    const perYearValue = yearsAsc.map((y) => y.classes.find((cls) => cls.invoiceClass === c.invoiceClass)?.invoiceSalesValue ?? 0);
-    const trend = trendFromValues(perYearValue[perYearValue.length - 2], perYearValue[perYearValue.length - 1] ?? 0);
-    return {
-      id: c.invoiceClass,
-      classification: invoiceClassFullLabel(c.invoiceClass),
-      count: c.invoiceCount,
-      pctOfTotal: totalValue > 0 ? c.value / totalValue : 0,
-      totalValue: c.value,
-      avgValuePerInvoice: c.invoiceCount > 0 ? c.value / c.invoiceCount : null,
-      trend: perYearValue.length >= 2 ? trend : 'flat',
-      status: c.invoiceCount > 0 ? 'Active' : 'Inactive',
-    };
-  });
-}
-
-const classificationDetailColumns: DataGridColumn<ClassificationDetailRow>[] = [
-  { key: 'classification', header: 'Classification', width: 160 },
-  { key: 'count', header: 'Count', align: 'right', render: (r) => r.count.toLocaleString() },
-  { key: 'pctOfTotal', header: '% of Total', align: 'right', render: (r) => `${(r.pctOfTotal * 100).toFixed(2)}%`, rawValue: (r) => r.pctOfTotal * 100 },
-  { key: 'totalValue', header: 'Total Value', align: 'right', render: (r) => formatCurrency(r.totalValue) },
-  { key: 'avgValuePerInvoice', header: 'Avg Value per Invoice', align: 'right', render: (r) => (r.avgValuePerInvoice === null ? '—' : formatCurrency(r.avgValuePerInvoice)) },
-  { key: 'trend', header: 'Trend', align: 'left', render: (r) => <TrendIcon trend={r.trend} />, rawValue: (r) => r.trend, width: 70 },
-  {
-    key: 'status',
-    header: 'Status',
-    align: 'left',
-    render: (r) => <StatusPill label={r.status} color={r.status === 'Active' ? 'var(--ps-color-success)' : 'var(--ps-color-muted-text)'} />,
-    rawValue: (r) => r.status,
-    width: 100,
-  },
-];
-
-/** Classification Tiers help block -- Issue #1's "Add Classification Definitions" requirement,
- * plus a plain-language note on what "Unclassified" means (per the investigation in
- * backend/src/measures/invoicesEngine.ts's normalizeInvoiceClass comment: lines whose order was
- * never actually invoiced -- e.g. a quotation, or a cancelled/pending order -- rather than a data
- * error, so there is deliberately no "fix" here beyond labeling it clearly). */
-function ClassificationTiersHelp() {
-  const tiers = ['A', 'B', 'C', 'D', 'Unclassified'];
-  return (
-    <div
-      style={{
-        marginTop: 12,
-        paddingTop: 10,
-        borderTop: '1px solid var(--ps-color-border)',
-        fontSize: 11,
-        color: 'var(--ps-color-muted-text)',
-      }}
-    >
-      <div style={{ fontWeight: 700, marginBottom: 4, color: 'var(--ps-color-text)' }}>Classification Tiers</div>
-      <ul style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {tiers.map((t) => (
-          <li key={t}>
-            <strong style={{ color: 'var(--ps-color-text)' }}>{INVOICE_CLASS_LABELS[t]}</strong>
-            {t !== 'Unclassified' ? `: invoices ${INVOICE_CLASS_RANGE[t]}.` : ': lines whose order was never actually invoiced (e.g. a quotation, or a cancelled/pending order) -- not a data error.'}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 /** Same visual shell as Revenue Trend's ExportPdfButton -- copied per-page rather than shared, same
  * convention that component already established. */
 function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => void; downloading: boolean; disabled?: boolean }) {
@@ -448,7 +365,6 @@ export default function InvoicesEnginePage() {
     onFiltersChange,
     onAnchorDateChange,
     onDateRangeChange,
-    resetFilters,
   } = useFilterState();
 
   // Sales Trend chart interaction: drillMode toggles what clicking a year does. Off (default) ->
@@ -465,11 +381,18 @@ export default function InvoicesEnginePage() {
 
   const scope: InvoicesEngineScope = { selectedYear, selectedInvoiceClass };
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
+  const filterOptions = useScopedFilterOptions();
   const overview = useInvoicesEngineOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
+
+  /** Page-local click-filters (not part of the app-wide filter bar) that also narrow this page's data. */
+  function pageFilterParts(): string[] {
+    const parts: string[] = [];
+    if (selectedYear != null) parts.push(`Year: ${selectedYear}`);
+    if (selectedInvoiceClass) parts.push(`Invoice Class: ${INVOICE_CLASS_LABELS[selectedInvoiceClass] ?? selectedInvoiceClass}`);
+    return parts;
+  }
 
   async function handleDownloadTablePdf<T extends Record<string, unknown>>(key: string, title: string, columns: Column<T>[], rows: T[]) {
     setDownloadingPdf(key);
@@ -479,23 +402,26 @@ export default function InvoicesEnginePage() {
         columns: columns.map((c) => ({ header: c.header, align: c.align })),
         rows: rows.map((row) => columns.map((c) => String(row[c.key] ?? ''))),
         fileName: title.toLowerCase().replace(/\s+/g, '-'),
+        extraFilterParts: pageFilterParts(),
       });
     } finally {
       setDownloadingPdf(null);
     }
   }
 
-  function handleReset() {
-    resetFilters();
-    setDrillMode(false);
-    setDrilledYear(null);
-    setSelectedYear(null);
-    setSelectedInvoiceClass(null);
-  }
-
-  function handleRefresh() {
-    overview.retry();
-    refreshStatus.retry();
+  // Filters-applied list and "Exported by" come from the shared PDF export context (see
+  // PdfExportContextBridge), not from this page.
+  async function handleExportPerformanceTablePdf() {
+    try {
+      await exportPerformanceTablePdf({
+        title: 'Performance Details',
+        rows: toExecutiveSummaryRows(kpis),
+        columns: PERFORMANCE_PDF_COLUMNS,
+        extraFilterParts: pageFilterParts(),
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    }
   }
 
   function handleSalesTrendCategoryClick(label: string) {
@@ -562,7 +488,14 @@ export default function InvoicesEnginePage() {
     avgVolumePerInvoice: y.avgVolumePerInvoice ?? 0,
   }));
 
-  const classificationSegments = (data?.classification ?? []).map((c) => ({
+  // Invoices Classification (donut/legend/detail table) excludes Unclassified -- those lines'
+  // orders were never actually invoiced (a quotation, or a cancelled/pending order), so they carry
+  // no invoice value and don't belong in a value-tier breakdown. Sales Trend's own year-by-class
+  // drill-down is untouched -- it's a different chart (total invoiced activity per year), where
+  // Unclassified still represents real line activity for that year.
+  const classification = (data?.classification ?? []).filter((c) => c.invoiceClass !== 'Unclassified');
+
+  const classificationSegments = classification.map((c) => ({
     id: c.invoiceClass,
     label: invoiceClassFullLabel(c.invoiceClass),
     value: c.value,
@@ -602,9 +535,6 @@ export default function InvoicesEnginePage() {
     value: formatInvoiceValue(s.value),
   }));
 
-  const salesPerformanceRows = buildSalesPerformanceRows(data?.salesTrend.byYear ?? []);
-  const invoicesTrendDetailRows = buildInvoicesTrendDetailRows(data?.invoicesTrend ?? []);
-  const classificationDetailRows = buildClassificationDetailRows(data?.classification ?? [], data?.salesTrend.byYearClass ?? []);
 
   return (
     <PermissionGuard pageKey="invoices_engine">
@@ -613,17 +543,15 @@ export default function InvoicesEnginePage() {
           pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
-          onRefresh={handleRefresh}
-          lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
           onLogout={logout}
           showDateInput={false}
         />
 
         <FilterBar
+          showCustomerFilter
           filters={effectiveFilters}
           onChange={onFiltersChange}
-          onReset={handleReset}
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
@@ -631,24 +559,18 @@ export default function InvoicesEnginePage() {
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
-          customerGroupsLoading={filterOptions.customerGroups.loading}
-          distributionChannelsLoading={filterOptions.distributionChannels.loading}
-          branchesLoading={filterOptions.branches.loading}
-          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
-          onExportReport={exportReport.exportReport}
-          isExporting={exportReport.isExporting}
-          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
           isStale={refreshStatus.data?.isStale}
           isInverted={refreshStatus.data?.isInverted}
+          refreshCheck={refreshStatus.data?.refreshCheck}
           lastRefreshTime={lastRefreshLabel}
         />
 
@@ -893,17 +815,19 @@ export default function InvoicesEnginePage() {
                     showPercentLabels
                   />
                 )}
-                <ClassificationTiersHelp />
               </ChartPanel>
             </div>
 
-            {/* Zone D -- Detail analysis tables, one per chart above (Issue #3). */}
             {!overview.loading && !overview.error && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
-                <DetailTablePanel title="Sales Performance by Year" subtitle="Detail behind Sales Trend" columns={salesPerformanceColumns} rows={salesPerformanceRows} fileName="sales-performance-by-year" />
-                <DetailTablePanel title="Invoices Trend Detail" subtitle="Detail behind Invoices Trend" columns={invoicesTrendDetailColumns} rows={invoicesTrendDetailRows} fileName="invoices-trend-detail" />
-                <DetailTablePanel title="Invoices Classification Detail" subtitle="Detail behind Invoices Classification" columns={classificationDetailColumns} rows={classificationDetailRows} fileName="invoices-classification-detail" />
-              </div>
+              <PerformanceReportTable
+                title="Performance Details"
+                rows={toExecutiveSummaryRows(data?.kpis)}
+                showLytdColumn
+                lastColumnLabel="Last"
+                showStatus
+                showTakeaway
+                onExportPdf={handleExportPerformanceTablePdf}
+              />
             )}
           </div>
         </main>
@@ -917,35 +841,6 @@ export default function InvoicesEnginePage() {
         <BottomNavBar active="Invoices Engine" />
       </div>
     </PermissionGuard>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Zone D -- one detail-analysis table: title + @07ps/ui's DataGrid (sortable, searchable, PDF/CSV
-// export built in).
-// ---------------------------------------------------------------------------
-
-function DetailTablePanel<T extends Record<string, unknown>>({
-  title,
-  subtitle,
-  columns,
-  rows,
-  fileName,
-}: {
-  title: string;
-  subtitle: string;
-  columns: DataGridColumn<T>[];
-  rows: T[];
-  fileName: string;
-}) {
-  return (
-    <Card>
-      <div style={{ marginBottom: 'var(--ps-space-2, 8px)' }}>
-        <div style={{ fontSize: 14, fontWeight: 700 }}>{title}</div>
-        <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>{subtitle}</div>
-      </div>
-      <DataGrid columns={columns} rows={rows} getRowId={(r) => String((r as Record<string, unknown>).id)} fileName={fileName} pageSize={10} maxBodyHeight={340} />
-    </Card>
   );
 }
 

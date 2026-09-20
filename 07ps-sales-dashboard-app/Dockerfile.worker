@@ -9,6 +9,8 @@ RUN npm run build
 
 # --- Stage 2: Final runner stage ---
 FROM node:20-alpine
+# tzdata: makes the TZ env var (APP_TIMEZONE, set in docker-compose.yml) resolve to a real IANA zone.
+RUN apk add --no-cache tzdata
 WORKDIR /repo
 COPY package.json ./
 COPY backend ./backend

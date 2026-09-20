@@ -31,6 +31,8 @@ async function request<T>(path: string, token: string | null, init?: RequestInit
       },
     });
   } catch (err) {
+    // A caller-initiated abort (superseded filter request) is not a failure -- let it through as-is.
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
     // Dev-diagnosability fix (Section 3.23 gap): a network-level failure -- backend not running,
     // wrong port, CORS preflight block -- throws here as an opaque `TypeError: Failed to fetch`
     // before we ever get a Response to inspect. Log the real error + the URL we tried, so this is
@@ -70,6 +72,8 @@ export interface TachometerFilters {
   channelKeys?: number[];
   salesTeamKeys?: string[];
   salespersonKeys?: number[];
+  /** Sales-transaction pages only (Fact_SalesLines-grain KPIs); targets/CRM data have no customer. */
+  customerKeys?: number[];
 }
 
 export type TargetStatus = 'green' | 'yellow' | 'red' | 'no_target';
@@ -110,6 +114,7 @@ function buildQuery(anchorDate: string, filters: TachometerFilters): string {
   (filters.channelKeys ?? []).forEach((v) => params.append('channelKeys', String(v)));
   (filters.salesTeamKeys ?? []).forEach((v) => params.append('salesTeamKeys', v));
   (filters.salespersonKeys ?? []).forEach((v) => params.append('salespersonKeys', String(v)));
+  (filters.customerKeys ?? []).forEach((v) => params.append('customerKeys', String(v)));
   return params.toString();
 }
 
@@ -121,20 +126,75 @@ export function fetchTachometerOverview(
   return request(`/tachometer/overview?${buildQuery(anchorDate, filters)}`, token);
 }
 
+/** Response of GET /filters/options (backend/src/filters/optionsService.ts): valid options for all
+ * seven filters given the current selection, plus that selection with now-invalid values removed. */
+export interface FilterOptionsResponse {
+  filters: Required<TachometerFilters>;
+  options: {
+    businessUnits: DimOption[];
+    customerGroups: DimOption[];
+    distributionChannels: DimOption[];
+    branches: DimOption[];
+    salespersons: DimOption[];
+    customers: DimOption[];
+  };
+  hasData: boolean;
+}
+
+export function fetchFilterOptions(
+  token: string,
+  filters: TachometerFilters,
+  window: { dateFrom?: string | null; dateTo?: string | null },
+  signal?: AbortSignal,
+): Promise<FilterOptionsResponse> {
+  const params = new URLSearchParams(buildQuery('', filters));
+  params.delete('anchorDate');
+  if (window.dateFrom) params.set('dateFrom', window.dateFrom);
+  if (window.dateTo) params.set('dateTo', window.dateTo);
+  return request<FilterOptionsResponse>(`/filters/options?${params.toString()}`, token, { signal });
+}
+
 export function fetchBusinessUnits(token: string) {
   return request<DimOption[]>('/filters/business-units', token);
 }
-export function fetchCustomerGroups(token: string) {
-  return request<DimOption[]>('/filters/customer-groups', token);
+
+/** Upstream keys already selected in a cascading Filter Bar -- Company Link + Cascading Filter
+ * Bar, 2026-09. Each cascading fetch* function below only accepts the subset of these its own
+ * endpoint actually narrows by (e.g. fetchCustomerGroups only reads companyKeys, since Customer
+ * Group is the first dimension narrowed by Company). Omitting `upstream` entirely (or passing all-
+ * empty arrays) hits each endpoint's unchanged fast path -- see routes/filters.ts's module
+ * docstring. */
+export interface CascadeUpstream {
+  companyKeys?: number[];
+  segmentKeys?: number[];
+  channelKeys?: number[];
+  salesTeamKeys?: string[];
 }
-export function fetchDistributionChannels(token: string) {
-  return request<DimOption[]>('/filters/distribution-channels', token);
+
+function cascadeQuery(upstream: CascadeUpstream | undefined, keys: (keyof CascadeUpstream)[]): string {
+  const params = new URLSearchParams();
+  for (const key of keys) {
+    const values = upstream?.[key] ?? [];
+    for (const v of values) params.append(key, String(v));
+  }
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
 }
-export function fetchBranches(token: string) {
-  return request<DimOption[]>('/filters/branches', token);
+
+export function fetchCustomerGroups(token: string, upstream?: Pick<CascadeUpstream, 'companyKeys'>) {
+  return request<DimOption[]>(`/filters/customer-groups${cascadeQuery(upstream, ['companyKeys'])}`, token);
 }
-export function fetchSalespersons(token: string) {
-  return request<DimOption[]>('/filters/salespersons', token);
+export function fetchDistributionChannels(token: string, upstream?: Pick<CascadeUpstream, 'companyKeys' | 'segmentKeys'>) {
+  return request<DimOption[]>(`/filters/distribution-channels${cascadeQuery(upstream, ['companyKeys', 'segmentKeys'])}`, token);
+}
+export function fetchBranches(token: string, upstream?: Pick<CascadeUpstream, 'companyKeys' | 'segmentKeys' | 'channelKeys'>) {
+  return request<DimOption[]>(`/filters/branches${cascadeQuery(upstream, ['companyKeys', 'segmentKeys', 'channelKeys'])}`, token);
+}
+export function fetchSalespersons(token: string, upstream?: CascadeUpstream) {
+  return request<DimOption[]>(
+    `/filters/salespersons${cascadeQuery(upstream, ['companyKeys', 'segmentKeys', 'channelKeys', 'salesTeamKeys'])}`,
+    token,
+  );
 }
 
 export interface RefreshStatus {
@@ -144,7 +204,25 @@ export interface RefreshStatus {
   lastOrderCreated: string | null;
   lastRefreshTime: string | null;
   isStale: boolean;
+  /** true iff refreshCheck.inconsistent -- kept for the pages that already pass it. */
   isInverted: boolean;
+  refreshCheck?: RefreshCheck;
+  /** IANA zone the API/ETL treat as the business zone (APP_TIMEZONE). */
+  displayTimezone?: string;
+}
+
+/** Mirrors backend/src/measures/refreshStatus.ts's RefreshCheck. */
+export interface RefreshCheck {
+  status: 'ok' | 'no_refresh_log' | 'refresh_before_data' | 'data_ahead_of_watermark' | 'timezone_mismatch' | 'last_run_failed_after_load';
+  inconsistent: boolean;
+  message: string;
+  action: string | null;
+  timezone: string;
+  toleranceMinutes: number;
+  lastRefreshUtc: string | null;
+  latestLoadedOrderUtc: string | null;
+  watermarkOrderCreatedUtc: string | null;
+  differenceMinutes: number | null;
 }
 
 export function fetchRefreshStatus(token: string) {
@@ -260,8 +338,233 @@ export interface AdminRole {
   is_system: number;
 }
 
+/**
+ * Admin Salesperson Management (backend/src/routes/admin/salespersons.ts). UPDATED
+ * (Reports/Dashboards Honor Admin Salesperson Overrides, 2026-09): the *_override /
+ * target_override_amount fields now reclassify this salesperson's revenue/target everywhere on
+ * every dashboard and report -- see backend/src/services/salespersonAdminService.ts's header
+ * comment for the full mechanism. This one admin page is the deliberate exception: its own
+ * ytd_sales_value/ytd_target_amount/ytd_attainment_pct columns stay real, unoverridden reads off
+ * Fact_SalesLines/Fact_Targets for this one salesperson (an override never changes which
+ * salesperson a row belongs to, so this page's own single-salesperson sum is unaffected by
+ * segment/channel/team reclassification regardless) -- shown deliberately alongside
+ * target_override_amount so the admin can compare real history against what they're about to set,
+ * rather than one silently overwriting the other on this page.
+ *
+ * company_key_override (Company Link + Cascading Filter Bar, 2026-09) is the one field here that
+ * is NOT part of the reclassification mechanism above -- deliberate, confirmed. It exists purely
+ * for organizational labeling and as an input to the cascading Filter Bar's dropdown narrowing
+ * (fetchCustomerGroups/fetchDistributionChannels/fetchBranches/fetchSalespersons' `upstream`
+ * param above). Report totals are never affected by it.
+ */
+export interface SalespersonAdminRow {
+  [key: string]: unknown;
+  salesperson_key: number;
+  salesperson_name: string;
+  admin_name_override: string | null;
+  ytd_sales_value: number;
+  ytd_target_amount: number;
+  ytd_attainment_pct: number | null;
+  channel_key_override: number | null;
+  channel_name_override: string | null;
+  segment_key_override: number | null;
+  segment_name_override: string | null;
+  sales_team_key_override: string | null;
+  sales_team_name_override: string | null;
+  company_key_override: number | null;
+  company_name_override: string | null;
+  target_override_amount: number | null;
+  note: string | null;
+  updated_at: string | null;
+  updated_by_email: string | null;
+  linked_user_id: number | null;
+  linked_user_email: string | null;
+}
+
+export interface SalespersonProfileHistoryRow {
+  history_id: number;
+  admin_name_override: string | null;
+  channel_key_override: number | null;
+  segment_key_override: number | null;
+  sales_team_key_override: string | null;
+  company_key_override: number | null;
+  target_override_amount: number | null;
+  note: string | null;
+  changed_at: string;
+  changed_by_email: string | null;
+}
+
+export interface SalespersonProfilePatch {
+  adminNameOverride?: string | null;
+  channelKeyOverride?: number | null;
+  segmentKeyOverride?: number | null;
+  salesTeamKeyOverride?: string | null;
+  companyKeyOverride?: number | null;
+  targetOverrideAmount?: number | null;
+  note?: string | null;
+}
+
+/** Options for the Salesperson dropdown on Create/Edit User -- backend/src/services/userService.ts's
+ * getSalespersonOptions(), live Dim_Salesperson data (no is_active column exists there). */
+export interface SalespersonOption {
+  salesperson_key: number;
+  salesperson_name: string;
+  sales_team_key: string | null;
+  sales_team_name: string | null;
+  distribution_channel: string | null;
+}
+
+/**
+ * Sales Team Management (backend/src/routes/admin/salesteams.ts). Same overlay caveat as
+ * SalespersonAdminRow -- sales_team_name already falls back to the live Dim_SalesTeam name when
+ * no team_name_override is recorded (done server-side). segment_key_override now feeds dashboards/
+ * reports too (see SalespersonAdminRow's updated comment above and
+ * backend/src/services/salesTeamAdminService.ts's header). company_key_override is NOT part of
+ * that reclassification -- same deliberate exception as SalespersonAdminRow's own field.
+ */
+export interface SalesTeamAdminRow {
+  [key: string]: unknown;
+  sales_team_key: string;
+  sales_team_name: string;
+  team_code: string | null;
+  segment_key_override: number | null;
+  segment_name_override: string | null;
+  company_key_override: number | null;
+  company_name_override: string | null;
+  target_override_amount: number | null;
+  note: string | null;
+  updated_at: string | null;
+  updated_by_email: string | null;
+}
+
+export interface SalesTeamProfileHistoryRow {
+  history_id: number;
+  team_name_override: string | null;
+  team_code: string | null;
+  segment_key_override: number | null;
+  company_key_override: number | null;
+  target_override_amount: number | null;
+  note: string | null;
+  changed_at: string;
+  changed_by_email: string | null;
+}
+
+export interface SalesTeamProfilePatch {
+  teamNameOverride?: string | null;
+  teamCode?: string;
+  segmentKeyOverride?: number | null;
+  companyKeyOverride?: number | null;
+  targetOverrideAmount?: number | null;
+  note?: string | null;
+}
+
+/**
+ * Admin-controlled reference data (backend/src/routes/admin/customerGroups.ts,
+ * distributionChannels.ts, companies.ts -- see data/warehouse/migrations/0018_reference_data_admin.sql).
+ * Each row optionally links to a live ETL key; usage_count tells the frontend whether
+ * Deactivate/Delete are safe to offer without a second round-trip.
+ */
+export interface ReferenceDataRow {
+  [key: string]: unknown;
+  name: string;
+  definition: string | null;
+  display_order: number;
+  is_active: boolean;
+  created_at: string;
+  created_by_email: string | null;
+  updated_at: string;
+  updated_by_email: string | null;
+  usage_count: number;
+}
+
+export interface CustomerGroupRow extends ReferenceDataRow {
+  customer_group_id: number;
+  etl_segment_key: number | null;
+  etl_segment_name: string | null;
+  /** Share of the Daily Critical Number (0-100) this group contributes -- see
+   * backend/src/measures/criticalNumber.ts's computeDailyCriticalNumber. */
+  critical_number_pct: number;
+}
+
+export interface DistributionChannelRow extends ReferenceDataRow {
+  distribution_channel_id: number;
+  etl_channel_key: number | null;
+  etl_channel_name: string | null;
+}
+
+export interface CompanyRow extends ReferenceDataRow {
+  company_id: number;
+  etl_company_key: number | null;
+  etl_company_name: string | null;
+  /** Share of the Daily Critical Number (0-100) this company contributes -- see
+   * backend/src/measures/criticalNumber.ts's computeDailyCriticalNumber. */
+  critical_number_pct: number;
+}
+
+export interface ReferenceDataPatch {
+  name?: string;
+  definition?: string | null;
+  displayOrder?: number;
+  isActive?: boolean;
+}
+
+/**
+ * Admin-controlled Official Holidays / Forced Closures (backend/src/routes/admin/holidays.ts,
+ * closures.ts -- see data/warehouse/migrations/0020_holidays_closures_admin.sql). Read by the
+ * Critical Number page's working-day math -- edits here take effect on the page's very next load.
+ */
+export interface HolidayRow {
+  [key: string]: unknown;
+  holiday_id: number;
+  holiday_name: string;
+  holiday_date: string;
+  recurring: boolean;
+  company: string | null;
+  is_active: boolean;
+  created_at: string;
+  created_by_email: string | null;
+  updated_at: string;
+  updated_by_email: string | null;
+}
+
+export interface HolidayPatch {
+  holidayName?: string;
+  holidayDate?: string;
+  recurring?: boolean;
+  company?: string | null;
+  isActive?: boolean;
+}
+
+export interface ClosureRow {
+  [key: string]: unknown;
+  closure_id: number;
+  branch_key: string;
+  branch_name: string | null;
+  company: string | null;
+  closure_date: string;
+  duration_days: number;
+  reason: string | null;
+  is_active: boolean;
+  created_at: string;
+  created_by_email: string | null;
+  updated_at: string;
+  updated_by_email: string | null;
+}
+
+export interface ClosurePatch {
+  branchKey?: string;
+  company?: string | null;
+  closureDate?: string;
+  durationDays?: number;
+  reason?: string | null;
+  isActive?: boolean;
+}
+
 export const adminApi = {
   listRoles: (token: string): Promise<AdminRole[]> => request('/admin/users/meta/roles', token),
+
+  getSalespersonOptions: (token: string): Promise<SalespersonOption[]> =>
+    request('/admin/users/meta/salespersons', token),
 
   listUsers: (
     token: string,
@@ -448,6 +751,16 @@ export const adminApi = {
   startEtlRun: (token: string, mode: EtlMode): Promise<{ ok: boolean; runId: number; jobId: string }> =>
     request(`/admin/etl/start/${mode}`, token, { method: 'POST' }),
 
+  getEtlPreflight: (token: string): Promise<EtlPreflightResponse> => request('/admin/etl/preflight', token),
+
+  /** Re-runs the last failed/cancelled run (or `runId`) with the same mode. */
+  retryEtlRun: (token: string, runId?: number): Promise<{ ok: boolean; runId: number; retriedRunId: number }> =>
+    request('/admin/etl/retry', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(runId === undefined ? {} : { runId }),
+    }),
+
   cancelEtlRun: (token: string): Promise<{ ok: boolean; message: string }> =>
     request('/admin/etl/cancel', token, { method: 'POST' }),
 
@@ -456,6 +769,240 @@ export const adminApi = {
 
   getEtlRunLogLines: (token: string, runId: number): Promise<{ lines: string[] }> =>
     request(`/admin/etl/runs/${runId}/log`, token),
+
+  // --- Salesperson Management (backend/src/routes/admin/salespersons.ts) ---
+
+  listSalespersons: (
+    token: string,
+    params: { search?: string; channelKey?: number; segmentKey?: number; salesTeamKey?: string; page?: number; pageSize?: number } = {},
+  ): Promise<{ rows: SalespersonAdminRow[]; total: number; page: number; pageSize: number }> => {
+    const qs = new URLSearchParams();
+    if (params.search) qs.set('search', params.search);
+    if (params.channelKey !== undefined) qs.set('channelKey', String(params.channelKey));
+    if (params.segmentKey !== undefined) qs.set('segmentKey', String(params.segmentKey));
+    if (params.salesTeamKey) qs.set('salesTeamKey', params.salesTeamKey);
+    qs.set('page', String(params.page ?? 1));
+    qs.set('pageSize', String(params.pageSize ?? 25));
+    return request(`/admin/salespersons?${qs.toString()}`, token);
+  },
+
+  updateSalespersonProfile: (
+    token: string,
+    salespersonKey: number,
+    input: SalespersonProfilePatch,
+  ): Promise<{ row: SalespersonAdminRow }> =>
+    request(`/admin/salespersons/${salespersonKey}`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }),
+
+  bulkUpdateSalespersonProfiles: (
+    token: string,
+    salespersonKeys: number[],
+    patch: SalespersonProfilePatch,
+  ): Promise<{ results: Array<{ salespersonKey: number; ok: boolean; error?: string }> }> =>
+    request('/admin/salespersons/bulk', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ salespersonKeys, patch }),
+    }),
+
+  getSalespersonHistory: (
+    token: string,
+    salespersonKey: number,
+    page = 1,
+    pageSize = 25,
+  ): Promise<{ rows: SalespersonProfileHistoryRow[]; total: number }> =>
+    request(`/admin/salespersons/${salespersonKey}/history?page=${page}&pageSize=${pageSize}`, token),
+
+  // --- Sales Team Management (backend/src/routes/admin/salesteams.ts) ---
+
+  listSalesTeams: (
+    token: string,
+    params: { search?: string; segmentKey?: number; page?: number; pageSize?: number } = {},
+  ): Promise<{ rows: SalesTeamAdminRow[]; total: number; page: number; pageSize: number }> => {
+    const qs = new URLSearchParams();
+    if (params.search) qs.set('search', params.search);
+    if (params.segmentKey !== undefined) qs.set('segmentKey', String(params.segmentKey));
+    qs.set('page', String(params.page ?? 1));
+    qs.set('pageSize', String(params.pageSize ?? 25));
+    return request(`/admin/salesteams?${qs.toString()}`, token);
+  },
+
+  updateSalesTeamProfile: (
+    token: string,
+    salesTeamKey: string,
+    input: SalesTeamProfilePatch,
+  ): Promise<{ row: SalesTeamAdminRow }> =>
+    request(`/admin/salesteams/${encodeURIComponent(salesTeamKey)}`, token, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }),
+
+  /** Server-side restricted to segmentKeyOverride only -- "No bulk Name/Code edit (too risky)". */
+  bulkUpdateSalesTeamSegment: (
+    token: string,
+    salesTeamKeys: string[],
+    segmentKeyOverride: number | null,
+  ): Promise<{ results: Array<{ salesTeamKey: string; ok: boolean; error?: string }> }> =>
+    request('/admin/salesteams/bulk', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ salesTeamKeys, patch: { segmentKeyOverride } }),
+    }),
+
+  /** Company Link + Cascading Filter Bar, 2026-09 -- a separate endpoint from bulkUpdateSalesTeamSegment
+   * (backend/src/routes/admin/salesteams.ts's POST /bulk-company), so that route's existing
+   * "segment only" restriction stays untouched for its existing callers. */
+  bulkUpdateSalesTeamCompany: (
+    token: string,
+    salesTeamKeys: string[],
+    companyKeyOverride: number | null,
+  ): Promise<{ results: Array<{ salesTeamKey: string; ok: boolean; error?: string }> }> =>
+    request('/admin/salesteams/bulk-company', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ salesTeamKeys, patch: { companyKeyOverride } }),
+    }),
+
+  getSalesTeamHistory: (
+    token: string,
+    salesTeamKey: string,
+    page = 1,
+    pageSize = 25,
+  ): Promise<{ rows: SalesTeamProfileHistoryRow[]; total: number }> =>
+    request(`/admin/salesteams/${encodeURIComponent(salesTeamKey)}/history?page=${page}&pageSize=${pageSize}`, token),
+
+  // --- Reference Data: Customer Groups / Distribution Channels / Companies
+  // (backend/src/routes/admin/customerGroups.ts, distributionChannels.ts, companies.ts) ---
+
+  listCustomerGroups: (
+    token: string,
+    params: { isActive?: boolean; search?: string; page?: number; pageSize?: number } = {},
+  ): Promise<{ rows: CustomerGroupRow[]; total: number }> => {
+    const qs = new URLSearchParams();
+    if (params.isActive !== undefined) qs.set('isActive', String(params.isActive));
+    if (params.search) qs.set('search', params.search);
+    qs.set('page', String(params.page ?? 1));
+    qs.set('pageSize', String(params.pageSize ?? 100));
+    return request(`/admin/customer-groups?${qs.toString()}`, token);
+  },
+  getCustomerGroupEtlOptions: (token: string): Promise<{ segment_key: number; segment_name: string }[]> =>
+    request('/admin/customer-groups/etl-options', token),
+  createCustomerGroup: (
+    token: string,
+    input: ReferenceDataPatch & { name: string; etlSegmentKey?: number | null; criticalNumberPct?: number },
+  ): Promise<{ row: CustomerGroupRow }> =>
+    request('/admin/customer-groups', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  updateCustomerGroup: (
+    token: string,
+    id: number,
+    input: ReferenceDataPatch & { etlSegmentKey?: number | null; criticalNumberPct?: number },
+  ): Promise<{ row: CustomerGroupRow }> =>
+    request(`/admin/customer-groups/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  deleteCustomerGroup: (token: string, id: number): Promise<{ success: boolean }> =>
+    request(`/admin/customer-groups/${id}`, token, { method: 'DELETE' }),
+
+  listDistributionChannels: (
+    token: string,
+    params: { isActive?: boolean; search?: string; page?: number; pageSize?: number } = {},
+  ): Promise<{ rows: DistributionChannelRow[]; total: number }> => {
+    const qs = new URLSearchParams();
+    if (params.isActive !== undefined) qs.set('isActive', String(params.isActive));
+    if (params.search) qs.set('search', params.search);
+    qs.set('page', String(params.page ?? 1));
+    qs.set('pageSize', String(params.pageSize ?? 100));
+    return request(`/admin/distribution-channels?${qs.toString()}`, token);
+  },
+  getDistributionChannelEtlOptions: (token: string): Promise<{ channel_key: number; channel_name: string }[]> =>
+    request('/admin/distribution-channels/etl-options', token),
+  createDistributionChannel: (
+    token: string,
+    input: ReferenceDataPatch & { name: string; etlChannelKey?: number | null },
+  ): Promise<{ row: DistributionChannelRow }> =>
+    request('/admin/distribution-channels', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  updateDistributionChannel: (
+    token: string,
+    id: number,
+    input: ReferenceDataPatch & { etlChannelKey?: number | null },
+  ): Promise<{ row: DistributionChannelRow }> =>
+    request(`/admin/distribution-channels/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  deleteDistributionChannel: (token: string, id: number): Promise<{ success: boolean }> =>
+    request(`/admin/distribution-channels/${id}`, token, { method: 'DELETE' }),
+
+  listCompanies: (
+    token: string,
+    params: { isActive?: boolean; search?: string; page?: number; pageSize?: number } = {},
+  ): Promise<{ rows: CompanyRow[]; total: number }> => {
+    const qs = new URLSearchParams();
+    if (params.isActive !== undefined) qs.set('isActive', String(params.isActive));
+    if (params.search) qs.set('search', params.search);
+    qs.set('page', String(params.page ?? 1));
+    qs.set('pageSize', String(params.pageSize ?? 100));
+    return request(`/admin/companies?${qs.toString()}`, token);
+  },
+  getCompanyEtlOptions: (token: string): Promise<{ company_key: number; company_name: string }[]> =>
+    request('/admin/companies/etl-options', token),
+  createCompany: (
+    token: string,
+    input: ReferenceDataPatch & { name: string; etlCompanyKey?: number | null; criticalNumberPct?: number },
+  ): Promise<{ row: CompanyRow }> =>
+    request('/admin/companies', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  updateCompany: (
+    token: string,
+    id: number,
+    input: ReferenceDataPatch & { etlCompanyKey?: number | null; criticalNumberPct?: number },
+  ): Promise<{ row: CompanyRow }> =>
+    request(`/admin/companies/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  deleteCompany: (token: string, id: number): Promise<{ success: boolean }> =>
+    request(`/admin/companies/${id}`, token, { method: 'DELETE' }),
+
+  listHolidays: (
+    token: string,
+    params: { isActive?: boolean; search?: string; page?: number; pageSize?: number } = {},
+  ): Promise<{ rows: HolidayRow[]; total: number }> => {
+    const qs = new URLSearchParams();
+    if (params.isActive !== undefined) qs.set('isActive', String(params.isActive));
+    if (params.search) qs.set('search', params.search);
+    qs.set('page', String(params.page ?? 1));
+    qs.set('pageSize', String(params.pageSize ?? 100));
+    return request(`/admin/holidays?${qs.toString()}`, token);
+  },
+  createHoliday: (
+    token: string,
+    input: HolidayPatch & { holidayName: string; holidayDate: string },
+  ): Promise<{ row: HolidayRow }> =>
+    request('/admin/holidays', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  updateHoliday: (token: string, id: number, input: HolidayPatch): Promise<{ row: HolidayRow }> =>
+    request(`/admin/holidays/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  deleteHoliday: (token: string, id: number): Promise<{ success: boolean }> =>
+    request(`/admin/holidays/${id}`, token, { method: 'DELETE' }),
+
+  listClosures: (
+    token: string,
+    params: { isActive?: boolean; branchKey?: string; search?: string; page?: number; pageSize?: number } = {},
+  ): Promise<{ rows: ClosureRow[]; total: number }> => {
+    const qs = new URLSearchParams();
+    if (params.isActive !== undefined) qs.set('isActive', String(params.isActive));
+    if (params.branchKey) qs.set('branchKey', params.branchKey);
+    if (params.search) qs.set('search', params.search);
+    qs.set('page', String(params.page ?? 1));
+    qs.set('pageSize', String(params.pageSize ?? 100));
+    return request(`/admin/closures?${qs.toString()}`, token);
+  },
+  getClosureBranchOptions: (token: string): Promise<{ branch_key: string; branch_name: string }[]> =>
+    request('/admin/closures/branch-options', token),
+  createClosure: (
+    token: string,
+    input: ClosurePatch & { branchKey: string; closureDate: string },
+  ): Promise<{ row: ClosureRow }> =>
+    request('/admin/closures', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  updateClosure: (token: string, id: number, input: ClosurePatch): Promise<{ row: ClosureRow }> =>
+    request(`/admin/closures/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+  deleteClosure: (token: string, id: number): Promise<{ success: boolean }> =>
+    request(`/admin/closures/${id}`, token, { method: 'DELETE' }),
 };
 
 // --- ETL Control Center types ---
@@ -493,8 +1040,38 @@ export interface EtlProgress {
   stageStatus?: 'started' | 'completed' | 'failed';
 }
 
+/** GET /admin/etl/preflight: are the ETL's manual input workbooks reachable/valid from the ETL
+ * service itself? `available: false` = the check couldn't run (ETL API unreachable). */
+export interface EtlPreflightResponse {
+  available: boolean;
+  error?: string;
+  ok?: boolean;
+  input_dir?: string;
+  source_var?: string;
+  configured_value?: string;
+  dir_exists?: boolean;
+  platform?: string;
+  files?: {
+    name: string;
+    path: string;
+    required: boolean;
+    status: 'ok' | 'missing' | 'unreadable' | 'invalid_xlsx';
+    size_bytes: number | null;
+    modified: string | null;
+    near_matches: string[];
+    detail: string;
+  }[];
+  listing?: string[];
+  listing_truncated?: boolean;
+  hint?: string;
+  config_error?: string | null;
+  output?: { dir: string | null; writable: boolean; detail: string };
+}
+
 export interface EtlStatusResponse {
   run: EtlJobRun | null;
+  /** The most recent run that actually finished -- unlike `run`, never the in-flight one. */
+  lastRun: EtlJobRun | null;
   progress: EtlProgress | null;
   recentLog: string[];
   /** false means the queue backend (Redis) is unreachable right now -- distinct from a genuine
@@ -707,6 +1284,9 @@ export interface CriticalNumberPeriodCounter {
   actualValue: number;
   expectedValue: number;
   gapValue: number;
+  /** workingDaysTotal * dailyCriticalNumber -- the FULL month/year target, for the donut chart's
+   * Achieved-vs-Remaining split (distinct from expectedValue, which stays elapsed-to-date). */
+  periodTarget: number;
 }
 
 export interface CriticalNumberWorkingDaysCard {
@@ -754,6 +1334,10 @@ export interface CriticalNumberTrendCard {
   value: number;
   trendValues: number[];
   trendPct: number | null;
+  /** Pace-adjusted "expected as of today" figure this row's gap is measured against (Working Days
+   * YTD x Daily Critical Number for Missing Value, Working Days YTD itself for Missing Days) --
+   * see backend/src/measures/criticalNumber.ts's MissingValueCard/MissingDaysCard docstrings. */
+  expectedValue: number;
 }
 
 export interface CriticalNumberOverview {
@@ -821,10 +1405,25 @@ export interface RevenueTrendKpis {
   aspVarianceMtd: RevenueTrendVarianceCard;
 }
 
+/** One Performance Details row: `last` is LYTD for a YTD row, LMTD for an MTD row (both are the
+ * same window shifted back one year -- see backend filters.ts). */
+export interface RevenueTrendPerformanceRow {
+  key: string;
+  metric: 'value' | 'volume' | 'asp';
+  period: 'ytd' | 'mtd';
+  actual: number | null;
+  target: number | null;
+  last: number | null;
+  variancePct: number | null;
+  varianceLastPct: number | null;
+  status: TargetStatus;
+}
+
 export interface RevenueTrendOverview {
   anchorDate: string;
   series: RevenueTrendMonthPoint[];
   kpis: RevenueTrendKpis;
+  performanceDetails: RevenueTrendPerformanceRow[];
 }
 
 export function fetchRevenueTrendOverview(
@@ -1140,6 +1739,20 @@ export interface OpportunityDetailRow {
   isOpen: boolean;
 }
 
+export interface DataQualityIssue {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface DataQualityOverview {
+  totalRecords: number;
+  dirtyRecords: number;
+  dirtyPct: number | null;
+  status: TargetStatus;
+  issues: DataQualityIssue[];
+}
+
 export interface PipelineHealthOverview {
   funnel: FunnelCounts;
   funnelValues: FunnelValues;
@@ -1150,6 +1763,7 @@ export interface PipelineHealthOverview {
   opportunityByStage: StageValueSlice[];
   probabilityDistribution: ProbabilityBucketSlice[];
   opportunities: OpportunityDetailRow[];
+  dataQuality: DataQualityOverview;
 }
 
 export function fetchPipelineHealthOverview(token: string, filters: TachometerFilters): Promise<PipelineHealthOverview> {
@@ -1276,45 +1890,118 @@ export function fetchActivityMomentumOverview(
 }
 
 // ---------------------------------------------------------------------------
-// Overview Report (backend/src/routes/reports.ts) -- an on-demand PDF snapshot of the CURRENT
-// situation for whatever filters are on screen, aggregating all 8 pages above. NOT the same thing
-// as the Python reporting/ pipeline at the repo root (a separate, scheduled, full-history Sales
-// Predictive Report with forecasting) -- keep these two names/concepts distinct.
+// BCG Matrix (backend/src/routes/bcgMatrix.ts) -- live product-classification snapshot
+// (fact_bcgmatrix, refreshed by the same 3-hour/nightly ETL as every other page). No
+// anchorDate/filters: the YTD/LYTD figures are already computed server-side and don't get
+// recomputed per request.
 // ---------------------------------------------------------------------------
 
-/** Blob-returning twin of request<T> -- a PDF response can't be res.json()'d. Same auth header
- * and error-message extraction as request<T>, just a different success-path body read. */
-async function requestBlob(path: string, token: string | null): Promise<Blob> {
-  const url = `${API_BASE}${path}`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[api] network failure calling ${url} -- is the backend running on ${API_BASE}? (CORS/port mismatches land here too):`, err);
-    throw new ApiError(0, 'Could not reach the server. It may be offline or unreachable.');
-  }
-  if (!res.ok) {
-    let message = `Request failed (${res.status})`;
-    try {
-      const rawBody = await res.json();
-      if (rawBody && typeof rawBody === 'object' && 'error' in rawBody) {
-        message = String((rawBody as { error?: unknown }).error);
-      }
-    } catch {
-      // ignore -- keep generic message, never surface raw parse errors (Section 5.9)
-    }
-    throw new ApiError(res.status, message);
-  }
-  return res.blob();
+export interface BcgFact {
+  ProductKey: string;
+  ProductName: string;
+  Company: string;
+  Category: string | null;
+  Brand: string | null;
+  /** Null only on a `discontinuedFacts` row (see BcgMatrixOverview) -- real LYTD sales, zero YTD
+   * activity, nothing to classify into a quadrant this year. */
+  bcg_class_YTD: 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs' | null;
+  bcg_class_LYTD: string | null;
+  volume_class_YTD: string | null;
+  profit_class_YTD: string | null;
+  bcg_code_YTD: string | null;
+  bcg_movement: 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost' | null;
+  total_value_YTD: number;
+  total_value_LYTD: number;
+  total_quantity_YTD: number;
+  total_quantity_LYTD: number;
+  /** Percentage points (35 means 35%), not a raw fraction. Null means "no LYTD baseline to
+   * compare against" (a new product, not 0% growth) -- see
+   * backend/src/measures/materialsAnalogyBcg.ts's header note. Render distinctly, never as 0%. */
+  quantity_growth_pct: number | null;
+  avg_unit_price_YTD: number;
+  avg_unit_price_LYTD: number;
+  /** Percentage points (35 means 35%), not a raw fraction -- see quantity_growth_pct's note. */
+  perc_gross_profit_YTD: number;
+  perc_gross_profit_LYTD: number;
 }
 
-export function fetchOverviewReportPdf(
-  token: string,
-  anchorDate: string,
-  filters: TachometerFilters,
-): Promise<Blob> {
-  return requestBlob(`/reports/overview?${buildQuery(anchorDate, filters)}`, token);
+export interface BcgMatrixOverview {
+  facts: BcgFact[];
+  /** Real LYTD sales, zero YTD activity (`bcg_movement === 'Lost'` on every row) -- excluded from
+   * `facts` (and therefore from the quadrant KPI cards / matrix cells, which have nothing to
+   * classify these into) but a real, non-hidden part of the Portfolio Movement picture and the
+   * Product Detail table. */
+  discontinuedFacts: BcgFact[];
+  unclassifiedCount: number;
+}
+
+/** Customer Group/Distribution Channel/Branch/Salesperson + a date range -- narrows WHICH
+ * already-classified products come back (Fact_SalesLines product-set membership), never a
+ * reclassification against the filtered subset's own volume, and never a recomputed YTD/LYTD
+ * window -- see backend/src/measures/materialsAnalogyBcg.ts's BcgProductScope header for why.
+ * `companyKeys` is deliberately never sent -- this page keeps its own Tika/Majaal pill toggle. */
+export interface BcgMatrixScopeFilters {
+  segmentKeys?: number[];
+  channelKeys?: number[];
+  salesTeamKeys?: string[];
+  salespersonKeys?: number[];
+  fromDate?: string;
+  toDate?: string;
+}
+
+function buildBcgMatrixQuery(scope: BcgMatrixScopeFilters): string {
+  const params = new URLSearchParams();
+  (scope.segmentKeys ?? []).forEach((v) => params.append('segmentKeys', String(v)));
+  (scope.channelKeys ?? []).forEach((v) => params.append('channelKeys', String(v)));
+  (scope.salesTeamKeys ?? []).forEach((v) => params.append('salesTeamKeys', v));
+  (scope.salespersonKeys ?? []).forEach((v) => params.append('salespersonKeys', String(v)));
+  if (scope.fromDate) params.set('fromDate', scope.fromDate);
+  if (scope.toDate) params.set('toDate', scope.toDate);
+  return params.toString();
+}
+
+export function fetchBcgMatrixOverview(token: string, scope: BcgMatrixScopeFilters = {}): Promise<BcgMatrixOverview> {
+  const qs = buildBcgMatrixQuery(scope);
+  return request(`/bcg-matrix/overview${qs ? `?${qs}` : ''}`, token);
+}
+
+// ---------------------------------------------------------------------------
+// PIM Contribution Brand Performance (backend/src/routes/materialsAnalogyBrandPerformance.ts) --
+// live per-product catalog + sales stats replacing materialsAnalogy/data.json (a ~32% offline
+// sample confirmed as the root cause of undercounted SKU Count/revenue/volume for every partner
+// brand card on this page). Same shape/field set as BcgFact -- deliberately structurally
+// compatible with MaterialsAnalogyFact so computeBrandStats (materialsAnalogy/shared.ts) needs no
+// logic changes, only a widened input type (see BrandStatsRow there).
+// ---------------------------------------------------------------------------
+
+export interface BrandPerformanceFact {
+  ProductKey: string;
+  ProductName: string;
+  Company: string;
+  Category: string | null;
+  Brand: string | null;
+  bcg_class_YTD: 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs' | null;
+  bcg_movement: 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost' | null;
+  total_value_YTD: number;
+  total_value_LYTD: number;
+  total_quantity_YTD: number;
+  total_quantity_LYTD: number;
+  /** Null for a product with no matching sales activity (no baseline ratio to compute), not 0. */
+  avg_unit_price_YTD: number | null;
+  avg_unit_price_LYTD: number | null;
+  perc_gross_profit_YTD: number | null;
+  perc_gross_profit_LYTD: number | null;
+  quantity_growth_pct: number | null;
+}
+
+export interface BrandPerformanceOverview {
+  facts: BrandPerformanceFact[];
+}
+
+/** No scope/filter params -- like useBcgMatrixOverview's own unscoped default, Company/Category/
+ * BCG Class filtering for this page stays a client-side concern (filterFacts). A SALESPERSON-tier
+ * or role-restricted caller's RBAC lock is still enforced server-side regardless (see the route's
+ * own header) -- there is no client-side equivalent to request or bypass. */
+export function fetchBrandPerformanceOverview(token: string): Promise<BrandPerformanceOverview> {
+  return request('/pim-contribution/brand-performance', token);
 }

@@ -13,6 +13,7 @@ import {
   ApiError,
   EffectivePermissions,
   LoginHistoryRow,
+  SalespersonOption,
 } from '../../../../lib/api';
 
 const PAGE_KEYS = [
@@ -46,6 +47,8 @@ function UserDetailBody() {
   const [permissions, setPermissions] = useState<EffectivePermissions>({});
   const [roles, setRoles] = useState<AdminRole[]>([]);
   const [history, setHistory] = useState<LoginHistoryRow[]>([]);
+  const [salespersonOptions, setSalespersonOptions] = useState<SalespersonOption[]>([]);
+  const [salespersonKey, setSalespersonKey] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -65,6 +68,7 @@ function UserDetailBody() {
         setPermissions(detail.permissions);
         setRoles(rolesRes);
         setHistory(historyRes.rows);
+        setSalespersonKey(detail.user.salesperson_key === null ? '' : String(detail.user.salesperson_key));
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load user.'))
       .finally(() => setLoading(false));
@@ -73,6 +77,31 @@ function UserDetailBody() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const isSalesperson = user?.role_name === 'SALESPERSON';
+
+  // Loaded lazily, same as the Create User panel -- only fetched for a user who actually has (or
+  // is being given) the Salesperson role.
+  useEffect(() => {
+    if (!token || !isSalesperson || salespersonOptions.length > 0) return;
+    adminApi.getSalespersonOptions(token).then(setSalespersonOptions).catch(() => setSalespersonOptions([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, isSalesperson]);
+
+  async function handleSaveSalesperson() {
+    if (!token) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      await adminApi.updateUser(token, userId, { salespersonKey: salespersonKey === '' ? null : Number(salespersonKey) });
+      setNotice('Salesperson link updated.');
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to update salesperson link.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleChangeRole(nextRoleId: number) {
     if (!token) return;
@@ -212,6 +241,41 @@ function UserDetailBody() {
           </Button>
         </div>
       </Card>
+
+      {isSalesperson && (
+        <Card>
+          <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>Linked Salesperson</h3>
+          <p style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', margin: '0 0 12px' }}>
+            This user&apos;s dashboard data is locked to whichever salesperson is selected here. Changes are recorded in an
+            audit trail.
+          </p>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ minWidth: 260 }}>
+              <label style={{ display: 'block', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--ps-color-muted-text)', marginBottom: 4 }}>
+                Salesperson
+              </label>
+              <select
+                value={salespersonKey}
+                onChange={(e) => setSalespersonKey(e.target.value)}
+                disabled={busy}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--ps-color-border)', background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', fontSize: 14, boxSizing: 'border-box' }}
+              >
+                <option value="">Unlinked</option>
+                {salespersonOptions.map((sp) => (
+                  <option key={sp.salesperson_key} value={sp.salesperson_key}>
+                    {sp.salesperson_name}
+                    {sp.sales_team_name ? ` — ${sp.sales_team_name}` : ''}
+                    {sp.distribution_channel ? ` (${sp.distribution_channel})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button disabled={busy} onClick={handleSaveSalesperson}>
+              Save
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <Card>
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>Permission Overrides</h3>

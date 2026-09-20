@@ -6,6 +6,7 @@ import {
   correlateLatestPipelineRunLog,
   finishRun,
   getMaxPipelineRunLogId,
+  markRunRetrying,
   markRunStarted,
 } from '../services/etlRunTracker';
 import { etlLogger } from '../services/etlLogger';
@@ -38,6 +39,11 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
   // a stale 409 from a stuck Flask-side tracker). That gap is exactly how run ids 59/60 ended up
   // wedged at status='running' with hasActiveEtlRun() blocking every subsequent run.
   let recordedTerminalStatus = false;
+
+  // BullMQ re-runs a failed job (attempts/backoff, see enqueuePipelineRun). While a retry is still
+  // pending the run must keep holding the ETL lock instead of reading as 'failed' -- see
+  // markRunRetrying's header -- so only the final attempt records a terminal 'failed'.
+  const willRetry = job.attemptsMade + 1 < (job.opts.attempts ?? 1);
 
   try {
     const result = await runPipeline({
@@ -84,15 +90,20 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
 
     if (result.exitCode !== 0) {
       recordedTerminalStatus = true;
-      await finishRun(runId, {
-        status: 'failed',
-        exitCode: result.exitCode,
-        errorMessage: result.stderrTail || 'Pipeline exited non-zero with no captured output.',
-        pipelineRunLogId: correlated?.pipelineRunLogId,
-        odooExtractCount: correlated?.odooExtractCount,
-        dbLoadedCount: correlated?.dbLoadedCount,
-        qaIssuesCount: correlated?.qaIssuesCount,
-      });
+      const errorMessage = result.stderrTail || 'Pipeline exited non-zero with no captured output.';
+      if (willRetry) {
+        await markRunRetrying(runId, errorMessage);
+      } else {
+        await finishRun(runId, {
+          status: 'failed',
+          exitCode: result.exitCode,
+          errorMessage,
+          pipelineRunLogId: correlated?.pipelineRunLogId,
+          odooExtractCount: correlated?.odooExtractCount,
+          dbLoadedCount: correlated?.dbLoadedCount,
+          qaIssuesCount: correlated?.qaIssuesCount,
+        });
+      }
       // Throwing is what makes BullMQ apply the queue's configured retry/backoff
       // (see enqueuePipelineRun in ../queue/etlQueue.ts) instead of silently swallowing the failure.
       throw new Error(
@@ -118,11 +129,12 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
     // recordedTerminalStatus is what tells those apart: without it, case (a) would get finished
     // twice, clobbering result.stderrTail with this generic message.
     if (!recordedTerminalStatus) {
-      await finishRun(runId, {
-        status: 'failed',
-        exitCode: null,
-        errorMessage: err instanceof Error ? err.message : String(err),
-      });
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (willRetry) {
+        await markRunRetrying(runId, errorMessage);
+      } else {
+        await finishRun(runId, { status: 'failed', exitCode: null, errorMessage });
+      }
     }
     throw err;
   } finally {

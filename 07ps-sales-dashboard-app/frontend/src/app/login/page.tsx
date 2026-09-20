@@ -34,7 +34,7 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthLayout title="Sign in" subtitle="BMH Sales Dashboard">
+    <AuthLayout title="Sign in" subtitle="BMH 07's BI REPORT">
       <form onSubmit={handleSubmit}>
         <TextInput
           label="Email"

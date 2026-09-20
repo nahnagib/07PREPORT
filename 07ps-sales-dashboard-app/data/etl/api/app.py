@@ -11,6 +11,8 @@ Endpoints:
   POST /etl/jobs/<job_id>/cancel   - terminate the running subprocess
   POST /etl/reset                  - admin override: clear a stuck "active job" slot on this
                                       tracker (terminates the tracked subprocess if still alive)
+  GET  /etl/preflight              - are the manual input workbooks reachable/valid from THIS
+                                      process (the same check the pipeline's first step makes)
   GET  /health                     - unauthenticated
 
 Local dev: `python app.py`. Production (cPanel/gunicorn): gunicorn against wsgi:app (see wsgi.py).
@@ -24,10 +26,22 @@ from functools import wraps
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+# data/etl/ (parent of api/) so `config` -- the pipeline's own package -- imports here too.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# ...and src/, so /etl/preflight can import the product mapper even when the package is not pip-installed.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from flask import Flask, jsonify, request
 
 from api_config import Config
+from config.input_check import (
+    DEFAULT_INPUT_DIR,
+    DEFAULT_OUTPUT_DIR,
+    InputConfigError,
+    check_writable,
+    env_dir,
+    inspect_input_dir,
+)
 from job_tracker import tracker
 
 app = Flask(__name__)
@@ -69,6 +83,49 @@ def health():
         "service": "etl-api",
         "activeJob": {"jobId": active.job_id, "status": active.status} if active else None,
     }), 200
+
+
+@app.route("/etl/preflight", methods=["GET"])
+@require_api_key
+def etl_preflight():
+    """Input-file readiness as seen from this process. Never raises for a bad environment: a wrong
+    path is reported in the body (`ok: false` + explanation) so the dashboard can show it."""
+    import os
+
+    raw = next((os.getenv(n) for n in ("ETL_INPUT_DIR", "INPUT_DIR") if os.getenv(n, "").strip()), str(DEFAULT_INPUT_DIR))
+    var = next((n for n in ("ETL_INPUT_DIR", "INPUT_DIR") if os.getenv(n, "").strip()), "ETL_INPUT_DIR")
+    try:
+        input_dir, var, raw = env_dir(("ETL_INPUT_DIR", "INPUT_DIR"), DEFAULT_INPUT_DIR)
+        report = inspect_input_dir(input_dir, source_var=var, configured_value=raw)
+    except InputConfigError as exc:
+        report = inspect_input_dir(Path(raw), source_var=var, configured_value=raw, config_error=str(exc))
+    body = report.to_dict()
+    try:
+        output_dir, _, _ = env_dir(("ETL_OUTPUT_DIR", "OUTPUT_DIR"), DEFAULT_OUTPUT_DIR)
+        writable, detail = check_writable(output_dir)
+        body["output"] = {"dir": str(output_dir), "writable": writable, "detail": detail}
+    except InputConfigError as exc:
+        body["output"] = {"dir": None, "writable": False, "detail": str(exc)}
+    body["productMappings"] = _product_mapping_status(body)
+    body["ok"] = bool(body["ok"] and body["output"]["writable"] and body["productMappings"]["ok"])
+    return jsonify(body), 200
+
+
+def _product_mapping_status(report: dict) -> dict:
+    """How many Odoo->clean product names PRODUCTS.xlsx yields -- 0 means the run would fail its mapper guard."""
+    import os
+
+    products = next((f for f in report.get("files", []) if f.get("name") == "PRODUCTS.xlsx"), None)
+    if not products or products.get("status") != "ok":
+        return {"ok": False, "count": None, "detail": "PRODUCTS.xlsx is not readable (see files)"}
+    try:
+        from sales_pipeline.product_name_mapper import ProductNameMapper
+
+        count = ProductNameMapper(products["path"]).mapping_count()
+    except Exception as exc:  # noqa: BLE001 - reported in the body, never raised
+        return {"ok": False, "count": None, "detail": str(exc)}
+    allow_empty = os.getenv("ETL_ALLOW_EMPTY_PRODUCT_MAPPING", "").strip().lower() in {"1", "true", "yes", "on"}
+    return {"ok": count > 0 or allow_empty, "count": count, "detail": "" if count else "0 mappings loaded"}
 
 
 @app.route("/etl/run", methods=["POST"])

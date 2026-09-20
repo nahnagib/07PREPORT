@@ -21,3 +21,10 @@ app.zip
 .claude/
 .pytest_cache/
 .ruff_cache/
+data/etl/Exports/
+data/etl/Input/
+data/etl/input/
+_pdf_verify_scratch/
+tachometer_screenshots/
+frontend_dev.log
+frontend_restart.log

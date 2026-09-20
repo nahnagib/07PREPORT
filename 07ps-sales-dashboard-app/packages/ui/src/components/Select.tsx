@@ -1,6 +1,6 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Search, X } from 'lucide-react';
+import { ChevronDown, Loader2, Search, X } from 'lucide-react';
 
 export interface SelectOption {
   value: string;
@@ -17,8 +17,15 @@ export interface SelectProps {
   disabled?: boolean;
   /** Section 3.4: locked/disabled filters are shown greyed out, never hidden. */
   lockedReason?: string;
+  /** Options are being (re)fetched. Shown as a spinner; the control stays usable with whatever
+   * options it already has, so a background refresh never makes the dropdown flicker or lock. */
+  loading?: boolean;
   placeholder?: string;
 }
+
+/** A dropdown can be handed thousands of options (e.g. every customer); rendering them all makes
+ * opening it janky, so only this many are drawn -- searching narrows to the rest. */
+const MAX_RENDERED_OPTIONS = 200;
 
 /**
  * Design-quality pass: replaces the native <select> (Screenshot A showed the raw, unstyled
@@ -42,6 +49,7 @@ export function Select({
   searchable = false,
   disabled = false,
   lockedReason,
+  loading = false,
   placeholder = 'All',
 }: SelectProps) {
   const [open, setOpen] = useState(false);
@@ -74,9 +82,18 @@ export function Select({
   const buttonText =
     selectedLabels.length === 0 ? placeholder : selectedLabels.length === 1 ? selectedLabels[0] : `${selectedLabels.length} selected`;
 
-  const filteredOptions = query.trim()
+  const matchingOptions = query.trim()
     ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase()))
     : options;
+  const hiddenCount = Math.max(0, matchingOptions.length - MAX_RENDERED_OPTIONS);
+  // Selected options are always drawn, even past the cap, so a selection never disappears.
+  const filteredOptions =
+    hiddenCount === 0
+      ? matchingOptions
+      : [
+          ...matchingOptions.slice(0, MAX_RENDERED_OPTIONS),
+          ...matchingOptions.slice(MAX_RENDERED_OPTIONS).filter((o) => value.includes(o.value)),
+        ];
 
   function toggleValue(optValue: string) {
     if (multiSelect) {
@@ -138,6 +155,13 @@ export function Select({
           >
             {buttonText}
           </span>
+          {loading && (
+            <Loader2
+              size={14}
+              aria-label="Loading options"
+              style={{ flexShrink: 0, color: 'var(--ps-color-muted-text)', animation: 'ps-spin 0.9s linear infinite' }}
+            />
+          )}
           <ChevronDown
             size={16}
             style={{
@@ -251,6 +275,12 @@ export function Select({
 
             {filteredOptions.length === 0 && (
               <div style={{ padding: '10px', fontSize: 13, color: 'var(--ps-color-muted-text)' }}>No matches</div>
+            )}
+
+            {hiddenCount > 0 && (
+              <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
+                Showing first {MAX_RENDERED_OPTIONS} of {matchingOptions.length} -- type to search for the rest
+              </div>
             )}
           </div>
         )}

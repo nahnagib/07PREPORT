@@ -1,6 +1,11 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
+import { APP_TIMEZONE } from '../lib/format';
 import { API_BASE } from '../lib/api';
+
+/** Pipeline lines already start with their own zoned timestamp ("2026-09-20 15:15:11 +0200 | ..."), so the
+ * panel's receipt-time prefix is only added for lines without one -- and is labelled, not bare. */
+const PIPELINE_TIMESTAMP = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/;
 
 interface LogLine {
   ts: string | null;
@@ -213,7 +218,9 @@ export function EtlLogPanel({
         ) : (
           lines.map((l, i) => (
             <div key={i}>
-              {l.ts && <span style={{ color: '#5b6b78' }}>[{new Date(l.ts).toLocaleTimeString('en-GB', { timeZone: 'Africa/Tripoli' })}] </span>}
+              {l.ts && !PIPELINE_TIMESTAMP.test(l.text) && (
+                <span style={{ color: '#5b6b78' }}>[{new Date(l.ts).toLocaleTimeString('en-GB', { timeZone: APP_TIMEZONE })} {APP_TIMEZONE}] </span>
+              )}
               {l.text}
             </div>
           ))

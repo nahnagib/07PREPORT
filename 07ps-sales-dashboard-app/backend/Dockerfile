@@ -1,3 +1,4 @@
+# Build context is the repo root (see docker-compose.yml).
 # --- Stage 1: Build the application ---
 FROM node:20-alpine AS builder
 
@@ -12,6 +13,9 @@ RUN npm run build
 
 # --- Stage 2: Final lightweight runner ---
 FROM node:20-alpine
+
+# tzdata: makes the TZ env var (APP_TIMEZONE, set in docker-compose.yml) resolve to a real IANA zone.
+RUN apk add --no-cache tzdata
 
 # Install Chromium for automated generation tasks
 RUN apk add --no-cache chromium nss freetype freetype-dev harfbuzz ca-certificates ttf-freefont

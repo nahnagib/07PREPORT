@@ -6,7 +6,7 @@ import cProfile
 import pstats
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -24,7 +24,9 @@ class StepTiming:
 @dataclass
 class PipelineRunContext:
     scheduled_refresh_time: str | None = None
-    start_time: datetime = field(default_factory=datetime.now)
+    # tz-aware UTC: a naive datetime.now() reads the container's own zone (UTC in Docker, local on a
+    # Windows host), which is what made "Last Refresh" disagree with the Libya-time order timestamps.
+    start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     end_time: datetime | None = None
     status: str = "RUNNING"
     error_message: str = ""
@@ -33,13 +35,13 @@ class PipelineRunContext:
     @contextmanager
     def step(self, name: str) -> Iterator[None]:
         logger = logging.getLogger(__name__)
-        step_start = datetime.now()
+        step_start = datetime.now(timezone.utc)
         perf_start = time.perf_counter()
         logger.info("Pipeline step %s started", name)
         try:
             yield
         except Exception as exc:
-            step_end = datetime.now()
+            step_end = datetime.now(timezone.utc)
             duration = time.perf_counter() - perf_start
             self.step_timings.append(
                 StepTiming(
@@ -54,7 +56,7 @@ class PipelineRunContext:
             logger.info("Pipeline step %s failed duration_seconds=%.2f", name, duration)
             raise
         else:
-            step_end = datetime.now()
+            step_end = datetime.now(timezone.utc)
             duration = time.perf_counter() - perf_start
             self.step_timings.append(
                 StepTiming(
@@ -68,13 +70,13 @@ class PipelineRunContext:
             logger.info("Pipeline step %s completed duration_seconds=%.2f", name, duration)
 
     def finish(self, status: str, error_message: str = "") -> None:
-        self.end_time = datetime.now()
+        self.end_time = datetime.now(timezone.utc)
         self.status = status
         self.error_message = error_message
 
     @property
     def total_duration_seconds(self) -> float:
-        end = self.end_time or datetime.now()
+        end = self.end_time or datetime.now(timezone.utc)
         return (end - self.start_time).total_seconds()
 
     @property

@@ -1,10 +1,33 @@
 # Deployment target: Libyan Spider VPS (root access)
-version: '3.9'
+# Production stack: redis, etl-api, backend, frontend, etl-worker. See docs/DEPLOYMENT.md.
+# `docker compose up -d --build` runs it behind the host's reverse proxy (Apache on the VPS; see
+# docs/DEPLOYMENT.md). frontend and backend keep the STATIC container IPs (172.18.0.100 / .101) the proxy
+# config points at, so do not change the `networks:` subnet or those ipv4_address values.
+#
+# MySQL is NOT containerized here -- the stack connects to an existing MySQL 8 instance (DB_HOST_FOR_
+# CONTAINERS below; see docs/DEPLOYMENT.md "Database").
+#
+# Project variables (host folders, timezone, DB host, image tag) come from the sibling `.env`
+# (see .env.example); per-service settings come from backend/.env and data/etl/.env.
+#
+# Every service pins its timezone (TZ), restarts unless stopped, rotates its logs, and has a memory/CPU
+# limit. There are NO host-specific paths in this file: host folders are variables.
+
+x-logging: &default-logging
+  driver: 'json-file'
+  options: { max-size: '50m', max-file: '5' }
+
+# Linux Docker has no built-in `host.docker.internal`; this maps it to the host gateway so a MySQL
+# running on the Docker host is reachable (Docker Desktop already provides it; the mapping is harmless there).
+x-host-gateway: &host-gateway
+  - 'host.docker.internal:host-gateway'
 
 services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    environment:
+      TZ: ${APP_TIMEZONE:-Africa/Tripoli}
     volumes:
       - redisdata:/data
     ports:
@@ -14,25 +37,45 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-    logging:
-      driver: 'json-file'
-      options: { max-size: '10m', max-file: '3' }
+    deploy:
+      resources:
+        limits: { cpus: '0.50', memory: 256M }
+    logging: *default-logging
 
+  # Flask ETL API - wraps the real pipeline (data/etl/src/sales_pipeline). Only etl-worker calls
+  # this (via pythonRunner.ts); the main backend API process never does. Not exposed externally.
   etl-api:
+    image: 07ps/etl-api:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: ./data/etl/Dockerfile.api
     restart: unless-stopped
     env_file: ./data/etl/.env
+    # `environment` wins over data/etl/.env, so a stale host path or DB host left in that file (a
+    # C:/... INPUT_DIR, DB_HOST=localhost) cannot break the run. The manual input workbooks come from a
+    # host folder (ETL_INPUT_HOST_DIR) mounted READ-ONLY at the fixed container path /etl/input.
+    environment:
+      TZ: ${APP_TIMEZONE:-Africa/Tripoli}
+      TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli} # business zone the ETL converts Odoo UTC times to; must equal APP_TIMEZONE
+      DB_SESSION_TIMEZONE: '+00:00' # ETL's DB sessions run in UTC (CURRENT_TIMESTAMP, TIMESTAMP columns)
+      DB_HOST: ${DB_HOST_FOR_CONTAINERS:-host.docker.internal}
+      ETL_INPUT_DIR: /etl/input
+      ETL_OUTPUT_DIR: /etl/output
+    extra_hosts: *host-gateway
     volumes:
-      - /root/07PREPORT/Input:/data/Input:ro
+      - ${ETL_INPUT_HOST_DIR:-../Input}:/etl/input:ro
+      # A named volume by default; set ETL_OUTPUT_HOST_DIR to a host folder to bind-mount instead.
+      - ${ETL_OUTPUT_HOST_DIR:-etl_output}:/etl/output
     ports:
-      - '127.0.0.1:5001:5001'
-    logging:
-      driver: 'json-file'
-      options: { max-size: '50m', max-file: '5' }
+      - '127.0.0.1:5001:5001' # localhost only - internal-only service
+    # Healthcheck comes from data/etl/Dockerfile.api's own HEALTHCHECK instruction.
+    deploy:
+      resources:
+        limits: { cpus: '2.00', memory: 3G }
+    logging: *default-logging
 
   backend:
+    image: 07ps/backend:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -40,13 +83,24 @@ services:
     env_file: ./backend/.env
     environment:
       NODE_ENV: production
+      TZ: ${APP_TIMEZONE:-Africa/Tripoli}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli}
+      ETL_SCHEDULE_TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli} # cron expressions are read in the business zone
+      ETL_LOG_DIR: /var/log/07ps/etl
+      # Container-to-container DNS, not the host loopback.
       REDIS_HOST: redis
+      DB_HOST: ${DB_HOST_FOR_CONTAINERS:-host.docker.internal}
+    extra_hosts: *host-gateway
+    volumes:
+      - etl_logs:/var/log/07ps/etl
     depends_on:
       redis:
         condition: service_healthy
     networks:
       default:
         ipv4_address: 172.18.0.101
+      # No etl-api dependency: only etl-worker calls it. The dashboard/API should come up even if the
+      # ETL service is briefly down.
     ports:
       - '0.0.0.0:4001:4000'
     healthcheck:
@@ -55,16 +109,21 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    logging:
-      driver: 'json-file'
-      options: { max-size: '50m', max-file: '5' }
+    deploy:
+      resources:
+        limits: { cpus: '1.00', memory: 768M }
+    logging: *default-logging
 
   frontend:
+    image: 07ps/frontend:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: frontend/Dockerfile
       args:
+        # Next.js inlines NEXT_PUBLIC_* into the client bundle at `next build` time, so these are BUILD
+        # args: changing them needs `docker compose build frontend`, not just a restart.
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://dashboards.benmussaholding.com/api}
+        NEXT_PUBLIC_APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli}
     restart: unless-stopped
     depends_on:
       backend:
@@ -72,6 +131,7 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://dashboards.benmussaholding.com/api}
+      TZ: ${APP_TIMEZONE:-Africa/Tripoli}
     networks:
       default:
         ipv4_address: 172.18.0.100
@@ -83,11 +143,15 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    logging:
-      driver: 'json-file'
-      options: { max-size: '50m', max-file: '5' }
+    deploy:
+      resources:
+        limits: { cpus: '1.00', memory: 768M }
+    logging: *default-logging
 
+  # Runs the integrated ETL (backend/src/etl). Only this service consumes the BullMQ queue and executes
+  # runs; it calls the etl-api service over HTTP (pythonRunner.ts), so it needs no Python.
   etl-worker:
+    image: 07ps/etl-worker:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: ./Dockerfile.worker
@@ -95,26 +159,54 @@ services:
     env_file: ./backend/.env
     environment:
       NODE_ENV: production
-      ETL_API_URL: http://etl-api:5001
+      TZ: ${APP_TIMEZONE:-Africa/Tripoli}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli}
+      ETL_API_URL: http://etl-api:5001 # internal Docker network DNS, not localhost
+      ETL_LOG_DIR: /var/log/07ps/etl
       REDIS_HOST: redis
+      DB_HOST: ${DB_HOST_FOR_CONTAINERS:-host.docker.internal}
+    extra_hosts: *host-gateway
+    volumes:
+      - etl_logs:/var/log/07ps/etl
     depends_on:
       redis:
         condition: service_healthy
       etl-api:
-        condition: service_started
-    logging:
-      driver: 'json-file'
-      options: { max-size: '50m', max-file: '5' }
+        condition: service_healthy
+    healthcheck:
+      # The worker has no HTTP port; alive = its node process exists.
+      test: ['CMD-SHELL', 'pgrep -f "dist/etl/commands/worker.js" > /dev/null || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits: { cpus: '0.50', memory: 512M }
+    logging: *default-logging
 
+  # Legacy ingestion service (data/ingestion, mocked Odoo by default). Not part of the production
+  # path documented in docs/DEPLOYMENT.md; start it explicitly with `--profile legacy` if still needed.
   ingestion:
+    profiles: ['legacy']
     build: ./data/ingestion
     restart: unless-stopped
     env_file: ./data/ingestion/.env
     volumes:
-      - /root/07PREPORT/Input:/data/Input:ro
+      - ${ETL_INPUT_HOST_DIR:-../Input}:/data/Input:ro
+    environment:
+      TZ: ${APP_TIMEZONE:-Africa/Tripoli}
+    deploy:
+      resources:
+        limits: { cpus: '0.50', memory: 512M }
+    logging: *default-logging
 
 volumes:
   redisdata:
+    driver: local
+  etl_output:
+    driver: local
+  etl_logs:
     driver: local
 
 networks:

@@ -6,11 +6,11 @@ import { attachUserContext } from '../middleware/scopeContext';
 import { fetchRefreshStatus } from '../measures/refreshStatus';
 
 /**
- * REWRITTEN 2026-07-05 (Tachometer backend port session): the previous version queried a
- * `refresh_log` table that doesn't exist in the real warehouse -- the real audit schema is
- * `pipeline_run_log`/`pipeline_run_audit` (adopted verbatim from the vendored pipeline's own
- * logging, see data/warehouse/migrations/0007_etl_and_audit_log.sql). Now backed by
- * src/measures/refreshStatus.ts (ported 1:1 from the validated Python reference).
+ * Refresh metadata for the dashboard footer/sidebar and the "Refresh log looks wrong" banner.
+ * Backed by src/measures/refreshStatus.ts: "Last Refresh" is etl_run_log's last SUCCESSFUL run
+ * (UTC), and `refreshCheck` says whether that log agrees with the data actually in the tables.
+ * The post-deploy smoke check (scripts/post_deploy_check.py) fails the deployment when
+ * `refreshCheck.inconsistent` is true.
  */
 
 export const metaRouter = Router();
@@ -26,6 +26,8 @@ metaRouter.get('/refresh-status', async (_req, res, next) => {
       lastRefreshTime: status.lastRefreshTime,
       isStale: status.isStale,
       isInverted: status.isInverted,
+      refreshCheck: status.refreshCheck,
+      displayTimezone: status.displayTimezone,
     });
   } catch (err) {
     next(err);

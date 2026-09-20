@@ -20,6 +20,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.sql.sqltypes import TypeEngine
 
 from config.settings import Settings
+from sales_pipeline.etl_run_log import to_business_naive
 from sales_pipeline.runtime import PipelineRunContext
 
 
@@ -73,7 +74,12 @@ class DatabaseExporter:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.logger = logging.getLogger(__name__)
-        self.engine = create_engine(settings.sqlalchemy_url, pool_pre_ping=True, future=True)
+        connect_args: dict[str, Any] = {}
+        if settings.sqlalchemy_url.startswith("mysql"):
+            # Explicit session zone: CURRENT_TIMESTAMP / TIMESTAMP conversion no longer depend on the
+            # DB server's SYSTEM zone (observed UTC+2 in production).
+            connect_args["init_command"] = f"SET time_zone = '{settings.db_session_timezone}'"
+        self.engine = create_engine(settings.sqlalchemy_url, pool_pre_ping=True, future=True, connect_args=connect_args)
 
     @contextmanager
     def _exclusive_run_lock(self) -> Iterator[None]:
@@ -228,6 +234,53 @@ class DatabaseExporter:
             self.logger.info("Incremental SQL row-count validation passed for %s table(s)", len(validation))
         return SQLExportResult(table_counts=table_counts, validation=validation)
 
+    # Read-path indexes for the cascading filters (backend/src/filters/optionsService.ts joins
+    # Fact_SalesLines to Dim_Date and DISTINCTs the dimension keys) and the freshness check
+    # (MAX(OrderDateTime)/MAX(QuotationDate)). Full loads recreate the tables, which drops any index,
+    # so they are re-applied after every load. Numeric/date columns only: pandas creates text
+    # columns as TEXT, which MySQL cannot index without a prefix length.
+    QUERY_INDEXES: dict[str, list[tuple[str, tuple[str, ...]]]] = {
+        "Fact_SalesLines": [
+            ("ix_fsl_datekey", ("DateKey",)),
+            ("ix_fsl_filter_combo", ("CompanyKey", "SegmentKey", "SalespersonKey", "CustomerKey")),
+            ("ix_fsl_salesperson", ("SalespersonKey",)),
+        ],
+        "Fact_Orders": [
+            ("ix_fo_orderdatetime", ("OrderDateTime",)),
+            ("ix_fo_quotationdate", ("QuotationDate",)),
+        ],
+    }
+
+    def ensure_query_indexes(self) -> None:
+        """Creates any missing read-path index; never fails the run (a missing index only slows reads)."""
+        if self.engine.dialect.name != "mysql":
+            return
+        inspector = inspect(self.engine)
+        preparer = self.engine.dialect.identifier_preparer
+        for table_name, indexes in self.QUERY_INDEXES.items():
+            try:
+                if not self._table_exists(table_name):
+                    continue
+                db_table = self._database_table_name(table_name) or table_name
+                columns = {c["name"] for c in inspector.get_columns(db_table, schema=self._effective_schema())}
+                existing = inspector.get_indexes(db_table, schema=self._effective_schema())
+                for index_name, cols in indexes:
+                    # Already covered (by name, or by any index that starts with these columns, e.g. the
+                    # date-column index the incremental path creates itself): nothing to do.
+                    covered = any(i["name"] == index_name or list(i["column_names"][: len(cols)]) == list(cols) for i in existing)
+                    if covered or not set(cols) <= columns:
+                        continue
+                    col_list = ", ".join(preparer.quote(c) for c in cols)
+                    with self.engine.begin() as conn:
+                        conn.execute(text(f"CREATE INDEX {preparer.quote(index_name)} ON {self._quoted_table_name(table_name)} ({col_list})"))
+                    self.logger.info("Created index %s on %s (%s)", index_name, table_name, ", ".join(cols))
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("Could not ensure indexes on %s: %s", table_name, exc)
+
+    def _legacy_naive(self, value: datetime | None) -> datetime | None:
+        """pipeline_run_log/pipeline_run_audit keep naive business-timezone wall-clock values."""
+        return to_business_naive(value, self.settings.timezone) if value is not None else None
+
     def write_run_log(
         self,
         run_context: PipelineRunContext,
@@ -278,8 +331,10 @@ class DatabaseExporter:
                 ),
                 {
                     "scheduled_refresh_time": run_context.scheduled_refresh_time,
-                    "pipeline_start_time": run_context.start_time,
-                    "pipeline_end_time": run_context.end_time,
+                    # Legacy table: naive wall-clock in the business timezone (see etl_run_log.py for
+                    # the UTC-only source of truth the dashboard's "Last Refresh" now reads).
+                    "pipeline_start_time": self._legacy_naive(run_context.start_time),
+                    "pipeline_end_time": self._legacy_naive(run_context.end_time),
                     "total_duration_minutes": round(run_context.total_duration_minutes, 4),
                     "status": run_context.status,
                     "error_message": error_message,
@@ -340,8 +395,8 @@ class DatabaseExporter:
                     """
                 ),
                 {
-                    "started_at": run_context.start_time,
-                    "finished_at": run_context.end_time,
+                    "started_at": self._legacy_naive(run_context.start_time),
+                    "finished_at": self._legacy_naive(run_context.end_time),
                     "load_mode": load_mode,
                     "output_mode": output_mode,
                     "odoo_cutoff_utc": str(odoo_cutoff_utc) if odoo_cutoff_utc is not None else None,
