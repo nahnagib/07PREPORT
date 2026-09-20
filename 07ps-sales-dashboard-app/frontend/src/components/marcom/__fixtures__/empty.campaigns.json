@@ -1,0 +1,156 @@
+{
+ "page": "campaigns",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12,
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "statuses": []
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "statuses": [
+   "Planned",
+   "Ongoing",
+   "Completed",
+   "On Hold"
+  ]
+ },
+ "freshness": {
+  "hasData": false
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12
+ },
+ "hasData": false,
+ "meta": {
+  "missing": [
+   "data"
+  ]
+ },
+ "today": "2026-09-20",
+ "totals": {
+  "spend": 0,
+  "revenue": 0,
+  "rate": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better"
+  }
+ },
+ "spendVsRevenue": [],
+ "roiByCampaign": {
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  },
+  "campaigns": []
+ },
+ "timeline": [],
+ "coverageByType": {
+  "totalUnits": 0,
+  "types": [
+   {
+    "mediaType": "1-Street Lights",
+    "units": 0,
+    "share": null
+   },
+   {
+    "mediaType": "2-Mega Billboards",
+    "units": 0,
+    "share": null
+   },
+   {
+    "mediaType": "3-Billboards",
+    "units": 0,
+    "share": null
+   },
+   {
+    "mediaType": "4-Bridge Banners",
+    "units": 0,
+    "share": null
+   },
+   {
+    "mediaType": "5-Light Screen",
+    "units": 0,
+    "share": null
+   }
+  ]
+ },
+ "costByType": {
+  "totalCost": 0,
+  "types": [
+   {
+    "mediaType": "1-Street Lights",
+    "cost": 0,
+    "units": 0,
+    "costPerUnit": null
+   },
+   {
+    "mediaType": "2-Mega Billboards",
+    "cost": 0,
+    "units": 0,
+    "costPerUnit": null
+   },
+   {
+    "mediaType": "3-Billboards",
+    "cost": 0,
+    "units": 0,
+    "costPerUnit": null
+   },
+   {
+    "mediaType": "4-Bridge Banners",
+    "cost": 0,
+    "units": 0,
+    "costPerUnit": null
+   },
+   {
+    "mediaType": "5-Light Screen",
+    "cost": 0,
+    "units": 0,
+    "costPerUnit": null
+   }
+  ]
+ }
+}

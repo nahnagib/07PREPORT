@@ -3,6 +3,7 @@ import { getFreshness } from '../marcom/service';
 import { BRAND_JOIN, availableYears, listBrands, latestMonth, runCurrent, where } from './db';
 import { applyDefaults, parseBool, parseBrandIds, parseCommonRaw, parsePlatforms, parseStatuses } from './params';
 import { BrandRef } from './common';
+import { makeEnvelope, Options } from './envelope';
 import { CAMPAIGN_STATUSES, PLATFORMS } from '../marcom/templateConfig';
 import { SpendRow, buildSpending } from './spending';
 import { CampaignRow, MediaRow, buildCampaigns } from './campaigns';
@@ -30,20 +31,6 @@ async function resolve(raw: Raw) {
   const applied = applyDefaults(common, latest, Number(businessToday().slice(0, 4)));
   const selected: BrandRef[] = brandIds ? brands.filter((b) => brandIds.includes(b.id)) : brands;
   return { ...applied, brands, brandIds, selected };
-}
-
-interface Options { years: number[]; brands: BrandRef[]; platforms?: readonly string[]; statuses?: readonly string[] }
-
-/**
- * Wraps a page payload with the filters that were applied, the freshness line and the filter
- * OPTIONS the UI needs (every year with data, every brand, and the page's platform/status lists),
- * so the frontend never hard-codes them.
- */
-export function makeEnvelope<T extends { hasData: boolean; meta: { missing: string[] } }>(
-  page: string, filters: Record<string, unknown>, options: Options, freshness: unknown, payload: T,
-) {
-  if (!payload.hasData) payload.meta.missing.push('data');
-  return { page, filters, options, freshness, ...payload };
 }
 
 async function envelope<T extends { hasData: boolean; meta: { missing: string[] } }>(
@@ -142,3 +129,5 @@ export async function tradePage(raw: Raw) {
   const payload = buildTrade({ year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, trade, events, today: businessToday(), completedOnly });
   return envelope('trade', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected, completedOnly }, r.brands, payload);
 }
+
+export { makeEnvelope };

@@ -1,0 +1,440 @@
+{
+ "page": "digital",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12,
+  "platforms": [
+   "Facebook",
+   "Google",
+   "LinkedIn",
+   "Instagram",
+   "TikTok"
+  ]
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "platforms": [
+   "Facebook",
+   "Google",
+   "LinkedIn",
+   "Instagram",
+   "TikTok"
+  ]
+ },
+ "freshness": {
+  "hasData": false
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12
+ },
+ "hasData": false,
+ "meta": {
+  "missing": [
+   "data"
+  ],
+  "deltaBasis": "lastMonthVsPreviousMonth"
+ },
+ "followers": {
+  "platforms": [
+   {
+    "platform": "Facebook",
+    "value": null,
+    "asOf": null
+   },
+   {
+    "platform": "Google",
+    "value": null,
+    "asOf": null
+   },
+   {
+    "platform": "LinkedIn",
+    "value": null,
+    "asOf": null
+   },
+   {
+    "platform": "Instagram",
+    "value": null,
+    "asOf": null
+   },
+   {
+    "platform": "TikTok",
+    "value": null,
+    "asOf": null
+   }
+  ],
+  "total": null,
+  "metaTotal": null
+ },
+ "ctr": {
+  "overall": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "byPlatform": [
+   {
+    "platform": "Facebook",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "platform": "Google",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "platform": "LinkedIn",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "platform": "Instagram",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "platform": "TikTok",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   }
+  ]
+ },
+ "engagementRate": {
+  "overall": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "byPlatform": [
+   {
+    "platform": "Facebook",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "platform": "Google",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "platform": "LinkedIn",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "platform": "Instagram",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "platform": "TikTok",
+    "kpi": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "higher_better"
+    }
+   }
+  ]
+ },
+ "engagementMonthly": [
+  {
+   "year": 2026,
+   "month": 1,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 2,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 3,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 4,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 5,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 6,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 7,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 8,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 9,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 10,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 11,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  },
+  {
+   "year": 2026,
+   "month": 12,
+   "paid": null,
+   "organic": null,
+   "organicShare": null
+  }
+ ],
+ "bounceRate": {
+  "kpi": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "lower_better"
+  },
+  "series": [
+   {
+    "year": 2026,
+    "month": 1,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 2,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 3,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 4,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 5,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 6,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 7,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 8,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 9,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 10,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 11,
+    "value": null
+   },
+   {
+    "year": 2026,
+    "month": 12,
+    "value": null
+   }
+  ]
+ },
+ "avgSession": {
+  "kpi": {
+   "value": null,
+   "status": "na",
+   "unit": "minutes",
+   "direction": "higher_better"
+  },
+  "series": [
+   {
+    "year": 2026,
+    "month": 1,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 2,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 3,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 4,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 5,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 6,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 7,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 8,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 9,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 10,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 11,
+    "value": null,
+    "status": "na"
+   },
+   {
+    "year": 2026,
+    "month": 12,
+    "value": null,
+    "status": "na"
+   }
+  ]
+ }
+}

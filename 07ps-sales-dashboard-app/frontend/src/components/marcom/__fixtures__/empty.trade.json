@@ -1,0 +1,402 @@
+{
+ "page": "trade",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12,
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "completedOnly": false
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ]
+ },
+ "freshness": {
+  "hasData": false
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12
+ },
+ "hasData": false,
+ "meta": {
+  "missing": [
+   "data"
+  ],
+  "deltaBasis": "lastMonthVsPreviousMonth",
+  "eventsFilter": "excludingCancelled"
+ },
+ "today": "2026-09-20",
+ "compliance": {
+  "headline": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null,
+   "asOf": null
+  },
+  "average": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "series": []
+ },
+ "giveawaysStock": {
+  "headline": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null,
+   "asOf": null
+  },
+  "average": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "series": []
+ },
+ "printedStock": {
+  "headline": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null,
+   "asOf": null
+  },
+  "average": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "series": []
+ },
+ "attendance": {
+  "kpi": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "actual": 0,
+  "expected": 0,
+  "series": []
+ },
+ "eventsByTypeMonthly": [
+  {
+   "year": 2026,
+   "month": 1,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 2,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 3,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 4,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 5,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 6,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 7,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 8,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 9,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 10,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 11,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  },
+  {
+   "year": 2026,
+   "month": 12,
+   "total": 0,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 0,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 0,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  }
+ ],
+ "eventsTimeline": [],
+ "eventsMonthlySummary": [
+  {
+   "year": 2026,
+   "month": 1,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 2,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 3,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 4,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 5,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 6,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 7,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 8,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 9,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 10,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 11,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  },
+  {
+   "year": 2026,
+   "month": 12,
+   "planned": 0,
+   "completed": 0,
+   "completionPct": null
+  }
+ ]
+}

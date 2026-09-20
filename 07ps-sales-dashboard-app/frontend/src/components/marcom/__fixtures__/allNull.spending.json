@@ -1,0 +1,218 @@
+{
+ "page": "spending",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 8,
+  "toMonth": 8,
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   }
+  ]
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ]
+ },
+ "freshness": {
+  "hasData": true,
+  "latestPeriod": {
+   "year": 2026,
+   "month": 8,
+   "label": "August 2026"
+  },
+  "uploadedBy": "Demo Admin",
+  "uploadedAt": "2026-09-20T09:00:00.000Z",
+  "batchId": 4
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 8,
+  "toMonth": 8
+ },
+ "hasData": true,
+ "meta": {
+  "missing": [
+   "lastYearData"
+  ]
+ },
+ "totals": {
+  "spend": {
+   "total": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 0
+    }
+   ]
+  },
+  "revenueAttributed": {
+   "total": 280000,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 280000
+    }
+   ]
+  },
+  "companyRevenue": {
+   "total": 1200000,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 1200000
+    }
+   ]
+  }
+ },
+ "roi": {
+  "ytd": {
+   "value": null,
+   "status": "na",
+   "unit": "ratio",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null
+  },
+  "lytd": null,
+  "monthly": [
+   {
+    "month": 8,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   }
+  ],
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  }
+ },
+ "budgetUtilization": {
+  "overall": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "spend": 0,
+   "budget": 0,
+   "overBudget": false
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "spend": 0,
+    "budget": 0,
+    "overBudget": false
+   }
+  ]
+ },
+ "brandGrowth": {
+  "overall": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better",
+   "revenueCurrent": 1200000,
+   "revenueLastYear": 0
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 1200000,
+    "revenueLastYear": 0
+   }
+  ]
+ },
+ "cac": {
+  "overall": {
+   "value": null,
+   "status": "na",
+   "unit": "lyd",
+   "direction": "lower_better",
+   "pctOfInvoice": {
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "direction": "lower_better"
+   },
+   "weightedAvgInvoice": null,
+   "newCustomers": 0,
+   "spend": 0
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": null,
+    "status": "na",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "pctOfInvoice": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "lower_better"
+    },
+    "weightedAvgInvoice": null,
+    "newCustomers": 0,
+    "spend": 0
+   }
+  ]
+ },
+ "cpc": {
+  "overall": {
+   "value": null,
+   "status": "na",
+   "unit": "lyd",
+   "direction": "lower_better",
+   "socialPostCost": 8000,
+   "clicks": 0
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": null,
+    "status": "na",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "socialPostCost": 8000,
+    "clicks": 0
+   }
+  ]
+ }
+}

@@ -1,0 +1,504 @@
+{
+ "page": "spending",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 8,
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ]
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ]
+ },
+ "freshness": {
+  "hasData": true,
+  "latestPeriod": {
+   "year": 2026,
+   "month": 8,
+   "label": "August 2026"
+  },
+  "uploadedBy": "Demo Admin",
+  "uploadedAt": "2026-09-20T09:00:00.000Z",
+  "batchId": 4
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 8
+ },
+ "hasData": true,
+ "meta": {
+  "missing": [
+   "lastYearData"
+  ]
+ },
+ "totals": {
+  "spend": {
+   "total": 450000,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": 50000
+    },
+    {
+     "month": 2,
+     "value": 52000
+    },
+    {
+     "month": 3,
+     "value": 48000
+    },
+    {
+     "month": 4,
+     "value": 55000
+    },
+    {
+     "month": 5,
+     "value": 60000
+    },
+    {
+     "month": 6,
+     "value": 58000
+    },
+    {
+     "month": 7,
+     "value": 62000
+    },
+    {
+     "month": 8,
+     "value": 65000
+    }
+   ]
+  },
+  "revenueAttributed": {
+   "total": 2834100,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": 340000
+    },
+    {
+     "month": 2,
+     "value": 338000
+    },
+    {
+     "month": 3,
+     "value": 297600
+    },
+    {
+     "month": 4,
+     "value": 330000
+    },
+    {
+     "month": 5,
+     "value": 384000
+    },
+    {
+     "month": 6,
+     "value": 382800
+    },
+    {
+     "month": 7,
+     "value": 378200
+    },
+    {
+     "month": 8,
+     "value": 383500
+    }
+   ]
+  },
+  "companyRevenue": {
+   "total": 9816000,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": 1200000
+    },
+    {
+     "month": 2,
+     "value": 1224000
+    },
+    {
+     "month": 3,
+     "value": 1176000
+    },
+    {
+     "month": 4,
+     "value": 1236000
+    },
+    {
+     "month": 5,
+     "value": 1260000
+    },
+    {
+     "month": 6,
+     "value": 1200000
+    },
+    {
+     "month": 7,
+     "value": 1248000
+    },
+    {
+     "month": 8,
+     "value": 1272000
+    }
+   ]
+  }
+ },
+ "roi": {
+  "ytd": {
+   "value": 6.298,
+   "status": "green",
+   "unit": "ratio",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null
+  },
+  "lytd": null,
+  "monthly": [
+   {
+    "month": 1,
+    "current": 6.8,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 2,
+    "current": 6.5,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 3,
+    "current": 6.2,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 4,
+    "current": 6,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 5,
+    "current": 6.4,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 6,
+    "current": 6.6,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 7,
+    "current": 6.1,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 8,
+    "current": 5.9,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   }
+  ],
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  }
+ },
+ "budgetUtilization": {
+  "overall": {
+   "value": 90.9090909090909,
+   "status": "neutral",
+   "unit": "percent",
+   "spend": 450000,
+   "budget": 495000,
+   "overBudget": false
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": 90.9090909090909,
+    "status": "neutral",
+    "unit": "percent",
+    "spend": 450000,
+    "budget": 495000,
+    "overBudget": false
+   },
+   {
+    "brandId": 2,
+    "brand": "Brand B",
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "spend": 0,
+    "budget": 0,
+    "overBudget": false
+   },
+   {
+    "brandId": 3,
+    "brand": "Brand C",
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "spend": 0,
+    "budget": 0,
+    "overBudget": false
+   },
+   {
+    "brandId": 4,
+    "brand": "Brand D",
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "spend": 0,
+    "budget": 0,
+    "overBudget": false
+   }
+  ]
+ },
+ "brandGrowth": {
+  "overall": {
+   "value": 14.285714285714286,
+   "status": "neutral",
+   "unit": "percent",
+   "direction": "higher_better",
+   "revenueCurrent": 9816000,
+   "revenueLastYear": 8589000
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": 14.285714285714286,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 9816000,
+    "revenueLastYear": 8589000
+   },
+   {
+    "brandId": 2,
+    "brand": "Brand B",
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 0,
+    "revenueLastYear": 0
+   },
+   {
+    "brandId": 3,
+    "brand": "Brand C",
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 0,
+    "revenueLastYear": 0
+   },
+   {
+    "brandId": 4,
+    "brand": "Brand D",
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 0,
+    "revenueLastYear": 0
+   }
+  ]
+ },
+ "cac": {
+  "overall": {
+   "value": 125,
+   "status": "green",
+   "unit": "lyd",
+   "direction": "lower_better",
+   "pctOfInvoice": {
+    "value": 2.5,
+    "status": "green",
+    "unit": "percent",
+    "direction": "lower_better"
+   },
+   "weightedAvgInvoice": 5000,
+   "newCustomers": 3600,
+   "spend": 450000
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": 125,
+    "status": "green",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "pctOfInvoice": {
+     "value": 2.5,
+     "status": "green",
+     "unit": "percent",
+     "direction": "lower_better"
+    },
+    "weightedAvgInvoice": 5000,
+    "newCustomers": 3600,
+    "spend": 450000
+   },
+   {
+    "brandId": 2,
+    "brand": "Brand B",
+    "value": null,
+    "status": "na",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "pctOfInvoice": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "lower_better"
+    },
+    "weightedAvgInvoice": null,
+    "newCustomers": 0,
+    "spend": 0
+   },
+   {
+    "brandId": 3,
+    "brand": "Brand C",
+    "value": null,
+    "status": "na",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "pctOfInvoice": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "lower_better"
+    },
+    "weightedAvgInvoice": null,
+    "newCustomers": 0,
+    "spend": 0
+   },
+   {
+    "brandId": 4,
+    "brand": "Brand D",
+    "value": null,
+    "status": "na",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "pctOfInvoice": {
+     "value": null,
+     "status": "na",
+     "unit": "percent",
+     "direction": "lower_better"
+    },
+    "weightedAvgInvoice": null,
+    "newCustomers": 0,
+    "spend": 0
+   }
+  ]
+ },
+ "cpc": {
+  "overall": {
+   "value": 1.8,
+   "status": "green",
+   "unit": "lyd",
+   "direction": "lower_better",
+   "socialPostCost": 32400,
+   "clicks": 18000
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": 1.8,
+    "status": "green",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "socialPostCost": 32400,
+    "clicks": 18000
+   },
+   {
+    "brandId": 2,
+    "brand": "Brand B",
+    "value": null,
+    "status": "na",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "socialPostCost": 0,
+    "clicks": 0
+   },
+   {
+    "brandId": 3,
+    "brand": "Brand C",
+    "value": null,
+    "status": "na",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "socialPostCost": 0,
+    "clicks": 0
+   },
+   {
+    "brandId": 4,
+    "brand": "Brand D",
+    "value": null,
+    "status": "na",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "socialPostCost": 0,
+    "clicks": 0
+   }
+  ]
+ }
+}

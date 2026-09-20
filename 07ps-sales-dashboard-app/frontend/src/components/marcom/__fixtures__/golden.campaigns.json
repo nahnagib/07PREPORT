@@ -1,0 +1,197 @@
+{
+ "page": "campaigns",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12,
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "statuses": []
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "statuses": [
+   "Planned",
+   "Ongoing",
+   "Completed",
+   "On Hold"
+  ]
+ },
+ "freshness": {
+  "hasData": true,
+  "latestPeriod": {
+   "year": 2026,
+   "month": 8,
+   "label": "August 2026"
+  },
+  "uploadedBy": "Demo Admin",
+  "uploadedAt": "2026-09-20T09:00:00.000Z",
+  "batchId": 4
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12
+ },
+ "hasData": true,
+ "meta": {
+  "missing": []
+ },
+ "today": "2026-09-20",
+ "totals": {
+  "spend": 120000,
+  "revenue": 650000,
+  "rate": {
+   "value": 541.6666666666666,
+   "status": "neutral",
+   "unit": "percent",
+   "direction": "higher_better"
+  }
+ },
+ "spendVsRevenue": [
+  {
+   "name": "Ramadan Lighting Campaign",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Completed",
+   "spend": 120000,
+   "revenue": 650000
+  }
+ ],
+ "roiByCampaign": {
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  },
+  "campaigns": [
+   {
+    "name": "Ramadan Lighting Campaign",
+    "brand": "Brand A",
+    "roi": {
+     "value": 5.416666666666667,
+     "status": "green",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   }
+  ]
+ },
+ "timeline": [
+  {
+   "name": "Ramadan Lighting Campaign",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Completed",
+   "start": "2026-02-01",
+   "end": "2026-03-15",
+   "durationDays": 42,
+   "spend": 120000,
+   "revenue": 650000,
+   "roi": 5.416666666666667,
+   "roiStatus": "green",
+   "rate": 541.6666666666666
+  }
+ ],
+ "coverageByType": {
+  "totalUnits": 45,
+  "types": [
+   {
+    "mediaType": "1-Street Lights",
+    "units": 45,
+    "share": 100
+   },
+   {
+    "mediaType": "2-Mega Billboards",
+    "units": 0,
+    "share": 0
+   },
+   {
+    "mediaType": "3-Billboards",
+    "units": 0,
+    "share": 0
+   },
+   {
+    "mediaType": "4-Bridge Banners",
+    "units": 0,
+    "share": 0
+   },
+   {
+    "mediaType": "5-Light Screen",
+    "units": 0,
+    "share": 0
+   }
+  ]
+ },
+ "costByType": {
+  "totalCost": 30000,
+  "types": [
+   {
+    "mediaType": "1-Street Lights",
+    "cost": 30000,
+    "units": 45,
+    "costPerUnit": 666.6666666666666
+   },
+   {
+    "mediaType": "2-Mega Billboards",
+    "cost": 0,
+    "units": 0,
+    "costPerUnit": null
+   },
+   {
+    "mediaType": "3-Billboards",
+    "cost": 0,
+    "units": 0,
+    "costPerUnit": null
+   },
+   {
+    "mediaType": "4-Bridge Banners",
+    "cost": 0,
+    "units": 0,
+    "costPerUnit": null
+   },
+   {
+    "mediaType": "5-Light Screen",
+    "cost": 0,
+    "units": 0,
+    "costPerUnit": null
+   }
+  ]
+ }
+}

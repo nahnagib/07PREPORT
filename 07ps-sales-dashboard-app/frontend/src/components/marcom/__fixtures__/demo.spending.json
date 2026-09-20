@@ -1,0 +1,507 @@
+{
+ "page": "spending",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 8,
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ]
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ]
+ },
+ "freshness": {
+  "hasData": true,
+  "latestPeriod": {
+   "year": 2026,
+   "month": 8,
+   "label": "August 2026"
+  },
+  "uploadedBy": "Demo Admin",
+  "uploadedAt": "2026-09-20T09:00:00.000Z",
+  "batchId": 4
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 8
+ },
+ "hasData": true,
+ "meta": {
+  "missing": []
+ },
+ "totals": {
+  "spend": {
+   "total": 1291000,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": 150000
+    },
+    {
+     "month": 2,
+     "value": 162000
+    },
+    {
+     "month": 3,
+     "value": 144000
+    },
+    {
+     "month": 4,
+     "value": 159000
+    },
+    {
+     "month": 5,
+     "value": 164000
+    },
+    {
+     "month": 6,
+     "value": 173000
+    },
+    {
+     "month": 7,
+     "value": 171000
+    },
+    {
+     "month": 8,
+     "value": 168000
+    }
+   ]
+  },
+  "revenueAttributed": {
+   "total": 6107900,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": 752000
+    },
+    {
+     "month": 2,
+     "value": 779600
+    },
+    {
+     "month": 3,
+     "value": 668800
+    },
+    {
+     "month": 4,
+     "value": 713000
+    },
+    {
+     "month": 5,
+     "value": 783400
+    },
+    {
+     "month": 6,
+     "value": 839800
+    },
+    {
+     "month": 7,
+     "value": 785300
+    },
+    {
+     "month": 8,
+     "value": 786000
+    }
+   ]
+  },
+  "companyRevenue": {
+   "total": 27754740,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": 3393000
+    },
+    {
+     "month": 2,
+     "value": 3460860
+    },
+    {
+     "month": 3,
+     "value": 3325140
+    },
+    {
+     "month": 4,
+     "value": 3494790
+    },
+    {
+     "month": 5,
+     "value": 3562650
+    },
+    {
+     "month": 6,
+     "value": 3393000
+    },
+    {
+     "month": 7,
+     "value": 3528720
+    },
+    {
+     "month": 8,
+     "value": 3596580
+    }
+   ]
+  }
+ },
+ "roi": {
+  "ytd": {
+   "value": 4.731138652207591,
+   "status": "yellow",
+   "unit": "ratio",
+   "direction": "higher_better",
+   "previous": 3.531138652207591,
+   "delta": 1.2
+  },
+  "lytd": {
+   "value": 3.531138652207591,
+   "status": "yellow",
+   "unit": "ratio",
+   "direction": "higher_better"
+  },
+  "monthly": [
+   {
+    "month": 1,
+    "current": 5.013333333333334,
+    "currentStatus": "green",
+    "lastYear": 3.8133333333333335,
+    "lastYearStatus": "yellow"
+   },
+   {
+    "month": 2,
+    "current": 4.812345679012346,
+    "currentStatus": "yellow",
+    "lastYear": 3.612345679012346,
+    "lastYearStatus": "yellow"
+   },
+   {
+    "month": 3,
+    "current": 4.644444444444444,
+    "currentStatus": "yellow",
+    "lastYear": 3.4444444444444446,
+    "lastYearStatus": "yellow"
+   },
+   {
+    "month": 4,
+    "current": 4.484276729559748,
+    "currentStatus": "yellow",
+    "lastYear": 3.2842767295597484,
+    "lastYearStatus": "yellow"
+   },
+   {
+    "month": 5,
+    "current": 4.7768292682926825,
+    "currentStatus": "yellow",
+    "lastYear": 3.5768292682926828,
+    "lastYearStatus": "yellow"
+   },
+   {
+    "month": 6,
+    "current": 4.854335260115607,
+    "currentStatus": "yellow",
+    "lastYear": 3.654335260115607,
+    "lastYearStatus": "yellow"
+   },
+   {
+    "month": 7,
+    "current": 4.592397660818714,
+    "currentStatus": "yellow",
+    "lastYear": 3.3923976608187134,
+    "lastYearStatus": "yellow"
+   },
+   {
+    "month": 8,
+    "current": 4.678571428571429,
+    "currentStatus": "yellow",
+    "lastYear": 3.4785714285714286,
+    "lastYearStatus": "yellow"
+   }
+  ],
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  }
+ },
+ "budgetUtilization": {
+  "overall": {
+   "value": 98.31695986596604,
+   "status": "neutral",
+   "unit": "percent",
+   "spend": 1291000,
+   "budget": 1313100,
+   "overBudget": false
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": 90.9090909090909,
+    "status": "neutral",
+    "unit": "percent",
+    "spend": 450000,
+    "budget": 495000,
+    "overBudget": false
+   },
+   {
+    "brandId": 2,
+    "brand": "Brand B",
+    "value": 111.11111111111111,
+    "status": "neutral",
+    "unit": "percent",
+    "spend": 353000,
+    "budget": 317700,
+    "overBudget": true
+   },
+   {
+    "brandId": 3,
+    "brand": "Brand C",
+    "value": 95.23809523809524,
+    "status": "neutral",
+    "unit": "percent",
+    "spend": 248000,
+    "budget": 260400,
+    "overBudget": false
+   },
+   {
+    "brandId": 4,
+    "brand": "Brand D",
+    "value": 100,
+    "status": "neutral",
+    "unit": "percent",
+    "spend": 240000,
+    "budget": 240000,
+    "overBudget": false
+   }
+  ]
+ },
+ "brandGrowth": {
+  "overall": {
+   "value": 7.3734177215189876,
+   "status": "neutral",
+   "unit": "percent",
+   "direction": "higher_better",
+   "revenueCurrent": 27754740,
+   "revenueLastYear": 25848800
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": 14.285714285714286,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 9816000,
+    "revenueLastYear": 8589000
+   },
+   {
+    "brandId": 2,
+    "brand": "Brand B",
+    "value": 5,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 7386540,
+    "revenueLastYear": 7034800
+   },
+   {
+    "brandId": 3,
+    "brand": "Brand C",
+    "value": -8,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 5644200,
+    "revenueLastYear": 6135000
+   },
+   {
+    "brandId": 4,
+    "brand": "Brand D",
+    "value": 20,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 4908000,
+    "revenueLastYear": 4090000
+   }
+  ]
+ },
+ "cac": {
+  "overall": {
+   "value": 221.63090128755366,
+   "status": "yellow",
+   "unit": "lyd",
+   "direction": "lower_better",
+   "pctOfInvoice": {
+    "value": 3.4175137653536636,
+    "status": "yellow",
+    "unit": "percent",
+    "direction": "lower_better"
+   },
+   "weightedAvgInvoice": 6485.150214592275,
+   "newCustomers": 5825,
+   "spend": 1291000
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": 125,
+    "status": "green",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "pctOfInvoice": {
+     "value": 2.5,
+     "status": "green",
+     "unit": "percent",
+     "direction": "lower_better"
+    },
+    "weightedAvgInvoice": 5000,
+    "newCustomers": 3600,
+    "spend": 450000
+   },
+   {
+    "brandId": 2,
+    "brand": "Brand B",
+    "value": 250,
+    "status": "yellow",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "pctOfInvoice": {
+     "value": 4.166666666666667,
+     "status": "yellow",
+     "unit": "percent",
+     "direction": "lower_better"
+    },
+    "weightedAvgInvoice": 6000,
+    "newCustomers": 1412,
+    "spend": 353000
+   },
+   {
+    "brandId": 3,
+    "brand": "Brand C",
+    "value": 600.4842615012107,
+    "status": "red",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "pctOfInvoice": {
+     "value": 7.506053268765133,
+     "status": "red",
+     "unit": "percent",
+     "direction": "lower_better"
+    },
+    "weightedAvgInvoice": 8000,
+    "newCustomers": 413,
+    "spend": 248000
+   },
+   {
+    "brandId": 4,
+    "brand": "Brand D",
+    "value": 600,
+    "status": "green",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "pctOfInvoice": {
+     "value": 3,
+     "status": "green",
+     "unit": "percent",
+     "direction": "lower_better"
+    },
+    "weightedAvgInvoice": 20000,
+    "newCustomers": 400,
+    "spend": 240000
+   }
+  ]
+ },
+ "cpc": {
+  "overall": {
+   "value": 2.9515756475829074,
+   "status": "yellow",
+   "unit": "lyd",
+   "direction": "lower_better",
+   "socialPostCost": 178895,
+   "clicks": 60610
+  },
+  "brands": [
+   {
+    "brandId": 1,
+    "brand": "Brand A",
+    "value": 1.8,
+    "status": "green",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "socialPostCost": 32400,
+    "clicks": 18000
+   },
+   {
+    "brandId": 2,
+    "brand": "Brand B",
+    "value": 3.5,
+    "status": "yellow",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "socialPostCost": 61775,
+    "clicks": 17650
+   },
+   {
+    "brandId": 3,
+    "brand": "Brand C",
+    "value": 7,
+    "status": "red",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "socialPostCost": 34720,
+    "clicks": 4960
+   },
+   {
+    "brandId": 4,
+    "brand": "Brand D",
+    "value": 2.5,
+    "status": "yellow",
+    "unit": "lyd",
+    "direction": "lower_better",
+    "socialPostCost": 50000,
+    "clicks": 20000
+   }
+  ]
+ }
+}

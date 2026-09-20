@@ -1,0 +1,933 @@
+{
+ "page": "campaigns",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12,
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "statuses": []
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "statuses": [
+   "Planned",
+   "Ongoing",
+   "Completed",
+   "On Hold"
+  ]
+ },
+ "freshness": {
+  "hasData": true,
+  "latestPeriod": {
+   "year": 2026,
+   "month": 8,
+   "label": "August 2026"
+  },
+  "uploadedBy": "Demo Admin",
+  "uploadedAt": "2026-09-20T09:00:00.000Z",
+  "batchId": 4
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12
+ },
+ "hasData": true,
+ "meta": {
+  "missing": []
+ },
+ "today": "2026-09-20",
+ "totals": {
+  "spend": 3000000,
+  "revenue": 6580000,
+  "rate": {
+   "value": 219.33333333333334,
+   "status": "neutral",
+   "unit": "percent",
+   "direction": "higher_better"
+  }
+ },
+ "spendVsRevenue": [
+  {
+   "name": "Single day campaign",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "Planned",
+   "spend": 240000,
+   "revenue": 540000
+  },
+  {
+   "name": "Spans both years",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Ongoing",
+   "spend": 230000,
+   "revenue": 535000
+  },
+  {
+   "name": "Started last year",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Completed",
+   "spend": 220000,
+   "revenue": 530000
+  },
+  {
+   "name": "Crosses into next year",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Ongoing",
+   "spend": 210000,
+   "revenue": 525000
+  },
+  {
+   "name": "Campaign 20 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "spend": 200000,
+   "revenue": 420000
+  },
+  {
+   "name": "Campaign 19 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "spend": 190000,
+   "revenue": 415000
+  },
+  {
+   "name": "Campaign 18 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "spend": 180000,
+   "revenue": 410000
+  },
+  {
+   "name": "Campaign 17 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "spend": 170000,
+   "revenue": 405000
+  },
+  {
+   "name": "Campaign 16 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "spend": 160000,
+   "revenue": 400000
+  },
+  {
+   "name": "Campaign 15 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "spend": 150000,
+   "revenue": 295000
+  },
+  {
+   "name": "Campaign 14 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "spend": 140000,
+   "revenue": 290000
+  },
+  {
+   "name": "Campaign 13 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "spend": 130000,
+   "revenue": 285000
+  },
+  {
+   "name": "Campaign 12 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "spend": 120000,
+   "revenue": 280000
+  },
+  {
+   "name": "Campaign 11 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "spend": 110000,
+   "revenue": 275000
+  },
+  {
+   "name": "Campaign 10 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "spend": 100000,
+   "revenue": 170000
+  },
+  {
+   "name": "Campaign 9 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "spend": 90000,
+   "revenue": 165000
+  },
+  {
+   "name": "Campaign 8 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "spend": 80000,
+   "revenue": 160000
+  },
+  {
+   "name": "Campaign 7 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "spend": 70000,
+   "revenue": 155000
+  },
+  {
+   "name": "Campaign 6 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "spend": 60000,
+   "revenue": 150000
+  },
+  {
+   "name": "Campaign 5 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "spend": 50000,
+   "revenue": 45000
+  },
+  {
+   "name": "Campaign 4 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "spend": 40000,
+   "revenue": 40000
+  },
+  {
+   "name": "Campaign 3 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "spend": 30000,
+   "revenue": 35000
+  },
+  {
+   "name": "Campaign 2 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "spend": 20000,
+   "revenue": 30000
+  },
+  {
+   "name": "Campaign 1 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "spend": 10000,
+   "revenue": 25000
+  }
+ ],
+ "roiByCampaign": {
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  },
+  "campaigns": [
+   {
+    "name": "Single day campaign",
+    "brand": "Brand D",
+    "roi": {
+     "value": 2.25,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Spans both years",
+    "brand": "Brand C",
+    "roi": {
+     "value": 2.3260869565217392,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Started last year",
+    "brand": "Brand B",
+    "roi": {
+     "value": 2.409090909090909,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Crosses into next year",
+    "brand": "Brand A",
+    "roi": {
+     "value": 2.5,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 20 with a very very long descriptive name for the label column",
+    "brand": "Brand D",
+    "roi": {
+     "value": 2.1,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 19 with a very very long descriptive name for the label column",
+    "brand": "Brand C",
+    "roi": {
+     "value": 2.1842105263157894,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 18 with a very very long descriptive name for the label column",
+    "brand": "Brand B",
+    "roi": {
+     "value": 2.2777777777777777,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 17 with a very very long descriptive name for the label column",
+    "brand": "Brand A",
+    "roi": {
+     "value": 2.3823529411764706,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 16 with a very very long descriptive name for the label column",
+    "brand": "Brand D",
+    "roi": {
+     "value": 2.5,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 15 with a very very long descriptive name for the label column",
+    "brand": "Brand C",
+    "roi": {
+     "value": 1.9666666666666668,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 14 with a very very long descriptive name for the label column",
+    "brand": "Brand B",
+    "roi": {
+     "value": 2.0714285714285716,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 13 with a very very long descriptive name for the label column",
+    "brand": "Brand A",
+    "roi": {
+     "value": 2.1923076923076925,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 12 with a very very long descriptive name for the label column",
+    "brand": "Brand D",
+    "roi": {
+     "value": 2.3333333333333335,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 11 with a very very long descriptive name for the label column",
+    "brand": "Brand C",
+    "roi": {
+     "value": 2.5,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 10 with a very very long descriptive name for the label column",
+    "brand": "Brand B",
+    "roi": {
+     "value": 1.7,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 9 with a very very long descriptive name for the label column",
+    "brand": "Brand A",
+    "roi": {
+     "value": 1.8333333333333335,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 8 with a very very long descriptive name for the label column",
+    "brand": "Brand D",
+    "roi": {
+     "value": 2,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 7 with a very very long descriptive name for the label column",
+    "brand": "Brand C",
+    "roi": {
+     "value": 2.2142857142857144,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 6 with a very very long descriptive name for the label column",
+    "brand": "Brand B",
+    "roi": {
+     "value": 2.5,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 5 with a very very long descriptive name for the label column",
+    "brand": "Brand A",
+    "roi": {
+     "value": 0.9,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 4 with a very very long descriptive name for the label column",
+    "brand": "Brand D",
+    "roi": {
+     "value": 1,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 3 with a very very long descriptive name for the label column",
+    "brand": "Brand C",
+    "roi": {
+     "value": 1.1666666666666667,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 2 with a very very long descriptive name for the label column",
+    "brand": "Brand B",
+    "roi": {
+     "value": 1.5,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Campaign 1 with a very very long descriptive name for the label column",
+    "brand": "Brand A",
+    "roi": {
+     "value": 2.5,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   }
+  ]
+ },
+ "timeline": [
+  {
+   "name": "Spans both years",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Ongoing",
+   "start": "2025-06-01",
+   "end": "2027-06-01",
+   "durationDays": 30,
+   "spend": 230000,
+   "revenue": 535000,
+   "roi": 2.3260869565217392,
+   "roiStatus": "red",
+   "rate": 232.6086956521739
+  },
+  {
+   "name": "Started last year",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Completed",
+   "start": "2025-11-20",
+   "end": "2026-02-15",
+   "durationDays": 30,
+   "spend": 220000,
+   "revenue": 530000,
+   "roi": 2.409090909090909,
+   "roiStatus": "red",
+   "rate": 240.9090909090909
+  },
+  {
+   "name": "Campaign 1 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "start": "2026-01-05",
+   "end": "2026-02-20",
+   "durationDays": 30,
+   "spend": 10000,
+   "revenue": 25000,
+   "roi": 2.5,
+   "roiStatus": "red",
+   "rate": 250
+  },
+  {
+   "name": "Campaign 12 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "start": "2026-01-05",
+   "end": "2026-02-20",
+   "durationDays": 30,
+   "spend": 120000,
+   "revenue": 280000,
+   "roi": 2.3333333333333335,
+   "roiStatus": "red",
+   "rate": 233.33333333333334
+  },
+  {
+   "name": "Campaign 13 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "start": "2026-02-05",
+   "end": "2026-03-20",
+   "durationDays": 30,
+   "spend": 130000,
+   "revenue": 285000,
+   "roi": 2.1923076923076925,
+   "roiStatus": "red",
+   "rate": 219.23076923076923
+  },
+  {
+   "name": "Campaign 2 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "start": "2026-02-05",
+   "end": "2026-03-20",
+   "durationDays": 30,
+   "spend": 20000,
+   "revenue": 30000,
+   "roi": 1.5,
+   "roiStatus": "red",
+   "rate": 150
+  },
+  {
+   "name": "Campaign 14 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "start": "2026-03-05",
+   "end": "2026-04-20",
+   "durationDays": 30,
+   "spend": 140000,
+   "revenue": 290000,
+   "roi": 2.0714285714285716,
+   "roiStatus": "red",
+   "rate": 207.14285714285714
+  },
+  {
+   "name": "Campaign 3 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "start": "2026-03-05",
+   "end": "2026-04-20",
+   "durationDays": 30,
+   "spend": 30000,
+   "revenue": 35000,
+   "roi": 1.1666666666666667,
+   "roiStatus": "red",
+   "rate": 116.66666666666667
+  },
+  {
+   "name": "Campaign 15 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "start": "2026-04-05",
+   "end": "2026-05-20",
+   "durationDays": 30,
+   "spend": 150000,
+   "revenue": 295000,
+   "roi": 1.9666666666666668,
+   "roiStatus": "red",
+   "rate": 196.66666666666666
+  },
+  {
+   "name": "Campaign 4 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "start": "2026-04-05",
+   "end": "2026-05-20",
+   "durationDays": 30,
+   "spend": 40000,
+   "revenue": 40000,
+   "roi": 1,
+   "roiStatus": "red",
+   "rate": 100
+  },
+  {
+   "name": "Campaign 16 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "start": "2026-05-05",
+   "end": "2026-06-20",
+   "durationDays": 30,
+   "spend": 160000,
+   "revenue": 400000,
+   "roi": 2.5,
+   "roiStatus": "red",
+   "rate": 250
+  },
+  {
+   "name": "Campaign 5 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "start": "2026-05-05",
+   "end": "2026-06-20",
+   "durationDays": 30,
+   "spend": 50000,
+   "revenue": 45000,
+   "roi": 0.9,
+   "roiStatus": "red",
+   "rate": 90
+  },
+  {
+   "name": "Single day campaign",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "Planned",
+   "start": "2026-05-05",
+   "end": "2026-05-05",
+   "durationDays": 30,
+   "spend": 240000,
+   "revenue": 540000,
+   "roi": 2.25,
+   "roiStatus": "red",
+   "rate": 225
+  },
+  {
+   "name": "Campaign 17 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "start": "2026-06-05",
+   "end": "2026-07-20",
+   "durationDays": 30,
+   "spend": 170000,
+   "revenue": 405000,
+   "roi": 2.3823529411764706,
+   "roiStatus": "red",
+   "rate": 238.23529411764707
+  },
+  {
+   "name": "Campaign 6 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "start": "2026-06-05",
+   "end": "2026-07-20",
+   "durationDays": 30,
+   "spend": 60000,
+   "revenue": 150000,
+   "roi": 2.5,
+   "roiStatus": "red",
+   "rate": 250
+  },
+  {
+   "name": "Campaign 18 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "start": "2026-07-05",
+   "end": "2026-08-20",
+   "durationDays": 30,
+   "spend": 180000,
+   "revenue": 410000,
+   "roi": 2.2777777777777777,
+   "roiStatus": "red",
+   "rate": 227.77777777777777
+  },
+  {
+   "name": "Campaign 7 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "start": "2026-07-05",
+   "end": "2026-08-20",
+   "durationDays": 30,
+   "spend": 70000,
+   "revenue": 155000,
+   "roi": 2.2142857142857144,
+   "roiStatus": "red",
+   "rate": 221.42857142857142
+  },
+  {
+   "name": "Campaign 19 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "start": "2026-08-05",
+   "end": "2026-09-20",
+   "durationDays": 30,
+   "spend": 190000,
+   "revenue": 415000,
+   "roi": 2.1842105263157894,
+   "roiStatus": "red",
+   "rate": 218.42105263157896
+  },
+  {
+   "name": "Campaign 8 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "start": "2026-08-05",
+   "end": "2026-09-20",
+   "durationDays": 30,
+   "spend": 80000,
+   "revenue": 160000,
+   "roi": 2,
+   "roiStatus": "red",
+   "rate": 200
+  },
+  {
+   "name": "Campaign 20 with a very very long descriptive name for the label column",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "On Hold",
+   "start": "2026-09-05",
+   "end": "2026-10-20",
+   "durationDays": 30,
+   "spend": 200000,
+   "revenue": 420000,
+   "roi": 2.1,
+   "roiStatus": "red",
+   "rate": 210
+  },
+  {
+   "name": "Campaign 9 with a very very long descriptive name for the label column",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Planned",
+   "start": "2026-09-05",
+   "end": "2026-10-20",
+   "durationDays": 30,
+   "spend": 90000,
+   "revenue": 165000,
+   "roi": 1.8333333333333335,
+   "roiStatus": "red",
+   "rate": 183.33333333333334
+  },
+  {
+   "name": "Campaign 10 with a very very long descriptive name for the label column",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "start": "2026-10-05",
+   "end": "2026-11-20",
+   "durationDays": 30,
+   "spend": 100000,
+   "revenue": 170000,
+   "roi": 1.7,
+   "roiStatus": "red",
+   "rate": 170
+  },
+  {
+   "name": "Campaign 11 with a very very long descriptive name for the label column",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "start": "2026-11-05",
+   "end": "2026-12-20",
+   "durationDays": 30,
+   "spend": 110000,
+   "revenue": 275000,
+   "roi": 2.5,
+   "roiStatus": "red",
+   "rate": 250
+  },
+  {
+   "name": "Crosses into next year",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Ongoing",
+   "start": "2026-11-15",
+   "end": "2027-02-10",
+   "durationDays": 30,
+   "spend": 210000,
+   "revenue": 525000,
+   "roi": 2.5,
+   "roiStatus": "red",
+   "rate": 250
+  }
+ ],
+ "coverageByType": {
+  "totalUnits": 194,
+  "types": [
+   {
+    "mediaType": "1-Street Lights",
+    "units": 100,
+    "share": 51.54639175257732
+   },
+   {
+    "mediaType": "2-Mega Billboards",
+    "units": 21,
+    "share": 10.824742268041238
+   },
+   {
+    "mediaType": "3-Billboards",
+    "units": 40,
+    "share": 20.61855670103093
+   },
+   {
+    "mediaType": "4-Bridge Banners",
+    "units": 14,
+    "share": 7.216494845360825
+   },
+   {
+    "mediaType": "5-Light Screen",
+    "units": 19,
+    "share": 9.793814432989691
+   }
+  ]
+ },
+ "costByType": {
+  "totalCost": 339000,
+  "types": [
+   {
+    "mediaType": "1-Street Lights",
+    "cost": 65000,
+    "units": 100,
+    "costPerUnit": 650
+   },
+   {
+    "mediaType": "2-Mega Billboards",
+    "cost": 126000,
+    "units": 21,
+    "costPerUnit": 6000
+   },
+   {
+    "mediaType": "3-Billboards",
+    "cost": 69000,
+    "units": 40,
+    "costPerUnit": 1725
+   },
+   {
+    "mediaType": "4-Bridge Banners",
+    "cost": 27000,
+    "units": 14,
+    "costPerUnit": 1928.5714285714287
+   },
+   {
+    "mediaType": "5-Light Screen",
+    "cost": 52000,
+    "units": 19,
+    "costPerUnit": 2736.842105263158
+   }
+  ]
+ }
+}

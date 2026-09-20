@@ -1,0 +1,226 @@
+{
+ "page": "trade",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 8,
+  "toMonth": 8,
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "completedOnly": false
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ]
+ },
+ "freshness": {
+  "hasData": true,
+  "latestPeriod": {
+   "year": 2026,
+   "month": 8,
+   "label": "August 2026"
+  },
+  "uploadedBy": "Demo Admin",
+  "uploadedAt": "2026-09-20T09:00:00.000Z",
+  "batchId": 4
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 8,
+  "toMonth": 8
+ },
+ "hasData": true,
+ "meta": {
+  "missing": [],
+  "deltaBasis": "lastMonthVsPreviousMonth",
+  "eventsFilter": "excludingCancelled"
+ },
+ "today": "2026-09-20",
+ "compliance": {
+  "headline": {
+   "value": 94,
+   "status": "green",
+   "unit": "percent",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null,
+   "asOf": {
+    "year": 2026,
+    "month": 8
+   }
+  },
+  "average": {
+   "value": 94,
+   "status": "green",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "series": [
+   {
+    "year": 2026,
+    "month": 8,
+    "value": 94,
+    "status": "green"
+   }
+  ]
+ },
+ "giveawaysStock": {
+  "headline": {
+   "value": 85,
+   "status": "yellow",
+   "unit": "percent",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null,
+   "asOf": {
+    "year": 2026,
+    "month": 8
+   }
+  },
+  "average": {
+   "value": 85,
+   "status": "yellow",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "series": [
+   {
+    "year": 2026,
+    "month": 8,
+    "value": 85,
+    "status": "yellow"
+   }
+  ]
+ },
+ "printedStock": {
+  "headline": {
+   "value": 72,
+   "status": "red",
+   "unit": "percent",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null,
+   "asOf": {
+    "year": 2026,
+    "month": 8
+   }
+  },
+  "average": {
+   "value": 72,
+   "status": "red",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "series": [
+   {
+    "year": 2026,
+    "month": 8,
+    "value": 72,
+    "status": "red"
+   }
+  ]
+ },
+ "attendance": {
+  "kpi": {
+   "value": 85,
+   "status": "yellow",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
+  "actual": 850,
+  "expected": 1000,
+  "series": [
+   {
+    "year": 2026,
+    "month": 8,
+    "actual": 850,
+    "expected": 1000,
+    "value": 85,
+    "status": "yellow"
+   }
+  ]
+ },
+ "eventsByTypeMonthly": [
+  {
+   "year": 2026,
+   "month": 8,
+   "total": 2,
+   "byType": {
+    "1-Professionals": 0,
+    "2-Architects/Designers": 1,
+    "3-Corporate": 0,
+    "4-CSR": 0,
+    "5-Entertainment": 1,
+    "6-Launch & Opening": 0,
+    "7-Internal/Trainings": 0,
+    "8-Exhibitions": 0
+   }
+  }
+ ],
+ "eventsTimeline": [
+  {
+   "name": "Beach Festival Activation",
+   "type": "5-Entertainment",
+   "brandId": 4,
+   "brand": "Brand D",
+   "planned": "2026-08-08",
+   "completion": "2026-08-08",
+   "status": "Completed",
+   "overdue": false
+  },
+  {
+   "name": "Architects Forum",
+   "type": "2-Architects/Designers",
+   "brandId": 1,
+   "brand": "Brand A",
+   "planned": "2026-08-21",
+   "completion": null,
+   "status": "Planned",
+   "overdue": true
+  }
+ ],
+ "eventsMonthlySummary": [
+  {
+   "year": 2026,
+   "month": 8,
+   "planned": 2,
+   "completed": 1,
+   "completionPct": 50
+  }
+ ]
+}

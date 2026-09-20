@@ -1,0 +1,421 @@
+{
+ "page": "campaigns",
+ "filters": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12,
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "statuses": []
+ },
+ "options": {
+  "years": [
+   2025,
+   2026
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A"
+   },
+   {
+    "id": 2,
+    "name": "Brand B"
+   },
+   {
+    "id": 3,
+    "name": "Brand C"
+   },
+   {
+    "id": 4,
+    "name": "Brand D"
+   }
+  ],
+  "statuses": [
+   "Planned",
+   "Ongoing",
+   "Completed",
+   "On Hold"
+  ]
+ },
+ "freshness": {
+  "hasData": true,
+  "latestPeriod": {
+   "year": 2026,
+   "month": 8,
+   "label": "August 2026"
+  },
+  "uploadedBy": "Demo Admin",
+  "uploadedAt": "2026-09-20T09:00:00.000Z",
+  "batchId": 4
+ },
+ "period": {
+  "year": 2026,
+  "fromMonth": 1,
+  "toMonth": 12
+ },
+ "hasData": true,
+ "meta": {
+  "missing": []
+ },
+ "today": "2026-09-20",
+ "totals": {
+  "spend": 650000,
+  "revenue": 2984000,
+  "rate": {
+   "value": 459.0769230769231,
+   "status": "neutral",
+   "unit": "percent",
+   "direction": "higher_better"
+  }
+ },
+ "spendVsRevenue": [
+  {
+   "name": "Summer Outdoor Push",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Completed",
+   "spend": 150000,
+   "revenue": 1050000
+  },
+  {
+   "name": "Ramadan Lighting Campaign",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Completed",
+   "spend": 120000,
+   "revenue": 650000
+  },
+  {
+   "name": "Spring Kitchens Promo",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Completed",
+   "spend": 80000,
+   "revenue": 400000
+  },
+  {
+   "name": "Eid Billboard Wave",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "spend": 100000,
+   "revenue": 299000
+  },
+  {
+   "name": "Back To School",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "Ongoing",
+   "spend": 90000,
+   "revenue": 270000
+  },
+  {
+   "name": "Autumn Refresh",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "spend": 60000,
+   "revenue": 240000
+  },
+  {
+   "name": "National Day Lights",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "On Hold",
+   "spend": 50000,
+   "revenue": 75000
+  },
+  {
+   "name": "Year-End Mega Sale",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "Planned",
+   "spend": 0,
+   "revenue": 0
+  }
+ ],
+ "roiByCampaign": {
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  },
+  "campaigns": [
+   {
+    "name": "Summer Outdoor Push",
+    "brand": "Brand A",
+    "roi": {
+     "value": 7,
+     "status": "green",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Ramadan Lighting Campaign",
+    "brand": "Brand A",
+    "roi": {
+     "value": 5.416666666666667,
+     "status": "green",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Spring Kitchens Promo",
+    "brand": "Brand B",
+    "roi": {
+     "value": 5,
+     "status": "yellow",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Eid Billboard Wave",
+    "brand": "Brand C",
+    "roi": {
+     "value": 2.99,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Back To School",
+    "brand": "Brand D",
+    "roi": {
+     "value": 3,
+     "status": "yellow",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Autumn Refresh",
+    "brand": "Brand B",
+    "roi": {
+     "value": 4,
+     "status": "yellow",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "National Day Lights",
+    "brand": "Brand C",
+    "roi": {
+     "value": 1.5,
+     "status": "red",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   },
+   {
+    "name": "Year-End Mega Sale",
+    "brand": "Brand D",
+    "roi": {
+     "value": null,
+     "status": "na",
+     "unit": "ratio",
+     "direction": "higher_better"
+    }
+   }
+  ]
+ },
+ "timeline": [
+  {
+   "name": "Ramadan Lighting Campaign",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Completed",
+   "start": "2026-02-01",
+   "end": "2026-03-15",
+   "durationDays": 42,
+   "spend": 120000,
+   "revenue": 650000,
+   "roi": 5.416666666666667,
+   "roiStatus": "green",
+   "rate": 541.6666666666666
+  },
+  {
+   "name": "Spring Kitchens Promo",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Completed",
+   "start": "2026-03-10",
+   "end": "2026-04-30",
+   "durationDays": 51,
+   "spend": 80000,
+   "revenue": 400000,
+   "roi": 5,
+   "roiStatus": "yellow",
+   "rate": 500
+  },
+  {
+   "name": "Eid Billboard Wave",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "Completed",
+   "start": "2026-04-15",
+   "end": "2026-05-31",
+   "durationDays": 46,
+   "spend": 100000,
+   "revenue": 299000,
+   "roi": 2.99,
+   "roiStatus": "red",
+   "rate": 299
+  },
+  {
+   "name": "Summer Outdoor Push",
+   "brandId": 1,
+   "brand": "Brand A",
+   "status": "Completed",
+   "start": "2026-06-01",
+   "end": "2026-08-31",
+   "durationDays": 91,
+   "spend": 150000,
+   "revenue": 1050000,
+   "roi": 7,
+   "roiStatus": "green",
+   "rate": 700
+  },
+  {
+   "name": "Back To School",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "Ongoing",
+   "start": "2026-08-15",
+   "end": "2026-10-15",
+   "durationDays": 61,
+   "spend": 90000,
+   "revenue": 270000,
+   "roi": 3,
+   "roiStatus": "yellow",
+   "rate": 300
+  },
+  {
+   "name": "Autumn Refresh",
+   "brandId": 2,
+   "brand": "Brand B",
+   "status": "Ongoing",
+   "start": "2026-09-01",
+   "end": "2026-11-30",
+   "durationDays": 90,
+   "spend": 60000,
+   "revenue": 240000,
+   "roi": 4,
+   "roiStatus": "yellow",
+   "rate": 400
+  },
+  {
+   "name": "National Day Lights",
+   "brandId": 3,
+   "brand": "Brand C",
+   "status": "On Hold",
+   "start": "2026-09-10",
+   "end": "2026-09-25",
+   "durationDays": 15,
+   "spend": 50000,
+   "revenue": 75000,
+   "roi": 1.5,
+   "roiStatus": "red",
+   "rate": 150
+  },
+  {
+   "name": "Year-End Mega Sale",
+   "brandId": 4,
+   "brand": "Brand D",
+   "status": "Planned",
+   "start": "2026-11-15",
+   "end": "2026-12-31",
+   "durationDays": 46,
+   "spend": 0,
+   "revenue": 0,
+   "roi": null,
+   "roiStatus": "na",
+   "rate": null
+  }
+ ],
+ "coverageByType": {
+  "totalUnits": 194,
+  "types": [
+   {
+    "mediaType": "1-Street Lights",
+    "units": 100,
+    "share": 51.54639175257732
+   },
+   {
+    "mediaType": "2-Mega Billboards",
+    "units": 21,
+    "share": 10.824742268041238
+   },
+   {
+    "mediaType": "3-Billboards",
+    "units": 40,
+    "share": 20.61855670103093
+   },
+   {
+    "mediaType": "4-Bridge Banners",
+    "units": 14,
+    "share": 7.216494845360825
+   },
+   {
+    "mediaType": "5-Light Screen",
+    "units": 19,
+    "share": 9.793814432989691
+   }
+  ]
+ },
+ "costByType": {
+  "totalCost": 339000,
+  "types": [
+   {
+    "mediaType": "1-Street Lights",
+    "cost": 65000,
+    "units": 100,
+    "costPerUnit": 650
+   },
+   {
+    "mediaType": "2-Mega Billboards",
+    "cost": 126000,
+    "units": 21,
+    "costPerUnit": 6000
+   },
+   {
+    "mediaType": "3-Billboards",
+    "cost": 69000,
+    "units": 40,
+    "costPerUnit": 1725
+   },
+   {
+    "mediaType": "4-Bridge Banners",
+    "cost": 27000,
+    "units": 14,
+    "costPerUnit": 1928.5714285714287
+   },
+   {
+    "mediaType": "5-Light Screen",
+    "cost": 52000,
+    "units": 19,
+    "costPerUnit": 2736.842105263158
+   }
+  ]
+ }
+}
