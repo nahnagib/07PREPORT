@@ -5,7 +5,7 @@ WORKDIR /repo
 COPY package.json ./
 COPY frontend ./frontend
 COPY packages ./packages
-RUN npm install
+RUN npm install --legacy-peer-deps
 WORKDIR /repo/frontend
 # NEXT_PUBLIC_* vars are inlined into the client bundle at build time -- must be an ARG available
 # before `next build` runs, not just a runtime env var (see docker-compose.yml's frontend.build.args).

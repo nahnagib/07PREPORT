@@ -1,0 +1,18 @@
+# --- Stage 1: Build stage ---
+FROM node:20-alpine AS builder
+WORKDIR /repo
+COPY package.json ./
+COPY backend ./backend
+RUN npm install --workspace backend
+WORKDIR /repo/backend
+RUN npm run build
+
+# --- Stage 2: Final runner stage ---
+FROM node:20-alpine
+WORKDIR /repo
+COPY package.json ./
+COPY backend ./backend
+RUN npm install --workspace backend --omit=dev
+COPY --from=builder /repo/backend/dist /repo/backend/dist
+WORKDIR /repo/backend
+CMD ["node", "dist/etl/commands/worker.js"]
