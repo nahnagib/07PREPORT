@@ -8,6 +8,7 @@
     "start": "node dist/server.js",
     "lint": "eslint src --ext .ts",
     "test": "vitest run",
+    "test:marcom-db": "vitest run -c vitest.marcom-db.config.ts",
     "create-admin": "tsx scripts/createAdmin.ts",
     "etl:run": "tsx src/etl/commands/run.ts",
     "etl:customers": "tsx src/etl/commands/customers.ts",

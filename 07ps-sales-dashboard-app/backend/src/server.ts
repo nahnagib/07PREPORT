@@ -20,6 +20,8 @@ import { adminRolesRouter } from './routes/admin/roles';
 import { adminLoginHistoryRouter } from './routes/admin/loginHistory';
 import { adminEtlRunsRouter } from './routes/admin/etlRuns';
 import { adminEtlControlRouter } from './routes/admin/etlControl';
+import { marcomUploadRouter, marcomFreshnessRouter } from './routes/marcomUpload';
+import { cleanupExpiredStaged } from './marcom/staging';
 import { registerEtlSchedules } from './etl/scheduler/registerSchedules';
 import { reconcileOrphanedEtlRuns, reconcileStaleQueuedRuns } from './etl/services/etlReconciliation';
 import { etlLogger } from './etl/services/etlLogger';
@@ -52,6 +54,9 @@ app.use('/admin/login-history', adminLoginHistoryRouter);
 // Mounted before /admin/etl (a shorter prefix) to avoid any ambiguity in route matching.
 app.use('/admin/etl-runs', adminEtlRunsRouter);
 app.use('/admin/etl', adminEtlControlRouter);
+// MARCOM Contribution (Promotion): Excel upload admin + freshness for the four report pages.
+app.use('/marcom/upload', marcomUploadRouter);
+app.use('/marcom/freshness', marcomFreshnessRouter);
 
 // Section 5.9 - system-tier fallback: no stack traces, no raw DB errors, ever.
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -90,3 +95,7 @@ setInterval(() => {
     }),
   );
 }, STALE_QUEUED_SWEEP_INTERVAL_MS);
+
+// Staged (dry-run) MARCOM uploads expire after an hour; sweep them (row + file) at startup and every 10 min.
+cleanupExpiredStaged().catch(() => undefined);
+setInterval(() => { cleanupExpiredStaged().catch(() => undefined); }, 10 * 60 * 1000);
