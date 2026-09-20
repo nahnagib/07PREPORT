@@ -21,6 +21,7 @@ import { adminLoginHistoryRouter } from './routes/admin/loginHistory';
 import { adminEtlRunsRouter } from './routes/admin/etlRuns';
 import { adminEtlControlRouter } from './routes/admin/etlControl';
 import { marcomUploadRouter, marcomFreshnessRouter } from './routes/marcomUpload';
+import { marcomKpiRouter } from './routes/marcomKpi';
 import { cleanupExpiredStaged } from './marcom/staging';
 import { registerEtlSchedules } from './etl/scheduler/registerSchedules';
 import { reconcileOrphanedEtlRuns, reconcileStaleQueuedRuns } from './etl/services/etlReconciliation';
@@ -57,6 +58,7 @@ app.use('/admin/etl', adminEtlControlRouter);
 // MARCOM Contribution (Promotion): Excel upload admin + freshness for the four report pages.
 app.use('/marcom/upload', marcomUploadRouter);
 app.use('/marcom/freshness', marcomFreshnessRouter);
+app.use('/marcom/kpi', marcomKpiRouter);
 
 // Section 5.9 - system-tier fallback: no stack traces, no raw DB errors, ever.
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

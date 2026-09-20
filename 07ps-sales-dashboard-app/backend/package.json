@@ -10,6 +10,8 @@
     "test": "vitest run",
     "test:marcom-db": "vitest run -c vitest.marcom-db.config.ts",
     "create-admin": "tsx scripts/createAdmin.ts",
+    "marcom:demo-seed": "tsx scripts/marcomDemoSeed.ts seed",
+    "marcom:demo-unseed": "tsx scripts/marcomDemoSeed.ts unseed",
     "etl:run": "tsx src/etl/commands/run.ts",
     "etl:customers": "tsx src/etl/commands/customers.ts",
     "etl:sales": "tsx src/etl/commands/sales.ts",
