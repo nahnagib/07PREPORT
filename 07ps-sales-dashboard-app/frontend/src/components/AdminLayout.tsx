@@ -9,6 +9,7 @@ import { useAuth } from '../lib/AuthProvider';
 const TABS = [
   { label: 'Users', href: '/admin/users', pageKey: 'admin_users' },
   { label: 'Roles & Permissions', href: '/admin/roles', pageKey: 'admin_roles' },
+  { label: 'MARCOM Data Upload', href: '/admin/marcom-upload', pageKey: 'admin_marcom_upload' },
   { label: 'Login History', href: '/admin/login-history', pageKey: 'admin_login_history' },
 ] as const;
 

@@ -87,16 +87,23 @@ export function periodLabel(from: string, to: string): string {
   return `${MONTHS[fm - 1]} ${fy} to ${MONTHS[tm - 1]} ${ty}`;
 }
 
-/** Earliest/latest year-month touched by the file's rows. */
+/**
+ * Earliest/latest reporting month in the file: the month-keyed tables (P1, P3, P4-A). Campaign and
+ * event dates only decide the period when the file has no month-keyed rows (a campaign that runs
+ * Feb-Mar shouldn't stretch a February upload to "February to March").
+ */
 export function computePeriod(parse: ParseResult): Period | null {
   const ym: string[] = [];
-  const push = (y: unknown, m: unknown) => { if (y && m) ym.push(`${y}-${String(m).padStart(2, '0')}`); };
   for (const t of ['spend', 'social', 'web', 'trade'] as const) {
-    for (const r of parse.tables[t].rows) push(r.data.year, r.data.month);
+    for (const r of parse.tables[t].rows) {
+      if (r.data.year && r.data.month) ym.push(`${r.data.year}-${String(r.data.month).padStart(2, '0')}`);
+    }
   }
-  const fromDate = (d: unknown) => { if (typeof d === 'string' && d.length >= 7) ym.push(d.slice(0, 7)); };
-  for (const r of parse.tables.campaigns.rows) { fromDate(r.data.startDate); fromDate(r.data.endDate); }
-  for (const r of parse.tables.events.rows) fromDate(r.data.plannedDate);
+  if (!ym.length) {
+    const fromDate = (d: unknown) => { if (typeof d === 'string' && d.length >= 7) ym.push(d.slice(0, 7)); };
+    for (const r of parse.tables.campaigns.rows) { fromDate(r.data.startDate); fromDate(r.data.endDate); }
+    for (const r of parse.tables.events.rows) fromDate(r.data.plannedDate);
+  }
   if (!ym.length) return null;
   ym.sort();
   return { from: ym[0], to: ym[ym.length - 1], label: periodLabel(ym[0], ym[ym.length - 1]) };
