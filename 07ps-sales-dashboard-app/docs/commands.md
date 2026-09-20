@@ -132,8 +132,8 @@ if it doesn't exist) — read by `Settings.from_env()` in `data/etl/config/setti
 | `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY` | always | Odoo connection; validation fails without these |
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | `--output sql`/`both`, or any incremental run | same MySQL instance the web app uses |
 | `DB_RELOAD_MODE` | full-mode SQL writes | `drop_recreate` (default) or `truncate` |
-| `INPUT_DIR` | always | directory containing `PRODUCTS.xlsx`/`OffDays.xlsx`/etc. — in this environment set to the **absolute** path `C:/Users/Lenovo/Desktop/07PREPORT/Input`, not `data/etl/Input` (there's a separate, unused legacy copy of the same filenames under `data/etl/Input/` — don't confuse the two) |
-| `OUTPUT_DIR` | `--output excel`/`both` | defaults to `./Exports` (relative to `data/etl/`) |
+| `ETL_INPUT_DIR` (legacy `INPUT_DIR`) | always | directory containing `PRODUCTS.xlsx`/`OffDays.xlsx`/`SalesTeam.xlsx`/`sales_targets.xlsx`, **as seen by the process running the pipeline**. Default `data/etl/input`; relative values resolve against `data/etl/`. Under docker-compose it is set to `/etl/input` for you and the host folder is `ETL_INPUT_HOST_DIR` in the project `.env` (mounted read-only). A `C:/...` value on Linux fails fast with the fix. Note: `data/etl/Input/` (same folder on Windows' case-insensitive disk) is an old legacy copy — point `ETL_INPUT_HOST_DIR` at the folder with the current files |
+| `ETL_OUTPUT_DIR` (legacy `OUTPUT_DIR`) | `--output excel`/`both` | defaults to `data/etl/Exports`; must be writable (`/etl/output` in Docker, host folder `ETL_OUTPUT_HOST_DIR`) |
 | `TIMEZONE` | always | defaults `Africa/Tripoli` |
 
 Running via `npm run etl:*` instead reads `backend/.env` for `ETL_API_URL`/`ETL_API_KEY`/schedule

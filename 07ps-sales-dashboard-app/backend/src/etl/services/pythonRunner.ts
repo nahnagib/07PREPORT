@@ -266,3 +266,48 @@ export async function resetEtlApi(): Promise<{ ok: boolean; resetJobId: string |
     return null;
   }
 }
+
+/** Shape of the ETL API's GET /etl/preflight (data/etl/api/app.py, config/input_check.py). */
+export interface EtlPreflight {
+  ok: boolean;
+  input_dir: string;
+  source_var: string;
+  configured_value: string;
+  dir_exists: boolean;
+  dir_is_dir: boolean;
+  platform: string;
+  files: {
+    name: string;
+    path: string;
+    required: boolean;
+    status: 'ok' | 'missing' | 'unreadable' | 'invalid_xlsx';
+    size_bytes: number | null;
+    modified: string | null;
+    near_matches: string[];
+    detail: string;
+  }[];
+  listing: string[];
+  listing_truncated: boolean;
+  hint: string;
+  config_error: string | null;
+  output: { dir: string | null; writable: boolean; detail: string };
+}
+
+/**
+ * Asks the ETL API whether the manual input workbooks are reachable and valid from ITS point of
+ * view (the process/container that actually runs the pipeline). Returns `{ report }` on success and
+ * `{ error }` when the API itself can't be reached -- callers must treat "unknown" differently from
+ * "checked and bad": only a `report` with ok=false should block a run.
+ */
+export async function getEtlPreflight(): Promise<{ report: EtlPreflight } | { error: string }> {
+  const config = getEtlConfig();
+  if (!config.etlApi.url || !config.etlApi.apiKey) {
+    return { error: 'ETL_API_URL/ETL_API_KEY are not configured' };
+  }
+  try {
+    const response = await buildClient(config.etlApi.url, config.etlApi.apiKey).get<EtlPreflight>('/etl/preflight');
+    return { report: response.data };
+  } catch (err) {
+    return { error: describeError(err) };
+  }
+}

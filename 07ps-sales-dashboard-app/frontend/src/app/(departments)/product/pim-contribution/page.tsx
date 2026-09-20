@@ -351,11 +351,6 @@ export default function PimContributionPage() {
         />
 
         <FilterBar
-          onReset={() => {
-            setCompany('All');
-            setCategory([]);
-            setBcgClass('All');
-          }}
           showDateRange={false}
           showCompanyDimension={false}
           showTransactionDimensions={false}

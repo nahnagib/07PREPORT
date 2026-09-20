@@ -6,7 +6,7 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useFilterState } from '../../../../components/FilterProvider';
+import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import {
   Card,
   ChartPanel,
@@ -24,7 +24,7 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useInvoicesEngineOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import { useInvoicesEngineOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { InvoiceStats, InvoicesEngineKpis, InvoicesEngineScope, InvoiceYearClassBreakdown } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVariance, formatVolume } from '../../../../lib/format';
 
@@ -365,7 +365,6 @@ export default function InvoicesEnginePage() {
     onFiltersChange,
     onAnchorDateChange,
     onDateRangeChange,
-    resetFilters,
   } = useFilterState();
 
   // Sales Trend chart interaction: drillMode toggles what clicking a year does. Off (default) ->
@@ -382,10 +381,9 @@ export default function InvoicesEnginePage() {
 
   const scope: InvoicesEngineScope = { selectedYear, selectedInvoiceClass };
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
+  const filterOptions = useScopedFilterOptions();
   const overview = useInvoicesEngineOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
   /** Page-local click-filters (not part of the app-wide filter bar) that also narrow this page's data. */
@@ -424,19 +422,6 @@ export default function InvoicesEnginePage() {
     } catch (err) {
       console.error('PDF export failed:', err);
     }
-  }
-
-  function handleReset() {
-    resetFilters();
-    setDrillMode(false);
-    setDrilledYear(null);
-    setSelectedYear(null);
-    setSelectedInvoiceClass(null);
-  }
-
-  function handleRefresh() {
-    overview.retry();
-    refreshStatus.retry();
   }
 
   function handleSalesTrendCategoryClick(label: string) {
@@ -558,17 +543,15 @@ export default function InvoicesEnginePage() {
           pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
-          onRefresh={handleRefresh}
-          lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
           onLogout={logout}
           showDateInput={false}
         />
 
         <FilterBar
+          showCustomerFilter
           filters={effectiveFilters}
           onChange={onFiltersChange}
-          onReset={handleReset}
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
@@ -576,24 +559,18 @@ export default function InvoicesEnginePage() {
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
-          customerGroupsLoading={filterOptions.customerGroups.loading}
-          distributionChannelsLoading={filterOptions.distributionChannels.loading}
-          branchesLoading={filterOptions.branches.loading}
-          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
-          onExportReport={exportReport.exportReport}
-          isExporting={exportReport.isExporting}
-          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
           isStale={refreshStatus.data?.isStale}
           isInverted={refreshStatus.data?.isInverted}
+          refreshCheck={refreshStatus.data?.refreshCheck}
           lastRefreshTime={lastRefreshLabel}
         />
 

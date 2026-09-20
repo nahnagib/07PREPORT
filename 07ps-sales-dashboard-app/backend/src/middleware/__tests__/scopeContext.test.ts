@@ -29,6 +29,7 @@ describe('resolveScopedFilters -- default "All filters" baseline', () => {
       channelKeys: [],
       salesTeamKeys: [],
       salespersonKeys: [],
+      customerKeys: [],
     });
 
     // This is the critical regression case: with the frontend's default "All" state (no filter
@@ -75,6 +76,7 @@ describe('resolveScopedFilters -- default "All filters" baseline', () => {
       channelKeys: [],
       salesTeamKeys: [],
       salespersonKeys: [40],
+      customerKeys: [],
     });
   });
 });
@@ -113,6 +115,7 @@ describe('resolveScopedFilters -- role data scope (role_data_scope rules)', () =
       channelKeys: [],
       salesTeamKeys: [],
       salespersonKeys: [],
+      customerKeys: [],
     });
   });
 

@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import { setPdfExportContextProvider } from '@07ps/ui';
 import { useAuth } from '../lib/AuthProvider';
 import { useFilterOptions } from '../lib/hooks';
-import { useFilterState } from './FilterProvider';
+import { useFilterState, useScopedFilterOptions } from './FilterProvider';
 
 /**
  * Registers the app-wide PDF export context (see packages/ui/src/pdfExportContext.ts) so every
@@ -15,7 +15,7 @@ import { useFilterState } from './FilterProvider';
 export function PdfExportContextBridge() {
   const { user, token, error: authError, retryAuth } = useAuth();
   const { effectiveFilters: f, dateFromDate, dateToDate } = useFilterState();
-  const options = useFilterOptions(token, authError, retryAuth, f);
+  const options = useScopedFilterOptions();
 
   // The provider closure reads the latest render's values via a ref, so a stale closure can never
   // export yesterday's filters.

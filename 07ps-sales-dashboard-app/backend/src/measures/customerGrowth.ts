@@ -94,7 +94,7 @@ export async function fetchCustomerActivitySnapshot(
   filters: Filters,
   scope: CustomerGrowthScope = {},
 ): Promise<Map<number, CustomerActivity>> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cat = buildCategorySqlClause(scope.category, 'dc');
   const ytd = ytdWindow(effectiveAnchor);
   const lytd = lytdWindow(effectiveAnchor);
@@ -268,7 +268,7 @@ async function fetchDistinctCustomerCount(
   filters: Filters,
   scope: CustomerGrowthScope = {},
 ): Promise<number> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cat = buildCategorySqlClause(scope.category, 'dc');
   const sql = `
     SELECT COUNT(DISTINCT fsl.CustomerKey) AS cnt
@@ -289,7 +289,7 @@ async function fetchNewCustomerCount(
   filters: Filters,
   scope: CustomerGrowthScope = {},
 ): Promise<number> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cat = buildCategorySqlClause(scope.category, 'dc');
   const sql = `
     SELECT COUNT(DISTINCT fsl.CustomerKey) AS cnt
@@ -391,7 +391,7 @@ export async function fetchCustomersTrendByYear(
   filters: Filters,
   scope: CustomerGrowthScope = {},
 ): Promise<CustomerYearPoint[]> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cat = buildCategorySqlClause(scope.category, 'dc');
   const sql = `
     SELECT
@@ -442,7 +442,7 @@ export async function fetchCustomersContribution(
   filters: Filters,
   scope: CustomerGrowthScope = {},
 ): Promise<CustomersContribution> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cat = buildCategorySqlClause(scope.category, 'dc');
   const window = scope.year !== undefined ? fullYearWindow(scope.year) : ytdWindow(anchor);
   const sql = `
@@ -506,7 +506,7 @@ interface ClassSalesRow {
 }
 
 async function fetchSalesByCustomerAndClass(pool: Pool, window: DateWindow, filters: Filters): Promise<Map<string, ClassSalesRow[]>> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const sql = `
     SELECT
       fsl.CustomerKey AS customerKey,

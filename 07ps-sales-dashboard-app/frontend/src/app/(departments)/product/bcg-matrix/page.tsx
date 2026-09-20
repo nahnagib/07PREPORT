@@ -5,7 +5,7 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useAuth } from '../../../../lib/AuthProvider';
-import { useFilterState } from '../../../../components/FilterProvider';
+import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import {
   Card,
   KpiTile,
@@ -33,7 +33,7 @@ import {
   MOVEMENT_COLOR,
   MOVEMENT_LABEL,
 } from '../../../../lib/materialsAnalogy/shared';
-import { useBcgMatrixOverview, useFilterOptions } from '../../../../lib/hooks';
+import { useBcgMatrixOverview } from '../../../../lib/hooks';
 import type { BcgFact } from '../../../../lib/api';
 import displayNamesRaw from '../../../../lib/materialsAnalogy/cleanProductNames.json';
 
@@ -187,9 +187,9 @@ export default function BcgMatrixPage() {
   // app-wide too, so a Salesperson selected on another page carries over here, same as it already
   // does between any two of those other pages today. Company/Category/BCG Class stay this page's
   // own local pills below (unaffected, unchanged) -- `effectiveFilters.companyKeys` is never read.
-  const { effectiveFilters, anchorDate, dateFromDate, dateToDate, onFiltersChange, onAnchorDateChange, onDateRangeChange, resetFilters } =
+  const { effectiveFilters, anchorDate, dateFromDate, dateToDate, onFiltersChange, onAnchorDateChange, onDateRangeChange } =
     useFilterState();
-  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
+  const filterOptions = useScopedFilterOptions();
 
   // Confirmed with the project owner (see BcgProductScope's header in
   // backend/src/measures/materialsAnalogyBcg.ts): these 4 dimensions + the date range narrow WHICH
@@ -459,12 +459,7 @@ export default function BcgMatrixPage() {
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
-          customerGroupsLoading={filterOptions.customerGroups.loading}
-          distributionChannelsLoading={filterOptions.distributionChannels.loading}
-          branchesLoading={filterOptions.branches.loading}
-          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
-          onReset={resetFilters}
           showDateRange
           showCompanyDimension
           showTransactionDimensions

@@ -1,6 +1,7 @@
 'use client';
 import React from 'react';
 import { Info, AlertTriangle } from 'lucide-react';
+import type { RefreshCheck } from '../lib/api';
 
 /**
  * Modernization pass: combines what used to be two separately-stacked banners (the always-visible
@@ -14,10 +15,13 @@ import { Info, AlertTriangle } from 'lucide-react';
 export function ValidationStatusBar({
   isStale,
   isInverted,
+  refreshCheck,
   lastRefreshTime,
 }: {
   isStale?: boolean;
   isInverted?: boolean;
+  /** The backend's consistency verdict; its message says exactly what disagrees and what to do. */
+  refreshCheck?: RefreshCheck;
   lastRefreshTime?: string;
 }) {
   // Inversion (Last Refresh < Last Update) is a correctness bug, not mere staleness — it should
@@ -42,8 +46,9 @@ export function ValidationStatusBar({
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
           <AlertTriangle size={14} aria-hidden style={{ flexShrink: 0 }} />
-          Refresh log looks wrong: last successful refresh ({lastRefreshTime ?? '—'}) is earlier than
-          the most recent order in the data. Treat &quot;Last Refresh&quot; as unreliable until this is fixed.
+          {refreshCheck?.message
+            ? `Refresh log check failed: ${refreshCheck.message}${refreshCheck.action ? ` What to do: ${refreshCheck.action}` : ''}`
+            : `Refresh log check failed: last successful refresh (${lastRefreshTime ?? '—'}) is inconsistent with the loaded data. Treat "Last Refresh" as unreliable until this is fixed.`}
         </span>
       </div>
     );

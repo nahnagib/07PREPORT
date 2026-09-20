@@ -44,6 +44,9 @@ export interface Filters {
   channelKeys?: number[]; // Distribution Channel
   salesTeamKeys?: string[]; // Branch
   salespersonKeys?: number[]; // Sales Person
+  /** Customer -- only honored by queries that opt in via buildWhereClause's `supportsCustomer`
+   * (Fact_SalesLines-grain sales measures); Fact_Targets and the CRM facts have no CustomerKey. */
+  customerKeys?: number[];
 }
 
 export const EMPTY_FILTERS: Filters = {};
@@ -56,6 +59,7 @@ const FILTER_COLUMNS: Record<keyof Filters, string> = {
   channelKeys: 'ChannelKey',
   salesTeamKeys: 'SalesTeamKey',
   salespersonKeys: 'SalespersonKey',
+  customerKeys: 'CustomerKey',
 };
 
 /**
@@ -158,12 +162,14 @@ const OVERRIDE_EXPR: Partial<Record<keyof Filters, (alias: string) => string>> =
 export function buildWhereClause(
   filters: Filters,
   tableAlias = '',
+  supportsCustomer = false,
 ): { clause: string; params: Array<string | number> } {
   const prefix = tableAlias ? `${tableAlias}.` : '';
   const clauses: string[] = [];
   const params: Array<string | number> = [];
 
   (Object.keys(FILTER_COLUMNS) as Array<keyof Filters>).forEach((field) => {
+    if (field === 'customerKeys' && !supportsCustomer) return;
     const values = filters[field];
     if (values && values.length > 0) {
       const placeholders = values.map(() => '?').join(', ');
@@ -286,6 +292,7 @@ export function applySalespersonLock(filters: Filters, user: UserContext): Filte
     channelKeys: [],
     salesTeamKeys: [],
     salespersonKeys: [user.salespersonKey],
+    customerKeys: filters.customerKeys,
   };
 }
 

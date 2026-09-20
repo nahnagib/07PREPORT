@@ -2,19 +2,38 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from config.settings import Settings
 from sales_pipeline.pipeline import OutputMode, PowerBISalesPipeline
 from sales_pipeline.runtime import optional_profiler
 
 
+class _ZonedFormatter(logging.Formatter):
+    """Log timestamps in the configured business timezone with an explicit UTC offset.
+
+    Containers run in UTC, so the default `asctime` printed UTC with no label while the dashboard
+    showed Libya time -- two different clocks for one run. Every line now carries its offset.
+    """
+
+    def __init__(self, tz_name: str) -> None:
+        super().__init__("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+        try:
+            self._tz = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            self._tz = ZoneInfo("UTC")
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        return datetime.fromtimestamp(record.created, tz=self._tz).strftime("%Y-%m-%d %H:%M:%S %z")
+
+
 def configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    handler = logging.StreamHandler()
+    handler.setFormatter(_ZonedFormatter(os.getenv("TIMEZONE", "Africa/Tripoli")))
+    logging.basicConfig(level=logging.INFO, handlers=[handler], force=True)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

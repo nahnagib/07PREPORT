@@ -1,7 +1,8 @@
 'use client';
-import React, { useState } from 'react';
+import React from 'react';
 import Image from 'next/image';
-import { RefreshCw, Bell, User, LogOut, Sun, Moon } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { ArrowLeft, Bell, User, LogOut, Sun, Moon } from 'lucide-react';
 import { DateInput } from '@07ps/ui';
 import { useBusinessUnit } from './BusinessUnitProvider';
 import { useTheme } from './ThemeProvider';
@@ -33,9 +34,9 @@ export interface AppHeaderProps {
   pageTitle: string;
   anchorDate: string;
   onAnchorDateChange: (date: string) => void;
-  onRefresh?: () => void;
-  /** Formatted "Last Refresh Time" string, shown as the refresh button's tooltip. */
-  lastRefreshTime?: string | null;
+  /** Back button (browser history), shown next to the theme toggle. Pass false where there is
+   * nothing to go back to (the Dashboard Hub). */
+  showBack?: boolean;
   /** Signed-in user's display label (role or full name), shown in the profile chip. */
   roleLabel?: string;
   notificationCount?: number;
@@ -60,8 +61,7 @@ export interface AppHeaderProps {
  * date selector, refresh, notifications, export, user profile" spec:
  *   - An inline compact Specific-Date selector, so the anchor date driving every KPI on the page is
  *     visible and changeable from the header itself, not only inside the sidebar
- *   - A Refresh button that spins while `onRefresh` is running and shows the last-refresh time as
- *     its tooltip
+ *   - A Back button (moved here from FilterBar) next to the theme toggle
  *   - A notification bell with an unread-count badge (still a visual affordance -- no notification
  *     backend exists in this build, same honest-stub convention as Header.tsx's Export button)
  *   - A profile chip showing the current dev sign-in role, standing in for a real user identity
@@ -73,8 +73,7 @@ export function AppHeader({
   pageTitle,
   anchorDate,
   onAnchorDateChange,
-  onRefresh,
-  lastRefreshTime,
+  showBack = true,
   roleLabel,
   notificationCount = 0,
   onLogout,
@@ -85,14 +84,7 @@ export function AppHeader({
   const { businessUnit } = useBusinessUnit();
   const { theme, toggle } = useTheme();
   const secondary = buLogo[businessUnit];
-  const [refreshing, setRefreshing] = useState(false);
-
-  const handleRefresh = () => {
-    if (!onRefresh) return;
-    setRefreshing(true);
-    onRefresh();
-    setTimeout(() => setRefreshing(false), 700);
-  };
+  const router = useRouter();
 
   const initials = (roleLabel ?? 'U')
     .split(' ')
@@ -155,6 +147,28 @@ export function AppHeader({
           </div>
         )}
 
+        {showBack && (
+          <button
+            onClick={() => router.back()}
+            aria-label="Back"
+            title="Back"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '1px solid var(--ps-color-border)',
+              borderRadius: 6,
+              width: 30,
+              height: 30,
+              background: 'transparent',
+              color: 'var(--ps-color-text)',
+              cursor: 'pointer',
+            }}
+          >
+            <ArrowLeft size={16} className="ps-rtl-flip" />
+          </button>
+        )}
+
         <button
           onClick={toggle}
           aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
@@ -173,21 +187,6 @@ export function AppHeader({
           }}
         >
           {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-        </button>
-
-        <button
-          onClick={handleRefresh}
-          aria-label="Refresh"
-          title={lastRefreshTime ? `Last refresh: ${lastRefreshTime}` : 'Refresh'}
-          style={{
-            display: 'flex',
-            background: 'none',
-            border: 'none',
-            color: 'var(--ps-color-muted-text)',
-            cursor: onRefresh ? 'pointer' : 'default',
-          }}
-        >
-          <RefreshCw size={18} style={refreshing ? { animation: 'ps-spin 0.7s linear' } : undefined} />
         </button>
 
         <button

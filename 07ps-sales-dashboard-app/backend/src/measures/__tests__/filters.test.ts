@@ -331,3 +331,18 @@ describe('Role data scope (generic role_data_scope rules)', () => {
     expect(scoped).toEqual({ companyKeys: [1], channelKeys: [3], segmentKeys: [1] });
   });
 });
+
+describe('buildWhereClause -- customerKeys', () => {
+  it('is ignored unless the caller opts in (targets / CRM tables have no CustomerKey)', () => {
+    const { clause, params } = buildWhereClause({ customerKeys: [7, 8] }, 'ftp');
+    expect(clause).toBe('1=1');
+    expect(params).toEqual([]);
+  });
+
+  it('filters on the alias CustomerKey column when the caller opts in', () => {
+    const { clause, params } = buildWhereClause({ companyKeys: [1], customerKeys: [7, 8] }, 'fsl', true);
+    expect(clause).toContain('fsl.CompanyKey IN (?)');
+    expect(clause).toContain('fsl.CustomerKey IN (?, ?)');
+    expect(params).toEqual([1, 7, 8]);
+  });
+});

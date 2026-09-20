@@ -139,6 +139,30 @@ html, body {
   }
 }
 
+/* Directional icons (e.g. the header Back arrow) mirror in RTL. */
+[dir='rtl'] .ps-rtl-flip { transform: scaleX(-1); }
+
+/* ScrollableNav (BottomNavBar): hidden scrollbar, tabs never shrink or wrap, centred while they
+   fit and start-aligned ("safe") once they overflow so the first tab is never clipped. */
+.ps-hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.ps-hide-scrollbar::-webkit-scrollbar { display: none; }
+.ps-scroll-nav-track {
+  display: flex;
+  align-items: center;
+  justify-content: safe center;
+  gap: var(--ps-space-6, 40px);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ps-scroll-nav-track > * { flex-shrink: 0; white-space: nowrap; }
+.ps-scroll-nav-track a { -webkit-user-drag: none; }
+@media (max-width: 767px) {
+  .ps-scroll-nav-track { gap: var(--ps-space-4, 24px); }
+}
+
 /* Tachometer rebuild (dark-theme pass): inactive BottomNavBar items "softly illuminate on hover". */
 .ps-bottomnav-inactive:hover > div {
   color: var(--ps-color-text) !important;

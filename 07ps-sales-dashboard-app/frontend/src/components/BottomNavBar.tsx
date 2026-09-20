@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useAuth } from '../lib/AuthProvider';
 import { ADMIN_NAV_ITEM, NAV_ITEMS, departmentReports } from '../lib/navItems';
 import { DEPARTMENTS } from '../lib/departments';
+import { ScrollableNav } from './ScrollableNav';
 
 /**
  * Tachometer rebuild (dark-theme pass): fixed bottom navigator, per the mockup's "modern bottom
@@ -46,15 +47,14 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
         bottom: 0,
         zIndex: 40,
         display: 'flex',
-        justifyContent: 'center',
-        gap: 'var(--ps-space-6, 40px)',
-        padding: '10px var(--ps-space-4, 24px)',
+        padding: '10px var(--ps-space-2, 8px)',
         background: 'var(--ps-color-translucent-bg)',
         backdropFilter: 'blur(10px)',
         WebkitBackdropFilter: 'blur(10px)',
         borderTop: '1px solid var(--ps-color-border)',
       }}
     >
+      <ScrollableNav label="pages" activeKey={active}>
       {items.map(({ label, icon: Icon, href }) => {
         const isActive = label === active;
         const content = (
@@ -77,7 +77,7 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
 
         if (href) {
           return (
-            <Link key={label} href={href} aria-label={label} style={{ textDecoration: 'none' }}>
+            <Link key={label} href={href} aria-label={label} aria-current={isActive ? 'page' : undefined} style={{ textDecoration: 'none' }}>
               {content}
             </Link>
           );
@@ -97,7 +97,7 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
       })}
 
       {showAdmin && (
-        <Link href={ADMIN_NAV_ITEM.href} aria-label={ADMIN_NAV_ITEM.label} style={{ textDecoration: 'none' }}>
+        <Link href={ADMIN_NAV_ITEM.href} aria-label={ADMIN_NAV_ITEM.label} aria-current={active === 'Admin' ? 'page' : undefined} style={{ textDecoration: 'none' }}>
           <div
             style={{
               display: 'flex',
@@ -114,6 +114,7 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
           </div>
         </Link>
       )}
+      </ScrollableNav>
     </nav>
   );
 }

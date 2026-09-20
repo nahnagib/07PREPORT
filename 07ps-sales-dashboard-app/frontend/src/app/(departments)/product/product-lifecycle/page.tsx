@@ -246,11 +246,6 @@ export default function ProductLifecyclePage() {
         />
 
         <FilterBar
-          onReset={() => {
-            setCompany('All');
-            setCategory([]);
-            setSegment('All');
-          }}
           showDateRange={false}
           showCompanyDimension={false}
           showTransactionDimensions={false}

@@ -1,6 +1,6 @@
 'use client';
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import type { TachometerFilters } from '../lib/api';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { fetchFilterOptions, fetchRefreshStatus, type DimOption, type FilterOptionsResponse, type TachometerFilters } from '../lib/api';
 import { useAuth } from '../lib/AuthProvider';
 import { useBusinessUnit } from './BusinessUnitProvider';
 
@@ -23,6 +23,7 @@ export const EMPTY_FILTERS: TachometerFilters = {
   channelKeys: [],
   salesTeamKeys: [],
   salespersonKeys: [],
+  customerKeys: [],
 };
 
 /** Dashboard-wide default: Customer Group defaults to B2B (segment_key 1) + B2C (segment_key 2)
@@ -49,7 +50,33 @@ interface FilterContextValue {
   onAnchorDateChange: (date: string) => void;
   onDateRangeChange: (from: string, to: string) => void;
   resetFilters: () => void;
+  /** Cross-filtered options for every filter (GET /filters/options) -- see useScopedFilterOptions. */
+  options: FilterOptionsState;
+  reloadOptions: () => void;
+  /** Which date scope narrows the option lists: 'range' = From..To (pages with a date range),
+   * 'anchor' = everything up to the single anchor date. FilterBar sets this from its own props. */
+  setOptionsDateMode: (mode: 'range' | 'anchor') => void;
+  /** Whether the current page's KPIs can be scoped by Customer (FilterBar sets this). While false the
+   * selection is left out of `effectiveFilters`, so it can neither narrow other lists nor be ignored
+   * silently by a page whose data has no customer grain (targets, CRM pipeline). */
+  setCustomerFilterEnabled: (enabled: boolean) => void;
+  /** Bumped whenever warehouse data has been refreshed (an ETL run finished); every data hook
+   * lists it as a dependency, so bumping it re-fetches all dashboard data and the filter options. */
+  dataVersion: number;
+  bumpDataVersion: () => void;
 }
+
+export interface FilterOptionsState {
+  data: FilterOptionsResponse['options'] | null;
+  /** True during any (re)fetch, including background refreshes while `data` is still shown. */
+  loading: boolean;
+  error: string | null;
+  /** The selected filters together match no sales data (within the date scope). */
+  empty: boolean;
+}
+
+const OPTIONS_DEBOUNCE_MS = 250;
+const REFRESH_POLL_MS = 60_000;
 
 const FilterContext = createContext<FilterContextValue | null>(null);
 
@@ -64,7 +91,7 @@ const FilterContext = createContext<FilterContextValue | null>(null);
  * each page's own handleFiltersChange).
  */
 export function FilterProvider({ children }: { children: React.ReactNode }) {
-  const { isSalesperson, salespersonKey } = useAuth();
+  const { isSalesperson, salespersonKey, token } = useAuth();
   const { setBusinessUnit } = useBusinessUnit();
 
   const [filters, setFilters] = useState<TachometerFilters>(DEFAULT_FILTERS);
@@ -72,44 +99,33 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   const [dateFromDate, setDateFromDate] = useState(ytdStartIso());
   const [dateToDate, setDateToDate] = useState(todayIso());
 
-  const effectiveFilters = useMemo<TachometerFilters>(
-    () => (isSalesperson ? { ...EMPTY_FILTERS, salespersonKeys: salespersonKey != null ? [salespersonKey] : [] } : filters),
-    [isSalesperson, salespersonKey, filters],
-  );
+  const [customerEnabled, setCustomerFilterEnabled] = useState(false);
 
-  const onFiltersChange = useCallback(
+  const effectiveFilters = useMemo<TachometerFilters>(() => {
+    const base = isSalesperson ? { ...EMPTY_FILTERS, salespersonKeys: salespersonKey != null ? [salespersonKey] : [] } : filters;
+    return customerEnabled ? base : { ...base, customerKeys: [] };
+  }, [isSalesperson, salespersonKey, filters, customerEnabled]);
+
+  /** Company -> header logo (Majaal/Tika/both). Also re-run when the server prunes a company. */
+  const syncBusinessUnit = useCallback(
     (next: TachometerFilters) => {
-      // Cascade reset (Company Link + Cascading Filter Bar, 2026-09): changing a parent filter
-      // clears every dependent child's *value* -- narrowing their *option lists* is handled
-      // separately by useFilterOptions (lib/hooks.ts), which re-fetches whenever its own upstream
-      // keys change. Compared against the PREVIOUS filters state (via setFilters's updater form),
-      // not `next` itself, so this only fires on an actual change to that specific field -- e.g.
-      // salespersonKeys changing must never reset itself or anything else.
-      setFilters((prev) => {
-        const cascaded: TachometerFilters = { ...next };
-        if (!sameKeys(prev.companyKeys, next.companyKeys)) {
-          cascaded.segmentKeys = [];
-          cascaded.channelKeys = [];
-          cascaded.salesTeamKeys = [];
-          cascaded.salespersonKeys = [];
-        } else if (!sameKeys(prev.segmentKeys, next.segmentKeys)) {
-          cascaded.channelKeys = [];
-          cascaded.salesTeamKeys = [];
-          cascaded.salespersonKeys = [];
-        } else if (!sameKeys(prev.channelKeys, next.channelKeys)) {
-          cascaded.salesTeamKeys = [];
-          cascaded.salespersonKeys = [];
-        } else if (!sameKeys(prev.salesTeamKeys, next.salesTeamKeys)) {
-          cascaded.salespersonKeys = [];
-        }
-        return cascaded;
-      });
       const companyKeys = next.companyKeys ?? [];
       if (companyKeys.length === 1 && companyKeys[0] === 1) setBusinessUnit('majaal');
       else if (companyKeys.length === 1 && companyKeys[0] === 2) setBusinessUnit('tika');
       else setBusinessUnit('all');
     },
     [setBusinessUnit],
+  );
+
+  const onFiltersChange = useCallback(
+    (next: TachometerFilters) => {
+      // Dependent selections are no longer cleared here: the server cross-filters every option
+      // list and returns the selection with only the now-invalid values removed (see the options
+      // effect below), so a still-valid child selection survives a parent change.
+      setFilters(next);
+      syncBusinessUnit(next);
+    },
+    [syncBusinessUnit],
   );
 
   const onDateRangeChange = useCallback((from: string, to: string) => {
@@ -137,6 +153,88 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     setDateToDate(today);
   }, [setBusinessUnit]);
 
+  // ---- Cross-filtered option lists (GET /filters/options) --------------------------------------
+  const [optionsDateMode, setOptionsDateMode] = useState<'range' | 'anchor'>('anchor');
+  const [dataVersion, setDataVersion] = useState(0);
+  const bumpDataVersion = useCallback(() => setDataVersion((v) => v + 1), []);
+  const [optionsReload, setOptionsReload] = useState(0);
+  const reloadOptions = useCallback(() => setOptionsReload((v) => v + 1), []);
+  const [options, setOptions] = useState<FilterOptionsState>({ data: null, loading: true, error: null, empty: false });
+
+  const dateFrom = optionsDateMode === 'range' ? dateFromDate : null;
+  const dateTo = optionsDateMode === 'range' ? dateToDate : anchorDate;
+  const filtersSig = JSON.stringify(effectiveFilters);
+  const isFirstOptionsLoad = useRef(true);
+
+  useEffect(() => {
+    if (!token) return;
+    const controller = new AbortController();
+    // First load is immediate; later ones are debounced so rapid multi-select clicks collapse into
+    // one request. Cleanup aborts the in-flight request, so a slow stale response can never
+    // overwrite a newer one (and cancelled timers never fire at all).
+    const delay = isFirstOptionsLoad.current ? 0 : OPTIONS_DEBOUNCE_MS;
+    // Keep showing the previous options while refetching (no flicker) -- only `loading` flips.
+    setOptions((o) => ({ ...o, loading: true, error: null }));
+    const timer = setTimeout(() => {
+      fetchFilterOptions(token, effectiveFilters, { dateFrom, dateTo }, controller.signal)
+        .then((res) => {
+          isFirstOptionsLoad.current = false;
+          setOptions({ data: res.options, loading: false, error: null, empty: !res.hasData });
+          // Auto-deselect: adopt the server's pruned selection if it dropped anything. Not for a
+          // salesperson-tier user (their filters are forced server-side and aren't editable).
+          if (!isSalesperson) {
+            const dims = ['companyKeys', 'segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys', 'customerKeys'] as const;
+            setFilters((prev) => {
+              if (dims.every((d) => sameKeys(prev[d], res.filters[d]))) return prev;
+              const next = { ...prev };
+              for (const d of dims) {
+                if (!sameKeys(prev[d], res.filters[d])) (next as Record<string, unknown>)[d] = res.filters[d];
+              }
+              syncBusinessUnit(next);
+              return next;
+            });
+          }
+        })
+        .catch((err) => {
+          if (err instanceof DOMException && err.name === 'AbortError') return;
+          setOptions((o) => ({ ...o, loading: false, error: err instanceof Error ? err.message : 'Failed to load filter options.' }));
+        });
+    }, delay);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+    // effectiveFilters is tracked through its serialized form (a new object each render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, filtersSig, dateFrom, dateTo, isSalesperson, dataVersion, optionsReload, syncBusinessUnit]);
+
+  // Notice a finished ETL run (any user, any page): poll the refresh timestamp and, when it moves,
+  // bump dataVersion so dashboards and filter options reload on their own.
+  const lastRefreshSeen = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    const check = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      fetchRefreshStatus(token)
+        .then((status) => {
+          if (cancelled) return;
+          const seen = lastRefreshSeen.current;
+          lastRefreshSeen.current = status.lastRefreshTime;
+          if (seen !== undefined && seen !== status.lastRefreshTime) bumpDataVersion();
+        })
+        .catch(() => {
+          // Best-effort; the next tick tries again.
+        });
+    };
+    check();
+    const id = setInterval(check, REFRESH_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [token, bumpDataVersion]);
+
   const value: FilterContextValue = {
     filters,
     effectiveFilters,
@@ -147,6 +245,12 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     onAnchorDateChange: setAnchorDate,
     onDateRangeChange,
     resetFilters,
+    options,
+    reloadOptions,
+    setOptionsDateMode,
+    setCustomerFilterEnabled,
+    dataVersion,
+    bumpDataVersion,
   };
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>;
@@ -156,4 +260,42 @@ export function useFilterState() {
   const ctx = useContext(FilterContext);
   if (!ctx) throw new Error('useFilterState must be used within FilterProvider');
   return ctx;
+}
+
+export function useDataVersion(): number {
+  // Outside a FilterProvider (e.g. isolated tests) there is nothing to refresh on.
+  return useContext(FilterContext)?.dataVersion ?? 0;
+}
+
+interface AsyncOptions {
+  data: DimOption[] | null;
+  loading: boolean;
+  error: string | null;
+}
+
+/**
+ * Cross-filtered option lists in the shape pages already consume from useFilterOptions
+ * (businessUnits/customerGroups/... each `{ data, loading, error }`), plus `customers`. All lists
+ * come from the one shared /filters/options request owned by FilterProvider, so every page and the
+ * FilterBar see the same, already-narrowed options without each fetching their own.
+ */
+export function useScopedFilterOptions() {
+  const ctx = useContext(FilterContext);
+  if (!ctx) throw new Error('useScopedFilterOptions must be used within FilterProvider');
+  const { data, loading, error } = ctx.options;
+  const pick = (key: keyof FilterOptionsResponse['options']): AsyncOptions => ({
+    data: data ? data[key] : null,
+    loading,
+    error,
+  });
+  return {
+    businessUnits: pick('businessUnits'),
+    customerGroups: pick('customerGroups'),
+    distributionChannels: pick('distributionChannels'),
+    branches: pick('branches'),
+    salespersons: pick('salespersons'),
+    customers: pick('customers'),
+    empty: ctx.options.empty,
+    reload: ctx.reloadOptions,
+  };
 }

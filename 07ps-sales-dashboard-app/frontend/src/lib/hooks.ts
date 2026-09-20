@@ -1,5 +1,6 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useDataVersion } from '../components/FilterProvider';
 import {
   BcgMatrixOverview,
   BcgMatrixScopeFilters,
@@ -39,7 +40,6 @@ import {
   ActivityMomentumOverview,
   PipelineHealthOverview,
   PipelineTrendOverview,
-  fetchOverviewReportPdf,
 } from './api';
 
 interface AsyncState<T> {
@@ -76,6 +76,21 @@ function authGate<T>(
   // else: auth is still in flight on first mount -- stay in the initial loading state, `load` will
   // re-run once `token` (or `authError`) changes.
   return true;
+}
+
+/** Guards against out-of-order responses: `begin()` returns a check that is true only while no newer
+ * request has begun, so a slow stale response can never overwrite a newer one's state. */
+function useLatestRequest() {
+  const counter = useRef(0);
+  return useMemo(
+    () => ({
+      begin() {
+        const id = ++counter.current;
+        return () => counter.current === id;
+      },
+    }),
+    [],
+  );
 }
 
 function makeRetry(token: string | null, retryAuth: () => void, load: () => void): () => void {
@@ -203,6 +218,8 @@ export function useTachometerOverview(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<TachometerOverview>>({
     data: null,
     loading: true,
@@ -212,11 +229,12 @@ export function useTachometerOverview(
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchTachometerOverview(token as string, anchorDate, filters)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters)]);
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();
@@ -234,6 +252,8 @@ export function useCriticalNumberOverview(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<CriticalNumberOverview>>({
     data: null,
     loading: true,
@@ -243,11 +263,12 @@ export function useCriticalNumberOverview(
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchCriticalNumberOverview(token as string, anchorDate, filters)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters)]);
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();
@@ -258,15 +279,18 @@ export function useCriticalNumberOverview(
 
 /** Last Update / Last Refresh Time + staleness (Standards Section 3.4/3.19/3.23). */
 export function useRefreshStatus(token: string | null, authError: string | null, retryAuth: () => void) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<RefreshStatus>>({ data: null, loading: true, error: null });
 
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchRefreshStatus(token as string)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message }));
-  }, [token, authError]);
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message }));
+  }, [dataVersion, token, authError]);
 
   useEffect(() => {
     load();
@@ -285,6 +309,8 @@ export function useTachometerBreakdown(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<TachometerBreakdown>>({
     data: null,
     loading: true,
@@ -294,11 +320,12 @@ export function useTachometerBreakdown(
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchTachometerBreakdown(token as string, anchorDate, filters, metric, groupBy)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters), metric, groupBy]);
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters), metric, groupBy]);
 
   useEffect(() => {
     load();
@@ -317,6 +344,8 @@ export function useRevenueTrendOverview(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<RevenueTrendOverview>>({
     data: null,
     loading: true,
@@ -326,11 +355,12 @@ export function useRevenueTrendOverview(
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchRevenueTrendOverview(token as string, anchorDate, filters)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters)]);
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();
@@ -351,6 +381,8 @@ export function useInvoicesEngineOverview(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<InvoicesEngineOverview>>({
     data: null,
     loading: true,
@@ -360,11 +392,12 @@ export function useInvoicesEngineOverview(
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchInvoicesEngineOverview(token as string, anchorDate, filters, scope)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters), scope.selectedYear, scope.selectedInvoiceClass]);
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters), scope.selectedYear, scope.selectedInvoiceClass]);
 
   useEffect(() => {
     load();
@@ -385,6 +418,8 @@ export function useCustomerGrowthOverview(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<CustomerGrowthOverview>>({
     data: null,
     loading: true,
@@ -394,11 +429,12 @@ export function useCustomerGrowthOverview(
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchCustomerGrowthOverview(token as string, anchorDate, filters, scope)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters), scope.selectedYear, scope.selectedCategory]);
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters), scope.selectedYear, scope.selectedCategory]);
 
   useEffect(() => {
     load();
@@ -416,6 +452,8 @@ export function usePipelineHealthOverview(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<PipelineHealthOverview>>({
     data: null,
     loading: true,
@@ -425,11 +463,12 @@ export function usePipelineHealthOverview(
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchPipelineHealthOverview(token as string, filters)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, JSON.stringify(filters)]);
+  }, [dataVersion, token, authError, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();
@@ -447,6 +486,8 @@ export function usePipelineTrendOverview(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<PipelineTrendOverview>>({
     data: null,
     loading: true,
@@ -456,11 +497,12 @@ export function usePipelineTrendOverview(
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchPipelineTrendOverview(token as string, anchorDate, filters)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters)]);
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();
@@ -478,6 +520,8 @@ export function useActivityMomentumOverview(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<ActivityMomentumOverview>>({
     data: null,
     loading: true,
@@ -487,11 +531,12 @@ export function useActivityMomentumOverview(
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchActivityMomentumOverview(token as string, anchorDate, filters)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters)]);
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();
@@ -508,16 +553,19 @@ export function useTachometerTrend(
   authError: string | null,
   retryAuth: () => void,
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<TachometerTrend>>({ data: null, loading: true, error: null });
 
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchTachometerTrend(token as string, anchorDate, filters)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, anchorDate, JSON.stringify(filters)]);
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();
@@ -535,16 +583,19 @@ export function useBcgMatrixOverview(
   retryAuth: () => void,
   scope: BcgMatrixScopeFilters = {},
 ) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<BcgMatrixOverview>>({ data: null, loading: true, error: null });
 
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchBcgMatrixOverview(token as string, scope)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError, JSON.stringify(scope)]);
+  }, [dataVersion, token, authError, JSON.stringify(scope)]);
 
   useEffect(() => {
     load();
@@ -558,62 +609,23 @@ export function useBcgMatrixOverview(
  * scope/filters param (Company/Category/BCG Class filtering stays client-side on this page, same
  * as it was against the mock data this replaces). */
 export function useBrandPerformanceOverview(token: string | null, authError: string | null, retryAuth: () => void) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
   const [state, setState] = useState<AsyncState<BrandPerformanceOverview>>({ data: null, loading: true, error: null });
 
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
     fetchBrandPerformanceOverview(token as string)
-      .then((data) => setState({ data, loading: false, error: null }))
-      .catch((err) => setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, authError]);
+  }, [dataVersion, token, authError]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   return { ...state, retry: makeRetry(token, retryAuth, load) };
-}
-
-/**
- * Export Overview Report (backend/src/routes/reports.ts) -- an on-demand PDF snapshot of the
- * CURRENT situation for whatever filters are on screen. Action-triggered, not auto-fetch-on-mount
- * like every other hook above, so it follows Pipeline Health's existing `handleDownloadPdf`
- * local-state convention (isExporting boolean + label swap) instead of the authGate/AsyncState
- * template -- generalized into one shared hook so the same button works on all 8 pages without
- * duplicating this 8 times. Unlike that existing precedent, this surfaces failures via `error`
- * rather than silently swallowing them.
- */
-export function useExportOverviewReport(token: string | null, anchorDate: string, filters: TachometerFilters) {
-  const [isExporting, setIsExporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const exportReport = useCallback(async () => {
-    if (!token) {
-      setError('You must be signed in to export a report.');
-      return;
-    }
-    setIsExporting(true);
-    setError(null);
-    try {
-      const blob = await fetchOverviewReportPdf(token, anchorDate, filters);
-      const url = URL.createObjectURL(blob);
-      const generatedTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Promotion_Overview_${anchorDate}_${generatedTimestamp}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to export the report.');
-    } finally {
-      setIsExporting(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, anchorDate, JSON.stringify(filters)]);
-
-  return { isExporting, error, exportReport };
 }

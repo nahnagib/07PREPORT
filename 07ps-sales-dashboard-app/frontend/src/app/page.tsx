@@ -25,6 +25,7 @@ export default function DashboardHubPage() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppHeader
+        showBack={false}
         pageTitle="7Ps Dashboard Hub"
         anchorDate=""
         onAnchorDateChange={() => {}}

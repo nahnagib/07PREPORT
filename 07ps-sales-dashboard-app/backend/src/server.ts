@@ -14,7 +14,6 @@ import { pipelineTrendRouter } from './routes/pipelineTrend';
 import { activityMomentumRouter } from './routes/activityMomentum';
 import { bcgMatrixRouter } from './routes/bcgMatrix';
 import { materialsAnalogyBrandPerformanceRouter } from './routes/materialsAnalogyBrandPerformance';
-import { reportsRouter } from './routes/reports';
 import { authRouter } from './routes/auth';
 import { adminUsersRouter } from './routes/admin/users';
 import { adminImportRouter } from './routes/admin/import';
@@ -76,8 +75,6 @@ app.use('/pipeline-trend', pipelineTrendRouter);
 app.use('/activity-momentum', activityMomentumRouter);
 app.use('/bcg-matrix', bcgMatrixRouter);
 app.use('/pim-contribution', materialsAnalogyBrandPerformanceRouter);
-// Overview Report (PDF export) -- aggregates the 8 pages above; not the Python reporting/ pipeline.
-app.use('/reports', reportsRouter);
 app.use('/auth', authRouter);
 app.use('/admin/users/import', adminImportRouter);
 app.use('/admin/users', adminUsersRouter);

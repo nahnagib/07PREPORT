@@ -129,6 +129,7 @@ export function resolveScopedFilters(req: Request, res: Response, next: NextFunc
     channelKeys: parseNumberArray(q.channelKeys),
     salesTeamKeys: parseStringArray(q.salesTeamKeys),
     salespersonKeys: parseNumberArray(q.salespersonKeys),
+    customerKeys: parseNumberArray(q.customerKeys),
   };
 
   try {

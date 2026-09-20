@@ -1,4 +1,5 @@
 import { DateTime } from 'luxon';
+import { getAppTimezone } from '../lib/timezone';
 import { getFreshness } from '../marcom/service';
 import { BRAND_JOIN, availableYears, listBrands, latestMonth, runCurrent, where } from './db';
 import { applyDefaults, parseBool, parseBrandIds, parseCommonRaw, parsePlatforms, parseStatuses } from './params';
@@ -13,8 +14,7 @@ import { EventRow, TradeRow, buildTrade } from './trade';
 type Raw = Record<string, unknown>;
 
 /** Same zone as lib/timezone.ts (the business timezone every date in this app is read in). */
-const BUSINESS_TIMEZONE = 'Africa/Tripoli';
-export const businessToday = (): string => DateTime.now().setZone(BUSINESS_TIMEZONE).toISODate()!;
+export const businessToday = (): string => DateTime.now().setZone(getAppTimezone()).toISODate()!;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const monthStart = (y: number, m: number) => `${y}-${pad(m)}-01`;

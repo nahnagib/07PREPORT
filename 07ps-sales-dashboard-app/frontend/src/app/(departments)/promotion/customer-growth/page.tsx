@@ -6,7 +6,7 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useFilterState } from '../../../../components/FilterProvider';
+import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import {
   Card,
   ChartPanel,
@@ -29,7 +29,7 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useCustomerGrowthOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import { useCustomerGrowthOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type {
   CustomerGrowthOverview,
   CustomerGrowthPeriodCounts,
@@ -313,7 +313,6 @@ export default function CustomerGrowthPage() {
     onFiltersChange,
     onAnchorDateChange,
     onDateRangeChange,
-    resetFilters,
   } = useFilterState();
 
   const [view, setView] = useState<'summary' | 'details'>('summary');
@@ -333,14 +332,15 @@ export default function CustomerGrowthPage() {
   // client-side from this page's own customersTable response and narrows the two per-customer-list
   // visuals below (Customer Details table, Customers Contribution donut) rather than triggering a
   // re-fetch. Page-local, not synced through FilterProvider, since no other page has this dimension.
-  const [selectedCustomerKeys, setSelectedCustomerKeys] = useState<string[]>([]);
+  // The Customer filter is a shared, server-side filter (FilterBar / filters.customerKeys), no longer
+  // a page-local client-side one, so every KPI and chart on this page is already scoped by it.
+  const selectedCustomerKeys = (effectiveFilters.customerKeys ?? []).map(String);
 
   const scope: CustomerGrowthScope = { selectedYear, selectedCategory };
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
+  const filterOptions = useScopedFilterOptions();
   const overview = useCustomerGrowthOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
   /** Page-local slicers/click-filters (not part of the app-wide filter bar) that also narrow this
@@ -386,23 +386,6 @@ export default function CustomerGrowthPage() {
     } finally {
       setDownloadingPdf(null);
     }
-  }
-
-  function handleReset() {
-    resetFilters();
-    setView('summary');
-    setSelectedYear(null);
-    setContributionDrill(null);
-    setCategoryDrillMode(false);
-    setCategoryDrill(null);
-    setSelectedCategory(null);
-    setStatusFilter(null);
-    setSelectedCustomerKeys([]);
-  }
-
-  function handleRefresh() {
-    overview.retry();
-    refreshStatus.retry();
   }
 
   function handleTrendCategoryClick(label: string) {
@@ -468,11 +451,6 @@ export default function CustomerGrowthPage() {
     customerCount: y.customerCount,
   }));
 
-  // Customer filter options: built from this page's own customer list (no shared Customer
-  // dimension exists -- see FilterBar's fallback), sorted for a stable, scannable dropdown.
-  const customerOptions = (data?.customersTable ?? [])
-    .map((r) => ({ value: String(r.customerKey), label: r.name }))
-    .sort((a, b) => a.label.localeCompare(b.label));
   const hasCustomerSelection = selectedCustomerKeys.length > 0;
 
   const contribution = data?.customersContribution;
@@ -568,17 +546,15 @@ export default function CustomerGrowthPage() {
           pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
-          onRefresh={handleRefresh}
-          lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
           onLogout={logout}
           showDateInput={false}
         />
 
         <FilterBar
+          showCustomerFilter
           filters={effectiveFilters}
           onChange={onFiltersChange}
-          onReset={handleReset}
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
@@ -586,27 +562,18 @@ export default function CustomerGrowthPage() {
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
-          customerGroupsLoading={filterOptions.customerGroups.loading}
-          distributionChannelsLoading={filterOptions.distributionChannels.loading}
-          branchesLoading={filterOptions.branches.loading}
-          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
-          customerOptions={customerOptions}
-          customerValue={selectedCustomerKeys}
-          onCustomerChange={setSelectedCustomerKeys}
-          onExportReport={exportReport.exportReport}
-          isExporting={exportReport.isExporting}
-          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
           isStale={refreshStatus.data?.isStale}
           isInverted={refreshStatus.data?.isInverted}
+          refreshCheck={refreshStatus.data?.refreshCheck}
           lastRefreshTime={lastRefreshLabel}
         />
 

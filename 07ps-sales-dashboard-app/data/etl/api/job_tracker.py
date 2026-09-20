@@ -11,6 +11,7 @@ backend/src/etl/queue/etlQueue.ts - this is defense-in-depth, not the only place
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 import uuid
@@ -104,6 +105,8 @@ def _run_job(job: Job, python_bin: str) -> None:
         proc = subprocess.Popen(
             args,
             cwd=str(ETL_ROOT),
+            # The job label ("scheduled-incremental", "manual", ...) becomes etl_run_log.trigger_source.
+            env={**os.environ, "ETL_TRIGGER_SOURCE": job.label or "api"},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

@@ -3,7 +3,9 @@ import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext } from '../middleware/scopeContext';
-import type { Filters } from '../measures/filters';
+import { DataScopeError, SalespersonLockError, applyRoleDataScope, applySalespersonLock, type Filters } from '../measures/filters';
+import { emptySelection, type Selection } from '../filters/cascade';
+import { getFilterOptions } from '../filters/optionsService';
 
 /**
  * Filter value-list endpoints for the Tachometer Filters Panel (Standards Section 3.4/4).
@@ -32,6 +34,13 @@ import type { Filters } from '../measures/filters';
  * such params present, every endpoint below runs the exact same query it always has -- a "fast
  * path" with zero behavior change for any caller that doesn't opt in. /business-units stays
  * unparameterized: it's the top of a one-directional cascade, nothing is ever upstream of it.
+ *
+ * CROSS-FILTERING (GET /options, 2026-09): supersedes the four per-dimension cascade endpoints for
+ * the Filter Bar. One call takes every current selection (+ optional date window) and returns the
+ * valid options for all seven filters -- each narrowed by every OTHER filter, in any direction --
+ * plus the selection with now-invalid values dropped. See filters/cascade.ts and
+ * filters/optionsService.ts; the per-dimension endpoints below remain for callers that want an
+ * unnarrowed full list (e.g. the role data-scope admin page).
  *
  * IMPORTANT: this narrowing is a UX/discovery concern only -- which options are *offered* -- and
  * is entirely separate from report-total computation. Company in particular is deliberately NOT
@@ -386,6 +395,78 @@ filtersRouter.get('/salespersons', async (req, res, next) => {
       )) as [Record<string, unknown>[], unknown];
     }
     res.json(scopeRows(rows, 'salesperson_key', allowedValues(req, 'salespersonKeys')));
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseIsoDate(raw: unknown): string | null {
+  return typeof raw === 'string' && ISO_DATE.test(raw) ? raw : null;
+}
+
+/**
+ * Cross-filtered options for all seven filters in one round trip.
+ *
+ * Query: companyKeys/segmentKeys/channelKeys/salesTeamKeys/salespersonKeys/customerKeys (each
+ * repeatable; absent = All) and optional dateFrom/dateTo (YYYY-MM-DD, inclusive; the option lists
+ * only reflect sales inside that window). Response: { filters, options, hasData } -- `filters` is
+ * the selection with values that are no longer valid removed (the client adopts it).
+ *
+ * The caller's role data scope / salesperson lock is applied as a hard wall, never as something a
+ * request can widen: values outside it are neither offered nor kept in `filters`. Unlike the report
+ * endpoints, a selection outside scope is pruned silently rather than answered with a 403 -- this
+ * endpoint's job is to say what is selectable.
+ */
+filtersRouter.get('/options', async (req, res, next) => {
+  try {
+    const q = req.query;
+    const isSalesperson = req.userContext?.roleCode === 'SALESPERSON';
+
+    const selection: Selection = {
+      ...emptySelection(),
+      companyKeys: parseNumberArray(q.companyKeys).map(String),
+      segmentKeys: parseNumberArray(q.segmentKeys).map(String),
+      channelKeys: parseNumberArray(q.channelKeys).map(String),
+      salesTeamKeys: parseStringArray(q.salesTeamKeys),
+      salespersonKeys: parseNumberArray(q.salespersonKeys).map(String),
+      customerKeys: parseNumberArray(q.customerKeys).map(String),
+    };
+
+    let scope: Partial<Selection> = {};
+    try {
+      const roleScope = applyRoleDataScope({}, req.userContext?.dataScopeRules ?? []);
+      const locked = applySalespersonLock(roleScope, req.userContext!);
+      const asStrings = (v: Array<string | number> | undefined) => (v ?? []).map(String);
+      scope = {
+        companyKeys: asStrings(locked.companyKeys),
+        segmentKeys: asStrings(locked.segmentKeys),
+        channelKeys: asStrings(locked.channelKeys),
+        salesTeamKeys: asStrings(locked.salesTeamKeys),
+        salespersonKeys: asStrings(locked.salespersonKeys),
+      };
+    } catch (err) {
+      if (err instanceof SalespersonLockError || err instanceof DataScopeError) {
+        res.status(403).json({ error: 'Forbidden: request is outside your assigned scope.' });
+        return;
+      }
+      throw err;
+    }
+    if (isSalesperson) {
+      // Same as applySalespersonLock: every other dimension is meaningless once pinned to one person.
+      selection.companyKeys = [];
+      selection.segmentKeys = [];
+      selection.channelKeys = [];
+      selection.salesTeamKeys = [];
+      selection.salespersonKeys = [];
+    }
+
+    let from = parseIsoDate(q.dateFrom);
+    const to = parseIsoDate(q.dateTo);
+    if (from && to && from > to) from = to;
+
+    res.json(await getFilterOptions({ from, to }, selection, scope));
   } catch (err) {
     next(err);
   }

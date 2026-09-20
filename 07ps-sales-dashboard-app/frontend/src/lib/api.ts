@@ -31,6 +31,8 @@ async function request<T>(path: string, token: string | null, init?: RequestInit
       },
     });
   } catch (err) {
+    // A caller-initiated abort (superseded filter request) is not a failure -- let it through as-is.
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
     // Dev-diagnosability fix (Section 3.23 gap): a network-level failure -- backend not running,
     // wrong port, CORS preflight block -- throws here as an opaque `TypeError: Failed to fetch`
     // before we ever get a Response to inspect. Log the real error + the URL we tried, so this is
@@ -70,6 +72,8 @@ export interface TachometerFilters {
   channelKeys?: number[];
   salesTeamKeys?: string[];
   salespersonKeys?: number[];
+  /** Sales-transaction pages only (Fact_SalesLines-grain KPIs); targets/CRM data have no customer. */
+  customerKeys?: number[];
 }
 
 export type TargetStatus = 'green' | 'yellow' | 'red' | 'no_target';
@@ -110,6 +114,7 @@ function buildQuery(anchorDate: string, filters: TachometerFilters): string {
   (filters.channelKeys ?? []).forEach((v) => params.append('channelKeys', String(v)));
   (filters.salesTeamKeys ?? []).forEach((v) => params.append('salesTeamKeys', v));
   (filters.salespersonKeys ?? []).forEach((v) => params.append('salespersonKeys', String(v)));
+  (filters.customerKeys ?? []).forEach((v) => params.append('customerKeys', String(v)));
   return params.toString();
 }
 
@@ -119,6 +124,34 @@ export function fetchTachometerOverview(
   filters: TachometerFilters,
 ): Promise<TachometerOverview> {
   return request(`/tachometer/overview?${buildQuery(anchorDate, filters)}`, token);
+}
+
+/** Response of GET /filters/options (backend/src/filters/optionsService.ts): valid options for all
+ * seven filters given the current selection, plus that selection with now-invalid values removed. */
+export interface FilterOptionsResponse {
+  filters: Required<TachometerFilters>;
+  options: {
+    businessUnits: DimOption[];
+    customerGroups: DimOption[];
+    distributionChannels: DimOption[];
+    branches: DimOption[];
+    salespersons: DimOption[];
+    customers: DimOption[];
+  };
+  hasData: boolean;
+}
+
+export function fetchFilterOptions(
+  token: string,
+  filters: TachometerFilters,
+  window: { dateFrom?: string | null; dateTo?: string | null },
+  signal?: AbortSignal,
+): Promise<FilterOptionsResponse> {
+  const params = new URLSearchParams(buildQuery('', filters));
+  params.delete('anchorDate');
+  if (window.dateFrom) params.set('dateFrom', window.dateFrom);
+  if (window.dateTo) params.set('dateTo', window.dateTo);
+  return request<FilterOptionsResponse>(`/filters/options?${params.toString()}`, token, { signal });
 }
 
 export function fetchBusinessUnits(token: string) {
@@ -171,7 +204,25 @@ export interface RefreshStatus {
   lastOrderCreated: string | null;
   lastRefreshTime: string | null;
   isStale: boolean;
+  /** true iff refreshCheck.inconsistent -- kept for the pages that already pass it. */
   isInverted: boolean;
+  refreshCheck?: RefreshCheck;
+  /** IANA zone the API/ETL treat as the business zone (APP_TIMEZONE). */
+  displayTimezone?: string;
+}
+
+/** Mirrors backend/src/measures/refreshStatus.ts's RefreshCheck. */
+export interface RefreshCheck {
+  status: 'ok' | 'no_refresh_log' | 'refresh_before_data' | 'data_ahead_of_watermark' | 'timezone_mismatch' | 'last_run_failed_after_load';
+  inconsistent: boolean;
+  message: string;
+  action: string | null;
+  timezone: string;
+  toleranceMinutes: number;
+  lastRefreshUtc: string | null;
+  latestLoadedOrderUtc: string | null;
+  watermarkOrderCreatedUtc: string | null;
+  differenceMinutes: number | null;
 }
 
 export function fetchRefreshStatus(token: string) {
@@ -700,6 +751,16 @@ export const adminApi = {
   startEtlRun: (token: string, mode: EtlMode): Promise<{ ok: boolean; runId: number; jobId: string }> =>
     request(`/admin/etl/start/${mode}`, token, { method: 'POST' }),
 
+  getEtlPreflight: (token: string): Promise<EtlPreflightResponse> => request('/admin/etl/preflight', token),
+
+  /** Re-runs the last failed/cancelled run (or `runId`) with the same mode. */
+  retryEtlRun: (token: string, runId?: number): Promise<{ ok: boolean; runId: number; retriedRunId: number }> =>
+    request('/admin/etl/retry', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(runId === undefined ? {} : { runId }),
+    }),
+
   cancelEtlRun: (token: string): Promise<{ ok: boolean; message: string }> =>
     request('/admin/etl/cancel', token, { method: 'POST' }),
 
@@ -979,8 +1040,38 @@ export interface EtlProgress {
   stageStatus?: 'started' | 'completed' | 'failed';
 }
 
+/** GET /admin/etl/preflight: are the ETL's manual input workbooks reachable/valid from the ETL
+ * service itself? `available: false` = the check couldn't run (ETL API unreachable). */
+export interface EtlPreflightResponse {
+  available: boolean;
+  error?: string;
+  ok?: boolean;
+  input_dir?: string;
+  source_var?: string;
+  configured_value?: string;
+  dir_exists?: boolean;
+  platform?: string;
+  files?: {
+    name: string;
+    path: string;
+    required: boolean;
+    status: 'ok' | 'missing' | 'unreadable' | 'invalid_xlsx';
+    size_bytes: number | null;
+    modified: string | null;
+    near_matches: string[];
+    detail: string;
+  }[];
+  listing?: string[];
+  listing_truncated?: boolean;
+  hint?: string;
+  config_error?: string | null;
+  output?: { dir: string | null; writable: boolean; detail: string };
+}
+
 export interface EtlStatusResponse {
   run: EtlJobRun | null;
+  /** The most recent run that actually finished -- unlike `run`, never the in-flight one. */
+  lastRun: EtlJobRun | null;
   progress: EtlProgress | null;
   recentLog: string[];
   /** false means the queue backend (Redis) is unreachable right now -- distinct from a genuine
@@ -1913,48 +2004,4 @@ export interface BrandPerformanceOverview {
  * own header) -- there is no client-side equivalent to request or bypass. */
 export function fetchBrandPerformanceOverview(token: string): Promise<BrandPerformanceOverview> {
   return request('/pim-contribution/brand-performance', token);
-}
-
-// ---------------------------------------------------------------------------
-// Overview Report (backend/src/routes/reports.ts) -- an on-demand PDF snapshot of the CURRENT
-// situation for whatever filters are on screen, aggregating all 8 pages above. NOT the same thing
-// as the Python reporting/ pipeline at the repo root (a separate, scheduled, full-history Sales
-// Predictive Report with forecasting) -- keep these two names/concepts distinct.
-// ---------------------------------------------------------------------------
-
-/** Blob-returning twin of request<T> -- a PDF response can't be res.json()'d. Same auth header
- * and error-message extraction as request<T>, just a different success-path body read. */
-async function requestBlob(path: string, token: string | null): Promise<Blob> {
-  const url = `${API_BASE}${path}`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[api] network failure calling ${url} -- is the backend running on ${API_BASE}? (CORS/port mismatches land here too):`, err);
-    throw new ApiError(0, 'Could not reach the server. It may be offline or unreachable.');
-  }
-  if (!res.ok) {
-    let message = `Request failed (${res.status})`;
-    try {
-      const rawBody = await res.json();
-      if (rawBody && typeof rawBody === 'object' && 'error' in rawBody) {
-        message = String((rawBody as { error?: unknown }).error);
-      }
-    } catch {
-      // ignore -- keep generic message, never surface raw parse errors (Section 5.9)
-    }
-    throw new ApiError(res.status, message);
-  }
-  return res.blob();
-}
-
-export function fetchOverviewReportPdf(
-  token: string,
-  anchorDate: string,
-  filters: TachometerFilters,
-): Promise<Blob> {
-  return requestBlob(`/reports/overview?${buildQuery(anchorDate, filters)}`, token);
 }

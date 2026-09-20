@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon';
 import { pool } from '../../db/pool';
-import { tripoliSqlDateTimeToDate } from '../../lib/timezone';
+import { getAppTimezone, utcSqlDateTimeToDate } from '../../lib/timezone';
 import { etlLogger } from './etlLogger';
 
 export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel';
@@ -80,6 +80,20 @@ export async function markRunStarted(runId: number): Promise<void> {
   );
 }
 
+/**
+ * A failed attempt that BullMQ is about to retry (see enqueuePipelineRun's attempts/backoff): the
+ * run goes back to 'queued' -- NOT 'failed' -- so hasActiveEtlRun() keeps holding the lock through
+ * the backoff wait. Marking it failed here (what happened before) freed the lock for the whole
+ * backoff window, letting a manual or scheduled run start alongside the pending retry, i.e. two
+ * pipeline runs against the same warehouse. The last error stays visible in error_message.
+ */
+export async function markRunRetrying(runId: number, errorMessage: string): Promise<void> {
+  await pool.query(
+    `UPDATE etl_job_runs SET status = 'queued', started_at = NULL, error_message = ? WHERE id = ?`,
+    [`Attempt failed, retrying: ${errorMessage}`.slice(0, 60_000), runId],
+  );
+}
+
 export interface FinishRunInput {
   status: 'success' | 'failed' | 'cancelled';
   exitCode: number | null;
@@ -136,7 +150,7 @@ export async function forceResetActiveEtlRuns(
   // Libya time, not raw UTC -- this is embedded as human-readable audit text (unlike the
   // queued_at/started_at/finished_at columns, which the frontend formats for display itself), so
   // it needs to already read correctly here, consistent with lib/timezone.ts's rule.
-  const resetAt = DateTime.now().setZone('Africa/Tripoli').toFormat('yyyy-MM-dd HH:mm:ss');
+  const resetAt = DateTime.now().setZone(getAppTimezone()).toFormat('yyyy-MM-dd HH:mm:ss');
   for (const row of activeRows) {
     await finishRun(row.id, {
       status: 'failed',
@@ -202,13 +216,12 @@ export async function releaseOrphanedPipelineLock(): Promise<{ released: boolean
   }
 }
 
-/** queued_at/started_at/finished_at are naive DATETIME columns written via MySQL's own
- * CURRENT_TIMESTAMP, so they carry the DB server's local wall-clock time (Libya, same as every
- * other timestamp in this warehouse -- see lib/timezone.ts's header). `SELECT *` still returns
- * these 3 columns too (via mysql2's own 'local'-zone Date conversion, which depends on whatever
- * OS timezone the Node process happens to run under), but the `_raw` string aliases queried
- * alongside them are what this function actually uses to correct them, discarding the ambiguous
- * `SELECT *` versions of just those 3 fields. */
+/** queued_at/started_at/finished_at are TIMESTAMP columns written via CURRENT_TIMESTAMP on the pool's
+ * connections, whose session is pinned to UTC (db/pool.ts: `SET time_zone = '+00:00'`), so
+ * DATE_FORMAT returns a UTC wall-clock string. (These used to be parsed as Libya time, which showed
+ * every run 2 hours early.) `SELECT *` still returns these 3 columns too, but via mysql2's own Date
+ * conversion, so the `_raw` string aliases queried alongside them are what this function uses,
+ * discarding the `SELECT *` versions of just those 3 fields. */
 const RAW_TIMESTAMP_COLUMNS = `,
   DATE_FORMAT(queued_at, '%Y-%m-%d %H:%i:%s') AS queued_at_raw,
   DATE_FORMAT(started_at, '%Y-%m-%d %H:%i:%s') AS started_at_raw,
@@ -224,9 +237,9 @@ function normalizeEtlJobRunRow(row: EtlJobRunRow & RawTimestampFields): EtlJobRu
   const { queued_at_raw, started_at_raw, finished_at_raw, ...rest } = row;
   return {
     ...rest,
-    queued_at: tripoliSqlDateTimeToDate(queued_at_raw) as Date,
-    started_at: tripoliSqlDateTimeToDate(started_at_raw),
-    finished_at: tripoliSqlDateTimeToDate(finished_at_raw),
+    queued_at: utcSqlDateTimeToDate(queued_at_raw) as Date,
+    started_at: utcSqlDateTimeToDate(started_at_raw),
+    finished_at: utcSqlDateTimeToDate(finished_at_raw),
   };
 }
 

@@ -1,4 +1,5 @@
 import type { Kpi, Status, Unit } from './types';
+import { APP_TIMEZONE } from '../format';
 import { t } from './text';
 
 /**
@@ -70,7 +71,7 @@ export function fmtTimestampDate(iso: string | null | undefined): string {
   if (!iso) return NA();
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return NA();
-  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Tripoli', day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
+  return new Intl.DateTimeFormat('en-GB', { timeZone: APP_TIMEZONE, day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
 }
 
 export function monthName(month: number, style: 'long' | 'short' = 'short'): string {

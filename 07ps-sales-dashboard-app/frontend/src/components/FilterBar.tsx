@@ -1,10 +1,10 @@
 'use client';
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { RotateCcw, FileDown, SlidersHorizontal, ChevronDown, ArrowLeft } from 'lucide-react';
-import { Select, DateInput, Button, type SelectOption } from '@07ps/ui';
+import React, { useEffect, useState } from 'react';
+import { SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { Select, DateInput, type SelectOption } from '@07ps/ui';
 import type { DimOption, TachometerFilters } from '../lib/api';
 import { formatTimestamp } from '../lib/format';
+import { useFilterState, useScopedFilterOptions } from './FilterProvider';
 
 /** Same UTC-based "today" FilterProvider's own default/clamp logic uses, so the To Date picker's
  * max here can never disagree with what onDateRangeChange would itself clamp it to. */
@@ -18,7 +18,6 @@ export interface FilterBarProps {
    * strictly additive extension, not a rework of the existing shape. */
   filters?: TachometerFilters;
   onChange?: (next: TachometerFilters) => void;
-  onReset: () => void;
   anchorDate?: string;
   onAnchorDateChange?: (date: string) => void;
   businessUnits?: DimOption[];
@@ -26,14 +25,6 @@ export interface FilterBarProps {
   distributionChannels?: DimOption[];
   branches?: DimOption[];
   salespersons?: DimOption[];
-  /** Cascading Filter Bar, 2026-09: true only for the brief window a dependent dropdown's option
-   * list is being re-fetched after its parent changed (see lib/hooks.ts's useFilterOptions) --
-   * NOT a "parent not selected yet" gate. A dropdown always shows its full option list and stays
-   * clickable at zero upstream selections; this is purely a transient loading indicator. */
-  customerGroupsLoading?: boolean;
-  distributionChannelsLoading?: boolean;
-  branchesLoading?: boolean;
-  salespersonsLoading?: boolean;
   isSalesperson?: boolean;
   /** MAX(Fact_Orders.OrderDateTime) -- the actual last confirmed Sales Order timestamp, not the
    * ETL's own refresh-completion time (that's shown separately at the bottom of the page by
@@ -46,17 +37,6 @@ export interface FilterBarProps {
   dateFromDate?: string;
   dateToDate?: string;
   onDateRangeChange?: (from: string, to: string) => void;
-  /** Customer Growth-only: no other page has a Customer dimension loaded in the warehouse (see the
-   * "Not available in the current data model" fallback rendered when these are omitted), so this
-   * filter only becomes a real, enabled control when a caller opts in by passing all three. */
-  customerOptions?: SelectOption[];
-  customerValue?: string[];
-  onCustomerChange?: (value: string[]) => void;
-  /** Export Overview Report (backend/src/routes/reports.ts) -- optional so a page that hasn't
-   * wired up useExportOverviewReport yet just doesn't render the button, rather than crashing. */
-  onExportReport?: () => void;
-  isExporting?: boolean;
-  exportError?: string | null;
 
   // ---- Materials Analogy rollout: which field GROUPS render at all, so a page whose data model
   // has none of these dimensions (Stock Velocity/PIM Contribution/Product Lifecycle -- still
@@ -86,6 +66,9 @@ export interface FilterBarProps {
    * sales-transaction dimensions that don't exist on product/inventory data. One flag for all 5
    * since they're conceptually one group (per the Materials Analogy revision's own framing). */
   showTransactionDimensions?: boolean;
+  /** Customer dropdown. Only for pages whose KPIs are all sales-line based: targets and CRM pipeline
+   * data have no customer grain, so on those pages a Customer selection would be silently ignored. */
+  showCustomerFilter?: boolean;
   /** "Last Order Date" / "Last Order Created" -- real Odoo order timestamps; showing them next to
    * a fixed synthetic YTD/LYTD comparison would misleadingly imply a live, refreshing feed. */
   showLastOrderInfo?: boolean;
@@ -98,7 +81,7 @@ export interface FilterBarProps {
 const fieldBox: React.CSSProperties = { width: 152, flexShrink: 0 };
 
 /** Matches Select/DateInput's own label styling exactly (font-size 12 + margin-bottom 4), so
- * non-field controls (Reset button, Last Refreshed text) that have no label of their own still
+ * non-field controls (Last Order info text) that have no label of their own still
  * start at the same top offset as every labeled field in the row. */
 const labelSpacerStyle: React.CSSProperties = {
   display: 'block',
@@ -116,19 +99,14 @@ const labelSpacerStyle: React.CSSProperties = {
  * mount (not persisted/shared across pages) -- every page load starts collapsed again, matching
  * "collapsed by default" rather than remembering the last session's choice.
  *
- * Same 5 real, backend-wired dimensions as AppSidebar (Company, Customer Group/Segment,
- * Distribution Channel, Branch/Sales Team, Salesperson) plus the single anchor date -- this
- * dashboard has never had a two-ended date-range filter or a Customer/Customer Status dimension
- * in its schema (only Fact_Orders/Fact_Targets/Dim_Date + the 5 dims above are loaded). The mockup
- * shows both, so rather than silently drop them or fake a working control, they're rendered here
- * as visibly disabled fields with a tooltip explaining why -- the same "disabled + honest tooltip"
- * convention already used by TopTabBar/BottomNavBar for not-yet-built pages, applied here to
- * not-yet-modeled filter dimensions instead of inventing data that doesn't exist.
+ * Six real, backend-wired dimensions (Company, Customer Group/Segment, Distribution Channel,
+ * Branch/Sales Team, Salesperson, Customer) plus the date control(s). Their option lists are
+ * cross-filtered by the server (see FilterProvider / GET /filters/options), so each dropdown only
+ * offers values that exist together with everything else currently selected.
  */
 export function FilterBar({
   filters = {},
   onChange = () => {},
-  onReset,
   anchorDate = '',
   onAnchorDateChange = () => {},
   businessUnits = [],
@@ -136,33 +114,52 @@ export function FilterBar({
   distributionChannels = [],
   branches = [],
   salespersons = [],
-  customerGroupsLoading = false,
-  distributionChannelsLoading = false,
-  branchesLoading = false,
-  salespersonsLoading = false,
   isSalesperson = false,
   lastUpdate = null,
   lastOrderCreated,
   dateFromDate = anchorDate,
   dateToDate = anchorDate,
   onDateRangeChange,
-  customerOptions,
-  customerValue,
-  onCustomerChange,
-  onExportReport,
-  isExporting = false,
-  exportError = null,
   showDateRange = true,
   showSingleDate = false,
   dateMin,
   dateMax,
   showCompanyDimension = true,
   showTransactionDimensions = true,
+  showCustomerFilter = false,
   showLastOrderInfo = true,
   extraFields,
 }: FilterBarProps) {
-  const router = useRouter();
-  const customerFilterEnabled = showTransactionDimensions && customerOptions != null && customerValue != null && onCustomerChange != null;
+  // Options are cross-filtered by the server (FilterProvider owns the single /filters/options
+  // request): every list below only ever holds values that are valid together with the current
+  // selection. `loading` is true during any refetch, but the previous options stay on screen, so a
+  // dropdown only *disables* itself when it has nothing to show yet or truly has no valid options.
+  const scoped = useScopedFilterOptions();
+  const { setOptionsDateMode, setCustomerFilterEnabled } = useFilterState();
+  const customerEnabled = showTransactionDimensions && showCustomerFilter;
+  const loading = scoped.businessUnits.loading;
+  const customerOptions = (scoped.customers.data ?? []).map((o) => ({ value: String(o.customer_key), label: String(o.customer_name) }));
+  const customerValue = (filters.customerKeys ?? []).map(String);
+
+  // Which date scope narrows the option lists depends on this page's date control.
+  useEffect(() => {
+    setOptionsDateMode(showDateRange ? 'range' : 'anchor');
+  }, [showDateRange, setOptionsDateMode]);
+  useEffect(() => {
+    setCustomerFilterEnabled(customerEnabled);
+    return () => setCustomerFilterEnabled(false);
+  }, [customerEnabled, setCustomerFilterEnabled]);
+
+  /** Disabled/locked-reason/loading props shared by every cascading dropdown. */
+  const fieldState = (optionCount: number, lockedTo?: string) => {
+    if (lockedTo) return { disabled: true, lockedReason: lockedTo, loading: false };
+    if (optionCount === 0) {
+      return loading
+        ? { disabled: true, lockedReason: 'Loading…', loading: true }
+        : { disabled: true, lockedReason: 'No options', loading: false };
+    }
+    return { disabled: false, lockedReason: undefined, loading };
+  };
   const lockedReason = isSalesperson ? 'Locked to your assigned scope' : undefined;
 
   // Collapsed by default so the page opens on a clean view; each page mount starts collapsed
@@ -175,7 +172,7 @@ export function FilterBar({
     (showTransactionDimensions ? (filters.channelKeys?.length ?? 0) : 0) +
     (showTransactionDimensions ? (filters.salesTeamKeys?.length ?? 0) : 0) +
     (showTransactionDimensions ? (filters.salespersonKeys?.length ?? 0) : 0) +
-    (customerFilterEnabled && customerValue ? customerValue.length : 0);
+    (customerEnabled ? customerValue.length : 0);
 
   const handleFromDateChange = (date: string) => {
     if (onDateRangeChange) {
@@ -273,8 +270,7 @@ export function FilterBar({
             value={(filters.companyKeys ?? []).map(String)}
             onChange={(v) => onChange({ ...filters, companyKeys: v.map(Number) })}
             multiSelect
-            disabled={isSalesperson}
-            lockedReason={lockedReason}
+            {...fieldState(businessUnits.length, lockedReason)}
           />
         </div>
       )}
@@ -288,8 +284,7 @@ export function FilterBar({
               value={(filters.segmentKeys ?? []).map(String)}
               onChange={(v) => onChange({ ...filters, segmentKeys: v.map(Number) })}
               multiSelect
-              disabled={isSalesperson || customerGroupsLoading}
-              lockedReason={lockedReason ?? (customerGroupsLoading ? 'Loading…' : undefined)}
+              {...fieldState(customerGroups.length, lockedReason)}
             />
           </div>
 
@@ -300,8 +295,7 @@ export function FilterBar({
               value={(filters.channelKeys ?? []).map(String)}
               onChange={(v) => onChange({ ...filters, channelKeys: v.map(Number) })}
               multiSelect
-              disabled={isSalesperson || distributionChannelsLoading}
-              lockedReason={lockedReason ?? (distributionChannelsLoading ? 'Loading…' : undefined)}
+              {...fieldState(distributionChannels.length, lockedReason)}
             />
           </div>
 
@@ -312,8 +306,8 @@ export function FilterBar({
               value={filters.salesTeamKeys ?? []}
               onChange={(v) => onChange({ ...filters, salesTeamKeys: v })}
               multiSelect
-              disabled={isSalesperson || branchesLoading}
-              lockedReason={lockedReason ?? (branchesLoading ? 'Loading…' : undefined)}
+              searchable
+              {...fieldState(branches.length, lockedReason)}
             />
           </div>
 
@@ -325,78 +319,27 @@ export function FilterBar({
               onChange={(v) => onChange({ ...filters, salespersonKeys: v.map(Number) })}
               multiSelect
               searchable
-              disabled={isSalesperson || salespersonsLoading}
-              lockedReason={isSalesperson ? 'Locked to your own record' : salespersonsLoading ? 'Loading…' : undefined}
+              {...fieldState(salespersons.length, isSalesperson ? 'Locked to your own record' : undefined)}
             />
           </div>
 
-          {customerFilterEnabled ? (
-            <div style={fieldBox}>
-              <Select
-                label="Customer"
-                options={customerOptions}
-                value={customerValue}
-                onChange={onCustomerChange}
-                multiSelect
-                searchable
-              />
-            </div>
-          ) : (
-            <div style={fieldBox} title="Not available in the current data model -- no Customer dimension is loaded in this warehouse.">
-              <Select label="Customer" options={[]} value={[]} onChange={() => {}} disabled lockedReason="Not available yet" />
-            </div>
+          {customerEnabled && (
+          <div style={fieldBox}>
+            <Select
+              label="Customer"
+              options={customerOptions}
+              value={customerValue}
+              onChange={(v) => onChange({ ...filters, customerKeys: v.map(Number) })}
+              multiSelect
+              searchable
+              {...fieldState(customerOptions.length)}
+            />
+          </div>
           )}
         </>
       )}
 
       {extraFields}
-
-      {/* Invisible label-height spacer keeps this button's top edge aligned with every field's
-          input, even though it has no label of its own above it. */}
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <span aria-hidden style={labelSpacerStyle}>&nbsp;</span>
-        <Button
-          variant="secondary"
-          onClick={() => router.back()}
-          style={{ height: 38, boxSizing: 'border-box', padding: '0 14px', whiteSpace: 'nowrap' }}
-        >
-          <ArrowLeft size={14} />
-          Back
-        </Button>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <span aria-hidden style={labelSpacerStyle}>&nbsp;</span>
-        <Button
-          variant="secondary"
-          onClick={onReset}
-          disabled={isSalesperson}
-          style={{ height: 38, boxSizing: 'border-box', padding: '0 14px', whiteSpace: 'nowrap' }}
-        >
-          <RotateCcw size={14} />
-          Reset Filters
-        </Button>
-      </div>
-
-      {onExportReport ? (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span aria-hidden style={labelSpacerStyle}>&nbsp;</span>
-          <Button
-            variant="secondary"
-            onClick={onExportReport}
-            disabled={isExporting}
-            style={{ height: 38, boxSizing: 'border-box', padding: '0 14px', whiteSpace: 'nowrap' }}
-          >
-            <FileDown size={14} />
-            {isExporting ? 'Exporting...' : 'Export Overview Report'}
-          </Button>
-          {exportError ? (
-            <span style={{ fontSize: 11, color: 'var(--ps-color-danger, #cf222e)', marginTop: 4, maxWidth: 220 }}>
-              {exportError}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
 
       <div style={{ flex: 1 }} />
 

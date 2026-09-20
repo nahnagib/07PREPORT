@@ -17,7 +17,18 @@ import { DateTime } from 'luxon';
  * IANA identifier, not a hardcoded +2 -- Libya has no DST today, but this resolves the offset from
  * the runtime's own tz database at call time, so a future rule change needs no code change here.
  */
-const BUSINESS_TIMEZONE = 'Africa/Tripoli';
+const DEFAULT_APP_TIMEZONE = 'Africa/Tripoli';
+
+/** The single configured business/display timezone (APP_TIMEZONE, IANA id). It is BOTH the zone the
+ * naive business fact columns (Fact_Orders.OrderDateTime/QuotationDate, ...) are stored in -- it must
+ * equal the ETL's TIMEZONE, the refresh check flags a mismatch -- and the zone shown to users.
+ * Operational metadata (etl_run_log.*_utc) is UTC and is never converted with this. Read lazily so
+ * tests can set the variable. An invalid value falls back to the default rather than throwing on
+ * every request. */
+export function getAppTimezone(): string {
+  const configured = process.env.APP_TIMEZONE?.trim();
+  return configured && DateTime.local().setZone(configured).isValid ? configured : DEFAULT_APP_TIMEZONE;
+}
 
 /** `raw` is a naive 'YYYY-MM-DD HH:mm:ss'-style string, as produced by
  * `DATE_FORMAT(col, '%Y-%m-%d %H:%i:%s')` (or MySQL's default string rendering of a DATETIME).
@@ -26,6 +37,14 @@ const BUSINESS_TIMEZONE = 'Africa/Tripoli';
  * `res.json()`'s automatic `.toISOString()`, etc.), nothing downstream needs to change. */
 export function tripoliSqlDateTimeToDate(raw: string | null | undefined): Date | null {
   if (!raw) return null;
-  const dt = DateTime.fromSQL(raw, { zone: BUSINESS_TIMEZONE });
+  const dt = DateTime.fromSQL(raw, { zone: getAppTimezone() });
+  return dt.isValid ? dt.toJSDate() : null;
+}
+
+/** Same as above for columns that hold a UTC wall-clock value: the `*_utc` columns of etl_run_log and
+ * TIMESTAMP columns read under the pool's `SET time_zone = '+00:00'` session (etl_job_runs). */
+export function utcSqlDateTimeToDate(raw: string | null | undefined): Date | null {
+  if (!raw) return null;
+  const dt = DateTime.fromSQL(raw, { zone: 'utc' });
   return dt.isValid ? dt.toJSDate() : null;
 }

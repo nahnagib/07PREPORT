@@ -6,7 +6,7 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useFilterState } from '../../../../components/FilterProvider';
+import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import {
   ChartPanel,
   InsightCard,
@@ -24,7 +24,7 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useRevenueTrendOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import { useRevenueTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { RevenueTrendMonthPoint, RevenueTrendPerformanceRow, RevenueTrendVarianceCard } from '../../../../lib/api';
 import { formatAsp, formatCurrency, formatTimestamp, formatVariance, formatVolume, toSemanticStatus } from '../../../../lib/format';
 
@@ -182,23 +182,12 @@ export default function RevenueTrendPage() {
     onFiltersChange,
     onAnchorDateChange,
     onDateRangeChange,
-    resetFilters,
   } = useFilterState();
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
+  const filterOptions = useScopedFilterOptions();
   const overview = useRevenueTrendOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
-
-  function handleReset() {
-    resetFilters();
-  }
-
-  function handleRefresh() {
-    overview.retry();
-    refreshStatus.retry();
-  }
 
   const roleLabel = user?.role.label ?? user?.fullName;
   const lastRefreshLabel = refreshStatus.data ? formatTimestamp(refreshStatus.data.lastRefreshTime) : undefined;
@@ -278,8 +267,6 @@ export default function RevenueTrendPage() {
           pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
-          onRefresh={handleRefresh}
-          lastRefreshTime={lastRefreshLabel}
           roleLabel={roleLabel}
           onLogout={logout}
           showDateInput={false}
@@ -288,7 +275,6 @@ export default function RevenueTrendPage() {
         <FilterBar
           filters={effectiveFilters}
           onChange={onFiltersChange}
-          onReset={handleReset}
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           businessUnits={filterOptions.businessUnits.data ?? []}
@@ -296,24 +282,18 @@ export default function RevenueTrendPage() {
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
-          customerGroupsLoading={filterOptions.customerGroups.loading}
-          distributionChannelsLoading={filterOptions.distributionChannels.loading}
-          branchesLoading={filterOptions.branches.loading}
-          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
-          onExportReport={exportReport.exportReport}
-          isExporting={exportReport.isExporting}
-          exportError={exportReport.error}
         />
 
         <ValidationStatusBar
           isStale={refreshStatus.data?.isStale}
           isInverted={refreshStatus.data?.isInverted}
+          refreshCheck={refreshStatus.data?.refreshCheck}
           lastRefreshTime={lastRefreshLabel}
         />
 

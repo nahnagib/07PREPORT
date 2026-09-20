@@ -210,11 +210,6 @@ function MetricDetailBody({
     router.replace(`/promotion/tachometer/${metricKey}?${params.toString()}`);
   }
 
-  function handleRefresh() {
-    overview.retry();
-    breakdown.retry();
-  }
-
   function buildFilterSummary(): string {
     const parts: string[] = [];
 
@@ -235,7 +230,6 @@ function MetricDetailBody({
         pageTitle={`${meta.title} — Breakdown`}
         anchorDate={anchorDate}
         onAnchorDateChange={handleAnchorDateChange}
-        onRefresh={handleRefresh}
         roleLabel={roleLabel}
         onLogout={onLogout}
         showDateInput={false}

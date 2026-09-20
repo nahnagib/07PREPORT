@@ -357,8 +357,8 @@ async function sumSegmentPct(pool: Pool, segmentKeys: number[]): Promise<number>
  * Monthly/Yearly Counter, Missing Value/Days YTD, and their variance calculations -- not just the
  * Daily Critical Number display card.
  *
- * Kept async (Promise<number>) so every existing call site (routes/criticalNumber.ts,
- * services/reportSections.ts) needs no signature changes from before this feature.
+ * Kept async (Promise<number>) so every existing call site (routes/criticalNumber.ts) needs no
+ * signature changes from before this feature.
  */
 export async function computeDailyCriticalNumber(
   pool: Pool,
@@ -620,7 +620,7 @@ export async function computeForcedClosuresYtd(
 
 /** DateKey (YYYYMMDD) -> actual value, for every day with at least one sale in the window. */
 async function fetchDailyActuals(pool: Pool, window: DateWindow, filters: Filters): Promise<Map<number, number>> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const sql = `
     SELECT fsl.DateKey AS dateKey, COALESCE(SUM(fsl.Value), 0) AS value
     FROM fact_saleslines fsl

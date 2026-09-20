@@ -7,7 +7,7 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
-import { useFilterState } from '../../../../components/FilterProvider';
+import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import {
   KpiCard,
   PerformanceReportTable,
@@ -23,7 +23,7 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterOptions, useTachometerOverview, useTachometerTrend, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
+import { useTachometerOverview, useTachometerTrend, useRefreshStatus } from '../../../../lib/hooks';
 import type { TachometerFilters, TachometerCard, AspCard, TachometerMetricKey } from '../../../../lib/api';
 import {
   toSemanticStatus,
@@ -155,20 +155,13 @@ export default function TachometerPage() {
   // Eternal-skeleton fix: every one of these now also gets devAuth's own error/retry, so if the
   // dev-session token mint itself failed (e.g. backend unreachable), these resolve to that same
   // error + a working Retry instead of freezing at loading:true forever. See hooks.ts's docstring.
-  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
+  const filterOptions = useScopedFilterOptions();
   const overview = useTachometerOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const trend = useTachometerTrend(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-  const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
 
   function handleReset() {
     resetFilters();
-  }
-
-  function handleRefresh() {
-    overview.retry();
-    trend.retry();
-    refreshStatus.retry();
   }
 
   function buildFilterSummaryParts(): string[] {
@@ -398,8 +391,6 @@ export default function TachometerPage() {
         pageTitle="Promotion Dashboard"
         anchorDate={anchorDate}
         onAnchorDateChange={onAnchorDateChange}
-        onRefresh={handleRefresh}
-        lastRefreshTime={lastRefreshLabel}
         roleLabel={roleLabel}
         onLogout={logout}
         showDateInput={false}
@@ -408,7 +399,6 @@ export default function TachometerPage() {
       <FilterBar
         filters={effectiveFilters}
         onChange={onFiltersChange}
-        onReset={handleReset}
         anchorDate={anchorDate}
         onAnchorDateChange={onAnchorDateChange}
         businessUnits={filterOptions.businessUnits.data ?? []}
@@ -416,25 +406,19 @@ export default function TachometerPage() {
         distributionChannels={filterOptions.distributionChannels.data ?? []}
         branches={filterOptions.branches.data ?? []}
         salespersons={filterOptions.salespersons.data ?? []}
-        customerGroupsLoading={filterOptions.customerGroups.loading}
-        distributionChannelsLoading={filterOptions.distributionChannels.loading}
-        branchesLoading={filterOptions.branches.loading}
-        salespersonsLoading={filterOptions.salespersons.loading}
         isSalesperson={isSalesperson}
         lastUpdate={refreshStatus.data?.lastUpdate ?? null}
         lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
         dateFromDate={dateFromDate}
         dateToDate={dateToDate}
         onDateRangeChange={onDateRangeChange}
-        onExportReport={exportReport.exportReport}
-        isExporting={exportReport.isExporting}
-        exportError={exportReport.error}
       />
 
       {/* Status-check requirement: this must never read as "connected to production". */}
       <ValidationStatusBar
         isStale={refreshStatus.data?.isStale}
         isInverted={refreshStatus.data?.isInverted}
+        refreshCheck={refreshStatus.data?.refreshCheck}
         lastRefreshTime={lastRefreshLabel}
       />
 

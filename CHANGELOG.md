@@ -6,6 +6,21 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (UX enhancements, 2026-09)
+- Bottom page navigator scrolls horizontally (wheel/drag/touch, edge arrows + fades, active tab scrolled into view, RTL-aware).
+- Back button moved into the header; header Refresh and filter-bar Reset Filters removed.
+- Filter Bar is now fully cross-filtered: new `GET /filters/options` (all seven filters, any direction, multi-select, auto-deselect of invalid values); Branch and Customer enabled. Customer filter (`customerKeys`) applies to sales-line KPIs and is offered on Invoices Engine / Customer Growth only.
+- ETL: enqueue is race-safe (cross-process lock); a failed attempt that BullMQ will retry keeps the lock; scheduled ticks skip while a run is active; `POST /admin/etl/retry`; `/admin/etl/status` returns `lastRun`; optional `ETL_SCHEDULE_TIMEZONE`; dashboards and filter options reload after an ETL run finishes.
+
+### Fixed (ETL input files, 2026-09)
+- ETL failed at step one in Docker: `data/etl/.env` pointed `INPUT_DIR` at a Windows path that cannot exist in the Linux `etl-api` container. Input/output directories are now `ETL_INPUT_DIR`/`ETL_OUTPUT_DIR` (legacy names still read), resolved with `pathlib` against `data/etl/`, default `data/etl/input`. `docker-compose.yml` mounts `ETL_INPUT_HOST_DIR` read-only at `/etl/input`; a `C:/...` value on Linux now fails fast with the fix.
+- Input validation runs first and explains itself (resolved path, per-file status, case-insensitive near matches, directory listing, corrupt/unreadable `.xlsx`, likely cause). `ProductNameMapper` no longer reports "ready" with 0 mappings for a missing/unreadable `PRODUCTS.xlsx`; it raises.
+- `GET /etl/preflight` (ETL API) and `GET /admin/etl/preflight`; the ETL panel shows the check, disables Run when inputs are bad, and a failed run shows the real error plus its last log lines. Pipeline log timestamps carry their UTC offset (Libya time); the log panel no longer adds a second, unlabelled clock.
+- `.dockerignore` excludes ETL input/output data from the image build context.
+
+### Removed
+- Export Overview Report (`/reports/overview`, report* services, `puppeteer-core`, Chromium in the backend image).
+
 ### Added
 - ETL Flask API (`data/etl/api/`) — wraps the real pipeline (`data/etl/src/sales_pipeline`) as an
   HTTP service, so the ETL can run in its own container/process without the API/worker needing

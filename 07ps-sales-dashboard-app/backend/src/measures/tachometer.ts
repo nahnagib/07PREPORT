@@ -85,7 +85,7 @@ export async function fetchValueVolume(
   window: DateWindow,
   filters: Filters,
 ): Promise<ValueVolume> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const sql = `
     SELECT
       COALESCE(SUM(fsl.value), 0)  AS value,
@@ -459,7 +459,7 @@ async function fetchValueVolumeGrouped(
   filters: Filters,
   groupBy: GroupBy,
 ): Promise<GroupedValueVolume[]> {
-  const { clause, params } = buildWhereClause(filters, 'fsl');
+  const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cfg = GROUP_CONFIG[groupBy];
   const keyExpr = cfg.keyExpr('fsl');
   const sql = `

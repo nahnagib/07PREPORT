@@ -11,7 +11,11 @@ avoids the user having to hand-type 8 exact filenames in a shell that doesn't su
 redirection (PowerShell).
 
 Usage (from the repo root, after `pip install pymysql`):
-    python data/warehouse/apply_migrations.py
+    python data/warehouse/apply_migrations.py                       # every file (fresh database only)
+    python data/warehouse/apply_migrations.py 0022_etl_run_log.sql  # only the named file(s) -- use this
+                                                                    # on an existing database: most files
+                                                                    # are plain CREATE TABLE and are not
+                                                                    # re-runnable; 0022 is idempotent.
 Reads the same DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME/DB_SOCKET vars as backend/.env and
 data/ingestion/.env. Creates the database if it doesn't exist yet.
 """
@@ -46,6 +50,12 @@ def main():
     files = sorted(glob.glob(os.path.join(migrations_dir, "*.sql")))
     if not files:
         raise SystemExit(f"No .sql files found in {migrations_dir}")
+    only = sys.argv[1:]
+    if only:
+        unknown = [n for n in only if not os.path.exists(os.path.join(migrations_dir, os.path.basename(n)))]
+        if unknown:
+            raise SystemExit(f"Unknown migration file(s): {', '.join(unknown)}")
+        files = [f for f in files if os.path.basename(f) in {os.path.basename(n) for n in only}]
 
     for path in files:
         name = os.path.basename(path)

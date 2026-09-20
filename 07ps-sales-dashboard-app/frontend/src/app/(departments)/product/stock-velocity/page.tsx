@@ -317,14 +317,6 @@ export default function StockVelocityPage() {
         />
 
         <FilterBar
-          onReset={() => {
-            setCompany('All');
-            setCategory([]);
-            setBand('All');
-            setMoversDrill(null);
-            setOverstockDrill(null);
-            setRiskDrill(null);
-          }}
           showDateRange={false}
           showCompanyDimension={false}
           showTransactionDimensions={false}
