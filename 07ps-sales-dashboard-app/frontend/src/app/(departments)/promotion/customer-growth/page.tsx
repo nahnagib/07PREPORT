@@ -12,7 +12,6 @@ import {
   ChartPanel,
   ComboChart,
   DonutChart,
-  GroupedBarChart,
   DataGrid,
   Select,
   Button,
@@ -20,13 +19,19 @@ import {
   LoadingSkeleton,
   ErrorState,
   exportRowsAsPdf,
+  exportPerformanceTablePdf,
+  PerformanceReportTable,
+  SEMANTIC_STATUS_LABEL,
   type Column,
   type DataGridColumn,
+  type PerformanceReportRow,
+  type PerformanceTablePdfColumn,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterOptions, useCustomerGrowthOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
 import type {
+  CustomerGrowthOverview,
   CustomerGrowthPeriodCounts,
   CustomerGrowthScope,
   CustomerStatusCounts,
@@ -35,6 +40,14 @@ import type {
 import { formatCurrency, formatTimestamp, formatVariance } from '../../../../lib/format';
 
 const CATEGORY_LETTERS = new Set(['A', 'B', 'C', 'D']);
+
+// Categorical palette for the Customers Category Share donut -- same "borrow a few brand hues for
+// a category dimension with no dedicated token" convention as Invoices Engine's INVOICE_CLASS_COLOR
+// and Pipeline Health's CATEGORY_PALETTE.
+const CATEGORY_DONUT_COLORS = ['var(--ps-color-trend-target)', 'var(--ps-color-accent)', 'var(--ps-color-gold)', 'var(--ps-color-muted-text)', 'var(--ps-color-watch)', 'var(--ps-color-last-year)'];
+function categoryDonutColor(index: number): string {
+  return CATEGORY_DONUT_COLORS[index % CATEGORY_DONUT_COLORS.length];
+}
 
 const STATUS_SLICER_OPTIONS: { value: CustomerStatusLabel; label: string }[] = [
   { value: 'Active Retained', label: 'Active Retained' },
@@ -50,6 +63,105 @@ function formatMillions(value: number): string {
   const fixed = (value / 1_000_000).toFixed(1);
   return `${fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed}M`;
 }
+
+// ---------------------------------------------------------------------------
+// Executive Summary -- this page has no target/benchmark anywhere in its data model (confirmed:
+// no Fact_Targets-style figure for customer counts), so status is a simple YTD-vs-LYTD sign read
+// (green if up, red if down), the same "good/bad" rule already used by this page's own RateCard for
+// Customer Acquisition/Growth (see RateCard below) -- reused here rather than inventing a second,
+// inconsistent threshold for the same kind of figure. Retention/Churn Rate deliberately stay
+// 'neutral', matching RateCard's own goodBadApplies={false} choice for those two.
+// ---------------------------------------------------------------------------
+
+function rateTakeaway(label: string, pct: number | null, goodBadApplies: boolean): string {
+  if (pct == null) return `No data available for ${label}.`;
+  const pctLabel = formatVariance(pct) ?? '—';
+  if (!goodBadApplies) return `${label} is ${pctLabel}.`;
+  return pct < 0 ? `${label} is down ${pctLabel.replace('-', '')} year-to-date.` : `${label} is up ${pctLabel} year-to-date.`;
+}
+
+/** "Last" is LYTD on a YTD row and LMTD on an MTD row -- same convention as Revenue Trend's
+ * Performance Details. Customer counts have no target, so Target / Variance to Target are "—" for
+ * count rows; status counts and rates are point-in-time YTD figures with no prior-period figure, so
+ * their Last / Variance to Last are "—" too. */
+function toExecutiveSummaryRows(data?: CustomerGrowthOverview | null): PerformanceReportRow[] {
+  if (!data) return [];
+  const { kpis, rates } = data;
+
+  const countRows = (id: string, name: string, counts: CustomerGrowthPeriodCounts, noun: string): PerformanceReportRow[] =>
+    (['ytd', 'mtd'] as const).map((period) => {
+      const actual = period === 'ytd' ? counts.ytd : counts.mtd;
+      const last = period === 'ytd' ? counts.lytd : counts.lmtd;
+      const lastName = period === 'ytd' ? 'LYTD' : 'LMTD';
+      const delta = last > 0 ? (actual - last) / last : null;
+      const deltaLabel = delta != null ? formatVariance(delta) ?? null : null;
+      return {
+        id: `${id}${period === 'ytd' ? 'Ytd' : 'Mtd'}`,
+        metric: `${name} (${period.toUpperCase()})`,
+        actualLabel: actual.toLocaleString(),
+        targetLabel: '—',
+        variancePct: null,
+        varianceLyPct: delta,
+        lytdLabel: last.toLocaleString(),
+        lytdFullValue: `${lastName}: ${last.toLocaleString()}`,
+        status: delta == null ? 'neutral' : delta < 0 ? 'alert' : 'success',
+        takeaway: `${actual.toLocaleString()} ${noun} ${period === 'ytd' ? 'YTD' : 'this month'}${
+          deltaLabel ? ` (${deltaLabel} vs ${period === 'ytd' ? 'last year' : 'last month'})` : ''
+        }.`,
+      };
+    });
+
+  const statusRow = (id: string, name: string, value: number, takeaway: string): PerformanceReportRow => ({
+    id,
+    metric: name,
+    actualLabel: value.toLocaleString(),
+    targetLabel: '—',
+    variancePct: null,
+    varianceLyPct: null,
+    status: 'neutral',
+    takeaway,
+  });
+
+  const rateRow = (id: string, name: string, pct: number | null, goodBadApplies: boolean): PerformanceReportRow => ({
+    id,
+    metric: name,
+    actualLabel: pct != null ? formatVariance(pct) ?? '—' : '—',
+    targetLabel: '—',
+    variancePct: pct,
+    varianceLyPct: null,
+    status: !goodBadApplies || pct == null ? 'neutral' : pct < 0 ? 'alert' : 'success',
+    takeaway: rateTakeaway(name, pct, goodBadApplies),
+  });
+
+  const status = kpis.customerStatus;
+  return [
+    ...countRows('newCustomers', 'New Customers', kpis.newCustomers, 'new customers'),
+    ...countRows('totalCustomers', 'Total Customers', kpis.totalCustomers, 'total customers'),
+    statusRow('activeRetained', 'Active Retained Customers', status.activeRetained, `${status.activeRetained.toLocaleString()} customers are currently active and retained.`),
+    statusRow('nonActive', 'Non-Active Customers', status.nonActive, `${status.nonActive.toLocaleString()} customers purchased last year but not this year.`),
+    statusRow('reactivated', 'Reactivated Customers', status.reactivated, `${status.reactivated.toLocaleString()} customers have returned after a period without purchases.`),
+    statusRow('blocked', 'Blocked Customers', status.blocked, `${status.blocked.toLocaleString()} customers are flagged as blocked in the operational system.`),
+    rateRow('customerAcquisition', 'Customer Acquisition', rates.customerAcquisitionPct, true),
+    rateRow('customerGrowth', 'Customer Growth', rates.customerGrowthPct, true),
+    rateRow('retentionRate', 'Retention Rate', rates.retentionRatePct, false),
+    rateRow('churnRate', 'Churn Rate', rates.churnRatePct, false),
+  ];
+}
+
+// Matches PerformanceReportTable's showLytdColumn layout so the PDF mirrors the on-screen table.
+function pctLabel(v: number | null): string {
+  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
+}
+const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
+  { header: 'Metric Name', getValue: (row) => row.metric },
+  { header: 'Actual', getValue: (row) => row.actualLabel },
+  { header: 'Last', getValue: (row) => row.lytdLabel ?? '—' },
+  { header: 'Target', getValue: (row) => row.targetLabel },
+  { header: 'Variance to Last', getValue: (row) => pctLabel(row.varianceLyPct) },
+  { header: 'Variance to Target', getValue: (row) => pctLabel(row.variancePct) },
+  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
+  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
+];
 
 function formatPlainNumber(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -225,11 +337,41 @@ export default function CustomerGrowthPage() {
 
   const scope: CustomerGrowthScope = { selectedYear, selectedCategory };
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth);
+  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
   const overview = useCustomerGrowthOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
+
+  /** Page-local slicers/click-filters (not part of the app-wide filter bar) that also narrow this
+   * page's data -- listed in every PDF from this page after the app-wide filters. Customer names
+   * are resolved from the loaded customer list, not raw keys. */
+  function pageFilterParts(): string[] {
+    const parts: string[] = [];
+    if (selectedYear != null) parts.push(`Year: ${selectedYear}`);
+    if (selectedCategory) parts.push(`Category: ${selectedCategory}`);
+    if (view === 'details' && statusFilter) parts.push(`Customer Status: ${statusFilter}`);
+    if (selectedCustomerKeys.length > 0) {
+      const names = (overview.data?.customersTable ?? [])
+        .filter((r) => selectedCustomerKeys.includes(String(r.customerKey)))
+        .map((r) => r.name);
+      parts.push(`Customer: ${names.length ? names.join(', ') : `${selectedCustomerKeys.length} selected`}`);
+    }
+    return parts;
+  }
+
+  async function handleExportPerformanceTablePdf() {
+    try {
+      await exportPerformanceTablePdf({
+        title: 'Performance Details',
+        rows: toExecutiveSummaryRows(overview.data),
+        columns: PERFORMANCE_PDF_COLUMNS,
+        extraFilterParts: pageFilterParts(),
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    }
+  }
 
   async function handleDownloadTablePdf<T extends Record<string, unknown>>(key: string, title: string, columns: Column<T>[], rows: T[]) {
     setDownloadingPdf(key);
@@ -239,6 +381,7 @@ export default function CustomerGrowthPage() {
         columns: columns.map((c) => ({ header: c.header, align: c.align })),
         rows: rows.map((row) => columns.map((c) => String(row[c.key] ?? ''))),
         fileName: title.toLowerCase().replace(/\s+/g, '-'),
+        extraFilterParts: pageFilterParts(),
       });
     } finally {
       setDownloadingPdf(null);
@@ -365,6 +508,16 @@ export default function CustomerGrowthPage() {
     ? drilledCategoryRow.customers.map((c) => ({ label: c.name, salesLytm: c.salesLytm, salesYtm: c.salesYtm }))
     : categoryRows.map((c) => ({ label: c.category, salesLytm: c.salesLytm, salesYtm: c.salesYtm }));
 
+  // Customers Category Share donut -- single-metric (Sales YTD) view of the same Category/customer
+  // data categoryChartPoints already carries; Sales LYTD stays visible in the table below the chart
+  // (categoryTableRows), just not encoded in the donut itself (a pie can only show one series).
+  const categoryDonutSegments = categoryChartPoints.map((p, i) => ({
+    id: p.label,
+    label: drilledCategoryRow ? p.label : `Category ${p.label}`,
+    value: p.salesYtm,
+    color: categoryDonutColor(i),
+  }));
+
   const tableRows = (data?.customersTable ?? [])
     .filter((r) => !statusFilter || r.status === statusFilter)
     .filter((r) => !hasCustomerSelection || selectedCustomerKeys.includes(String(r.customerKey)))
@@ -433,6 +586,10 @@ export default function CustomerGrowthPage() {
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
+          customerGroupsLoading={filterOptions.customerGroups.loading}
+          distributionChannelsLoading={filterOptions.distributionChannels.loading}
+          branchesLoading={filterOptions.branches.loading}
+          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
@@ -637,14 +794,15 @@ export default function CustomerGrowthPage() {
                         valueFormatter={(v) => formatCurrency(v)}
                         legendTitle="Group"
                         onSegmentClick={handleContributionSegmentClick}
+                        showPercentLabels
                       />
                     </>
                   )}
                 </ChartPanel>
 
                 <ChartPanel<CategoryTableRow>
-                  title="Customers Category Performance"
-                  infoText="Sales LYTD vs. Sales YTD by Customer Category (A highest value - D lowest). Enable drill-down to click a category and see its individual customers, or leave it off to click a category and set it as the page's active filter."
+                  title="Customers Category Share"
+                  infoText="Share of Sales YTD by Customer Category (A highest value - D lowest); Sales LYTD stays available in the table below. Enable drill-down to click a category and see its individual customers, or leave it off to click a category and set it as the page's active filter."
                   style={{ minHeight: 380 }}
                   tableColumns={overview.error ? undefined : categoryTableColumns}
                   tableRows={overview.error ? undefined : categoryTableRows}
@@ -689,23 +847,32 @@ export default function CustomerGrowthPage() {
                           </button>
                         </div>
                       )}
-                      <GroupedBarChart
-                        title="Customers Category Performance"
+                      <DonutChart
+                        title="Customers Category Share"
                         showTitle={false}
-                        points={categoryChartPoints}
-                        bars={[
-                          { key: 'salesLytm', name: 'Sales LYTD', color: 'var(--ps-color-last-year)' },
-                          { key: 'salesYtm', name: 'Sales YTD', color: 'var(--ps-color-accent)' },
-                        ]}
-                        valueFormatter={formatMillions}
-                        tooltipFormatters={{ salesLytm: (v) => formatCurrency(v), salesYtm: (v) => formatCurrency(v) }}
-                        onCategoryClick={handleCategoryClick}
-                        highlightedCategory={!drilledCategoryRow && selectedCategory != null ? selectedCategory : null}
+                        segments={categoryDonutSegments}
+                        valueFormatter={(v) => formatCurrency(v)}
+                        legendTitle={drilledCategoryRow ? 'Customer' : 'Category'}
+                        onSegmentClick={handleCategoryClick}
+                        selectedId={!drilledCategoryRow ? selectedCategory : null}
+                        showPercentLabels
                       />
                     </>
                   )}
                 </ChartPanel>
               </div>
+
+              {!overview.loading && !overview.error && (
+                <PerformanceReportTable
+                  title="Performance Details"
+                  rows={toExecutiveSummaryRows(data)}
+                  showLytdColumn
+                  lastColumnLabel="Last"
+                  showStatus
+                  showTakeaway
+                  onExportPdf={handleExportPerformanceTablePdf}
+                />
+              )}
             </div>
           ) : (
             <div className="ps-invoices-zone">
@@ -715,7 +882,13 @@ export default function CustomerGrowthPage() {
                 ) : overview.error ? (
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
-                  <DataGrid columns={customerTableColumns} rows={tableRows} getRowId={(row) => String(row.customerKey)} fileName="customers-table" />
+                  <DataGrid
+                    columns={customerTableColumns}
+                    rows={tableRows}
+                    getRowId={(row) => String(row.customerKey)}
+                    fileName="customers-table"
+                    extraFilterParts={pageFilterParts()}
+                  />
                 )}
               </ChartPanel>
 

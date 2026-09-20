@@ -24,7 +24,7 @@ import {
   computeYearlyCounter,
   fetchCompanyNamesByKey,
 } from '../measures/criticalNumber';
-import { computeRevenueTrendKpis, fetchRevenueTrendSeries } from '../measures/revenueTrend';
+import { computeRevenueTrendFigures, fetchRevenueTrendSeries } from '../measures/revenueTrend';
 import { computeInvoicesEngineKpis } from '../measures/invoicesEngine';
 import { computeCustomerGrowthOverview } from '../measures/customerGrowth';
 import { computePipelineHealthOverview } from '../measures/pipelineHealth';
@@ -149,37 +149,33 @@ export async function buildCriticalNumberSection(pool: Pool, anchor: Date, filte
 }
 
 // ---------------------------------------------------------------------------
-// Revenue Trend -- computeRevenueTrendKpis already returns VarianceCard objects
-// with variancePct/flag/status baked in; reused verbatim, not recomputed.
+// Revenue Trend -- the same six Performance Details rows the page's table shows (Value/Volume/ASP
+// x YTD/MTD, each with its LYTD/LMTD "Last" figure), from computeRevenueTrendFigures.
 // ---------------------------------------------------------------------------
 export async function buildRevenueTrendSection(pool: Pool, anchor: Date, filters: Filters): Promise<ReportSection> {
-  const [series, kpis] = await Promise.all([
+  const [series, { performanceDetails }] = await Promise.all([
     fetchRevenueTrendSeries(pool, anchor, filters),
-    computeRevenueTrendKpis(pool, anchor, filters),
+    computeRevenueTrendFigures(pool, anchor, filters),
   ]);
 
-  const fromVarianceCard = (key: string, label: string, unit: Unit, card: { variancePct: number | null; status: string }) => ({
-    key,
-    label,
-    actual: null,
-    target: null,
-    status: (card.status as TargetStatus) ?? TargetStatus.NO_TARGET,
-    variancePct: card.variancePct,
-    priorPeriodActual: null,
-    priorPeriodLabel: null,
-    unit,
-  });
+  const METRIC_LABEL = { value: 'Value', volume: 'Volume', asp: 'ASP' } as const;
+  const METRIC_UNIT: Record<'value' | 'volume' | 'asp', Unit> = { value: 'currency', volume: 'volume', asp: 'currency' };
 
   return {
     pageKey: 'revenue_trend',
     label: 'Revenue Trend',
     omitted: false,
-    kpis: [
-      fromVarianceCard('value_variance_ytd', 'YTD Value Variance', 'currency', kpis.valueVarianceYtd),
-      fromVarianceCard('value_variance_mtd', 'MTD Value Variance', 'currency', kpis.valueVarianceMtd),
-      fromVarianceCard('volume_variance_ytd', 'YTD Volume Variance', 'volume', kpis.volumeVarianceYtd),
-      fromVarianceCard('asp_variance_ytd', 'YTD ASP Variance', 'currency', kpis.aspVarianceYtd),
-    ],
+    kpis: performanceDetails.map((r) =>
+      kpi(
+        r.key,
+        `${METRIC_LABEL[r.metric]} (${r.period.toUpperCase()})`,
+        r.actual,
+        r.target,
+        METRIC_UNIT[r.metric],
+        r.last,
+        r.period === 'ytd' ? 'vs LYTD' : 'vs LMTD',
+      ),
+    ),
     trend: {
       seriesLabel: 'Monthly Revenue (Value)',
       points: series.map((p: any) => ({ label: p.label ?? `${p.year}-${String(p.month).padStart(2, '0')}`, value: p.value })),
@@ -197,10 +193,17 @@ export async function buildInvoicesEngineSection(pool: Pool, anchor: Date, filte
     pageKey: 'invoices_engine',
     label: 'Invoices Engine',
     omitted: false,
+    // Same rows as the page's Performance Details table: each metric for YTD (vs LYTD) and MTD
+    // (vs LMTD).
     kpis: [
-      kpi('invoice_count_ytd', 'YTD Invoice Count', kpis.ytd.invoiceCount, null, 'count', kpis.lytd.invoiceCount, 'vs LYTD'),
+      kpi('invoice_count_ytd', 'Invoice Count (YTD)', kpis.ytd.invoiceCount, null, 'count', kpis.lytd.invoiceCount, 'vs LYTD'),
       kpi('avg_sales_per_invoice_ytd', 'Avg Sales per Invoice (YTD)', kpis.ytd.avgSalesPerInvoice, null, 'currency', kpis.lytd.avgSalesPerInvoice, 'vs LYTD'),
       kpi('avg_lines_per_invoice_ytd', 'Avg Lines per Invoice (YTD)', kpis.ytd.avgLinesPerInvoice, null, 'count', kpis.lytd.avgLinesPerInvoice, 'vs LYTD'),
+      kpi('avg_volume_per_invoice_ytd', 'Avg Volume per Invoice (YTD)', kpis.ytd.avgVolumePerInvoice, null, 'volume', kpis.lytd.avgVolumePerInvoice, 'vs LYTD'),
+      kpi('invoice_count_mtd', 'Invoice Count (MTD)', kpis.mtd.invoiceCount, null, 'count', kpis.lmtd.invoiceCount, 'vs LMTD'),
+      kpi('avg_sales_per_invoice_mtd', 'Avg Sales per Invoice (MTD)', kpis.mtd.avgSalesPerInvoice, null, 'currency', kpis.lmtd.avgSalesPerInvoice, 'vs LMTD'),
+      kpi('avg_lines_per_invoice_mtd', 'Avg Lines per Invoice (MTD)', kpis.mtd.avgLinesPerInvoice, null, 'count', kpis.lmtd.avgLinesPerInvoice, 'vs LMTD'),
+      kpi('avg_volume_per_invoice_mtd', 'Avg Volume per Invoice (MTD)', kpis.mtd.avgVolumePerInvoice, null, 'volume', kpis.lmtd.avgVolumePerInvoice, 'vs LMTD'),
     ],
   };
 }
@@ -217,8 +220,16 @@ export async function buildCustomerGrowthSection(pool: Pool, anchor: Date, filte
     label: 'Customer Growth',
     omitted: false,
     kpis: [
-      kpi('total_customers_ytd', 'Active Customers (YTD)', k.totalCustomers.ytd, null, 'count', k.totalCustomers.lytd, 'vs LYTD'),
       kpi('new_customers_ytd', 'New Customers (YTD)', k.newCustomers.ytd, null, 'count', k.newCustomers.lytd, 'vs LYTD'),
+      kpi('new_customers_mtd', 'New Customers (MTD)', k.newCustomers.mtd, null, 'count', k.newCustomers.lmtd, 'vs LMTD'),
+      kpi('total_customers_ytd', 'Total Customers (YTD)', k.totalCustomers.ytd, null, 'count', k.totalCustomers.lytd, 'vs LYTD'),
+      kpi('total_customers_mtd', 'Total Customers (MTD)', k.totalCustomers.mtd, null, 'count', k.totalCustomers.lmtd, 'vs LMTD'),
+      kpi('active_retained', 'Active Retained Customers', k.customerStatus.activeRetained, null, 'count'),
+      kpi('non_active', 'Non-Active Customers', k.customerStatus.nonActive, null, 'count'),
+      kpi('reactivated', 'Reactivated Customers', k.customerStatus.reactivated, null, 'count'),
+      kpi('blocked', 'Blocked Customers', k.customerStatus.blocked, null, 'count'),
+      kpi('customer_acquisition', 'Customer Acquisition', rates.customerAcquisitionPct, null, 'percent'),
+      kpi('customer_growth', 'Customer Growth', rates.customerGrowthPct, null, 'percent'),
       kpi('retention_rate', 'Retention Rate', rates.retentionRatePct, null, 'percent'),
       kpi('churn_rate', 'Churn Rate', rates.churnRatePct, null, 'percent'),
     ],
@@ -253,7 +264,9 @@ export async function buildPipelineHealthSection(pool: Pool, anchor: Date, filte
       kpi('opportunities_ytd', 'YTD Opportunities', funnel.opportunities, null, 'count'),
       kpi('quotations_ytd', 'YTD Quotations', funnel.quotations, null, 'count'),
       kpi('sales_orders_ytd', 'YTD Sales Orders', funnel.salesOrders, null, 'count'),
+      kpi('deliveries_ytd', 'YTD Deliveries', funnel.deliveries, null, 'count'),
       ...benchmarks,
+      { key: 'data_quality', label: 'Data Quality (dirty %)', actual: overview.dataQuality.dirtyPct, target: 0.02, status: (overview.dataQuality.status as TargetStatus) ?? TargetStatus.NO_TARGET, variancePct: null, priorPeriodActual: null, priorPeriodLabel: null, unit: 'percent' },
     ],
   };
 }
@@ -281,8 +294,9 @@ export async function buildPipelineTrendSection(pool: Pool, anchor: Date, filter
 }
 
 // ---------------------------------------------------------------------------
-// Activity Momentum -- honors activityColumnsAvailable exactly like the
-// dashboard page does (never fabricates a 0 when the ETL backfill is pending).
+// Activity Momentum -- honors activityColumnsAvailable exactly like the dashboard page does (never
+// fabricates a 0 if the quotation-staleness columns this now depends on were ever to disappear from
+// the live schema -- see measures/activityMomentum.ts's module header).
 // ---------------------------------------------------------------------------
 export async function buildActivityMomentumSection(pool: Pool, anchor: Date, filters: Filters): Promise<ReportSection> {
   const overview = await computeActivityMomentumOverview(pool, anchor, filters);
@@ -303,7 +317,7 @@ export async function buildActivityMomentumSection(pool: Pool, anchor: Date, fil
     kpis,
     note: overview.activityColumnsAvailable
       ? undefined
-      : 'Engagement figures (inactive deals, next-step tracking) are not yet available -- the ETL backfill for these fields is pending.',
+      : 'Engagement figures (inactive deals, next-step tracking) are not available -- the required Fact_Opportunity columns are missing from the current schema.',
   };
 }
 

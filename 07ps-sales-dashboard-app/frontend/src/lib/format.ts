@@ -17,21 +17,28 @@ export function toSemanticStatus(status: TargetStatus): SemanticStatus {
   }
 }
 
-export function formatCurrency(value: number): string {
+/** Guards against non-finite input (null/undefined/NaN) rather than assuming the caller's own
+ * null-check already ran -- every existing caller does check first, but a value that's `undefined`
+ * (an API field omitted from the JSON payload) rather than an explicit `null` slips past a
+ * `=== null` guard and previously reached `.toLocaleString()` unguarded, producing "Cannot read
+ * properties of undefined (reading 'toLocaleString')" instead of a clean fallback. */
+export function formatCurrency(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return `LYD ${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
-export function formatVolume(value: number): string {
+export function formatVolume(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
-export function formatAsp(value: number | null): string {
-  if (value === null) return '—';
+export function formatAsp(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return `LYD ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
-export function formatVariance(pct: number | null): string | undefined {
-  if (pct === null) return undefined;
+export function formatVariance(pct: number | null | undefined): string | undefined {
+  if (pct === null || pct === undefined || !Number.isFinite(pct)) return undefined;
   const sign = pct >= 0 ? '+' : '';
   return `${sign}${(pct * 100).toFixed(2)}%`;
 }

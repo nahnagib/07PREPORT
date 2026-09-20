@@ -38,21 +38,24 @@
  * forecast, not a YTD figure, so it starts at the anchor's own month and runs forward (see
  * fetchExpectedClosureByMonth) rather than being clipped to year-to-date.
  *
- * Won/Lost-exclusion policy: this is a pipeline page -- Won/Lost opportunities are already closed
- * deals, not active pipeline, so every general/summary widget on this page -- the Full Pipeline
- * funnel's Opportunities bar (+ its own drill-down and Stage Benchmark, which is derived from it),
- * Expected Closure Opportunity, and Probabilities Distribution (already excludes both incidentally,
- * since Won/Lost map to the 0%/100% buckets outside the 10-90% range this widget shows) -- excludes
- * BOTH closed-won and closed-lost opportunities via `fo.IsOpen = 1` (the same "not won, not lost"
+ * Won/Lost-exclusion policy: this is a pipeline page -- Lost opportunities are dead, not active
+ * pipeline, so most general/summary widgets on this page -- Expected Closure Opportunity and
+ * Probabilities Distribution (already excludes both incidentally, since Won/Lost map to the 0%/100%
+ * buckets outside the 10-90% range this widget shows) -- exclude Lost via `fo.IsOpen = 1` (the same
  * flag already used this way in measures/activityMomentum.ts and measures/pipelineTrend.ts), so a
- * deal that's no longer active doesn't clutter charts about the live/forward pipeline. **Opportunity
- * by Stage is the one deliberate exception** -- it shows both Won and Lost stage segments so the
+ * dead deal doesn't clutter charts about the live/forward pipeline. **The Full Pipeline funnel's
+ * Opportunities bar (+ its own drill-down and Stage Benchmark, which is derived from it) is a
+ * deliberate exception, verified against live Odoo (2026-09):** Odoo never archives a Won
+ * opportunity (only Lost ones), so Odoo's own "Active Opportunities" ground truth already includes
+ * Won deals -- this bar matches that by excluding Lost only (`excludeLostClause`, see
+ * fetchOpportunitiesCountAndValue/fetchOpportunityStageIds), not `fo.IsOpen = 1`. **Opportunity by
+ * Stage is the other deliberate exception** -- it shows both Won and Lost stage segments so the
  * page still has one place to see where every current-stage dollar sits, closed deals included. The
  * shared Opportunity Details drill-down array is unfiltered at the query level (returns every
  * opportunity, Won/Lost/open) so it can back all four drill-down paths; `matchesFilter` on the
  * frontend applies the IsOpen requirement itself for the month/bucket drill-downs (Expected
  * Closure/Probabilities), leaves the stage drill-down unfiltered (Opportunity by Stage's exception),
- * and the funnelStage drill-down matches by an ID list that's already IsOpen-scoped at the query
+ * and the funnelStage drill-down matches by an ID list that's already Lost-excluded at the query
  * level (see fetchOpportunityStageIds). The funnel's Quotations/Sales Orders/Deliveries bars stay
  * unfiltered by Won/Lost -- those are Fact_Sales/Fact_Delivery documents with no IsWon/IsLost
  * concept of their own (they already happened regardless of the linked opportunity's current
@@ -62,6 +65,7 @@
 import type { Pool } from 'mysql2/promise';
 import { classifyVsTarget, variancePct, TargetStatus } from './classify';
 import { buildCrmWhereClause, buildWhereClause, excludeLostClause, ytdWindow, type Filters } from './filters';
+import { computeOpportunityDataQuality, type DataQualityOverview } from './dataQuality';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -101,18 +105,20 @@ async function countLeads(pool: Pool, anchor: Date, filters: Filters): Promise<n
   return countRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
 }
 
-/** Excludes both Won and Lost via `fo.IsOpen = 1` (see module docstring's Won/Lost-exclusion
- * policy) -- unlike the Quotations/Sales Orders/Deliveries stages below, which stay unfiltered on
- * purpose: those are documents that already happened regardless of the opportunity's current
- * status. Returns count + value (SUM(ExpectedRevenue)) in one query since Stage Benchmark needs the
- * count and the Full Pipeline funnel's hover/legend now needs the value too, and both must stay
- * scoped identically. */
+/** Excludes Lost only, via `excludeLostClause` -- NOT `fo.IsOpen = 1`. Verified against live Odoo
+ * (2026-09): Odoo's own "Active Opportunities" figure (the ground truth this bar must match) is
+ * simply the non-archived population -- Odoo archives (active=False) a CRM lead when it's marked
+ * Lost, but a Won opportunity stays active=True indefinitely, so Odoo's "active" pool already
+ * includes Won deals. Filtering this bar on IsOpen (excludes BOTH Won and Lost) was undercounting
+ * against that ground truth by exactly the Won population. Returns count + value
+ * (SUM(ExpectedRevenue)) in one query since Stage Benchmark needs the count and the Full Pipeline
+ * funnel's hover/legend now needs the value too, and both must stay scoped identically. */
 async function fetchOpportunitiesCountAndValue(pool: Pool, anchor: Date, filters: Filters): Promise<{ count: number; value: number }> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT COUNT(*) AS cnt, COALESCE(SUM(fo.ExpectedRevenue), 0) AS val FROM Fact_Opportunity fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND fo.IsOpen = 1
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${excludeLostClause('fo')}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   const row = (rows as any[])[0];
@@ -185,9 +191,11 @@ async function fetchQuotationRecords(pool: Pool, anchor: Date, filters: Filters)
   const { clause, params } = buildWhereClause(filters, 'fs');
   const sql = `
     SELECT fs.OrderNumber AS orderNumber, fs.Customer AS customer, fs.Company AS company,
-           fs.Salesperson AS salesperson, fs.QuotationDate AS documentDate, fs.OrderValue AS value,
+           COALESCE(sap.admin_name_override, fs.Salesperson) AS salesperson,
+           fs.QuotationDate AS documentDate, fs.OrderValue AS value,
            fs.OpportunityID AS opportunityId
     FROM Fact_Sales fs
+    LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
     WHERE DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${b2bClause('fs')} AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -199,26 +207,31 @@ async function fetchSalesOrderRecords(pool: Pool, anchor: Date, filters: Filters
   const { clause, params } = buildWhereClause(filters, 'fs');
   const sql = `
     SELECT fs.OrderNumber AS orderNumber, fs.Customer AS customer, fs.Company AS company,
-           fs.Salesperson AS salesperson, fs.QuotationDate AS documentDate, fs.OrderValue AS value,
+           COALESCE(sap.admin_name_override, fs.Salesperson) AS salesperson,
+           fs.QuotationDate AS documentDate, fs.OrderValue AS value,
            fs.OpportunityID AS opportunityId
     FROM Fact_Sales fs
+    LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
     WHERE fs.SalesDocumentType = 'Sales Order' AND DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${b2bClause('fs')} AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   return (rows as any[]).map(toFunnelSalesRecord);
 }
 
-/** Deliveries linked to an Opportunity can exceed the Sales Orders count -- one order can have
- * multiple partial delivery/picking records, a real characteristic of the data, not a bug; shown
- * as-is rather than clamped. */
+/** Row count can exceed the Sales Orders row count -- one order can have multiple partial
+ * delivery/picking records, a real characteristic of the data, not a bug; shown as-is rather than
+ * clamped in the drill-down table. The funnel bar itself counts distinct Opportunities, not rows
+ * (see countLinkedOpportunities), so it isn't affected by this. */
 async function fetchDeliveryRecords(pool: Pool, anchor: Date, filters: Filters): Promise<FunnelDeliveryRecord[]> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fd');
   const sql = `
     SELECT fd.OrderNumber AS orderNumber, fd.Customer AS customer, fd.Company AS company,
-           fd.Salesperson AS salesperson, fd.OrderDate AS orderDate, fd.DeliveryStatus AS deliveryStatus,
+           COALESCE(sap.admin_name_override, fd.Salesperson) AS salesperson,
+           fd.OrderDate AS orderDate, fd.DeliveryStatus AS deliveryStatus,
            fd.OpportunityID AS opportunityId
     FROM Fact_Delivery fd
+    LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fd.SalespersonKey
     WHERE fd.OrderDate BETWEEN ? AND ? AND ${b2bClause('fd')} AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -244,6 +257,17 @@ export async function fetchFunnelStageRecords(pool: Pool, anchor: Date, filters:
 
 function countLinked(rows: { opportunityId: string | null }[]): number {
   return rows.filter((r) => r.opportunityId != null).length;
+}
+
+/** Distinct Opportunities represented among the linked rows, not a row count. A single Opportunity
+ * can have several Quotation revisions, several confirmed Sales Orders, or several partial
+ * Deliveries -- counting rows directly (countLinked) counts each of those separately, which let a
+ * downstream stage's raw row count exceed the Opportunities count it's supposed to be a subset of
+ * (e.g. one Opportunity's 3 delivery rows would out-count 1 Opportunity). The funnel is a "how many
+ * of my Opportunities got at least this far" drop-off chart, not a document-volume count, so each
+ * stage's bar must count distinct Opportunities to stay a subset of the stage above it. */
+function countLinkedOpportunities(rows: { opportunityId: string | null }[]): number {
+  return new Set(rows.filter((r) => r.opportunityId != null).map((r) => r.opportunityId)).size;
 }
 
 /** Sum of `value` across linked (opportunityId != null) rows -- same population as countLinked
@@ -293,9 +317,9 @@ export async function computeFunnelCounts(
   const counts: FunnelCounts = {
     leads,
     opportunities: opportunities.count,
-    quotations: countLinked(stageRecords.quotations),
-    salesOrders: countLinked(stageRecords.salesOrders),
-    deliveries: countLinked(stageRecords.deliveries),
+    quotations: countLinkedOpportunities(stageRecords.quotations),
+    salesOrders: countLinkedOpportunities(stageRecords.salesOrders),
+    deliveries: countLinkedOpportunities(stageRecords.deliveries),
   };
   const values: FunnelValues = {
     opportunities: opportunities.value,
@@ -340,14 +364,14 @@ async function fetchLeadOpportunityIds(pool: Pool, anchor: Date, filters: Filter
   return fetchIdRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
 }
 
-/** Excludes both Won and Lost (`fo.IsOpen = 1`), matching fetchOpportunitiesCountAndValue above, so
- * clicking the Opportunities bar drills down into exactly what that bar counted. */
+/** Excludes Lost only, matching fetchOpportunitiesCountAndValue above, so clicking the
+ * Opportunities bar drills down into exactly what that bar counted. */
 async function fetchOpportunityStageIds(pool: Pool, anchor: Date, filters: Filters): Promise<string[]> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT fo.OpportunityID AS opportunityId FROM Fact_Opportunity fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND fo.IsOpen = 1
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${excludeLostClause('fo')}
   `;
   return fetchIdRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
 }
@@ -398,7 +422,13 @@ export function computeStageBenchmark(funnel: FunnelCounts): StageBenchmarkRow[]
 // Expected Closure Opportunity -- Expected Opportunity Count + Value, by ExpectedCloseDate month.
 // Forward-looking forecast, not a historical log: always starts at the anchor's own month (today's
 // month, in production -- this route has no page-level date control, see routes/pipelineHealth.ts)
-// and runs `monthsAhead` months forward, dropping anything already in the past. Zero-filled so a
+// and runs forward through however many months of real data actually exist -- NOT a fixed
+// months-ahead count. A hardcoded `monthsAhead` (previously 12) silently cut off any real
+// expected-closure data sitting further out than that -- confirmed live (2026-09): open B2B
+// opportunities have ExpectedCloseDate values into January 2028, more than a year past a 12-month
+// window from "today." The window here is instead bounded by the furthest month the unbounded query
+// below actually returns (or just the anchor's own month if there's no future data at all, so the
+// chart still renders one zero-filled bar instead of an empty array). Zero-filled in between so a
 // month with zero expected closures still renders as a bar, not a gap -- same
 // Array.from-over-a-year-month-map convention as activityMomentum's fetchNewOpportunitiesByMonth.
 // ---------------------------------------------------------------------------
@@ -411,17 +441,11 @@ export interface ExpectedClosureMonthPoint {
   expectedValue: number;
 }
 
-export async function fetchExpectedClosureByMonth(
-  pool: Pool,
-  anchor: Date,
-  filters: Filters,
-  monthsAhead = 12,
-): Promise<ExpectedClosureMonthPoint[]> {
+export async function fetchExpectedClosureByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<ExpectedClosureMonthPoint[]> {
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const startYear = anchor.getUTCFullYear();
   const startMonth = anchor.getUTCMonth() + 1;
   const rangeStart = new Date(Date.UTC(startYear, startMonth - 1, 1));
-  const rangeEndExclusive = new Date(Date.UTC(startYear, startMonth - 1 + monthsAhead, 1));
 
   const sql = `
     SELECT
@@ -430,14 +454,19 @@ export async function fetchExpectedClosureByMonth(
       COUNT(*) AS expectedCount,
       COALESCE(SUM(fo.ExpectedRevenue), 0) AS expectedValue
     FROM Fact_Opportunity fo
-    WHERE fo.ExpectedCloseDate >= ? AND fo.ExpectedCloseDate < ? AND ${clause} AND fo.IsOpen = 1
+    WHERE fo.ExpectedCloseDate >= ? AND ${clause} AND fo.IsOpen = 1
     GROUP BY YEAR(fo.ExpectedCloseDate), MONTH(fo.ExpectedCloseDate)
     ORDER BY year, month
   `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(rangeStart), toDateOnlyString(rangeEndExclusive), ...params]);
+  const [rows] = await pool.query(sql, [toDateOnlyString(rangeStart), ...params]);
   const byYearMonth = new Map<string, { count: number; value: number }>();
+  let monthsAhead = 1;
   for (const r of rows as any[]) {
-    byYearMonth.set(`${r.year}-${r.month}`, { count: Number(r.expectedCount), value: Number(r.expectedValue) });
+    const year = Number(r.year);
+    const month = Number(r.month);
+    byYearMonth.set(`${year}-${month}`, { count: Number(r.expectedCount), value: Number(r.expectedValue) });
+    const monthIndex = (year - startYear) * 12 + (month - startMonth) + 1;
+    monthsAhead = Math.max(monthsAhead, monthIndex);
   }
 
   return Array.from({ length: monthsAhead }, (_, i) => i).map((i) => {
@@ -546,7 +575,7 @@ export async function fetchOpportunityDetails(pool: Pool, filters: Filters): Pro
       fo.Customer AS customer,
       fo.Company AS company,
       fo.ExpectedRevenue AS expectedRevenue,
-      fo.Salesperson AS salesperson,
+      COALESCE(sap.admin_name_override, fo.Salesperson) AS salesperson,
       fo.Stage AS stage,
       fo.OpportunityCreatedDate AS createdDate,
       fo.ExpectedCloseDate AS expectedCloseDate,
@@ -555,6 +584,7 @@ export async function fetchOpportunityDetails(pool: Pool, filters: Filters): Pro
       fo.ProbabilityBucket AS probabilityBucket,
       fo.IsOpen AS isOpen
     FROM Fact_Opportunity fo
+    LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE ${clause}
   `;
   const [rows] = await pool.query(sql, params);
@@ -588,19 +618,21 @@ export interface PipelineHealthOverview {
   opportunityByStage: StageValueSlice[];
   probabilityDistribution: ProbabilityBucketSlice[];
   opportunities: OpportunityDetailRow[];
+  dataQuality: DataQualityOverview;
 }
 
 export async function computePipelineHealthOverview(pool: Pool, anchor: Date, filters: Filters): Promise<PipelineHealthOverview> {
   const funnelStageRecords = await fetchFunnelStageRecords(pool, anchor, filters);
-  const [funnelCounted, funnelOpportunityIds, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities] = await Promise.all([
+  const [funnelCounted, funnelOpportunityIds, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities, dataQuality] = await Promise.all([
     computeFunnelCounts(pool, anchor, filters, funnelStageRecords),
     fetchFunnelOpportunityIds(pool, anchor, filters),
     fetchExpectedClosureByMonth(pool, anchor, filters),
     fetchOpportunityByStage(pool, filters),
     fetchProbabilityDistribution(pool, filters),
     fetchOpportunityDetails(pool, filters),
+    computeOpportunityDataQuality(pool, filters),
   ]);
   const { counts: funnel, values: funnelValues } = funnelCounted;
   const stageBenchmark = computeStageBenchmark(funnel);
-  return { funnel, funnelValues, funnelOpportunityIds, funnelStageRecords, stageBenchmark, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities };
+  return { funnel, funnelValues, funnelOpportunityIds, funnelStageRecords, stageBenchmark, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities, dataQuality };
 }

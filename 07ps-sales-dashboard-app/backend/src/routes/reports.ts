@@ -13,12 +13,79 @@ import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
-import { dateOnlyUTC } from '../measures/filters';
+import { dateOnlyUTC, Filters } from '../measures/filters';
 import { getEffectivePermissions } from '../services/permissionService';
 import { SECTION_BUILDERS, SECTION_ORDER, ReportSection } from '../services/reportSections';
 import { buildObservations, buildRisks } from '../services/reportObservations';
 import { executiveSummary } from '../services/reportNarrative';
 import { renderOverviewReportPdf, OverviewReportPayload } from '../services/reportPdf';
+
+/** Resolves each active filter dimension's raw keys to display names, "Company: Majaal, Waha"
+ * style -- the same admin_ and Dim_ lookups routes/filters.ts's own dropdown endpoints already query
+ * by key, just narrowed to exactly the keys already selected instead of a role-scoped full list.
+ * Kept local to this route (matching filters.ts's own "small per-file duplication over cross-module
+ * imports" convention) since the Overview Report PDF is the only caller. */
+async function resolveFilterSummaryParts(filters: Filters): Promise<string[]> {
+  const parts: string[] = [];
+
+  if (filters.companyKeys?.length) {
+    const placeholders = filters.companyKeys.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT name FROM admin_company WHERE etl_company_key IN (${placeholders})`,
+      filters.companyKeys,
+    );
+    const names = (rows as { name: string }[]).map((r) => r.name);
+    if (names.length) parts.push(`Company: ${names.join(', ')}`);
+  }
+
+  if (filters.segmentKeys?.length) {
+    const placeholders = filters.segmentKeys.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT name FROM admin_customer_group WHERE etl_segment_key IN (${placeholders})`,
+      filters.segmentKeys,
+    );
+    const names = (rows as { name: string }[]).map((r) => r.name);
+    if (names.length) parts.push(`Customer Group: ${names.join(', ')}`);
+  }
+
+  if (filters.channelKeys?.length) {
+    const placeholders = filters.channelKeys.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT name FROM admin_distribution_channel WHERE etl_channel_key IN (${placeholders})`,
+      filters.channelKeys,
+    );
+    const names = (rows as { name: string }[]).map((r) => r.name);
+    if (names.length) parts.push(`Distribution Channel: ${names.join(', ')}`);
+  }
+
+  if (filters.salesTeamKeys?.length) {
+    const placeholders = filters.salesTeamKeys.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT COALESCE(stap.team_name_override, st.SalesTeam) as name
+       FROM Dim_SalesTeam st
+       LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
+       WHERE st.SalesTeamKey IN (${placeholders})`,
+      filters.salesTeamKeys,
+    );
+    const names = (rows as { name: string }[]).map((r) => r.name);
+    if (names.length) parts.push(`Branch: ${names.join(', ')}`);
+  }
+
+  if (filters.salespersonKeys?.length) {
+    const placeholders = filters.salespersonKeys.map(() => '?').join(', ');
+    const [rows] = await pool.query(
+      `SELECT COALESCE(sap.admin_name_override, ds.salesperson) as name
+       FROM Dim_Salesperson ds
+       LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey
+       WHERE ds.SalespersonKey IN (${placeholders})`,
+      filters.salespersonKeys,
+    );
+    const names = (rows as { name: string }[]).map((r) => r.name);
+    if (names.length) parts.push(`Salesperson: ${names.join(', ')}`);
+  }
+
+  return parts;
+}
 
 export const reportsRouter = Router();
 
@@ -85,11 +152,13 @@ reportsRouter.get('/overview', async (req, res, next) => {
     const observations = buildObservations(includedSections);
     const risks = buildRisks(includedSections);
     const omittedPageKeys = sections.filter((s) => s.omitted).map((s) => s.pageKey);
+    const filterSummaryParts = await resolveFilterSummaryParts(filters);
 
     const payload: OverviewReportPayload = {
       anchorDate: anchor.toISOString().slice(0, 10),
       generatedAt: new Date().toISOString(),
-      filters,
+      filterSummaryParts,
+      exportedByEmail: user.email,
       sections: includedSections,
       omittedPageKeys,
       executiveSummary: executiveSummary(includedSections, filters, observations[0] ?? null),

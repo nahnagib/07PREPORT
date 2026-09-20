@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
 import { pool } from '../db/pool';
+import { isConnectionError, sendServiceUnavailable } from '../lib/dbErrors';
 import { InvalidTokenError, verifyAccessToken } from '../lib/token';
 import { AppUserRow, UserStatus, getUserById } from '../services/userService';
 import type { RoleTier } from '../config/roles';
@@ -61,12 +62,27 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
-  if (await isTokenRevoked(verified.jti)) {
-    res.status(401).json({ error: 'Session has been signed out' });
+  let user;
+  try {
+    if (await isTokenRevoked(verified.jti)) {
+      res.status(401).json({ error: 'Session has been signed out' });
+      return;
+    }
+
+    user = await getUserById(verified.userId);
+  } catch (err) {
+    // Fail CLOSED: if we can't reach the DB to confirm this token isn't revoked, we must not treat
+    // it as valid -- a revoked/signed-out token slipping through on a DB blip is a security hole.
+    // Connection failures are an outage (503 + request ID); anything else is a genuine bug and
+    // goes to the central error handler (500 + request ID) rather than being mislabelled.
+    if (isConnectionError(err)) {
+      sendServiceUnavailable(req, res, err, 'requireAuth');
+      return;
+    }
+    next(err);
     return;
   }
 
-  const user = await getUserById(verified.userId);
   if (!user) {
     res.status(401).json({ error: 'Invalid or expired session' });
     return;

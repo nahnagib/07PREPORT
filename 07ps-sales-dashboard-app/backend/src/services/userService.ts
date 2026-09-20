@@ -38,6 +38,35 @@ export interface RoleRow {
   is_system: number;
 }
 
+export interface SalespersonOption {
+  salesperson_key: number;
+  salesperson_name: string;
+  sales_team_key: string | null;
+  sales_team_name: string | null;
+  distribution_channel: string | null;
+}
+
+/** Options for the "Salesperson" dropdown on the Create/Edit User forms -- live Dim_Salesperson
+ * data (no is_active column exists on it, see backend/src/routes/filters.ts's own query, so
+ * there is nothing to grey out) with its team name resolved for a readable label. Deliberately a
+ * dedicated admin_users-gated endpoint rather than reusing GET /filters/salespersons, which is
+ * gated on ('tachometer','view') and scoped/truncated for a SALESPERSON-tier caller -- neither of
+ * which is the right behavior for an Admin picking any salesperson to link a new user to. */
+export async function getSalespersonOptions(): Promise<SalespersonOption[]> {
+  const [rows] = await pool.query(
+    `SELECT
+       ds.SalespersonKey AS salesperson_key,
+       ds.salesperson AS salesperson_name,
+       ds.SalesTeamKey AS sales_team_key,
+       dst.SalesTeam AS sales_team_name,
+       ds.DistributionChannel AS distribution_channel
+     FROM Dim_Salesperson ds
+     LEFT JOIN Dim_SalesTeam dst ON dst.SalesTeamKey = ds.SalesTeamKey
+     ORDER BY ds.salesperson`,
+  );
+  return rows as SalespersonOption[];
+}
+
 const USER_WITH_ROLE_SELECT = `
   SELECT au.*, r.role_name, r.role_label, r.default_role_tier_code AS role_tier_code
   FROM app_user au
@@ -85,6 +114,27 @@ export interface CreateUserInput {
   salespersonKey?: number | null;
   companyScope?: 'ALL' | 'MAJAAL' | 'TIKA';
   sendEmail?: boolean;
+  /** Who's creating this user, for user_salesperson_change_history when salespersonKey is set.
+   * Optional (defaults to no attribution) since some callers -- e.g. the Excel import path --
+   * have no acting admin user in context. */
+  actorUserId?: number | null;
+}
+
+/** Appends one row to user_salesperson_change_history (0017_salesperson_user_linking.sql) iff
+ * the value actually changed -- shared by createUser and updateUser so both linking paths (set on
+ * creation, relink/unlink later) produce the same audit trail. */
+async function recordSalespersonLinkChange(
+  userId: number,
+  oldKey: number | null,
+  newKey: number | null,
+  actorUserId: number | null | undefined,
+): Promise<void> {
+  if (oldKey === newKey) return;
+  await pool.query(
+    `INSERT INTO user_salesperson_change_history (user_id, old_salesperson_key, new_salesperson_key, changed_by)
+     VALUES (?, ?, ?, ?)`,
+    [userId, oldKey, newKey, actorUserId ?? null],
+  );
 }
 
 export interface CreateUserResult {
@@ -129,6 +179,9 @@ export async function createUser(input: CreateUserInput): Promise<CreateUserResu
   );
   const userId = (result as { insertId: number }).insertId;
   await syncRoleTierAssignment(userId, role.default_role_tier_code);
+  if (input.salespersonKey ?? null) {
+    await recordSalespersonLinkChange(userId, null, input.salespersonKey ?? null, input.actorUserId);
+  }
 
   if (input.sendEmail !== false) {
     await sendTempPasswordEmail(input.email, input.fullName, tempPassword);
@@ -183,7 +236,7 @@ export interface UpdateUserInput {
   companyScope?: 'ALL' | 'MAJAAL' | 'TIKA';
 }
 
-export async function updateUser(userId: number, input: UpdateUserInput): Promise<void> {
+export async function updateUser(userId: number, input: UpdateUserInput, actorUserId?: number | null): Promise<void> {
   const fields: string[] = [];
   const params: unknown[] = [];
   if (input.fullName !== undefined) {
@@ -199,8 +252,17 @@ export async function updateUser(userId: number, input: UpdateUserInput): Promis
     params.push(input.companyScope);
   }
   if (fields.length === 0) return;
+
+  // Read the prior salesperson_key BEFORE the update so the history row records a real old->new
+  // transition, only when the caller actually touched that field.
+  const previous = input.salespersonKey !== undefined ? await getUserById(userId) : null;
+
   params.push(userId);
   await pool.query(`UPDATE app_user SET ${fields.join(', ')} WHERE user_id = ?`, params);
+
+  if (input.salespersonKey !== undefined) {
+    await recordSalespersonLinkChange(userId, previous?.salesperson_key ?? null, input.salespersonKey, actorUserId);
+  }
 }
 
 export async function setUserStatus(

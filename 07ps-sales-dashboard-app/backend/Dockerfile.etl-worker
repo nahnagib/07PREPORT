@@ -8,7 +8,7 @@ FROM node:20-alpine
 WORKDIR /repo
 COPY package.json ./
 COPY backend ./backend
-RUN npm install --workspace backend --omit=dev
+RUN npm install --workspace backend
 WORKDIR /repo/backend
 RUN npm run build
 CMD ["node", "dist/etl/commands/worker.js"]

@@ -12,6 +12,7 @@ import {
 } from '../services/authService';
 import { requireAuth } from '../middleware/auth';
 import { ValidationError } from '../lib/errors';
+import { isConnectionError, sendServiceUnavailable } from '../lib/dbErrors';
 import { getUserById } from '../services/userService';
 
 export const authRouter = Router();
@@ -44,6 +45,10 @@ authRouter.post('/login', loginLimiter, async (req, res, next) => {
     }
     if (err instanceof AccountUnavailableError) {
       res.status(403).json({ error: err.message });
+      return;
+    }
+    if (isConnectionError(err)) {
+      sendServiceUnavailable(req, res, err, 'login');
       return;
     }
     next(err);

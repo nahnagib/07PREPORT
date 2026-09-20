@@ -39,9 +39,9 @@ export function AuthLayout({
           <Image
             src={theme === 'dark' ? bmhMark.dark : bmhMark.light}
             alt="Ben Moussa Holding"
-            width={160}
-            height={38}
-            style={{ objectFit: 'contain', height: 38, width: 'auto' }}
+            width={200}
+            height={44}
+            style={{ objectFit: 'contain', height: 44, width: 'auto' }}
             priority
           />
         </div>

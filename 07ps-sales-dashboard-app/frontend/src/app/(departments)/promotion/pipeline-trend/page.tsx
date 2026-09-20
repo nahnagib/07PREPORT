@@ -7,7 +7,18 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { useFilterState } from '../../../../components/FilterProvider';
-import { Card, ChartPanel, ComboChart, StackedPercentBarChart, LoadingSkeleton, ErrorState, exportRowsAsPdf, type Column } from '@07ps/ui';
+import {
+  Card,
+  ChartPanel,
+  ComboChart,
+  StackedPercentBarChart,
+  PerformanceReportTable,
+  LoadingSkeleton,
+  ErrorState,
+  exportRowsAsPdf,
+  type Column,
+  type PerformanceReportRow,
+} from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterOptions, usePipelineTrendOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
@@ -163,6 +174,104 @@ function rowsToPdfRows<T extends Record<string, unknown>>(columns: Column<T>[], 
   return rows.map((row) => columns.map((c) => (c.render ? String(c.render(row)) : String(row[c.key] ?? ''))));
 }
 
+// ---------------------------------------------------------------------------
+// Executive Summary -- Win Rate/Won-Lost/by-month rows deliberately stay 'neutral': neither this
+// page's measures (backend/src/measures/pipelineTrend.ts) nor its API payload carry a Target for
+// Quotation Rates or the by-month panels -- there is no Fact_Targets-style target source for
+// quotation/opportunity counts the way Tachometer has one for Value/Volume/ASP. Rather than
+// fabricate one, those rows use 'neutral' directly (the same SemanticStatus classifyVsTarget(actual,
+// null) always resolves to when target is absent). The by-month rows DO have a genuine prior-year
+// series already in the API payload, so their Variance LY is real. The one row with a real,
+// documented threshold is Aging Risk -- the share of open Opportunities aged 90+ days, a standard
+// pipeline-health signal, banded at <15% (green) / <30% (yellow) / >=30% (red), tunable via the
+// constants below.
+// ---------------------------------------------------------------------------
+
+function ratioVsLastYear(actual: number, ly: number): number | null {
+  if (!ly || ly <= 0) return null;
+  return (actual - ly) / ly;
+}
+
+const AGING_RISK_YELLOW_PCT = 0.15;
+const AGING_RISK_RED_PCT = 0.3;
+
+function agingTotal(b: AgingBuckets): number {
+  return b.b0to30 + b.b30to60 + b.b60to90 + b.b90plus;
+}
+
+function toExecutiveSummaryRows(rates?: QuotationRates, aging?: AgingDistribution, opportunitiesByMonth?: MonthComparisonPoint[], quotationsByMonth?: MonthComparisonPoint[], salesOrdersByMonth?: MonthComparisonPoint[]): PerformanceReportRow[] {
+  const rows: PerformanceReportRow[] = [];
+  if (rates) {
+    rows.push(
+      {
+        id: 'winRate',
+        metric: 'Win Rate (YTD)',
+        actualLabel: formatVariance(rates.winRatePct) ?? '—',
+        targetLabel: '—',
+        variancePct: null,
+        varianceLyPct: null,
+        status: 'neutral',
+        takeaway: `${formatVariance(rates.winRatePct) ?? '—'} of quotations YTD have been won.`,
+      },
+      {
+        id: 'wonLostRatio',
+        metric: 'Won/Lost Ratio (YTD)',
+        actualLabel: formatRatio(rates.wonLostRatio),
+        targetLabel: '—',
+        variancePct: null,
+        varianceLyPct: null,
+        status: 'neutral',
+        takeaway: `${formatCountOrDash(rates.wonQuotations)} won vs ${formatCountOrDash(rates.lostQuotations)} lost quotations YTD.`,
+      },
+    );
+  }
+
+  const monthRows: [string, MonthComparisonPoint[] | undefined][] = [
+    ['Opportunities', opportunitiesByMonth],
+    ['Quotations', quotationsByMonth],
+    ['Sales Orders', salesOrdersByMonth],
+  ];
+  for (const [label, series] of monthRows) {
+    if (!series || series.length === 0) continue;
+    const sumCountYtd = series.reduce((s, p) => s + p.countYtd, 0);
+    const sumCountLytd = series.reduce((s, p) => s + p.countLytd, 0);
+    const varianceLy = ratioVsLastYear(sumCountYtd, sumCountLytd);
+    rows.push({
+      id: `count-${label}`,
+      metric: `${label} Count (YTD)`,
+      actualLabel: formatPlainNumber(sumCountYtd),
+      targetLabel: '—',
+      variancePct: null,
+      varianceLyPct: varianceLy,
+      trendValues: series.map((p) => p.countYtd),
+      status: 'neutral',
+      takeaway: `${formatPlainNumber(sumCountYtd)} ${label.toLowerCase()} YTD${varianceLy != null ? ` (${formatVariance(varianceLy)} vs last year)` : ''}.`,
+    });
+  }
+
+  if (aging) {
+    const total = agingTotal(aging.opportunities);
+    const riskPct = total > 0 ? aging.opportunities.b90plus / total : null;
+    const status: PerformanceReportRow['status'] =
+      riskPct == null ? 'neutral' : riskPct < AGING_RISK_YELLOW_PCT ? 'success' : riskPct < AGING_RISK_RED_PCT ? 'watch' : 'alert';
+    rows.push({
+      id: 'agingRisk',
+      metric: 'Aging Risk (Opportunities 90+ Days)',
+      actualLabel: riskPct != null ? formatVariance(riskPct) ?? '—' : '—',
+      targetLabel: `< ${Math.round(AGING_RISK_YELLOW_PCT * 100)}%`,
+      variancePct: null,
+      varianceLyPct: null,
+      status,
+      takeaway:
+        riskPct == null
+          ? 'No aging data available.'
+          : `${formatVariance(riskPct)} of open opportunities have been sitting for 90+ days.`,
+    });
+  }
+
+  return rows;
+}
+
 /** Same visual shell as Revenue Trend's ExportPdfButton -- copied per-page rather than shared, same
  * convention that component already established. */
 function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => void; downloading: boolean; disabled?: boolean }) {
@@ -212,7 +321,7 @@ export default function PipelineTrendPage() {
     resetFilters,
   } = useFilterState();
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth);
+  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
   const overview = usePipelineTrendOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
@@ -284,6 +393,10 @@ export default function PipelineTrendPage() {
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
+          customerGroupsLoading={filterOptions.customerGroups.loading}
+          distributionChannelsLoading={filterOptions.distributionChannels.loading}
+          branchesLoading={filterOptions.branches.loading}
+          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
@@ -302,7 +415,14 @@ export default function PipelineTrendPage() {
         />
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)', alignItems: 'start' }}>
+          {/* alignItems left at its CSS Grid default ('stretch') rather than 'start' -- with
+              'start' each column's height was just the sum of its own children, so the left
+              column (Rates card + 1 aging chart) ended up visibly shorter than the right column
+              (3 stacked combo-chart panels), leaving dead space under the Aging card. 'stretch'
+              makes both column divs fill the row's full height (the taller column's height), and
+              the Aging ChartPanel below picks up `flex: 1` to grow into that column's leftover
+              space instead of leaving it empty. */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
               <Card>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--ps-space-2, 8px)', gap: 8 }}>
@@ -333,8 +453,8 @@ export default function PipelineTrendPage() {
 
               <ChartPanel<AgingTableRow>
                 title="Open Opportunities & Quotations by Aging"
-                infoText="Open Opportunities and open Quotations, each as a 100%-stacked column by age bucket. A healthy pipeline concentrates in 0-30 days with low 90+."
-                style={{ minHeight: 340 }}
+                infoText="Open Opportunities and open Quotations, each as a 100%-stacked bar by age bucket. A healthy pipeline concentrates in 0-30 days with low 90+."
+                style={{ minHeight: 340, flex: '1 1 auto', height: 'auto' }}
                 tableColumns={overview.error ? undefined : agingTableColumns}
                 tableRows={overview.error ? undefined : agingTableRows}
                 getRowId={(row) => row.id}
@@ -353,7 +473,13 @@ export default function PipelineTrendPage() {
                 ) : overview.error ? (
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
-                  <StackedPercentBarChart title="Open Opportunities & Quotations by Aging" showTitle={false} points={agingPoints} segments={AGING_SEGMENTS} />
+                  <StackedPercentBarChart
+                    title="Open Opportunities & Quotations by Aging"
+                    showTitle={false}
+                    points={agingPoints}
+                    segments={AGING_SEGMENTS}
+                    orientation="horizontal"
+                  />
                 )}
               </ChartPanel>
             </div>
@@ -390,6 +516,15 @@ export default function PipelineTrendPage() {
                 onDownloadPdf={() => handleDownloadTablePdf('salesOrders', 'Sales Orders', monthTableColumns, salesOrdersTableRows)}
               />
             </div>
+
+            {!overview.loading && !overview.error && (
+              <PerformanceReportTable
+                title="Performance Details"
+                rows={toExecutiveSummaryRows(data?.quotationRates, data?.aging, data?.opportunitiesByMonth, data?.quotationsByMonth, data?.salesOrdersByMonth)}
+                showStatus
+                showTakeaway
+              />
+            )}
           </div>
         </main>
 

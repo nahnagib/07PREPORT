@@ -5,8 +5,12 @@ import {
   SalespersonLockError,
   applyRoleDataScope,
   applySalespersonLock,
+  buildCrmWhereClause,
   buildWhereClause,
   dateOnlyUTC,
+  effectiveChannelExpr,
+  effectiveSalesTeamExpr,
+  effectiveSegmentExpr,
   flmWindow,
   flyWindow,
   lmtdWindow,
@@ -115,8 +119,11 @@ describe('buildWhereClause', () => {
   });
 
   it('single filter, multiple values (OR via IN)', () => {
-    const { clause, params } = buildWhereClause({ channelKeys: [1, 2] }, 'fo');
-    expect(clause).toBe('fo.ChannelKey IN (?, ?)');
+    // companyKeys is one of the two fields with no admin-override concept (see OVERRIDE_EXPR in
+    // filters.ts), so this exercises the plain multi-value IN mechanic in isolation from the
+    // override-aware expressions covered below.
+    const { clause, params } = buildWhereClause({ companyKeys: [1, 2] }, 'fo');
+    expect(clause).toBe('fo.CompanyKey IN (?, ?)');
     expect(params).toEqual([1, 2]);
   });
 
@@ -124,15 +131,112 @@ describe('buildWhereClause', () => {
     const filters: Filters = { companyKeys: [1], segmentKeys: [2, 5], salespersonKeys: [40] };
     const { clause, params } = buildWhereClause(filters);
     expect(clause).toContain('CompanyKey IN (?)');
-    expect(clause).toContain('SegmentKey IN (?, ?)');
+    expect(clause).toContain(`${effectiveSegmentExpr('')} IN (?, ?)`);
     expect(clause).toContain('SalespersonKey IN (?)');
     expect(params).toEqual([1, 2, 5, 40]);
   });
 
   it('empty arrays are treated as no restriction', () => {
     const { clause, params } = buildWhereClause({ companyKeys: [], segmentKeys: [2] });
-    expect(clause).toBe('SegmentKey IN (?)');
+    expect(clause).toBe(`${effectiveSegmentExpr('')} IN (?)`);
     expect(params).toEqual([2]);
+  });
+
+  // segmentKeys/salesTeamKeys filter against the effective (admin-override-aware) value, not the
+  // raw column -- Reports/Dashboards Honor Admin Salesperson Overrides, 2026-09. Building the
+  // expected string from the real effective*Expr functions (rather than a hand-typed duplicate)
+  // means this test verifies buildWhereClause picked the right expression, without also having to
+  // stay in sync with that expression's own internal formatting -- the describe blocks below cover
+  // the internal shape of each expression on their own.
+  it('segmentKeys filters through the effective (override-aware) expression', () => {
+    const { clause, params } = buildWhereClause({ segmentKeys: [1, 2] }, 'fo');
+    expect(clause).toBe(`${effectiveSegmentExpr('fo')} IN (?, ?)`);
+    expect(params).toEqual([1, 2]);
+  });
+
+  it('salesTeamKeys filters through the effective (override-aware) expression', () => {
+    const { clause, params } = buildWhereClause({ salesTeamKeys: ['TK-1'] }, 'fo');
+    expect(clause).toBe(`${effectiveSalesTeamExpr('fo')} IN (?)`);
+    expect(params).toEqual(['TK-1']);
+  });
+
+  // channelKeys filters against the *inferred* channel (see effectiveChannelExpr), not the raw
+  // ChannelKey column -- Tasks #3/#4, "Unknown Sales" allocation.
+  it('channelKeys filters against the inferred-channel expression, not the raw column', () => {
+    const { clause, params } = buildWhereClause({ channelKeys: [3] }, 'fo');
+    expect(clause).toBe(`${effectiveChannelExpr('fo')} IN (?)`);
+    expect(params).toEqual([3]);
+  });
+
+  it('companyKeys and salespersonKeys have no override concept and stay plain columns', () => {
+    const { clause } = buildWhereClause({ companyKeys: [1], salespersonKeys: [40] }, 'fo');
+    expect(clause).toBe('fo.CompanyKey IN (?) AND fo.SalespersonKey IN (?)');
+  });
+});
+
+describe('buildCrmWhereClause', () => {
+  it('omits channelKeys but still resolves segmentKeys/salesTeamKeys through the effective expression', () => {
+    const { clause, params } = buildCrmWhereClause(
+      { channelKeys: [3], segmentKeys: [1], salesTeamKeys: ['TK-1'] },
+      'fo',
+    );
+    expect(clause).not.toContain('ChannelKey');
+    expect(clause).toBe(
+      `${effectiveSegmentExpr('fo')} IN (?) AND ${effectiveSalesTeamExpr('fo')} IN (?)`,
+    );
+    expect(params).toEqual([1, 'TK-1']);
+  });
+});
+
+describe('effectiveSegmentExpr', () => {
+  it('prefers the admin override, falling back to the raw column', () => {
+    const expr = effectiveSegmentExpr('fo');
+    expect(expr).toContain('sap.segment_key_override FROM salesperson_admin_profile sap');
+    expect(expr).toContain('sap.salesperson_key = fo.SalespersonKey');
+    expect(expr).toContain('fo.SegmentKey');
+  });
+
+  it('has no alias prefix when none is given', () => {
+    expect(effectiveSegmentExpr()).toContain('sap.salesperson_key = SalespersonKey');
+  });
+});
+
+describe('effectiveSalesTeamExpr', () => {
+  it('prefers the admin override, falling back to the raw column', () => {
+    const expr = effectiveSalesTeamExpr('fo');
+    expect(expr).toContain('sap.sales_team_key_override FROM salesperson_admin_profile sap');
+    expect(expr).toContain('sap.salesperson_key = fo.SalespersonKey');
+    expect(expr).toContain('fo.SalesTeamKey');
+  });
+});
+
+describe('effectiveChannelExpr', () => {
+  it('an explicit channel_key_override wins outright, before any inference runs', () => {
+    const expr = effectiveChannelExpr('fo');
+    // COALESCE short-circuits left-to-right, so the override subquery must appear before the
+    // CASE-based inference in the generated SQL text for it to actually take priority.
+    const overrideIdx = expr.indexOf('sap.channel_key_override');
+    const caseIdx = expr.indexOf('CASE');
+    expect(overrideIdx).toBeGreaterThanOrEqual(0);
+    expect(caseIdx).toBeGreaterThan(overrideIdx);
+  });
+
+  it('passes through any already-known channel unchanged', () => {
+    expect(effectiveChannelExpr()).toContain('WHEN ChannelKey <> 1 THEN ChannelKey');
+  });
+
+  it('maps B2C/Backoffice (segment 2/3) to Retail (3), and B2B/Inter Company (1/4) to Projects (2), using the EFFECTIVE segment', () => {
+    const expr = effectiveChannelExpr();
+    // The inference must branch on the effective (override-aware) segment, not the raw column --
+    // otherwise a reclassified salesperson's Unknown-channel rows would disagree with their own
+    // segment-grouped total. Asserting against effectiveSegmentExpr() directly (rather than a
+    // hand-typed 'SegmentKey IN (2, 3)') is what actually proves that composition.
+    expect(expr).toContain(`${effectiveSegmentExpr()} IN (2, 3) THEN 3`);
+    expect(expr).toContain(`${effectiveSegmentExpr()} IN (1, 4) THEN 2`);
+  });
+
+  it('leaves rows with no segment signal at Unknown (1) rather than guessing', () => {
+    expect(effectiveChannelExpr()).toContain('ELSE 1');
   });
 });
 

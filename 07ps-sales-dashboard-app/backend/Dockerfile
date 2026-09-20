@@ -9,7 +9,7 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true \
 WORKDIR /repo
 COPY package.json ./
 COPY backend ./backend
-RUN npm install --workspace backend --omit=dev
+RUN npm install --workspace backend
 WORKDIR /repo/backend
 RUN npm run build
 EXPOSE 4000

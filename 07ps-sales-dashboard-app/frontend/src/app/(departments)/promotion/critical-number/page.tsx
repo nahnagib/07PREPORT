@@ -17,11 +17,24 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { useFilterState } from '../../../../components/FilterProvider';
-import { Card, SemanticBadge, LoadingSkeleton, ErrorState, ProgressBar, Sparkline, CollapsibleSection, type SemanticStatus } from '@07ps/ui';
+import {
+  Card,
+  DonutChart,
+  LoadingSkeleton,
+  ErrorState,
+  Sparkline,
+  CollapsibleSection,
+  PerformanceReportTable,
+  exportPerformanceTablePdf,
+  type SemanticStatus,
+  type PerformanceReportRow,
+  type PerformanceTablePdfColumn,
+} from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterOptions, useCriticalNumberOverview, useRefreshStatus, useExportOverviewReport } from '../../../../lib/hooks';
 import { formatCompactCurrency, formatCurrency, formatVariance, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
+import type { CriticalNumberOverview } from '../../../../lib/api';
 
 // Not in tokens.css (business-unit accent there is charcoal/blue) -- these are the two brand
 // colors used specifically to tell Majaal/Tika apart in the Forced Closures branch breakdown,
@@ -40,6 +53,136 @@ function formatDayCount(n: number): string {
   return `${n} ${n === 1 ? 'day' : 'days'}`;
 }
 
+/** Single date picker bounds (Issue #9, dashboard revision pass): today (can't view the future)
+ * and Jan 1 of the current year (matches this page's YTD-only history -- there's no meaningful
+ * "prior year" Working Days/Critical Number figure to show). Same UTC-based "today" FilterBar's
+ * own todayIso() uses. */
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+function yearStartIso(): string {
+  return `${new Date().getUTCFullYear()}-01-01`;
+}
+
+// ---------------------------------------------------------------------------
+// Executive Summary -- a C-level scannable rollup. Daily/Monthly/Yearly Counter rows reuse this
+// page's own backend-computed status (classifyVsTarget); Missing Value/Days YTD have no target of
+// their own (they're already a gap-vs-pace figure), so their status is a simple, documented
+// ahead-of-pace/behind-pace read (green = at or ahead of pace, red = any shortfall) rather than a
+// fabricated banding.
+// ---------------------------------------------------------------------------
+
+function counterTakeaway(label: string, status: string, variancePct: number | null): string {
+  const variance = variancePct != null ? formatVariance(variancePct) ?? null : null;
+  if (status === 'green') return `${label} is on pace${variance ? ` (${variance} vs target)` : ''}.`;
+  if (status === 'yellow') return `${label} is slightly behind pace${variance ? ` (${variance} vs target)` : ''}.`;
+  if (status === 'red') return `${label} is well behind pace${variance ? ` (${variance} vs target)` : ''} and needs attention.`;
+  return `No target set for ${label}.`;
+}
+
+// Metric Name / Actual / Target / Variance to Target / Status / Takeaway, matching the on-page
+// PerformanceReportTable's compactColumns layout (no Variance LY or Trend column in the PDF either).
+const COMPACT_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
+  { header: 'Metric Name', getValue: (row) => row.metric },
+  { header: 'Actual', getValue: (row) => row.actualLabel },
+  { header: 'Target', getValue: (row) => row.targetLabel },
+  { header: 'Variance to Target', getValue: (row) => (row.variancePct !== null ? `${(row.variancePct * 100).toFixed(2)}%` : '—') },
+  { header: 'Status', getValue: (row) => row.status || '—' },
+  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
+];
+
+function toExecutiveSummaryRows(data?: CriticalNumberOverview | null): PerformanceReportRow[] {
+  if (!data) return [];
+  const rows: PerformanceReportRow[] = [
+    {
+      id: 'dailyCounter',
+      metric: 'Daily Counter',
+      actualLabel: formatCompactCurrency(data.dailyCounter.actual),
+      actualFullValue: formatCurrency(data.dailyCounter.actual),
+      targetLabel: data.dailyCounter.target != null ? formatCompactCurrency(data.dailyCounter.target) : '—',
+      variancePct: data.dailyCounter.variancePct,
+      varianceLyPct: null,
+      status: toSemanticStatus(data.dailyCounter.status),
+      takeaway: counterTakeaway('Today', data.dailyCounter.status, data.dailyCounter.variancePct),
+    },
+    {
+      id: 'monthlyCounter',
+      metric: 'Monthly Counter',
+      actualLabel: formatCompactCurrency(data.monthlyCounter.actualValue),
+      actualFullValue: formatCurrency(data.monthlyCounter.actualValue),
+      targetLabel: formatCompactCurrency(data.monthlyCounter.periodTarget),
+      variancePct: data.monthlyCounter.achievementPct != null ? data.monthlyCounter.achievementPct - 1 : null,
+      varianceLyPct: null,
+      status: toSemanticStatus(data.monthlyCounter.status),
+      takeaway: counterTakeaway('This month', data.monthlyCounter.status, data.monthlyCounter.achievementPct != null ? data.monthlyCounter.achievementPct - 1 : null),
+    },
+    {
+      id: 'yearlyCounter',
+      metric: 'Yearly Counter',
+      actualLabel: formatCompactCurrency(data.yearlyCounter.actualValue),
+      actualFullValue: formatCurrency(data.yearlyCounter.actualValue),
+      targetLabel: formatCompactCurrency(data.yearlyCounter.periodTarget),
+      variancePct: data.yearlyCounter.achievementPct != null ? data.yearlyCounter.achievementPct - 1 : null,
+      varianceLyPct: null,
+      status: toSemanticStatus(data.yearlyCounter.status),
+      takeaway: counterTakeaway('This year', data.yearlyCounter.status, data.yearlyCounter.achievementPct != null ? data.yearlyCounter.achievementPct - 1 : null),
+    },
+    {
+      id: 'workingDaysYtd',
+      metric: 'Working Days YTD',
+      actualLabel: String(data.workingDaysYtd.value),
+      targetLabel: '—',
+      variancePct: null,
+      varianceLyPct: data.workingDaysYtd.variancePct,
+      status: 'neutral',
+      takeaway: `${data.workingDaysYtd.value} working days so far this year (${data.workingDaysYtd.lastYear} same period last year).`,
+    },
+  ];
+
+  const missingValue = data.missingValueYtd.value;
+  const missingValueGap = missingValue == null ? null : -missingValue;
+  const missingValueBehind = missingValueGap != null && missingValueGap < 0;
+  rows.push({
+    id: 'missingValueYtd',
+    metric: 'Missing Value YTD',
+    actualLabel: missingValueGap == null ? '—' : `${missingValueBehind ? '-' : '+'}${formatCompactCurrency(Math.abs(missingValueGap))}`,
+    actualFullValue: missingValueGap == null ? undefined : `${missingValueBehind ? '-' : '+'}${formatCurrency(Math.abs(missingValueGap))}`,
+    targetLabel: formatCompactCurrency(data.missingValueYtd.expectedValue),
+    variancePct: null,
+    varianceLyPct: null,
+    trendValues: data.missingValueYtd.trendValues,
+    status: missingValueGap == null ? 'neutral' : missingValueBehind ? 'alert' : 'success',
+    takeaway:
+      missingValueGap == null
+        ? 'No pace data available.'
+        : missingValueBehind
+          ? `Sales are ${formatCompactCurrency(Math.abs(missingValueGap))} behind pace year-to-date.`
+          : `Sales are ${formatCompactCurrency(Math.abs(missingValueGap))} ahead of pace year-to-date.`,
+  });
+
+  const missingDays = data.missingDaysYtd.value;
+  const missingDaysGap = missingDays == null ? null : -missingDays;
+  const missingDaysBehind = missingDaysGap != null && missingDaysGap < 0;
+  rows.push({
+    id: 'missingDaysYtd',
+    metric: 'Missing Days YTD',
+    actualLabel: missingDaysGap == null ? '—' : `${missingDaysBehind ? '-' : '+'}${formatDayCount(Math.round(Math.abs(missingDaysGap)))}`,
+    targetLabel: formatDayCount(Math.round(data.missingDaysYtd.expectedValue)),
+    variancePct: null,
+    varianceLyPct: null,
+    trendValues: data.missingDaysYtd.trendValues,
+    status: missingDaysGap == null ? 'neutral' : missingDaysBehind ? 'alert' : 'success',
+    takeaway:
+      missingDaysGap == null
+        ? 'No pace data available.'
+        : missingDaysBehind
+          ? `Sales are the equivalent of ${formatDayCount(Math.round(Math.abs(missingDaysGap)))} behind pace year-to-date.`
+          : `Sales are the equivalent of ${formatDayCount(Math.round(Math.abs(missingDaysGap)))} ahead of pace year-to-date.`,
+  });
+
+  return rows;
+}
+
 /**
  * Critical Number page (Sales, Level 3) -- 07Ps_Phase1_Architecture_Standards.md Section 2.1.1:
  * "translates the annual target into a required daily value; tracks working-day consumption,
@@ -51,13 +194,18 @@ function formatDayCount(n: number): string {
  * shared pattern this mirrors.
  *
  * All figures come from backend/src/measures/criticalNumber.ts, computed against the same
- * throwaway/validation MySQL warehouse Tachometer reads from (Fact_SalesLines, Fact_Targets,
- * Fact_OffDays, Dim_Date) -- there is no live Odoo or Power BI connection, and no sample/mock data
- * path; ValidationStatusBar below states this plainly, same as Tachometer.
+ * throwaway/validation MySQL warehouse Tachometer reads from (Fact_SalesLines, Dim_Date) plus the
+ * admin-managed official_holidays/forced_closures tables (Admin Panel > Official Holidays / Forced
+ * Closures) -- there is no live Odoo or Power BI connection, and no sample/mock data path;
+ * ValidationStatusBar below states this plainly, same as Tachometer. The Daily Critical Number's
+ * company-wide base is a fixed 560,000 constant, unrelated to Fact_Targets, scaled by the active
+ * Company/Customer Group filter selection via admin-configured percentages -- see
+ * criticalNumber.ts's DAILY_CRITICAL_NUMBER and computeDailyCriticalNumber docstrings.
  */
 export default function CriticalNumberPage() {
   const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
   const {
+    filters,
     effectiveFilters,
     anchorDate,
     dateFromDate,
@@ -68,7 +216,7 @@ export default function CriticalNumberPage() {
     resetFilters,
   } = useFilterState();
 
-  const filterOptions = useFilterOptions(token, authError, retryAuth);
+  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
   const overview = useCriticalNumberOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const exportReport = useExportOverviewReport(token, anchorDate, effectiveFilters);
@@ -80,6 +228,69 @@ export default function CriticalNumberPage() {
   function handleRefresh() {
     overview.retry();
     refreshStatus.retry();
+  }
+
+  function buildFilterSummaryParts(): string[] {
+    const parts: string[] = [];
+
+    parts.push(`Date: ${anchorDate}`);
+
+    if (filters.companyKeys?.length) {
+      const labels = filterOptions.businessUnits.data
+        ?.filter((b) => filters.companyKeys!.includes(b.company_key as number))
+        .map((b) => b.company_name);
+      if (labels?.length) parts.push(`Company: ${labels.join(', ')}`);
+    }
+
+    if (filters.segmentKeys?.length) {
+      const labels = filterOptions.customerGroups.data
+        ?.filter((s) => filters.segmentKeys!.includes(s.segment_key as number))
+        .map((s) => s.segment_name);
+      if (labels?.length) parts.push(`Customer Group: ${labels.join(', ')}`);
+    }
+
+    if (filters.channelKeys?.length) {
+      const labels = filterOptions.distributionChannels.data
+        ?.filter((c) => filters.channelKeys!.includes(c.channel_key as number))
+        .map((c) => c.channel_name);
+      if (labels?.length) parts.push(`Distribution Channel: ${labels.join(', ')}`);
+    }
+
+    if (filters.salesTeamKeys?.length) {
+      const labels = filterOptions.branches.data
+        ?.filter((b) => filters.salesTeamKeys!.includes(b.sales_team_key as string))
+        .map((b) => b.sales_team_name);
+      if (labels?.length) parts.push(`Branch: ${labels.join(', ')}`);
+    }
+
+    if (filters.salespersonKeys?.length) {
+      const labels = filterOptions.salespersons.data
+        ?.filter((s) => filters.salespersonKeys!.includes(s.salesperson_key as number))
+        .map((s) => s.salesperson_name);
+      if (labels?.length) parts.push(`Salesperson: ${labels.join(', ')}`);
+    }
+
+    return parts;
+  }
+
+  function buildFilterSummary(): string {
+    const parts = buildFilterSummaryParts();
+    return parts.length > 0 ? parts.join(' | ') : 'No filters applied';
+  }
+
+  async function handleExportTablePdf() {
+    try {
+      await exportPerformanceTablePdf({
+        title: 'Performance Details',
+        rows: toExecutiveSummaryRows(data),
+        columns: COMPACT_PDF_COLUMNS,
+        filterParts: buildFilterSummaryParts(),
+        exportedByEmail: user?.email,
+        fileName: 'critical-number-performance-details',
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    }
   }
 
   const roleLabel = user?.role.label ?? user?.fullName;
@@ -106,11 +317,19 @@ export default function CriticalNumberPage() {
           onReset={handleReset}
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
+          showDateRange={false}
+          showSingleDate
+          dateMin={yearStartIso()}
+          dateMax={todayIso()}
           businessUnits={filterOptions.businessUnits.data ?? []}
           customerGroups={filterOptions.customerGroups.data ?? []}
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
           salespersons={filterOptions.salespersons.data ?? []}
+          customerGroupsLoading={filterOptions.customerGroups.loading}
+          distributionChannelsLoading={filterOptions.distributionChannels.loading}
+          branchesLoading={filterOptions.branches.loading}
+          salespersonsLoading={filterOptions.salespersons.loading}
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
@@ -211,13 +430,14 @@ export default function CriticalNumberPage() {
             >
               <ImpactCard
                 title="Missing Value YTD"
-                description="Net shortfall vs. pace: (Working Days YTD x Daily Critical Number) minus Actual YTD Value, floored at zero -- surplus days offset shortfall days"
-                valueLabel={data ? formatCompactCurrency(data.missingValueYtd.value) : '—'}
-                valueFullLabel={data ? formatCurrency(data.missingValueYtd.value) : undefined}
+                description="Net gap vs. pace: (Working Days YTD x Daily Critical Number) minus Actual YTD Value -- positive means ahead of pace, negative means behind (surplus days offset shortfall days)"
+                value={data?.missingValueYtd.value ?? null}
+                formatMagnitude={formatCompactCurrency}
+                formatFullMagnitude={formatCurrency}
                 trendValues={data?.missingValueYtd.trendValues ?? []}
                 trendPct={data?.missingValueYtd.trendPct ?? null}
                 sparklineLabel="Cumulative missing value, as of each month-end this year"
-                axisTooltip="X-axis: each month of this year, left to right (running total as of that month's end). Y-axis: cumulative missing value (LYD) = (Working Days Elapsed x Daily Critical Number) minus Actual Value to that point, floored at zero -- a running total, not that month's own isolated result."
+                axisTooltip="X-axis: each month of this year, left to right (running total as of that month's end). Y-axis: cumulative gap (LYD) = Actual Value minus (Working Days Elapsed x Daily Critical Number) to that point -- a running total, not that month's own isolated result."
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
@@ -225,16 +445,29 @@ export default function CriticalNumberPage() {
               <ImpactCard
                 title="Missing Days YTD"
                 description="Missing Value YTD expressed in day-equivalents (Missing Value / Daily Critical Number)"
-                valueLabel={data ? formatDayCount(data.missingDaysYtd.value) : '—'}
+                value={data?.missingDaysYtd.value ?? null}
+                formatMagnitude={formatDayCount}
                 trendValues={data?.missingDaysYtd.trendValues ?? []}
                 trendPct={data?.missingDaysYtd.trendPct ?? null}
                 sparklineLabel="Cumulative days behind pace, last 30 days"
-                axisTooltip="X-axis: each of the last 30 calendar days, left to right (running total as of that day). Y-axis: cumulative shortfall expressed as a number of days at the Daily Critical Number -- a running total, not that single day's own result."
+                axisTooltip="X-axis: each of the last 30 calendar days, left to right (running total as of that day). Y-axis: cumulative gap expressed as a number of days at the Daily Critical Number -- a running total, not that single day's own result."
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
               />
             </section>
+
+            {!overview.loading && !overview.error && (
+              <PerformanceReportTable
+                title="Performance Details"
+                rows={toExecutiveSummaryRows(data)}
+                showStatus
+                showTakeaway
+                compactColumns
+                filtersSummary={buildFilterSummary()}
+                onExportPdf={handleExportTablePdf}
+              />
+            )}
           </div>
         </main>
 
@@ -339,45 +572,28 @@ function DailyCriticalNumberCard({
         {value != null ? formatCompactCurrency(value) : '—'}
       </div>
       <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', maxWidth: 320 }}>
-        Required daily value to stay on this year&apos;s pace. Recalculates when Company or Customer Group filters change.
+        Baseline daily sales target -- the figure every Daily/Monthly/Yearly Counter below is measured against. Scales with
+        the active Company/Customer Group filters (Admin Panel &gt; Companies / Customer Groups sets each one's share).
       </div>
     </Card>
   );
 }
 
-const rangeBarFillColor: Record<SemanticStatus, string> = {
-  success: 'var(--ps-color-success)',
-  watch: 'var(--ps-color-watch)',
-  alert: 'var(--ps-color-alert)',
-  neutral: 'var(--ps-color-neutral-text)',
-};
+/** Shared Achieved/Remaining donut segment colors for the Daily/Monthly/Yearly counters (Issue #2-4,
+ * dashboard revision pass) -- blue for the achieved portion, light gray (the same track color
+ * RangeBar/ProgressBar used) for what's left to reach target. */
+const ACHIEVED_COLOR = 'var(--ps-color-accent)';
+const REMAINING_COLOR = 'var(--ps-color-border)';
 
-/** Horizontal linear bar over an arbitrary [min, max] range (not [0, target] like @07ps/ui's
- * ProgressBar) -- same thin-pill visual as ProgressBar/the Monthly-Yearly Counter bars, just with
- * a caller-supplied floor instead of always starting at zero. Used for Daily Counter's straight
- * 0..Daily Critical Number scale, replacing the old semi-circular gauge. */
-function RangeBar({ value, min, max, status }: { value: number; min: number; max: number; status: SemanticStatus }) {
-  const span = max - min;
-  const ratio = span > 0 ? Math.max(0, Math.min(1, (value - min) / span)) : 0;
-  return (
-    <div
-      role="progressbar"
-      aria-valuenow={Math.round(ratio * 100)}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      style={{ width: '100%', height: 6, borderRadius: 999, background: 'var(--ps-color-border)', overflow: 'hidden' }}
-    >
-      <div
-        style={{
-          width: `${ratio * 100}%`,
-          height: '100%',
-          borderRadius: 999,
-          background: rangeBarFillColor[status],
-          transition: 'width 0.2s ease-out',
-        }}
-      />
-    </div>
-  );
+function achievedVsRemainingSegments(actual: number, target: number | null) {
+  if (target == null || target <= 0) {
+    return [{ id: 'achieved', label: 'Achieved', value: Math.max(actual, 0) || 1, color: ACHIEVED_COLOR }];
+  }
+  const remaining = Math.max(0, target - actual);
+  return [
+    { id: 'achieved', label: 'Achieved', value: Math.max(0, actual), color: ACHIEVED_COLOR },
+    { id: 'remaining', label: 'Remaining', value: remaining, color: REMAINING_COLOR },
+  ];
 }
 
 function DailyCounterCard({
@@ -409,9 +625,6 @@ function DailyCounterCard({
   const status = toSemanticStatus((counter?.status as any) ?? 'no_target');
   const actual = counter?.actual ?? 0;
   const target = counter?.target ?? null;
-  const hasTarget = target != null && target > 0;
-  const min = 0;
-  const max = hasTarget ? target : Math.max(actual, 1);
 
   return (
     <Card style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -422,36 +635,25 @@ function DailyCounterCard({
           </span>
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>Daily Counter</span>
         </div>
-        <SemanticBadge status={status} />
+        <PaceBadge status={status} />
       </div>
 
-      <div
-        style={{ fontSize: 32, fontWeight: 700, color: 'var(--ps-color-text)', textAlign: 'center', margin: '4px 0 16px' }}
-        title={formatCurrency(actual)}
-      >
-        {formatCompactCurrency(actual)}
-      </div>
-
-      <RangeBar value={actual} min={min} max={max} status={status} />
-      {hasTarget && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ps-color-text)' }}>{formatCompactCurrency(min)}</div>
-            <div style={{ fontSize: 9, color: 'var(--ps-color-muted-text)' }}>0</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ps-color-text)' }} title={formatCurrency(max)}>{formatCompactCurrency(max)}</div>
-            <div style={{ fontSize: 9, color: 'var(--ps-color-muted-text)' }}>Critical Number</div>
-          </div>
-        </div>
-      )}
+      <DonutChart
+        showTitle={false}
+        segments={achievedVsRemainingSegments(actual, target)}
+        valueFormatter={(v) => formatCompactCurrency(v)}
+        legendTitle="Today"
+        height={200}
+        centerLabel="Today"
+        centerSubLabel={formatCompactCurrency(actual)}
+      />
 
       <div
         style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
           gap: 8,
-          marginTop: 16,
+          marginTop: 8,
           borderTop: '1px solid var(--ps-color-border)',
           paddingTop: 8,
         }}
@@ -475,12 +677,17 @@ function DailyCounterCard({
  * with pace-specific wording -- SemanticBadge's label map is fixed platform-wide vocabulary shared
  * by every page (Tachometer included), so it isn't forked just for this card's "pace" framing.
  * Same status -> color mapping, so it never disagrees with what SemanticBadge would show for the
- * same status. */
+ * same status.
+ *
+ * "Critical" -> "Underperforming" (Issue #5, dashboard revision pass): this page isn't about
+ * critical *issues*, it's about pace against a sales target, and "Critical" read as alarming/
+ * ambiguous. Page-local wording change only -- SemanticBadge itself (still "Critical" for 'alert')
+ * is shared verbatim by Tachometer/Pipeline Health/Product Lifecycle and is untouched. */
 function PaceBadge({ status }: { status: SemanticStatus }) {
   const label: Record<SemanticStatus, string> = {
-    success: 'Ahead of Pace',
+    success: 'On Pace',
     watch: 'Behind Pace',
-    alert: 'Critical',
+    alert: 'Underperforming',
     neutral: 'No Target',
   };
   const colorVar: Record<SemanticStatus, string> = {
@@ -526,6 +733,7 @@ function PeriodCounterCard({
     actualValue: number;
     expectedValue: number;
     gapValue: number;
+    periodTarget: number;
   };
   loading: boolean;
   error?: string;
@@ -549,6 +757,8 @@ function PeriodCounterCard({
   const status = toSemanticStatus((counter?.status as any) ?? 'no_target');
   const elapsed = counter?.workingDaysElapsed ?? 0;
   const total = counter?.workingDaysTotal ?? 0;
+  const actual = counter?.actualValue ?? 0;
+  const periodTarget = counter?.periodTarget ?? null;
   const pct = counter?.achievementPct != null ? Math.round(counter.achievementPct * 100) : null;
   const gap = counter?.gapValue ?? null;
   const ahead = gap != null && gap >= 0;
@@ -559,11 +769,18 @@ function PeriodCounterCard({
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{title}</span>
         <PaceBadge status={status} />
       </div>
-      <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 4 }}>
-        {elapsed} / {total} <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>Days</span>
-      </div>
-      <ProgressBar actual={elapsed} targetToDate={total || null} status={status} label={`${elapsed} of ${total} working days elapsed`} />
-      <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
+
+      <DonutChart
+        showTitle={false}
+        segments={achievedVsRemainingSegments(actual, periodTarget)}
+        valueFormatter={(v) => formatCompactCurrency(v)}
+        legendTitle={`${elapsed} / ${total} Working Days`}
+        height={200}
+        centerLabel={`${elapsed} / ${total}`}
+        centerSubLabel="Working Days"
+      />
+
+      <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>
         {pct != null ? `${pct}% of pace achieved` : 'No target set'}
       </div>
       {gap != null && (
@@ -802,8 +1019,9 @@ function SimpleCountCard({
 function ImpactCard({
   title,
   description,
-  valueLabel,
-  valueFullLabel,
+  value,
+  formatMagnitude,
+  formatFullMagnitude,
   trendValues,
   trendPct,
   sparklineLabel,
@@ -814,8 +1032,13 @@ function ImpactCard({
 }: {
   title: string;
   description: string;
-  valueLabel: string;
-  valueFullLabel?: string;
+  /** Raw signed backend figure: Target YTD minus Actual YTD -- positive = behind pace (a
+   * shortfall), negative = ahead of pace (a surplus). See criticalNumber.ts's computeMissingSummary
+   * docstring. Displayed sign-flipped (Actual - Target) so ahead-of-pace reads as a positive/green
+   * number, matching PeriodCounterCard's gapValue convention (Issue #8, dashboard revision pass). */
+  value: number | null;
+  formatMagnitude: (absoluteValue: number) => string;
+  formatFullMagnitude?: (absoluteValue: number) => string;
   trendValues: number[];
   trendPct: number | null;
   sparklineLabel: string;
@@ -847,11 +1070,20 @@ function ImpactCard({
   const TrendIcon = improving ? TrendingDown : TrendingUp;
   const trendStatus = trendPct == null ? 'neutral' : improving ? 'success' : 'alert';
 
+  const gap = value == null ? null : -value;
+  const behind = gap != null && gap < 0;
+  const gapColor = gap == null ? 'var(--ps-color-text)' : behind ? 'var(--ps-color-alert)' : 'var(--ps-color-success)';
+  const valueLabel = gap == null ? '—' : `${behind ? '-' : '+'}${formatMagnitude(Math.abs(gap))}`;
+  const valueFullLabel = gap == null || !formatFullMagnitude ? undefined : `${behind ? '-' : '+'}${formatFullMagnitude(Math.abs(gap))}`;
+
   return (
-    <Card style={{ width: '100%', borderLeft: `4px solid var(--ps-color-alert)` }}>
+    <Card style={{ width: '100%', borderLeft: `4px solid ${gapColor}` }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>{title}</div>
-      <div style={{ fontSize: 30, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 10 }} title={valueFullLabel}>
+      <div style={{ fontSize: 30, fontWeight: 700, color: gapColor, marginBottom: 10 }} title={valueFullLabel}>
         {valueLabel}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: -6, marginBottom: 10 }}>
+        {gap == null ? '' : behind ? 'Behind pace' : 'Ahead of / on pace'}
       </div>
 
       {trendValues.length > 1 && (

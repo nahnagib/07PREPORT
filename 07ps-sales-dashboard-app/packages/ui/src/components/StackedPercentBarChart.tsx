@@ -24,13 +24,19 @@ export interface StackedPercentBarChartProps {
   points: StackedPercentBarChartPoint[];
   segments: StackedPercentSegment[];
   height?: number;
+  /** 'vertical' (default) keeps categories on the X-axis with % stacked upward, matching every
+   * existing caller. 'horizontal' swaps the axes -- categories on the Y-axis, % stacked left to
+   * right -- via Recharts' own `layout="vertical"` BarChart prop (Recharts names the prop after the
+   * bars' direction, not the axis layout, which is the opposite of this prop's naming; kept as
+   * 'horizontal'/'vertical' here since that's what callers actually see on screen). */
+  orientation?: 'vertical' | 'horizontal';
 }
 
 /**
- * 100%-stacked vertical bar chart -- nothing else in this package does a normalized stack
- * (ComboChart/GroupedBarChart are clustered, not stacked). Same Recharts/CSS-variable/export-image
- * conventions as every other chart here; each Bar shares one `stackId` so segments stack to a full
- * column per category.
+ * 100%-stacked bar chart -- nothing else in this package does a normalized stack (ComboChart/
+ * GroupedBarChart are clustered, not stacked). Same Recharts/CSS-variable/export-image conventions
+ * as every other chart here; each Bar shares one `stackId` so segments stack to a full bar per
+ * category, in either orientation.
  */
 export function StackedPercentBarChart({
   title,
@@ -38,6 +44,7 @@ export function StackedPercentBarChart({
   points,
   segments,
   height = 280,
+  orientation = 'vertical',
 }: StackedPercentBarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -79,22 +86,54 @@ export function StackedPercentBarChart({
       </div>
       <div ref={containerRef} style={{ width: '100%' }}>
         <ResponsiveContainer width="100%" height={height}>
-          <BarChart data={points} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="var(--ps-color-border)" strokeDasharray="3 3" vertical={false} />
-            <XAxis
-              dataKey="label"
-              tick={{ fontSize: 12, fill: 'var(--ps-color-muted-text)' }}
-              axisLine={{ stroke: 'var(--ps-color-border)' }}
-              tickLine={false}
+          <BarChart
+            data={points}
+            layout={orientation === 'horizontal' ? 'vertical' : 'horizontal'}
+            margin={{ top: 4, right: 12, left: 0, bottom: 0 }}
+          >
+            <CartesianGrid
+              stroke="var(--ps-color-border)"
+              strokeDasharray="3 3"
+              vertical={orientation === 'horizontal'}
+              horizontal={orientation !== 'horizontal'}
             />
-            <YAxis
-              domain={[0, 100]}
-              tick={{ fontSize: 11, fill: 'var(--ps-color-muted-text)' }}
-              axisLine={false}
-              tickLine={false}
-              tickFormatter={(v: number) => `${v}%`}
-              width={40}
-            />
+            {orientation === 'horizontal' ? (
+              <>
+                <XAxis
+                  type="number"
+                  domain={[0, 100]}
+                  tick={{ fontSize: 11, fill: 'var(--ps-color-muted-text)' }}
+                  axisLine={{ stroke: 'var(--ps-color-border)' }}
+                  tickLine={false}
+                  tickFormatter={(v: number) => `${v}%`}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="label"
+                  tick={{ fontSize: 12, fill: 'var(--ps-color-muted-text)' }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={90}
+                />
+              </>
+            ) : (
+              <>
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 12, fill: 'var(--ps-color-muted-text)' }}
+                  axisLine={{ stroke: 'var(--ps-color-border)' }}
+                  tickLine={false}
+                />
+                <YAxis
+                  domain={[0, 100]}
+                  tick={{ fontSize: 11, fill: 'var(--ps-color-muted-text)' }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v: number) => `${v}%`}
+                  width={40}
+                />
+              </>
+            )}
             <Tooltip
               formatter={(value: number, name: string) => [`${value.toFixed(1)}%`, name]}
               contentStyle={{

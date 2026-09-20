@@ -74,6 +74,37 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+/**
+ * Extracts a genuinely useful message from a caught error, in particular axios/network failures
+ * against `localhost`: Node's happy-eyeballs connector tries both the IPv6 (::1) and IPv4
+ * (127.0.0.1) addresses, and when both are refused (the ETL Flask API process isn't running), it
+ * throws an AggregateError that axios normalizes into an Error whose own `.message` is an empty
+ * string -- `.code`/`.cause` still carry the real failure, but plain `err.message` does not. This
+ * is exactly what turned every "ETL run failed to start" log line into an unhelpful `"error":""`
+ * during the incident this was added to close (the Flask API had stopped running locally, and
+ * every run failed instantly with no usable message pointing at why). Every catch block in this
+ * file should route through this instead of the old `err instanceof Error ? err.message : String(err)`.
+ */
+function describeError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    if (err.message) return err.message;
+    const method = err.config?.method?.toUpperCase() ?? 'request';
+    const url = err.config?.url ?? '';
+    if (err.response) {
+      return `HTTP ${err.response.status} from ${method} ${url}: ${JSON.stringify(err.response.data)}`;
+    }
+    const cause = err.cause as { code?: string; errors?: { address?: string; port?: number }[] } | undefined;
+    const code = err.code ?? cause?.code;
+    const addresses = cause?.errors?.map((e) => (e.address ? `${e.address}:${e.port}` : null)).filter(Boolean);
+    if (code) {
+      return `${code}${addresses?.length ? ` connecting to ${addresses.join(', ')}` : ''} (${method} ${url})`;
+    }
+    return `Unrecognized axios error calling ${method} ${url}`;
+  }
+  if (err instanceof Error) return err.message || err.name || 'Unknown error';
+  return String(err);
+}
+
 function buildClient(etlApiUrl: string, etlApiKey: string): AxiosInstance {
   return axios.create({
     baseURL: etlApiUrl,
@@ -129,8 +160,12 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
     if (axios.isAxiosError(err) && err.response?.status === 409) {
       throw new Error(`ETL API reports a run is already active: ${JSON.stringify(err.response.data)}`);
     }
-    etlLogger.error('ETL run failed to start', { label, error: err instanceof Error ? err.message : String(err) });
-    throw err;
+    const message = describeError(err);
+    etlLogger.error('ETL run failed to start', { label, error: message });
+    // Rethrown as a fresh Error (not the raw `err`) so every downstream consumer of this
+    // rejection -- runPipelineJob.ts's catch block, BullMQ's job.on('failed') handler -- also
+    // gets `message`'s real description instead of an axios error whose own `.message` is empty.
+    throw new Error(message);
   }
 
   const stdoutLines: string[] = [];
@@ -140,9 +175,7 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
 
   const onAbort = () => {
     client.post(`/etl/jobs/${jobId}/cancel`).catch((err) => {
-      etlLogger.error('Failed to request ETL job cancellation', {
-        label, jobId, error: err instanceof Error ? err.message : String(err),
-      });
+      etlLogger.error('Failed to request ETL job cancellation', { label, jobId, error: describeError(err) });
     });
   };
   options.signal?.addEventListener('abort', onAbort);
@@ -156,12 +189,14 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
         consecutivePollFailures = 0;
       } catch (err) {
         consecutivePollFailures += 1;
+        const message = describeError(err);
         etlLogger.error('ETL job status poll failed', {
-          label, jobId, attempt: consecutivePollFailures, error: err instanceof Error ? err.message : String(err),
+          label, jobId, attempt: consecutivePollFailures, error: message,
         });
         if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
           throw new Error(
-            `Lost contact with the ETL API while polling job ${jobId} after ${consecutivePollFailures} attempts`,
+            `Lost contact with the ETL API while polling job ${jobId} after ${consecutivePollFailures} attempts ` +
+              `(last error: ${message})`,
           );
         }
         await sleep(config.etlApi.pollIntervalMs);
@@ -227,9 +262,7 @@ export async function resetEtlApi(): Promise<{ ok: boolean; resetJobId: string |
     etlLogger.info('ETL API tracker reset', { resetJobId: response.data.resetJobId });
     return response.data;
   } catch (err) {
-    etlLogger.error('ETL API tracker reset failed', {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    etlLogger.error('ETL API tracker reset failed', { error: describeError(err) });
     return null;
   }
 }

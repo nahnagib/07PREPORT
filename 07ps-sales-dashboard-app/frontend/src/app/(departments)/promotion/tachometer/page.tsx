@@ -16,6 +16,8 @@ import {
   SemanticBadge,
   LoadingSkeleton,
   Sparkline,
+  exportPerformanceTablePdf,
+  type PerformanceTablePdfColumn,
   type ReferenceMetric,
   type PerformanceReportRow,
 } from '@07ps/ui';
@@ -153,7 +155,7 @@ export default function TachometerPage() {
   // Eternal-skeleton fix: every one of these now also gets devAuth's own error/retry, so if the
   // dev-session token mint itself failed (e.g. backend unreachable), these resolve to that same
   // error + a working Retry instead of freezing at loading:true forever. See hooks.ts's docstring.
-  const filterOptions = useFilterOptions(token, authError, retryAuth);
+  const filterOptions = useFilterOptions(token, authError, retryAuth, effectiveFilters);
   const overview = useTachometerOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const trend = useTachometerTrend(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
@@ -169,7 +171,7 @@ export default function TachometerPage() {
     refreshStatus.retry();
   }
 
-  function buildFilterSummary(): string {
+  function buildFilterSummaryParts(): string[] {
     const parts: string[] = [];
 
     // Date range
@@ -221,150 +223,36 @@ export default function TachometerPage() {
       if (labels?.length) parts.push(`Salesperson: ${labels.join(', ')}`);
     }
 
+    return parts;
+  }
+
+  function buildFilterSummary(): string {
+    const parts = buildFilterSummaryParts();
     return parts.length > 0 ? parts.join(' | ') : 'No filters applied';
   }
 
+  // Actual / LYTD / Target / Variance to LYTD / Variance to Target / Status, matching the on-page
+  // PerformanceReportTable's showLytdColumn layout (no Trend column in the PDF either; sparklines
+  // were never rasterized here).
+  const LYTD_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
+    { header: 'Metric Name', getValue: (row) => row.metric },
+    { header: 'Actual', getValue: (row) => row.actualLabel },
+    { header: 'LYTD', getValue: (row) => row.lytdLabel ?? '—' },
+    { header: 'Target', getValue: (row) => row.targetLabel },
+    { header: 'Variance to LYTD', getValue: (row) => (row.varianceLyPct !== null ? `${(row.varianceLyPct * 100).toFixed(2)}%` : '—') },
+    { header: 'Variance to Target', getValue: (row) => (row.variancePct !== null ? `${(row.variancePct * 100).toFixed(2)}%` : '—') },
+    { header: 'Status', getValue: (row) => row.status || '—' },
+  ];
+
   async function handleExportTablePdf(title: string, rows: PerformanceReportRow[]) {
     try {
-      // Import jspdf and html2canvas dynamically to avoid SSR issues
-      const html2canvas = (await import('html2canvas')).default;
-      const jsPDF = (await import('jspdf')).jsPDF;
-
-      // Create a temporary container for PDF rendering
-      const tempContainer = document.createElement('div');
-      tempContainer.style.position = 'absolute';
-      tempContainer.style.left = '-9999px';
-      tempContainer.style.width = '1000px';
-      tempContainer.style.background = '#ffffff';
-      tempContainer.style.padding = '30px';
-      tempContainer.style.fontFamily = 'Arial, sans-serif';
-      tempContainer.style.fontSize = '12px';
-      tempContainer.style.color = '#111827';
-
-      // Add title
-      const titleEl = document.createElement('h2');
-      titleEl.textContent = title;
-      titleEl.style.fontSize = '18px';
-      titleEl.style.fontWeight = 'bold';
-      titleEl.style.marginBottom = '10px';
-      titleEl.style.color = '#111827';
-      tempContainer.appendChild(titleEl);
-
-      // Add filter summary
-      const filterSummary = buildFilterSummary();
-      const filterEl = document.createElement('p');
-      filterEl.textContent = `Filters: ${filterSummary}`;
-      filterEl.style.fontSize = '11px';
-      filterEl.style.color = '#6b7280';
-      filterEl.style.marginBottom = '20px';
-      filterEl.style.borderBottom = '1px solid #e5e7eb';
-      filterEl.style.paddingBottom = '10px';
-      tempContainer.appendChild(filterEl);
-
-      // Create table
-      const table = document.createElement('table');
-      table.style.width = '100%';
-      table.style.borderCollapse = 'collapse';
-      table.style.marginBottom = '20px';
-
-      // Header
-      const thead = document.createElement('thead');
-      const headerRow = document.createElement('tr');
-      const headers = ['Metric Name', 'Actual', 'Target', 'Variance%', 'Variance LY', 'Trend', 'Status'];
-      headers.forEach((h) => {
-        const th = document.createElement('th');
-        th.textContent = h;
-        th.style.padding = '10px';
-        th.style.textAlign = 'left';
-        th.style.fontWeight = 'bold';
-        th.style.backgroundColor = '#f3f4f6';
-        th.style.borderBottom = '2px solid #d1d5db';
-        th.style.fontSize = '11px';
-        headerRow.appendChild(th);
+      await exportPerformanceTablePdf({
+        title,
+        rows,
+        columns: LYTD_PDF_COLUMNS,
+        filterParts: buildFilterSummaryParts(),
+        exportedByEmail: user?.email,
       });
-      thead.appendChild(headerRow);
-      table.appendChild(thead);
-
-      // Body
-      const tbody = document.createElement('tbody');
-      rows.forEach((row, idx) => {
-        const tr = document.createElement('tr');
-        tr.style.backgroundColor = idx % 2 === 0 ? '#ffffff' : '#f9fafb';
-
-        const cells = [
-          row.metric,
-          row.actualLabel,
-          row.targetLabel,
-          row.variancePct !== null ? `${(row.variancePct * 100).toFixed(2)}%` : '—',
-          row.varianceLyPct !== null ? `${(row.varianceLyPct * 100).toFixed(2)}%` : '—',
-          '—', // Trend sparkline not rendered in PDF
-          row.status || '—', // Status will show as text
-        ];
-
-        cells.forEach((cell) => {
-          const td = document.createElement('td');
-          td.textContent = String(cell);
-          td.style.padding = '8px';
-          td.style.textAlign = 'left';
-          td.style.borderBottom = '1px solid #e5e7eb';
-          td.style.fontSize = '11px';
-          tr.appendChild(td);
-        });
-
-        tbody.appendChild(tr);
-      });
-      table.appendChild(tbody);
-      tempContainer.appendChild(table);
-
-      // Add timestamp
-      const timestamp = document.createElement('p');
-      timestamp.textContent = `Generated: ${new Date().toLocaleString()}`;
-      timestamp.style.fontSize = '10px';
-      timestamp.style.color = '#9ca3af';
-      timestamp.style.marginTop = '20px';
-      tempContainer.appendChild(timestamp);
-
-      // Append to DOM temporarily
-      document.body.appendChild(tempContainer);
-
-      // Convert to canvas
-      const canvas = await html2canvas(tempContainer, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
-
-      // Remove temporary container
-      document.body.removeChild(tempContainer);
-
-      // Create PDF
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'landscape',
-        unit: 'mm',
-        format: 'a4',
-      });
-
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth - 20;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 10;
-
-      pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight - 20;
-
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight - 20;
-      }
-
-      // Download
-      pdf.save(`${title.replace(/\s+/g, '-').toLowerCase()}.pdf`);
     } catch (err) {
       console.error('PDF export failed:', err);
     }
@@ -393,6 +281,8 @@ export default function TachometerPage() {
           targetLabel: data.ytdValue.targetToDate != null ? formatCompactCurrency(data.ytdValue.targetToDate) : '—',
           variancePct: data.ytdValue.variancePct,
           varianceLyPct: lyVariancePct(data.ytdValue.actual, data.ytdValue.lastYearSamePeriod),
+          lytdLabel: formatCompactCurrency(data.ytdValue.lastYearSamePeriod),
+          lytdFullValue: formatCurrency(data.ytdValue.lastYearSamePeriod),
           trendValues: revenueTrendValues,
           status: toSemanticStatus(data.ytdValue.status),
         },
@@ -404,6 +294,8 @@ export default function TachometerPage() {
           targetLabel: data.mtdValue.targetToDate != null ? formatCompactCurrency(data.mtdValue.targetToDate) : '—',
           variancePct: data.mtdValue.variancePct,
           varianceLyPct: lyVariancePct(data.mtdValue.actual, data.mtdValue.lastYearSamePeriod),
+          lytdLabel: formatCompactCurrency(data.mtdValue.lastYearSamePeriod),
+          lytdFullValue: formatCurrency(data.mtdValue.lastYearSamePeriod),
           trendValues: revenueTrendValues,
           status: toSemanticStatus(data.mtdValue.status),
         },
@@ -438,6 +330,8 @@ export default function TachometerPage() {
           targetLabel: data.ytdVolume.targetToDate != null ? formatCompactVolume(data.ytdVolume.targetToDate) : '—',
           variancePct: data.ytdVolume.variancePct,
           varianceLyPct: lyVariancePct(data.ytdVolume.actual, data.ytdVolume.lastYearSamePeriod),
+          lytdLabel: formatCompactVolume(data.ytdVolume.lastYearSamePeriod),
+          lytdFullValue: formatVolume(data.ytdVolume.lastYearSamePeriod),
           trendValues: volumeTrendValues,
           status: toSemanticStatus(data.ytdVolume.status),
         },
@@ -449,6 +343,8 @@ export default function TachometerPage() {
           targetLabel: data.mtdVolume.targetToDate != null ? formatCompactVolume(data.mtdVolume.targetToDate) : '—',
           variancePct: data.mtdVolume.variancePct,
           varianceLyPct: lyVariancePct(data.mtdVolume.actual, data.mtdVolume.lastYearSamePeriod),
+          lytdLabel: formatCompactVolume(data.mtdVolume.lastYearSamePeriod),
+          lytdFullValue: formatVolume(data.mtdVolume.lastYearSamePeriod),
           trendValues: volumeTrendValues,
           status: toSemanticStatus(data.mtdVolume.status),
         },
@@ -476,7 +372,8 @@ export default function TachometerPage() {
           actualLabel: formatAsp(data.aspYtd.actualAsp),
           targetLabel: data.aspYtd.targetAsp != null ? formatAsp(data.aspYtd.targetAsp) : '—',
           variancePct: aspVariancePct(data.aspYtd.actualAsp ?? 0, data.aspYtd.targetAsp),
-          varianceLyPct: null,
+          varianceLyPct: lyVariancePct(data.aspYtd.actualAsp ?? 0, data.aspYtd.lastYearAsp ?? 0),
+          lytdLabel: data.aspYtd.lastYearAsp != null ? formatAsp(data.aspYtd.lastYearAsp) : '—',
           trendValues: aspTrendValues,
           status: toSemanticStatus(data.aspYtd.status),
         },
@@ -486,7 +383,8 @@ export default function TachometerPage() {
           actualLabel: formatAsp(data.aspMtd.actualAsp),
           targetLabel: data.aspMtd.targetAsp != null ? formatAsp(data.aspMtd.targetAsp) : '—',
           variancePct: aspVariancePct(data.aspMtd.actualAsp ?? 0, data.aspMtd.targetAsp),
-          varianceLyPct: null,
+          varianceLyPct: lyVariancePct(data.aspMtd.actualAsp ?? 0, data.aspMtd.lastYearAsp ?? 0),
+          lytdLabel: data.aspMtd.lastYearAsp != null ? formatAsp(data.aspMtd.lastYearAsp) : '—',
           trendValues: aspTrendValues,
           status: toSemanticStatus(data.aspMtd.status),
         },
@@ -518,6 +416,10 @@ export default function TachometerPage() {
         distributionChannels={filterOptions.distributionChannels.data ?? []}
         branches={filterOptions.branches.data ?? []}
         salespersons={filterOptions.salespersons.data ?? []}
+        customerGroupsLoading={filterOptions.customerGroups.loading}
+        distributionChannelsLoading={filterOptions.distributionChannels.loading}
+        branchesLoading={filterOptions.branches.loading}
+        salespersonsLoading={filterOptions.salespersons.loading}
         isSalesperson={isSalesperson}
         lastUpdate={refreshStatus.data?.lastUpdate ?? null}
         lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
@@ -746,17 +648,19 @@ export default function TachometerPage() {
               style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}
             >
               <PerformanceReportTable
-                title="Value Performance Details"
+                title="Performance Details"
                 rows={valueRows}
                 showStatus
+                showLytdColumn
                 lastUpdatedLabel={lastRefreshLabel}
                 filtersSummary={buildFilterSummary()}
                 onExportPdf={() => handleExportTablePdf('Value Performance Details', valueRows)}
               />
               <PerformanceReportTable
-                title="Volume / ASP Performance Details"
+                title="Performance Details"
                 rows={volumeAspRows}
                 showStatus
+                showLytdColumn
                 lastUpdatedLabel={lastRefreshLabel}
                 filtersSummary={buildFilterSummary()}
                 onExportPdf={() => handleExportTablePdf('Volume / ASP Performance Details', volumeAspRows)}

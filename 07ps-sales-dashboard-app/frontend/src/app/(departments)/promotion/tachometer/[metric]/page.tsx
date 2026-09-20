@@ -13,6 +13,7 @@ import {
   LoadingSkeleton,
   ErrorState,
   SemanticBadge,
+  SEMANTIC_STATUS_LABEL,
   theme,
 } from '@07ps/ui';
 import { useAuth } from '../../../../../lib/AuthProvider';
@@ -377,7 +378,12 @@ function MetricDetailBody({
                       key: 'status',
                       header: 'Status',
                       render: (r) => <SemanticBadge status={toSemanticStatus(r.status)} />,
-                      rawValue: (r) => r.status,
+                      // Human label (matches the on-screen badge) rather than the raw status code
+                      // (e.g. "red") -- used for sort/search here, and as the PDF export's text
+                      // fallback; `badge` below is what the PDF export actually uses so it can
+                      // also draw the matching colored dot, same as SemanticBadge does on screen.
+                      rawValue: (r) => SEMANTIC_STATUS_LABEL[toSemanticStatus(r.status)],
+                      badge: (r) => toSemanticStatus(r.status),
                     },
                   ]}
                   rows={rows}

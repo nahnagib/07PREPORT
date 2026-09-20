@@ -35,6 +35,41 @@ export interface GroupedBarChartProps {
    * while every other row dims -- the "this is the active page filter" affordance, same convention
    * as ComboChart's highlightedCategory/DonutChart's selectedId. */
   highlightedCategory?: string | null;
+  /** Custom tooltip body for a hovered bar -- replaces the default series-value list entirely.
+   * Receives the full point object (including any extra fields the caller stuffed onto it beyond
+   * `label`/the series keys, e.g. a product's Value YTD/Volume YTD/Class for a drilled-in product
+   * bar) plus which series key was actually hovered, since a point can carry more than one bar. */
+  tooltipContent?: (point: GroupedBarChartPoint, seriesKey: string) => React.ReactNode;
+  /** Per-point color override for a single-series chart where each bar still needs its own color
+   * (e.g. one bar per BCG class) -- an alternative to the "one null-interleaved series per color"
+   * technique (still supported, still what multi-series charts on this page use) when there's
+   * really only one series and coloring it is the only thing that varies per row. Falls back to
+   * the series' own `color` wherever this returns undefined. */
+  colorForPoint?: (point: GroupedBarChartPoint) => string | undefined;
+  /** Width (px) reserved for the category axis's tick labels, and opt-in to ellipsis-truncating
+   * labels that don't fit it (see CategoryTick below). Left unset, the axis keeps its historical
+   * behavior -- a fixed 64px width with Recharts' own untruncated text, fine for the short labels
+   * (BCG classes, "Fast Movers") every existing caller uses. Callers with real product names that
+   * actually need truncating (e.g. Stock Velocity's drilled-in product bars) should pass something
+   * wider alongside a taller `height`; the untruncated name remains available via the hover
+   * tooltip either way. */
+  yAxisWidth?: number;
+}
+
+/** Renders a category-axis tick with the label truncated (character-count approximation, not a
+ * real text-measurement pass -- good enough for this axis's fixed font, and avoids a canvas
+ * round-trip on every render) to fit `width`, appending an ellipsis when it's cut. Long,
+ * unbounded product names were overflowing past their row and overlapping the next tick before
+ * this existed -- the hover tooltip (see tooltipContent) is what shows the untruncated name. */
+function CategoryTick({ x, y, payload, width }: { x: number; y: number; payload: { value: string }; width: number }) {
+  const text = String(payload.value);
+  const maxChars = Math.max(4, Math.floor(width / 6.2));
+  const display = text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+  return (
+    <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fill="var(--ps-color-muted-text)">
+      {display}
+    </text>
+  );
 }
 
 function defaultFormatter(v: number): string {
@@ -63,6 +98,9 @@ export function GroupedBarChart({
   height = 280,
   onCategoryClick,
   highlightedCategory = null,
+  tooltipContent,
+  colorForPoint,
+  yAxisWidth,
 }: GroupedBarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -129,10 +167,15 @@ export function GroupedBarChart({
             <YAxis
               type="category"
               dataKey="label"
-              tick={{ fontSize: 12, fill: 'var(--ps-color-muted-text)' }}
+              tick={
+                yAxisWidth
+                  ? (props: any) => <CategoryTick {...props} width={yAxisWidth} />
+                  : { fontSize: 12, fill: 'var(--ps-color-muted-text)' }
+              }
               axisLine={false}
               tickLine={false}
-              width={64}
+              width={yAxisWidth ?? 64}
+              interval={0}
             />
             <Tooltip
               formatter={(value: number, name: string, item: any) => {
@@ -146,6 +189,18 @@ export function GroupedBarChart({
                 background: 'var(--ps-color-surface)',
                 color: 'var(--ps-color-text)',
               }}
+              content={
+                tooltipContent
+                  ? ({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const item = payload[0] as any;
+                      const point = item?.payload as GroupedBarChartPoint;
+                      const seriesKey = item?.dataKey as string;
+                      if (!point) return null;
+                      return <>{tooltipContent(point, seriesKey)}</>;
+                    }
+                  : undefined
+              }
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             {bars.map((b) => (
@@ -164,7 +219,7 @@ export function GroupedBarChart({
                   return (
                     <Cell
                       key={p.label}
-                      fill={b.color}
+                      fill={colorForPoint?.(p) ?? b.color}
                       fillOpacity={dimmed ? 0.35 : 1}
                       stroke={isSelected ? 'var(--ps-color-gold)' : 'none'}
                       strokeWidth={isSelected ? 2 : 0}

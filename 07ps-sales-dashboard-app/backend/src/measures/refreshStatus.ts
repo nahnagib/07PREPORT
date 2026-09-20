@@ -92,10 +92,22 @@ export async function fetchRefreshStatus(pool: Pool): Promise<RefreshStatus> {
   ]);
   const isStale =
     lastRefreshTime === null || Date.now() - lastRefreshTime.getTime() > STALE_AFTER_MS;
-  // A successful refresh can never legitimately predate the most recent order it was supposed to
-  // include -- if it does, either pipeline_run_log has a bad/placeholder timestamp or the ETL
-  // read stale data. This should never happen in production; surfacing it beats silently hiding it.
+  // A successful refresh can never legitimately predate the record-creation time of the most
+  // recent order it was supposed to include -- if it does, either pipeline_run_log has a bad/
+  // placeholder timestamp or the ETL read stale data. This should never happen in production;
+  // surfacing it beats silently hiding it.
+  //
+  // 2026-09 root-cause fix: this used to compare against `lastUpdate` (MAX(OrderDateTime), the
+  // order's business/confirmation date) instead of `lastOrderCreated` (MAX(QuotationDate), Odoo's
+  // record-creation time). OrderDateTime is operator-set and can legitimately be dated *after* the
+  // moment the order was actually processed/loaded (e.g. a quotation confirmed today but dated for
+  // tomorrow's delivery run) -- comparing against it produced false-positive inversions on
+  // perfectly normal data. lastOrderCreated tracks real record-creation time, which by definition
+  // cannot postdate a refresh that already loaded it, so it's the correct -- and much less
+  // noisy -- signal for "the ETL actually read stale/inconsistent data."
   const isInverted =
-    lastUpdate !== null && lastRefreshTime !== null && lastRefreshTime.getTime() < lastUpdate.getTime();
+    lastOrderCreated !== null &&
+    lastRefreshTime !== null &&
+    lastRefreshTime.getTime() < lastOrderCreated.getTime();
   return { lastUpdate, lastOrderCreated, lastRefreshTime, isStale, isInverted };
 }

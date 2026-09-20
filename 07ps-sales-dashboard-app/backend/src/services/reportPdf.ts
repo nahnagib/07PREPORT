@@ -5,10 +5,9 @@
  * library into the server process for two small line charts.
  */
 import puppeteer from 'puppeteer-core';
-import { Filters } from '../measures/filters';
 import { TargetStatus } from '../measures/classify';
 import { Observation } from './reportObservations';
-import { ReportSection, TrendPoint, Unit } from './reportSections';
+import { ReportKpi, ReportSection, TrendPoint, Unit } from './reportSections';
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -86,10 +85,28 @@ function renderLineChart(title: string, points: TrendPoint[], width = 720, heigh
     </div>`;
 }
 
-function renderKpiTable(section: ReportSection): string {
-  const rows = section.kpis
-    .map(
-      (k) => `
+/** Hard cap on KPI rows per PDF page, mirroring @07ps/ui's packages/ui/src/pdfPagination.ts
+ * (PDF_TABLE_ROWS_PER_PAGE) exactly -- kept as a local copy rather than an import because this
+ * package's tsc build (`rootDir: "src"`, see backend/tsconfig.json) can't compile a sibling
+ * workspace package's raw TS source without restructuring its dist output layout, and this is a
+ * three-line pure function, not worth a compiled shared package for. If PDF_TABLE_ROWS_PER_PAGE
+ * ever changes there, change it here too. */
+const PDF_TABLE_ROWS_PER_PAGE = 18;
+
+/** Splits `rows` into fixed-size pages of at most `pageSize` rows (default
+ * PDF_TABLE_ROWS_PER_PAGE); the last chunk holds the remainder, never padded. Same semantics as
+ * packages/ui/src/pdfPagination.ts's chunkRows. */
+function chunkRows<T>(rows: T[], pageSize: number = PDF_TABLE_ROWS_PER_PAGE): T[][] {
+  if (rows.length === 0) return [];
+  const pages: T[][] = [];
+  for (let i = 0; i < rows.length; i += pageSize) {
+    pages.push(rows.slice(i, i + pageSize));
+  }
+  return pages;
+}
+
+function kpiRowHtml(k: ReportKpi): string {
+  return `
       <tr>
         <td>${escapeHtml(k.label)}</td>
         <td>${formatValue(k.actual, k.unit)}</td>
@@ -97,36 +114,59 @@ function renderKpiTable(section: ReportSection): string {
         <td>${k.variancePct !== null ? `${(k.variancePct * 100).toFixed(1)}%` : '--'}</td>
         <td>${k.priorPeriodActual !== null ? `${formatValue(k.priorPeriodActual, k.unit)} (${k.priorPeriodLabel})` : '--'}</td>
         <td><span class="status-dot" style="background:${STATUS_COLOR[k.status]}"></span>${k.status.replace('_', ' ').toUpperCase()}</td>
-      </tr>`
-    )
-    .join('');
-
-  return `
-    <div class="section">
-      <h3>${escapeHtml(section.label)}</h3>
-      ${section.note ? `<div class="note">${escapeHtml(section.note)}</div>` : ''}
-      <table>
-        <thead><tr><th>KPI</th><th>Actual</th><th>Target</th><th>Variance vs Target</th><th>Prior Period</th><th>Status</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      ${section.trend ? renderLineChart(section.trend.seriesLabel, section.trend.points) : ''}
-    </div>`;
+      </tr>`;
 }
 
-function describeFiltersShort(filters: Filters): string {
-  const parts: string[] = [];
-  if (filters.companyKeys?.length) parts.push(`Company: ${filters.companyKeys.length}`);
-  if (filters.segmentKeys?.length) parts.push(`Customer Group: ${filters.segmentKeys.length}`);
-  if (filters.channelKeys?.length) parts.push(`Channel: ${filters.channelKeys.length}`);
-  if (filters.salesTeamKeys?.length) parts.push(`Branch: ${filters.salesTeamKeys.length}`);
-  if (filters.salespersonKeys?.length) parts.push(`Salesperson: ${filters.salespersonKeys.length}`);
+/**
+ * A section's KPI rows are chunked into fixed PDF_TABLE_ROWS_PER_PAGE-row pages up front, each
+ * rendered as its own `<table>` (with its own `<thead>`, so the column header repeats on every
+ * page) inside its own `.section` block; every page after the first carries an explicit
+ * `page-break` class (`page-break-before: always`) rather than leaving where it lands up to
+ * Puppeteer's own flow layout. This is the primary pagination mechanism -- not a fallback -- so a
+ * section's rows can never be split across a page boundary at all, regardless of row height or
+ * content length. (Every section here has well under 18 KPI rows today, so in practice this still
+ * renders as a single page per section; the chunking applies uniformly anyway so a future section
+ * with more rows -- e.g. Pipeline Health's per-transition stage benchmarks -- inherits the same
+ * guarantee automatically instead of silently relying on `tr { page-break-inside: avoid }`, which
+ * is now only a defensive backstop for an unusually tall single row, not the pagination logic.)
+ */
+function renderKpiTable(section: ReportSection): string {
+  const kpiChunks = chunkRows(section.kpis);
+  return kpiChunks
+    .map((kpisForPage, pageIndex) => {
+      const isFirst = pageIndex === 0;
+      const isLast = pageIndex === kpiChunks.length - 1;
+      const heading =
+        kpiChunks.length > 1
+          ? `${escapeHtml(section.label)} (page ${pageIndex + 1} of ${kpiChunks.length})`
+          : escapeHtml(section.label);
+      return `
+    <div class="section${isFirst ? '' : ' page-break'}">
+      <h3>${heading}</h3>
+      ${isFirst && section.note ? `<div class="note">${escapeHtml(section.note)}</div>` : ''}
+      <table>
+        <thead><tr><th>KPI</th><th>Actual</th><th>Target</th><th>Variance vs Target</th><th>Prior Period</th><th>Status</th></tr></thead>
+        <tbody>${kpisForPage.map(kpiRowHtml).join('')}</tbody>
+      </table>
+      ${isLast && section.trend ? renderLineChart(section.trend.seriesLabel, section.trend.points) : ''}
+    </div>`;
+    })
+    .join('');
+}
+
+/** `filterSummaryParts` is pre-resolved to human-readable "Dimension: Name, Name" strings by the
+ * route handler (see routes/reports.ts's resolveFilterSummaryParts) -- this module only formats
+ * and escapes them, the same "Company: Majaal"-style labels the per-table PerformanceReportTable
+ * PDF export already shows, rather than the old raw filter-key counts. */
+function describeFiltersShort(parts: string[]): string {
   return parts.length ? parts.join(' | ') : 'No filters applied (all data)';
 }
 
 export interface OverviewReportPayload {
   anchorDate: string;
   generatedAt: string;
-  filters: Filters;
+  filterSummaryParts: string[];
+  exportedByEmail: string;
   sections: ReportSection[];
   omittedPageKeys: string[];
   executiveSummary: string;
@@ -135,8 +175,6 @@ export interface OverviewReportPayload {
 }
 
 function buildHtml(payload: OverviewReportPayload): string {
-  const filterSummary = describeFiltersShort(payload.filters);
-
   return `<!doctype html>
 <html>
 <head>
@@ -150,8 +188,18 @@ function buildHtml(payload: OverviewReportPayload): string {
   .cover { text-align: center; padding-top: 120px; }
   .cover .subtitle { font-size: 13px; color: #57606a; margin-top: 8px; }
   .cover .filters-box { margin: 32px auto 0; max-width: 480px; border: 1px solid #d0d7de; border-radius: 6px; padding: 16px; text-align: left; font-size: 12px; }
+  .cover .filters-box ul { margin: 6px 0 0; padding-left: 18px; }
+  .cover .filters-box li { margin-bottom: 4px; }
   .section { margin-bottom: 20px; page-break-inside: avoid; }
   table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  thead { display: table-header-group; }
+  /* NOT the pagination mechanism -- renderKpiTable (see reportPdf.ts) hard-caps every table to
+     PDF_TABLE_ROWS_PER_PAGE rows and inserts an explicit .page-break before each subsequent chunk,
+     so a table's rows can never straddle a page boundary by construction, independent of Puppeteer's
+     own flow layout. This is only a defensive backstop for an edge case that hard cap doesn't cover
+     -- an unusually tall single row (long wrapped text, etc.) that alone doesn't fit in the
+     remaining space on a page -- so it's pushed whole rather than split. */
+  tr { page-break-inside: avoid; break-inside: avoid; }
   th, td { border: 1px solid #d0d7de; padding: 5px 8px; text-align: left; font-size: 11px; }
   th { background: #f6f8fa; }
   .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
@@ -168,9 +216,14 @@ function buildHtml(payload: OverviewReportPayload): string {
   <div class="cover">
     <h1>Promotion Dashboard &mdash; Overview Report</h1>
     <div class="subtitle">Generated ${escapeHtml(formatGeneratedAt(payload.generatedAt))} &middot; Anchor date ${escapeHtml(payload.anchorDate)}</div>
+    <div class="subtitle">Exported by: ${escapeHtml(payload.exportedByEmail)} on ${escapeHtml(formatGeneratedAt(payload.generatedAt))}</div>
     <div class="filters-box">
-      <strong>Applied Filters</strong><br/>
-      ${escapeHtml(filterSummary)}
+      <strong>Filters applied:</strong>
+      ${
+        payload.filterSummaryParts.length
+          ? `<ul>${payload.filterSummaryParts.map((p) => `<li>${escapeHtml(p)}</li>`).join('')}</ul>`
+          : '<div>No filters applied.</div>'
+      }
     </div>
   </div>
 
@@ -218,7 +271,7 @@ export async function renderOverviewReportPdf(payload: OverviewReportPayload): P
     const page = await browser.newPage();
     const html = buildHtml(payload);
     await page.setContent(html, { waitUntil: 'networkidle0' });
-    const filterFooter = describeFiltersShort(payload.filters);
+    const filterFooter = describeFiltersShort(payload.filterSummaryParts);
     const pdf = await page.pdf({
       format: 'A4',
       printBackground: true,
@@ -227,7 +280,7 @@ export async function renderOverviewReportPdf(payload: OverviewReportPayload): P
       headerTemplate: '<span></span>',
       footerTemplate: `
         <div style="font-size:9px; color:#57606a; width:100%; padding:0 15mm; display:flex; justify-content:space-between;">
-          <span>${escapeHtml(filterFooter)}</span>
+          <span>${escapeHtml(filterFooter)} &middot; Exported by: ${escapeHtml(payload.exportedByEmail)}</span>
           <span class="pageNumber"></span>&nbsp;/&nbsp;<span class="totalPages"></span>
         </div>`,
     });

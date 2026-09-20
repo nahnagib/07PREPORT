@@ -6,6 +6,7 @@ import { AppHeader } from '../components/AppHeader';
 import { Card } from '@07ps/ui';
 import { useAuth } from '../lib/AuthProvider';
 import { DEPARTMENTS } from '../lib/departments';
+import { departmentIsBuilt, departmentReports } from '../lib/navItems';
 
 /**
  * 7Ps Dashboard Hub -- the new landing page (bmh.com.ly/Dashboard). Replaces what used to be the
@@ -48,9 +49,9 @@ export default function DashboardHubPage() {
               gap: 'var(--ps-space-4, 24px)',
             }}
           >
-            {DEPARTMENTS.filter((d) => d.status !== 'live' || canView('tachometer')).map((dept) => {
+            {DEPARTMENTS.filter((d) => !departmentIsBuilt(d.key) || departmentReports(d.key, canView).length > 0).map((dept) => {
               const Icon = dept.icon;
-              const isLive = dept.status === 'live';
+              const isLive = departmentReports(dept.key, canView).length > 0;
               return (
                 <Link key={dept.key} href={dept.href} style={{ textDecoration: 'none', color: 'inherit' }}>
                   <Card

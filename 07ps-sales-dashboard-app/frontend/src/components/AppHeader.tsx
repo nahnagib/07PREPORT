@@ -23,7 +23,7 @@ const buLogo: Record<string, { light: string; dark: string; alt: string } | null
   all: null,
   majaal: {
     light: `${BASE_PATH}/logos/majaal/majaal-mark-dark.png`,
-    dark: `${BASE_PATH}/logos/majaal/majaal-mark-light.jpg`,
+    dark: `${BASE_PATH}/logos/majaal/majaal-mark-light.png`,
     alt: 'Majaal',
   },
   tika: { light: `${BASE_PATH}/logos/tika/tikalogo.png`, dark: `${BASE_PATH}/logos/tika/tikalogo.png`, alt: 'Tika' },
@@ -44,6 +44,13 @@ export interface AppHeaderProps {
   /** Tachometer rebuild (dark-theme pass): hides the inline date selector when a FilterBar below
    * the header already owns the As-Of Date control, so the date isn't editable from two places. */
   showDateInput?: boolean;
+  /** Optional min/max clamp on the inline date selector (native <input type="date"> min/max) --
+   * additive, undefined preserves the previous no-clamp behavior. Unused while every page passes
+   * showDateInput={false} (Critical Number moved its single date field into FilterBar's
+   * showSingleDate instead, so all filters -- date included -- live in one place); kept for
+   * whichever page next wants the header's own inline date control. */
+  dateInputMin?: string;
+  dateInputMax?: string;
 }
 
 /**
@@ -72,6 +79,8 @@ export function AppHeader({
   notificationCount = 0,
   onLogout,
   showDateInput = true,
+  dateInputMin,
+  dateInputMax,
 }: AppHeaderProps) {
   const { businessUnit } = useBusinessUnit();
   const { theme, toggle } = useTheme();
@@ -111,9 +120,9 @@ export function AppHeader({
         <Image
           src={theme === 'dark' ? bmhMark.dark : bmhMark.light}
           alt="Ben Moussa Holding"
-          width={120}
-          height={28}
-          style={{ objectFit: 'contain', height: 28, width: 'auto' }}
+          width={160}
+          height={32}
+          style={{ objectFit: 'contain', height: 32, width: 'auto' }}
           priority
         />
         {secondary && (
@@ -121,12 +130,14 @@ export function AppHeader({
             <span aria-hidden style={{ color: 'var(--ps-color-border)' }}>
               |
             </span>
+            {/* Same fixed height as the BMH mark above, not a smaller one -- both logos in this
+                lockup must read as equally important brand marks, not primary+decoration. */}
             <Image
               src={theme === 'dark' ? secondary.dark : secondary.light}
               alt={secondary.alt}
-              width={80}
-              height={24}
-              style={{ objectFit: 'contain', height: 24, width: 'auto' }}
+              width={96}
+              height={32}
+              style={{ objectFit: 'contain', height: 32, width: 'auto' }}
             />
           </>
         )}
@@ -140,7 +151,7 @@ export function AppHeader({
             rebuild, dark-theme pass) to avoid two editable copies of the same value. */}
         {showDateInput && (
           <div className="hidden md:block" style={{ width: 168 }}>
-            <DateInput label="Date" value={anchorDate} onChange={onAnchorDateChange} />
+            <DateInput label="Date" value={anchorDate} onChange={onAnchorDateChange} min={dateInputMin} max={dateInputMax} />
           </div>
         )}
 

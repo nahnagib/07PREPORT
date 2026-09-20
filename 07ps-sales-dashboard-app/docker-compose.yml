@@ -52,6 +52,9 @@ services:
       # Container-to-container DNS, not the host loopback -- overrides backend/.env's local-dev
       # default (localhost) so nobody has to remember to edit that file for this deployment path.
       REDIS_HOST: redis
+      # MySQL runs on the Docker host, not in this compose network. backend/.env's local-dev
+      # default (127.0.0.1) would point at the container itself, so override it here.
+      DB_HOST: host.docker.internal
     depends_on:
       redis:
         condition: service_healthy
@@ -112,6 +115,7 @@ services:
       NODE_ENV: production
       ETL_API_URL: http://etl-api:5001 # internal Docker network DNS, not localhost
       REDIS_HOST: redis
+      DB_HOST: host.docker.internal # MySQL runs on the Docker host; see backend service above
     depends_on:
       redis:
         condition: service_healthy

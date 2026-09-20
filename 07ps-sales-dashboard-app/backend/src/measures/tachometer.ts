@@ -41,6 +41,8 @@ import { classifyVsTarget, variancePct, TargetStatus } from './classify';
 import {
   buildWhereClause,
   dateOnlyUTC,
+  effectiveSalesTeamExpr,
+  effectiveSegmentExpr,
   flmWindow,
   flyWindow,
   lmtdWindow,
@@ -103,6 +105,48 @@ export async function fetchValueVolume(
 }
 
 /**
+ * Admin target-override blending (Reports/Dashboards Honor Admin Salesperson Overrides, 2026-09,
+ * companion to filters.ts's effectiveSegmentExpr/effectiveChannelExpr/effectiveSalesTeamExpr on the
+ * revenue side). `salesperson_admin_profile.target_override_amount` is a single flat annual figure
+ * -- Fact_Targets (and everything else in this system) has no granularity finer than a calendar
+ * month, so rather than invent a new day-of-year precision nothing else uses, an override is
+ * treated as an even 12-way monthly split and injected as if it were that salesperson's real
+ * Fact_Targets data. That lets every existing consumer of fetchTargetForMonths/
+ * fetchTargetForMonthsGrouped below (mtdTargetToDate/ytdTargetToDate's prorateMtdTarget/
+ * prorateYtdTarget, fullPeriodTargetForMtd/Ytd, and criticalNumber.ts's FY-target/working-days
+ * arithmetic) inherit correct override-aware figures with ZERO changes on their end -- the
+ * substitution happens once, here, at the shared source both functions already were.
+ *
+ * `targetVolume` is NEVER touched by an override -- there is no volume-override column in the
+ * schema, so volume-based targets stay 100% real Fact_Targets data, unconditionally, everywhere.
+ *
+ * Known, accepted limitation: a salesperson with an override but zero matching Fact_Targets rows
+ * (e.g. no ETL target-plan data exists for them at all this year) never appears in the grouped
+ * query below and so contributes nothing -- same as this system's pre-override behavior. Revisit
+ * only if that turns out to matter in practice; not fixed here since it wasn't part of what was
+ * asked for.
+ */
+async function fetchMonthlyOverrideAmounts(pool: Pool, salespersonKeys: number[]): Promise<Map<number, number>> {
+  const uniqueKeys = Array.from(new Set(salespersonKeys));
+  if (uniqueKeys.length === 0) return new Map();
+  const [rows] = await pool.query(
+    `SELECT salesperson_key, target_override_amount FROM salesperson_admin_profile
+     WHERE salesperson_key IN (?) AND target_override_amount IS NOT NULL`,
+    [uniqueKeys],
+  );
+  return new Map((rows as any[]).map((r) => [Number(r.salesperson_key), Number(r.target_override_amount) / 12]));
+}
+
+/** How many real months this fetchTargetForMonths(Grouped) call's opts represents -- an
+ * overridden salesperson's flat per-month split is multiplied by this so it composes with the
+ * caller's own proration math exactly as a real multi-month Fact_Targets sum would. */
+function monthCountForOpts(opts: { month?: number; monthLt?: number }): number {
+  if (opts.month !== undefined) return 1;
+  if (opts.monthLt !== undefined) return Math.max(0, opts.monthLt - 1);
+  return 12;
+}
+
+/**
  * Sum fact_target_plan.target_revenue/target_volume for a given target_year, optionally narrowed
  * to one target_month (month=) or "months strictly before" (monthLt=), used by the YTD proration
  * helper to sum already-completed months. Filters by target_year/target_month, NOT date_key -- see
@@ -130,14 +174,27 @@ export async function fetchTargetForMonths(
 
   const sql = `
     SELECT
+      ftp.SalespersonKey AS salespersonKey,
       COALESCE(SUM(ftp.Target_Revenue), 0) AS target_revenue,
       COALESCE(SUM(ftp.Target_Volume), 0)  AS target_volume
     FROM Fact_Targets ftp
     WHERE ${conditions.join(' AND ')} AND ${clause}
+    GROUP BY ftp.SalespersonKey
   `;
   const [rows] = await pool.query(sql, queryParams);
-  const row = (rows as any[])[0];
-  return { targetRevenue: Number(row.target_revenue), targetVolume: Number(row.target_volume) };
+  const perSalesperson = rows as { salespersonKey: number; target_revenue: number; target_volume: number }[];
+
+  const overrides = await fetchMonthlyOverrideAmounts(pool, perSalesperson.map((r) => Number(r.salespersonKey)));
+  const monthCount = monthCountForOpts(opts);
+
+  let targetRevenue = 0;
+  let targetVolume = 0;
+  for (const row of perSalesperson) {
+    const overrideMonthly = overrides.get(Number(row.salespersonKey));
+    targetRevenue += overrideMonthly !== undefined ? overrideMonthly * monthCount : Number(row.target_revenue);
+    targetVolume += Number(row.target_volume);
+  }
+  return { targetRevenue, targetVolume };
 }
 
 export type Metric = 'value' | 'volume';
@@ -326,31 +383,59 @@ export function computeAspCard(
 
 export type GroupBy = 'salesperson' | 'salesTeam' | 'segment';
 
+/**
+ * Reworked for admin-override reclassification (see filters.ts's effective*Expr docstring):
+ * segment/salesTeam now group by a COMPUTED effective key (own override, falling back to the raw
+ * column) rather than the raw column directly, and resolve their label against the relevant admin
+ * overlay table first. salesperson keeps its raw, unambiguous key -- an override never changes
+ * which salesperson a row belongs to -- but now prefers admin_name_override for its label too.
+ *
+ * `keyJoin`/`keyExpr` are evaluated inside an aggregated derived table aliased `gk` (see
+ * fetchValueVolumeGrouped/fetchTargetForMonthsGrouped below); `labelJoins`/`labelExpr` then join
+ * against `gk.group_key` (a plain column by that point, not a repeated correlated subquery) to
+ * resolve the display name once per group, not once per underlying Fact_* row.
+ *
+ * `keyExpr` deliberately does NOT reuse filters.ts's effectiveSegmentExpr/effectiveSalesTeamExpr
+ * (the correlated-subquery versions used by buildWhereClause) -- MySQL's ONLY_FULL_GROUP_BY
+ * sql_mode rejects a GROUP BY expression containing a correlated subquery that references an
+ * outer column, even when it's textually identical to the SELECT expression above it. `keyJoin`
+ * instead joins salesperson_admin_profile directly into the inner aggregation query's FROM clause
+ * (a plain 1:1-or-0 join on its PK), so keyExpr can reference a joined column instead.
+ */
 interface GroupConfig {
-  column: string; // column name on Fact_SalesLines (filtered) / fact_target_plan
-  joinTable: string;
-  joinKeyColumn: string;
-  labelColumn: string;
+  keyJoin: (factAlias: string) => string;
+  keyExpr: (factAlias: string) => string;
+  labelJoins: string;
+  labelExpr: string;
 }
 
 const GROUP_CONFIG: Record<GroupBy, GroupConfig> = {
   salesperson: {
-    column: 'SalespersonKey',
-    joinTable: 'dim_salesperson',
-    joinKeyColumn: 'SalespersonKey',
-    labelColumn: 'salesperson',
+    keyJoin: () => '',
+    keyExpr: (alias) => `${alias}.SalespersonKey`,
+    labelJoins: `
+      LEFT JOIN dim_salesperson dsp ON gk.group_key = dsp.SalespersonKey
+      LEFT JOIN salesperson_admin_profile sap ON gk.group_key = sap.salesperson_key
+    `,
+    labelExpr: 'COALESCE(sap.admin_name_override, dsp.salesperson)',
   },
   salesTeam: {
-    column: 'SalesTeamKey',
-    joinTable: 'dim_salesteam',
-    joinKeyColumn: 'SalesTeamKey',
-    labelColumn: 'SalesTeam',
+    keyJoin: (alias) => `LEFT JOIN salesperson_admin_profile sap_key ON sap_key.salesperson_key = ${alias}.SalespersonKey`,
+    keyExpr: (alias) => `COALESCE(sap_key.sales_team_key_override, ${alias}.SalesTeamKey)`,
+    labelJoins: `
+      LEFT JOIN dim_salesteam dst ON gk.group_key = dst.SalesTeamKey
+      LEFT JOIN sales_team_admin_profile stap ON gk.group_key = stap.sales_team_key
+    `,
+    labelExpr: 'COALESCE(stap.team_name_override, dst.SalesTeam)',
   },
   segment: {
-    column: 'SegmentKey',
-    joinTable: 'dim_segment',
-    joinKeyColumn: 'SegmentKey',
-    labelColumn: 'Segment',
+    keyJoin: (alias) => `LEFT JOIN salesperson_admin_profile sap_key ON sap_key.salesperson_key = ${alias}.SalespersonKey`,
+    keyExpr: (alias) => `COALESCE(sap_key.segment_key_override, ${alias}.SegmentKey)`,
+    labelJoins: `
+      LEFT JOIN dim_segment dsg ON gk.group_key = dsg.SegmentKey
+      LEFT JOIN admin_customer_group acg ON gk.group_key = acg.etl_segment_key
+    `,
+    labelExpr: 'COALESCE(acg.name, dsg.Segment)',
   },
 };
 
@@ -376,18 +461,26 @@ async function fetchValueVolumeGrouped(
 ): Promise<GroupedValueVolume[]> {
   const { clause, params } = buildWhereClause(filters, 'fsl');
   const cfg = GROUP_CONFIG[groupBy];
+  const keyExpr = cfg.keyExpr('fsl');
   const sql = `
     SELECT
-      fsl.${cfg.column} AS group_key,
-      COALESCE(dim.${cfg.labelColumn}, 'Unassigned') AS group_label,
-      COALESCE(SUM(fsl.value), 0)  AS value,
-      COALESCE(SUM(fsl.volume), 0) AS volume
-    FROM Fact_SalesLines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    LEFT JOIN ${cfg.joinTable} dim ON fsl.${cfg.column} = dim.${cfg.joinKeyColumn}
-    WHERE dd.Date BETWEEN ? AND ?
-      AND ${clause}
-    GROUP BY fsl.${cfg.column}, dim.${cfg.labelColumn}
+      gk.group_key AS group_key,
+      COALESCE(${cfg.labelExpr}, 'Unassigned') AS group_label,
+      gk.value AS value,
+      gk.volume AS volume
+    FROM (
+      SELECT
+        ${keyExpr} AS group_key,
+        COALESCE(SUM(fsl.value), 0)  AS value,
+        COALESCE(SUM(fsl.volume), 0) AS volume
+      FROM Fact_SalesLines fsl
+      JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
+      ${cfg.keyJoin('fsl')}
+      WHERE dd.Date BETWEEN ? AND ?
+        AND ${clause}
+      GROUP BY ${keyExpr}
+    ) gk
+    ${cfg.labelJoins}
   `;
   const [rows] = await pool.query(sql, [
     toDateOnlyString(window.start),
@@ -402,6 +495,14 @@ async function fetchValueVolumeGrouped(
   }));
 }
 
+/**
+ * Grouped by (SalespersonKey, effective group key) one level finer than the GroupedTargetFigures[]
+ * the caller wants, so an overridden salesperson's flat target can be substituted in per-salesperson
+ * before re-aggregating up to the group level -- same override-blending logic as the ungrouped
+ * fetchTargetForMonths above, just re-aggregated by groupBy afterward instead of summed to one
+ * total. Two overridden salespeople who share a reclassified segment/team correctly collapse into
+ * one summed group row.
+ */
 async function fetchTargetForMonthsGrouped(
   pool: Pool,
   year: number,
@@ -411,6 +512,7 @@ async function fetchTargetForMonthsGrouped(
 ): Promise<GroupedTargetFigures[]> {
   const { clause, params } = buildWhereClause(filters, 'ftp');
   const cfg = GROUP_CONFIG[groupBy];
+  const keyExpr = cfg.keyExpr('ftp');
   const conditions = ['ftp.Year = ?'];
   const queryParams: Array<string | number> = [year];
 
@@ -425,22 +527,51 @@ async function fetchTargetForMonthsGrouped(
 
   const sql = `
     SELECT
-      ftp.${cfg.column} AS group_key,
-      COALESCE(dim.${cfg.labelColumn}, 'Unassigned') AS group_label,
-      COALESCE(SUM(ftp.Target_Revenue), 0) AS target_revenue,
-      COALESCE(SUM(ftp.Target_Volume), 0)  AS target_volume
-    FROM Fact_Targets ftp
-    LEFT JOIN ${cfg.joinTable} dim ON ftp.${cfg.column} = dim.${cfg.joinKeyColumn}
-    WHERE ${conditions.join(' AND ')} AND ${clause}
-    GROUP BY ftp.${cfg.column}, dim.${cfg.labelColumn}
+      gk.salespersonKey AS salespersonKey,
+      gk.group_key AS group_key,
+      COALESCE(${cfg.labelExpr}, 'Unassigned') AS group_label,
+      gk.target_revenue AS target_revenue,
+      gk.target_volume AS target_volume
+    FROM (
+      SELECT
+        ftp.SalespersonKey AS salespersonKey,
+        ${keyExpr} AS group_key,
+        COALESCE(SUM(ftp.Target_Revenue), 0) AS target_revenue,
+        COALESCE(SUM(ftp.Target_Volume), 0)  AS target_volume
+      FROM Fact_Targets ftp
+      ${cfg.keyJoin('ftp')}
+      WHERE ${conditions.join(' AND ')} AND ${clause}
+      GROUP BY ftp.SalespersonKey, ${keyExpr}
+    ) gk
+    ${cfg.labelJoins}
   `;
   const [rows] = await pool.query(sql, queryParams);
-  return (rows as any[]).map((r) => ({
-    groupKey: r.group_key,
-    groupLabel: String(r.group_label),
-    targetRevenue: Number(r.target_revenue),
-    targetVolume: Number(r.target_volume),
-  }));
+  const perSalespersonGroup = rows as {
+    salespersonKey: number;
+    group_key: string | number | null;
+    group_label: string;
+    target_revenue: number;
+    target_volume: number;
+  }[];
+
+  const overrides = await fetchMonthlyOverrideAmounts(pool, perSalespersonGroup.map((r) => Number(r.salespersonKey)));
+  const monthCount = monthCountForOpts(opts);
+
+  const byGroup = new Map<string, GroupedTargetFigures>();
+  for (const row of perSalespersonGroup) {
+    const key = String(row.group_key);
+    const overrideMonthly = overrides.get(Number(row.salespersonKey));
+    const targetRevenue = overrideMonthly !== undefined ? overrideMonthly * monthCount : Number(row.target_revenue);
+    const targetVolume = Number(row.target_volume); // never overridden -- no volume-override column exists
+    const existing = byGroup.get(key);
+    if (existing) {
+      existing.targetRevenue += targetRevenue;
+      existing.targetVolume += targetVolume;
+    } else {
+      byGroup.set(key, { groupKey: row.group_key, groupLabel: row.group_label, targetRevenue, targetVolume });
+    }
+  }
+  return Array.from(byGroup.values());
 }
 
 export interface BreakdownRow {
