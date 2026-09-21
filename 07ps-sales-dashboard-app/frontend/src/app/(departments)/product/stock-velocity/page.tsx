@@ -317,6 +317,12 @@ export default function StockVelocityPage() {
         />
 
         <FilterBar
+          onReset={() => {
+            setCompany('All');
+            setCategory([]);
+            setBand('All');
+          }}
+          isPristine={company === 'All' && category.length === 0 && band === 'All'}
           showDateRange={false}
           showCompanyDimension={false}
           showTransactionDimensions={false}

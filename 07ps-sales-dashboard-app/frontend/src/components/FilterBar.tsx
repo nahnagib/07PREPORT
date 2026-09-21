@@ -1,6 +1,6 @@
 'use client';
 import React, { useEffect, useState } from 'react';
-import { SlidersHorizontal, ChevronDown } from 'lucide-react';
+import { SlidersHorizontal, ChevronDown, RotateCcw } from 'lucide-react';
 import { Select, DateInput, type SelectOption } from '@07ps/ui';
 import type { DimOption, TachometerFilters } from '../lib/api';
 import { formatTimestamp } from '../lib/format';
@@ -76,6 +76,11 @@ export interface FilterBarProps {
    * in the same field row as the built-in fields above -- the extension point requested instead of
    * forking a second filter-bar component. */
   extraFields?: React.ReactNode;
+  /** Overrides the Reset filters button for pages whose filters are local state instead of the
+   * shared FilterProvider (Materials Analogy pages); pass together with `isPristine`. */
+  onReset?: () => void;
+  /** True when the page's own filters already equal their defaults (disables the Reset button). */
+  isPristine?: boolean;
 }
 
 const fieldBox: React.CSSProperties = { width: 152, flexShrink: 0 };
@@ -129,13 +134,17 @@ export function FilterBar({
   showCustomerFilter = false,
   showLastOrderInfo = true,
   extraFields,
+  onReset,
+  isPristine,
 }: FilterBarProps) {
   // Options are cross-filtered by the server (FilterProvider owns the single /filters/options
   // request): every list below only ever holds values that are valid together with the current
   // selection. `loading` is true during any refetch, but the previous options stay on screen, so a
   // dropdown only *disables* itself when it has nothing to show yet or truly has no valid options.
   const scoped = useScopedFilterOptions();
-  const { setOptionsDateMode, setCustomerFilterEnabled } = useFilterState();
+  const { setOptionsDateMode, setCustomerFilterEnabled, resetFilters, isAtDefaults } = useFilterState();
+  const handleReset = onReset ?? resetFilters;
+  const resetDisabled = onReset ? (isPristine ?? false) : isAtDefaults;
   const customerEnabled = showTransactionDimensions && showCustomerFilter;
   const loading = scoped.businessUnits.loading;
   const customerOptions = (scoped.customers.data ?? []).map((o) => ({ value: String(o.customer_key), label: String(o.customer_name) }));
@@ -340,6 +349,36 @@ export function FilterBar({
       )}
 
       {extraFields}
+
+      <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+        <span aria-hidden style={labelSpacerStyle}>&nbsp;</span>
+        <button
+          type="button"
+          onClick={handleReset}
+          disabled={resetDisabled}
+          aria-label="Reset filters"
+          title="Reset filters"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            height: 38,
+            padding: '0 12px',
+            borderRadius: 8,
+            border: '1px solid var(--ps-color-border)',
+            background: 'transparent',
+            color: 'var(--ps-color-text)',
+            fontSize: 13,
+            fontFamily: 'inherit',
+            whiteSpace: 'nowrap',
+            cursor: resetDisabled ? 'not-allowed' : 'pointer',
+            opacity: resetDisabled ? 0.45 : 1,
+          }}
+        >
+          <RotateCcw size={14} aria-hidden />
+          Reset filters
+        </button>
+      </div>
 
       <div style={{ flex: 1 }} />
 

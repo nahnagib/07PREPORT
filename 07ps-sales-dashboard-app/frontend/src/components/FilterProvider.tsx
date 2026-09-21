@@ -50,6 +50,8 @@ interface FilterContextValue {
   onAnchorDateChange: (date: string) => void;
   onDateRangeChange: (from: string, to: string) => void;
   resetFilters: () => void;
+  /** True when every filter and date already equals its default (the Reset button's disabled state). */
+  isAtDefaults: boolean;
   /** Cross-filtered options for every filter (GET /filters/options) -- see useScopedFilterOptions. */
   options: FilterOptionsState;
   reloadOptions: () => void;
@@ -153,6 +155,14 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     setDateToDate(today);
   }, [setBusinessUnit]);
 
+  const isAtDefaults =
+    (['companyKeys', 'segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys', 'customerKeys'] as const).every((d) =>
+      sameKeys(filters[d], DEFAULT_FILTERS[d]),
+    ) &&
+    dateFromDate === ytdStartIso() &&
+    dateToDate === todayIso() &&
+    anchorDate === todayIso();
+
   // ---- Cross-filtered option lists (GET /filters/options) --------------------------------------
   const [optionsDateMode, setOptionsDateMode] = useState<'range' | 'anchor'>('anchor');
   const [dataVersion, setDataVersion] = useState(0);
@@ -245,6 +255,7 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
     onAnchorDateChange: setAnchorDate,
     onDateRangeChange,
     resetFilters,
+    isAtDefaults,
     options,
     reloadOptions,
     setOptionsDateMode,

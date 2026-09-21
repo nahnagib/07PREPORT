@@ -246,6 +246,12 @@ export default function ProductLifecyclePage() {
         />
 
         <FilterBar
+          onReset={() => {
+            setCompany('All');
+            setCategory([]);
+            setSegment('All');
+          }}
+          isPristine={company === 'All' && category.length === 0 && segment === 'All'}
           showDateRange={false}
           showCompanyDimension={false}
           showTransactionDimensions={false}
