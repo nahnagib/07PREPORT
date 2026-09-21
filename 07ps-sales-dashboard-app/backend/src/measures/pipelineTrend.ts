@@ -14,6 +14,10 @@
  * Odoo sale.order state: sale/cancel/draft/sent) is reused directly as the Open/Lost signal rather
  * than inventing a new status scheme.
  *
+ * YEAR-TO-DATE ONLY (2026-09-21): every query here is limited to records created/quoted from Jan 1
+ * of the current year through the anchor (clamped by filters.ts's parsePipelineAnchor). The by-month
+ * charts have no prior-year series, and the aging buckets only cover this year's open records.
+ *
  * Lost-exclusion policy: fetchOpportunitiesByMonth (Fact_Opportunity-scoped) excludes closed-lost
  * opportunities via filters.ts's excludeLostClause -- it's a general creation-volume trend, not a
  * lost-specific one. Every other query on this page is Fact_Sales-scoped (Quotation Rates,
@@ -82,18 +86,15 @@ export async function computeQuotationRates(pool: Pool, anchor: Date, filters: F
 }
 
 // ---------------------------------------------------------------------------
-// 3 by-month YTD-vs-LYTD combo charts -- Opportunities / Quotations / Sales Orders. Same "up to
-// anchor's month only" convention as tachometer.ts's fetchMonthlySeries -- both the YTD and LYTD
-// series are clipped to the same month range for an apples-to-apples comparison.
+// 3 by-month combo charts -- Opportunities / Quotations / Sales Orders. Current year only: January
+// through the anchor's month, no prior-year (LYTD) series and nothing from earlier years is queried.
 // ---------------------------------------------------------------------------
 
 export interface MonthComparisonPoint {
   month: number;
   label: string;
   countYtd: number;
-  countLytd: number;
   valueYtd: number;
-  valueLytd: number;
 }
 
 async function fetchMonthComparison(
@@ -112,10 +113,10 @@ async function fetchMonthComparison(
   const sql = `
     SELECT YEAR(t.${dateColumn}) AS yr, MONTH(t.${dateColumn}) AS mo, COUNT(*) AS cnt, COALESCE(SUM(t.${valueColumn}), 0) AS val
     FROM ${table} t
-    WHERE YEAR(t.${dateColumn}) IN (?, ?) AND ${extraWhere} AND ${clause}
+    WHERE YEAR(t.${dateColumn}) = ? AND ${extraWhere} AND ${clause}
     GROUP BY YEAR(t.${dateColumn}), MONTH(t.${dateColumn})
   `;
-  const [rows] = await pool.query(sql, [year, year - 1, ...params]);
+  const [rows] = await pool.query(sql, [year, ...params]);
   const byYearMonth = new Map<string, { cnt: number; val: number }>();
   for (const r of rows as any[]) {
     byYearMonth.set(`${r.yr}-${r.mo}`, { cnt: Number(r.cnt), val: Number(r.val) });
@@ -124,9 +125,7 @@ async function fetchMonthComparison(
     month: m,
     label: MONTH_LABELS[m - 1],
     countYtd: byYearMonth.get(`${year}-${m}`)?.cnt ?? 0,
-    countLytd: byYearMonth.get(`${year - 1}-${m}`)?.cnt ?? 0,
     valueYtd: byYearMonth.get(`${year}-${m}`)?.val ?? 0,
-    valueLytd: byYearMonth.get(`${year - 1}-${m}`)?.val ?? 0,
   }));
 }
 
@@ -182,24 +181,26 @@ function toAgingBuckets(row: any): AgingBuckets {
 async function fetchOpenOpportunityAging(pool: Pool, anchor: Date, filters: Filters): Promise<AgingBuckets> {
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const anchorStr = toDateOnlyString(anchor);
+  const window = ytdWindow(anchor);
   const sql = `
     SELECT ${agingCaseSql('fo.OpportunityCreatedDate')}
     FROM Fact_Opportunity fo
-    WHERE fo.IsOpen = 1 AND ${clause}
+    WHERE fo.IsOpen = 1 AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
-  const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, ...params]);
+  const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   return toAgingBuckets((rows as any[])[0]);
 }
 
 async function fetchOpenQuotationAging(pool: Pool, anchor: Date, filters: Filters): Promise<AgingBuckets> {
   const { clause, params } = buildWhereClause(filters, 'fs');
   const anchorStr = toDateOnlyString(anchor);
+  const window = ytdWindow(anchor);
   const sql = `
     SELECT ${agingCaseSql('fs.QuotationDate')}
     FROM Fact_Sales fs
-    WHERE fs.IsRealQuotation = 1 AND fs.OrderState IN ('draft', 'sent') AND ${clause}
+    WHERE fs.IsRealQuotation = 1 AND fs.OrderState IN ('draft', 'sent') AND DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${clause}
   `;
-  const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, ...params]);
+  const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   return toAgingBuckets((rows as any[])[0]);
 }
 

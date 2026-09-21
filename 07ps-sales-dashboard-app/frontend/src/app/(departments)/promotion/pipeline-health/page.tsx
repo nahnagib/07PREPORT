@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { ArrowLeft, FileDown, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
+import { OpportunityChainView } from '../../../../components/OpportunityChainView';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
@@ -451,7 +452,7 @@ export default function PipelineHealthPage() {
     onDateRangeChange,
   } = useFilterState();
 
-  const [view, setView] = useState<'summary' | 'details' | 'stageRecords'>('summary');
+  const [view, setView] = useState<'summary' | 'details' | 'stageRecords' | 'chain'>('summary');
   const [detailsFilter, setDetailsFilter] = useState<DetailsFilter>(null);
   const [stageRecordKind, setStageRecordKind] = useState<StageRecordKind | null>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -631,6 +632,7 @@ export default function PipelineHealthPage() {
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
+          ytdOnly
         />
 
         <ValidationStatusBar
@@ -652,7 +654,7 @@ export default function PipelineHealthPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
                 <ChartPanel<FunnelTableRow>
                   title="Full Pipeline"
-                  infoText="Opportunities → Quotations → Sales Orders → Deliveries (B2B, YTD). Hover a stage for its count and value; click a stage to see the underlying opportunities."
+                  infoText="Opportunities → Quotations → Sales Orders → Deliveries (B2B, current year only). Hover a stage for its count and value; click a stage to see the underlying records, or open the Opportunity chain to follow each opportunity through every stage."
                   style={{ minHeight: 380 }}
                   tableColumns={overview.error ? undefined : funnelTableColumns}
                   tableRows={overview.error ? undefined : funnelTableRows}
@@ -660,6 +662,12 @@ export default function PipelineHealthPage() {
                   headerActions={
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <DrillIndicator hint="Click a stage to see its underlying opportunities" />
+                      {!overview.error && (
+                        <Button variant="secondary" onClick={() => setView('chain')} disabled={overview.loading}>
+                          <Layers size={14} />
+                          Opportunity chain
+                        </Button>
+                      )}
                       {!overview.error && (
                         <PdfButton
                           label="Export as PDF"
@@ -835,13 +843,34 @@ export default function PipelineHealthPage() {
               <PerformanceReportTable
                 title="Performance Details"
                 rows={toExecutiveSummaryRows(data)}
-                showLytdColumn
-                lastColumnLabel="Last"
                 showStatus
                 showTakeaway
                 onExportPdf={handleExportPerformanceTablePdf}
               />
             )}
+            </div>
+          ) : view === 'chain' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
+              <ChartPanel
+                title="Full Pipeline — Opportunity chain"
+                infoText="Every B2B opportunity created this year, followed through Quotation, Sales Order and Delivery. Linked through Odoo's opportunity reference on the quotation/order and the order's deliveries."
+                style={{ minHeight: 480 }}
+              >
+                {overview.loading ? (
+                  <LoadingSkeleton variant="chart" />
+                ) : overview.error ? (
+                  <ErrorState message={overview.error} onRetry={overview.retry} />
+                ) : (
+                  <OpportunityChainView chains={data?.opportunityChains} />
+                )}
+              </ChartPanel>
+
+              <div>
+                <Button variant="secondary" onClick={handleBackToSummary}>
+                  <ArrowLeft size={14} />
+                  Back
+                </Button>
+              </div>
             </div>
           ) : view === 'details' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>

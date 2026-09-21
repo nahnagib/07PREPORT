@@ -1676,6 +1676,9 @@ export interface FunnelSalesRecord {
   salesperson: string | null;
   documentDate: string | null;
   value: number;
+  orderDate: string | null;
+  orderState: string | null;
+  documentType: string | null;
   /** null = no linked Opportunity ("Tracking > Opportunity" empty on the Odoo form). */
   opportunityId: string | null;
 }
@@ -1687,6 +1690,8 @@ export interface FunnelDeliveryRecord {
   salesperson: string | null;
   orderDate: string | null;
   deliveryStatus: string | null;
+  deliveryReference: string | null;
+  deliveryDate: string | null;
   opportunityId: string | null;
 }
 
@@ -1694,6 +1699,41 @@ export interface FunnelStageRecords {
   quotations: FunnelSalesRecord[];
   salesOrders: FunnelSalesRecord[];
   deliveries: FunnelDeliveryRecord[];
+}
+
+export type ChainStage = 'opportunity' | 'quotation' | 'salesOrder' | 'delivery';
+
+export interface ChainDocument {
+  number: string;
+  date: string | null;
+  value: number;
+  status: string | null;
+}
+
+export interface OpportunityChainRow {
+  opportunityId: string;
+  name: string;
+  customer: string | null;
+  salesperson: string | null;
+  stage: string | null;
+  createdDate: string | null;
+  isWon: boolean;
+  opportunity: ChainDocument;
+  quotations: ChainDocument[];
+  salesOrders: ChainDocument[];
+  deliveries: ChainDocument[];
+  reachedStage: ChainStage;
+}
+
+export interface ChainStageTotal {
+  opportunities: number;
+  documents: number;
+  value: number;
+}
+
+export interface OpportunityChains {
+  rows: OpportunityChainRow[];
+  totals: Record<'opportunities' | 'quotations' | 'salesOrders' | 'deliveries', ChainStageTotal>;
 }
 
 export interface StageBenchmarkRow {
@@ -1758,6 +1798,7 @@ export interface PipelineHealthOverview {
   funnelValues: FunnelValues;
   funnelOpportunityIds: FunnelOpportunityIds;
   funnelStageRecords: FunnelStageRecords;
+  opportunityChains: OpportunityChains;
   stageBenchmark: StageBenchmarkRow[];
   expectedClosureByMonth: ExpectedClosureMonthPoint[];
   opportunityByStage: StageValueSlice[];
@@ -1789,9 +1830,7 @@ export interface MonthComparisonPoint {
   month: number;
   label: string;
   countYtd: number;
-  countLytd: number;
   valueYtd: number;
-  valueLytd: number;
 }
 
 export interface AgingBuckets {
@@ -1851,7 +1890,6 @@ export interface NewOpportunitiesMonthPoint {
   month: number;
   label: string;
   countYtd: number;
-  countLytd: number;
 }
 
 export interface ActivityOpportunityRow {

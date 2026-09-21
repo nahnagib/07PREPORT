@@ -9,6 +9,8 @@ import { useFilterState, useScopedFilterOptions } from './FilterProvider';
 /** Same UTC-based "today" FilterProvider's own default/clamp logic uses, so the To Date picker's
  * max here can never disagree with what onDateRangeChange would itself clamp it to. */
 const todayIso = () => new Date().toISOString().slice(0, 10);
+/** Jan 1 of the current year -- the floor for `ytdOnly` pages. Computed on each call, never hardcoded. */
+const ytdStartIso = () => `${new Date().getUTCFullYear()}-01-01`;
 
 export interface FilterBarProps {
   /** All of the sales-transaction-shaped props below (filters/onChange/businessUnits/...) are
@@ -49,6 +51,10 @@ export interface FilterBarProps {
   /** From Date / To Date. Off for Materials Analogy pages -- that dataset is a fixed YTD-vs-LYTD
    * comparison, not a slice-able date range (see lib/materialsAnalogy/shared.ts). */
   showDateRange?: boolean;
+  /** Current-year-only pages (the Pipeline pages): From/To can never go earlier than Jan 1 of the
+   * current year -- earlier dates are disabled in the pickers, and a range inherited from another
+   * page (the date state is shared across pages) is clamped up to Jan 1 on mount. */
+  ytdOnly?: boolean;
   /** Single "Date" field (bound to anchorDate/onAnchorDateChange), rendered first in the filter
    * row alongside Company/Customer Group/etc. -- for a page like Critical Number that has exactly
    * one anchor date and no real range, so the date control lives with the rest of the filters
@@ -126,6 +132,7 @@ export function FilterBar({
   dateToDate = anchorDate,
   onDateRangeChange,
   showDateRange = true,
+  ytdOnly = false,
   showSingleDate = false,
   dateMin,
   dateMax,
@@ -183,17 +190,29 @@ export function FilterBar({
     (showTransactionDimensions ? (filters.salespersonKeys?.length ?? 0) : 0) +
     (customerEnabled ? customerValue.length : 0);
 
+  const floorDate = (date: string) => (ytdOnly && date < ytdStartIso() ? ytdStartIso() : date);
+
   const handleFromDateChange = (date: string) => {
     if (onDateRangeChange) {
-      onDateRangeChange(date, dateToDate);
+      onDateRangeChange(floorDate(date), dateToDate);
     }
   };
 
   const handleToDateChange = (date: string) => {
     if (onDateRangeChange) {
-      onDateRangeChange(dateFromDate, date);
+      onDateRangeChange(dateFromDate, floorDate(date));
     }
   };
+
+  // Date state is shared across pages, so a range picked on another page may already reach back
+  // before Jan 1 -- pull it up to the current year as soon as a YTD-only page mounts.
+  useEffect(() => {
+    if (!ytdOnly || !onDateRangeChange) return;
+    if (dateFromDate < ytdStartIso() || dateToDate < ytdStartIso()) {
+      onDateRangeChange(floorDate(dateFromDate), floorDate(dateToDate));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ytdOnly, dateFromDate, dateToDate]);
 
   return (
     <div style={{ background: 'var(--ps-color-surface)', borderBottom: '1px solid var(--ps-color-border)' }}>
@@ -260,7 +279,7 @@ export function FilterBar({
           <div style={fieldBox}>
             {/* max=dateToDate: the From Date picker can't be moved past the current To Date, so
                 the range can never invert from this side. */}
-            <DateInput label="From Date" value={dateFromDate} onChange={handleFromDateChange} max={dateToDate} />
+            <DateInput label="From Date" value={dateFromDate} onChange={handleFromDateChange} min={ytdOnly ? ytdStartIso() : undefined} max={dateToDate} />
           </div>
 
           <div style={fieldBox}>

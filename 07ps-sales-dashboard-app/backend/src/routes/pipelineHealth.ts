@@ -3,7 +3,7 @@ import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
-import { dateOnlyUTC } from '../measures/filters';
+import { parsePipelineAnchor } from '../measures/filters';
 import { computePipelineHealthOverview } from '../measures/pipelineHealth';
 
 /**
@@ -30,19 +30,10 @@ pipelineHealthRouter.use(
   resolveScopedFilters,
 );
 
-function parseAnchorDate(raw: unknown): Date {
-  if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    const now = new Date();
-    return dateOnlyUTC(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
-  }
-  const [y, m, d] = raw.split('-').map(Number);
-  return dateOnlyUTC(y, m, d);
-}
-
 pipelineHealthRouter.get('/overview', async (req, res, next) => {
   try {
     const filters = req.scopedFilters!;
-    const anchor = parseAnchorDate(req.query.anchorDate);
+    const anchor = parsePipelineAnchor(req.query.anchorDate);
     const overview = await computePipelineHealthOverview(pool, anchor, filters, req.user?.roleName === 'ADMIN');
     res.json(overview);
   } catch (err) {

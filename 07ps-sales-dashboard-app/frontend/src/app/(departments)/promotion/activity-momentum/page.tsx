@@ -121,9 +121,7 @@ function toExecutiveSummaryRows(
 ): PerformanceReportRow[] {
   if (!counts || !rates) return [];
   const series = newOppByMonth ?? [];
-  const sumYtd = series.reduce((s, p) => s + p.countYtd, 0);
-  const sumLytd = series.reduce((s, p) => s + p.countLytd, 0);
-  const ytdVarianceLy = sumLytd > 0 ? (sumYtd - sumLytd) / sumLytd : null;
+  // Current-year-only page: there is no prior-year comparison, so Variance to Last Year is "n/a".
 
   return [
     {
@@ -132,11 +130,9 @@ function toExecutiveSummaryRows(
       actualLabel: formatCountOrDash(counts.totalYtd),
       targetLabel: '—',
       variancePct: null,
-      varianceLyPct: ytdVarianceLy,
+      varianceLyPct: null,
       status: 'neutral',
-      takeaway: `${formatCountOrDash(counts.totalYtd)} new opportunities created so far this year${
-        ytdVarianceLy != null ? ` (${formatVariance(ytdVarianceLy)} vs last year)` : ''
-      }.`,
+      takeaway: `${formatCountOrDash(counts.totalYtd)} new opportunities created so far this year.`,
     },
     {
       id: 'active',
@@ -211,15 +207,13 @@ interface NewOppTableRow extends Record<string, unknown> {
   id: string;
   month: string;
   countYtd: number;
-  countLytd: number;
 }
 const newOppTableColumns: Column<NewOppTableRow>[] = [
   { key: 'month', header: 'Month' },
   { key: 'countYtd', header: '#YTD', align: 'right' },
-  { key: 'countLytd', header: '#LYTD', align: 'right' },
 ];
 function toNewOppTableRows(rows?: NewOpportunitiesMonthPoint[]): NewOppTableRow[] {
-  return (rows ?? []).map((p) => ({ id: p.label, month: p.label, countYtd: p.countYtd, countLytd: p.countLytd }));
+  return (rows ?? []).map((p) => ({ id: p.label, month: p.label, countYtd: p.countYtd }));
 }
 
 /** Resolves each column's formatted string, falling back to the render function -- same convention
@@ -377,7 +371,6 @@ export default function ActivityMomentumPage() {
   const newOpportunitiesPoints = (data?.newOpportunitiesByMonth ?? []).map((p) => ({
     label: p.label,
     actual: p.countYtd,
-    lastYear: p.countLytd,
     target: null,
   }));
 
@@ -429,6 +422,7 @@ export default function ActivityMomentumPage() {
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
+          ytdOnly
         />
 
         <ValidationStatusBar
@@ -532,7 +526,6 @@ export default function ActivityMomentumPage() {
                       showTitle={false}
                       points={newOpportunitiesPoints}
                       actualLabel="YTD"
-                      lastYearLabel="LYTD"
                       valueFormatter={(v) => v.toLocaleString()}
                     />
                   )}

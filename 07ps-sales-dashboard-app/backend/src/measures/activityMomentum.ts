@@ -54,7 +54,16 @@
  * rows to exist -- the frontend's default (no filter selected) view is what excludes Lost, via
  * matchesActivityFilter in activity-momentum/page.tsx.
  *
- * Cohort vs. snapshot scoping (fixed 2026-09): `totalYtdAll`/`totalYtd`/`won`/`lost` describe *this
+ * YEAR-TO-DATE ONLY (2026-09-21): every figure on this page is now scoped to opportunities CREATED
+ * from Jan 1 of the current year through the (clamped, see filters.ts's parsePipelineAnchor)
+ * anchor. That supersedes the all-time "snapshot" scoping described in the next paragraph: the
+ * snapshot figures (`active`/`withoutActivity`/`withoutNextStep`, at-risk ratio, the details array)
+ * still describe CURRENT state, but only of this year's origination cohort -- nothing created in a
+ * previous year is fetched or calculated. The New Opportunities chart is the current year only
+ * (January through the anchor's month), with no prior-year series.
+ *
+ * Cohort vs. snapshot scoping (fixed 2026-09, superseded by the YTD-only rule above for the
+ * creation-date window): `totalYtdAll`/`totalYtd`/`won`/`lost` describe *this
  * year's origination cohort* -- opportunities CREATED in the anchor's YTD window -- so they stay
  * scoped by `DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ?`, matching pipelineHealth.ts's
  * documented policy for fetchOpportunitiesCountAndValue (also a creation-volume figure).
@@ -86,7 +95,7 @@
  */
 
 import type { Pool } from 'mysql2/promise';
-import { buildCrmWhereClause, excludeLostClause, ytdWindow, type Filters } from './filters';
+import { buildCrmWhereClause, excludeLostClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -211,12 +220,12 @@ export async function computeOpportunityActivityCounts(
   const snapshotSql = `
     SELECT ${snapshotSelectParts.join(', ')}
     FROM Fact_Opportunity fo
-    WHERE ${clause}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
 
   const [[cohortRows], [snapshotRows]] = await Promise.all([
     pool.query(cohortSql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]),
-    pool.query(snapshotSql, params),
+    pool.query(snapshotSql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]),
   ]);
   const cohortRow = (cohortRows as any[])[0];
   const snapshotRow = (snapshotRows as any[])[0];
@@ -245,6 +254,7 @@ export async function computeActivityRates(
   filters: Filters,
   activityAvailable: boolean,
   counts: OpportunityActivityCountsInternal,
+  anchor: Date = parsePipelineAnchor(undefined),
 ): Promise<ActivityRates> {
   // Lost ÷ ALL YTD opportunities (totalYtdAll, not the now-Lost-excluding totalYtd) -- this ratio
   // IS the lost-specific widget, so its own denominator must keep counting Lost rows, unaffected
@@ -266,15 +276,16 @@ export async function computeActivityRates(
   // atRiskCount are scoped to SalesSegment = 'B2B' -- matching atRiskCount's own conditions -- so
   // the ratio's denominator isn't diluted by non-B2B opportunities that could never appear in the
   // numerator (see module header's "B2B segment scope" note).
+  const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT
       SUM(CASE WHEN fo.IsOpen = 1 AND fo.SalesSegment = 'B2B' THEN 1 ELSE 0 END) AS openCount,
       SUM(CASE WHEN fo.IsOpen = 1 AND (${WITHOUT_ACTIVITY_SQL} OR ${WITHOUT_NEXT_STEP_SQL}) THEN 1 ELSE 0 END) AS atRiskCount
     FROM Fact_Opportunity fo
-    WHERE ${clause}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
-  const [rows] = await pool.query(sql, params);
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   const row = (rows as any[])[0];
   const openCount = Number(row.openCount ?? 0);
   const atRiskCount = Number(row.atRiskCount ?? 0);
@@ -310,15 +321,14 @@ async function fetchLostByReason(pool: Pool, anchor: Date, filters: Filters): Pr
 }
 
 // ---------------------------------------------------------------------------
-// New Opportunities YTD vs LYTD, by month. Same "up to anchor's month only" convention as every
-// other by-month series in this codebase.
+// New Opportunities by month -- current year only, January through the anchor's month (no
+// prior-year series).
 // ---------------------------------------------------------------------------
 
 export interface NewOpportunitiesMonthPoint {
   month: number;
   label: string;
   countYtd: number;
-  countLytd: number;
 }
 
 /** Excludes Lost (see filters.ts's excludeLostClause) -- a general creation-volume trend, not a
@@ -330,22 +340,21 @@ async function fetchNewOpportunitiesByMonth(pool: Pool, anchor: Date, filters: F
   const sql = `
     SELECT YEAR(fo.OpportunityCreatedDate) AS yr, MONTH(fo.OpportunityCreatedDate) AS mo, COUNT(*) AS cnt
     FROM Fact_Opportunity fo
-    WHERE YEAR(fo.OpportunityCreatedDate) IN (?, ?) AND ${clause} AND ${excludeLostClause('fo')}
+    WHERE YEAR(fo.OpportunityCreatedDate) = ? AND ${clause} AND ${excludeLostClause('fo')}
     GROUP BY YEAR(fo.OpportunityCreatedDate), MONTH(fo.OpportunityCreatedDate)
   `;
-  const [rows] = await pool.query(sql, [year, year - 1, ...params]);
+  const [rows] = await pool.query(sql, [year, ...params]);
   const byYearMonth = new Map<string, number>();
   for (const r of rows as any[]) byYearMonth.set(`${r.yr}-${r.mo}`, Number(r.cnt));
   return Array.from({ length: throughMonth }, (_, i) => i + 1).map((m) => ({
     month: m,
     label: MONTH_LABELS[m - 1],
     countYtd: byYearMonth.get(`${year}-${m}`) ?? 0,
-    countLytd: byYearMonth.get(`${year - 1}-${m}`) ?? 0,
   }));
 }
 
 // ---------------------------------------------------------------------------
-// Opportunity table -- all-time (not YTD-scoped), same shape as Pipeline Health's Opportunity
+// Opportunity table -- current-year opportunities only, same shape as Pipeline Health's Opportunity
 // Details for consistency, plus per-row flags for the Details view's Activity filter panel
 // (#Active/#Lost/#Won/#Inactive/#W/O Next Step/#YTD, single-select).
 // ---------------------------------------------------------------------------
@@ -395,8 +404,8 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
   }
   const sql = `SELECT ${selectParts.join(', ')} FROM Fact_Opportunity fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
-    WHERE ${clause}`;
-  const [rows] = await pool.query(sql, params);
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}`;
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
 
   const ytdStartStr = toDateOnlyString(window.start);
   const ytdEndStr = toDateOnlyString(window.end);
@@ -443,7 +452,7 @@ export async function computeActivityMomentumOverview(pool: Pool, anchor: Date, 
   const activityColumnsAvailable = await checkActivityColumnsAvailable(pool);
   const counts = await computeOpportunityActivityCounts(pool, anchor, filters, activityColumnsAvailable);
   const [rates, lostByReason, newOpportunitiesByMonth, opportunities] = await Promise.all([
-    computeActivityRates(pool, filters, activityColumnsAvailable, counts),
+    computeActivityRates(pool, filters, activityColumnsAvailable, counts, anchor),
     fetchLostByReason(pool, anchor, filters),
     fetchNewOpportunitiesByMonth(pool, anchor, filters),
     fetchActivityOpportunities(pool, anchor, filters, activityColumnsAvailable),

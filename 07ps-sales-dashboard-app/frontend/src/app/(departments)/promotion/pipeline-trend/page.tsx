@@ -46,9 +46,7 @@ function toMonthChartPoints(series: MonthComparisonPoint[]) {
   return series.map((p) => ({
     label: p.label,
     countYtd: p.countYtd,
-    countLytd: p.countLytd,
     valueYtd: p.valueYtd,
-    valueLytd: p.valueLytd,
   }));
 }
 
@@ -73,11 +71,9 @@ const AGING_SEGMENTS = [
 
 const MONTH_CHART_BARS = [
   { key: 'countYtd', name: '#YTD', color: 'var(--ps-color-accent)' },
-  { key: 'countLytd', name: '#LYTD', color: 'var(--ps-color-last-year)' },
 ];
 const MONTH_CHART_LINES = [
   { key: 'valueYtd', name: 'Value YTD', color: 'var(--ps-color-gold)', yAxisId: 'right' as const },
-  { key: 'valueLytd', name: 'Value LYTD', color: 'var(--ps-color-neutral-text)', yAxisId: 'right' as const },
 ];
 
 // ---------------------------------------------------------------------------
@@ -145,25 +141,19 @@ interface MonthTableRow extends Record<string, unknown> {
   id: string;
   month: string;
   countYtd: number;
-  countLytd: number;
   valueYtd: string;
-  valueLytd: string;
 }
 const monthTableColumns: Column<MonthTableRow>[] = [
   { key: 'month', header: 'Month' },
   { key: 'countYtd', header: '#YTD', align: 'right' },
-  { key: 'countLytd', header: '#LYTD', align: 'right' },
   { key: 'valueYtd', header: 'Value YTD', align: 'right' },
-  { key: 'valueLytd', header: 'Value LYTD', align: 'right' },
 ];
 function toMonthTableRows(series: MonthComparisonPoint[]): MonthTableRow[] {
   return series.map((p) => ({
     id: p.label,
     month: p.label,
     countYtd: p.countYtd,
-    countLytd: p.countLytd,
     valueYtd: formatCurrency(p.valueYtd),
-    valueLytd: formatCurrency(p.valueLytd),
   }));
 }
 
@@ -186,11 +176,6 @@ function rowsToPdfRows<T extends Record<string, unknown>>(columns: Column<T>[], 
 // pipeline-health signal, banded at <15% (green) / <30% (yellow) / >=30% (red), tunable via the
 // constants below.
 // ---------------------------------------------------------------------------
-
-function ratioVsLastYear(actual: number, ly: number): number | null {
-  if (!ly || ly <= 0) return null;
-  return (actual - ly) / ly;
-}
 
 const AGING_RISK_YELLOW_PCT = 0.15;
 const AGING_RISK_RED_PCT = 0.3;
@@ -234,18 +219,16 @@ function toExecutiveSummaryRows(rates?: QuotationRates, aging?: AgingDistributio
   for (const [label, series] of monthRows) {
     if (!series || series.length === 0) continue;
     const sumCountYtd = series.reduce((s, p) => s + p.countYtd, 0);
-    const sumCountLytd = series.reduce((s, p) => s + p.countLytd, 0);
-    const varianceLy = ratioVsLastYear(sumCountYtd, sumCountLytd);
     rows.push({
       id: `count-${label}`,
       metric: `${label} Count (YTD)`,
       actualLabel: formatPlainNumber(sumCountYtd),
       targetLabel: '—',
       variancePct: null,
-      varianceLyPct: varianceLy,
+      varianceLyPct: null,
       trendValues: series.map((p) => p.countYtd),
       status: 'neutral',
-      takeaway: `${formatPlainNumber(sumCountYtd)} ${label.toLowerCase()} YTD${varianceLy != null ? ` (${formatVariance(varianceLy)} vs last year)` : ''}.`,
+      takeaway: `${formatPlainNumber(sumCountYtd)} ${label.toLowerCase()} YTD.`,
     });
   }
 
@@ -385,6 +368,7 @@ export default function PipelineTrendPage() {
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
+          ytdOnly
         />
 
         <ValidationStatusBar
@@ -574,9 +558,7 @@ function MonthComboPanel({
           rightAxisFormatter={formatMillions}
           tooltipFormatters={{
             countYtd: (v) => v.toLocaleString(),
-            countLytd: (v) => v.toLocaleString(),
             valueYtd: (v) => formatCurrency(v),
-            valueLytd: (v) => formatCurrency(v),
           }}
           height={220}
         />

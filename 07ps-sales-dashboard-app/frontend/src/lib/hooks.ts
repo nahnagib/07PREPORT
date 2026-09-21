@@ -443,8 +443,8 @@ export function useCustomerGrowthOverview(
   return { ...state, retry: makeRetry(token, retryAuth, load) };
 }
 
-/** Pipeline Health KPI overview (backend's /pipeline-health/overview endpoint). No anchorDate --
- * this page's figures are all-time, see api.ts's fetchPipelineHealthOverview header comment. Same
+/** Pipeline Health (Full Pipeline) KPI overview (backend's /pipeline-health/overview endpoint). No
+ * anchorDate -- the backend anchors it to today, current-year YTD only. Same
  * authGate/makeRetry template as every other overview hook. */
 export function usePipelineHealthOverview(
   token: string | null,
@@ -454,6 +454,7 @@ export function usePipelineHealthOverview(
 ) {
   const dataVersion = useDataVersion();
   const latest = useLatestRequest();
+  const year = new Date().getFullYear();
   const [state, setState] = useState<AsyncState<PipelineHealthOverview>>({
     data: null,
     loading: true,
@@ -467,8 +468,10 @@ export function usePipelineHealthOverview(
     fetchPipelineHealthOverview(token as string, filters)
       .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // `year` is part of the dependency list so a session that crosses New Year's never reuses a
+    // previous year's figures (the Pipeline pages are strictly current-year YTD).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataVersion, token, authError, JSON.stringify(filters)]);
+  }, [dataVersion, token, authError, year, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();

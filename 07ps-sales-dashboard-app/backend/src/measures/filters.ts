@@ -399,6 +399,28 @@ export function mtdWindow(anchor: Date): DateWindow {
   return { start: dateOnlyUTC(y, m, 1), end: anchor };
 }
 
+/** Today as a date-only UTC value. */
+export function todayUTC(): Date {
+  const now = new Date();
+  return dateOnlyUTC(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+}
+
+/**
+ * Anchor for the Pipeline pages (Full Pipeline, Pipeline Trend, Activity Momentum), which are
+ * strictly current-year YTD (Jan 1 of the CURRENT year through today). Any missing/invalid anchor,
+ * any anchor from a previous year and any future anchor falls back to today, so a stale client or a
+ * hand-built URL can never pull prior-year data. Computed from the clock on every call -- nothing
+ * is hardcoded to a year, so it rolls over on Jan 1 by itself.
+ */
+export function parsePipelineAnchor(raw: unknown): Date {
+  const today = todayUTC();
+  if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return today;
+  const [y, m, d] = raw.split('-').map(Number);
+  const parsed = dateOnlyUTC(y, m, d);
+  if (Number.isNaN(parsed.getTime()) || parsed.getUTCFullYear() !== today.getUTCFullYear() || parsed > today) return today;
+  return parsed;
+}
+
 /** Year-to-Date: start of the selected year through the selected date (inclusive). */
 export function ytdWindow(anchor: Date): DateWindow {
   const y = anchor.getUTCFullYear();

@@ -40,16 +40,13 @@ describe('checkActivityColumnsAvailable', () => {
 });
 
 describe('computeOpportunityActivityCounts -- cohort vs. snapshot scoping', () => {
-  it('sends the creation-date YTD window only to the cohort query, not the snapshot query', async () => {
+  it('sends the current-year creation-date window to both the cohort and the snapshot query', async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const query = vi.fn(async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
-      if (sql.includes('BETWEEN ? AND ?')) {
+      if (sql.includes('totalYtdAll')) {
         return [[{ totalYtdAll: 5, totalYtd: 4, won: 1, lost: 1 }]];
       }
-      // Snapshot query: a still-open, still-inactive opportunity created in a prior year would
-      // never reach the cohort query above, but must still be counted here, since this query has
-      // no OpportunityCreatedDate filter at all.
       return [[{ active: 2, withoutActivity: 1, withoutNextStep: 1 }]];
     });
     const pool = { query } as unknown as Pool;
@@ -57,12 +54,14 @@ describe('computeOpportunityActivityCounts -- cohort vs. snapshot scoping', () =
     const result = await computeOpportunityActivityCounts(pool, dateOnlyUTC(2026, 6, 30), {}, true);
 
     expect(calls).toHaveLength(2);
-    const cohortCall = calls.find((c) => c.sql.includes('BETWEEN ? AND ?'));
-    const snapshotCall = calls.find((c) => !c.sql.includes('BETWEEN ? AND ?'));
+    const cohortCall = calls.find((c) => c.sql.includes('totalYtdAll'));
+    const snapshotCall = calls.find((c) => !c.sql.includes('totalYtdAll'));
     expect(cohortCall).toBeDefined();
     expect(snapshotCall).toBeDefined();
-    // The snapshot query must not carry the two date-window params the cohort query needs.
-    expect(snapshotCall!.params).toEqual([]);
+    // Year-to-date only: even the current-state snapshot is limited to opportunities created from
+    // Jan 1 of the anchor's (current) year, so nothing from a previous year is ever counted.
+    expect(snapshotCall!.sql).toContain('DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ?');
+    expect(snapshotCall!.params).toEqual(['2026-01-01', '2026-06-30']);
     expect(cohortCall!.params).toEqual(['2026-01-01', '2026-06-30']);
 
     expect(result).toEqual({
@@ -78,7 +77,7 @@ describe('computeOpportunityActivityCounts -- cohort vs. snapshot scoping', () =
 
   it('falls back to a single #Active snapshot column when activity columns are unavailable', async () => {
     const query = vi.fn(async (sql: string) => {
-      if (sql.includes('BETWEEN ? AND ?')) return [[{ totalYtdAll: 3, totalYtd: 3, won: 0, lost: 0 }]];
+      if (sql.includes('totalYtdAll')) return [[{ totalYtdAll: 3, totalYtd: 3, won: 0, lost: 0 }]];
       return [[{ active: 3 }]];
     });
     const pool = { query } as unknown as Pool;

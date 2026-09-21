@@ -22,6 +22,15 @@
  *   Fact_Delivery    -- one row per picking/delivery record. OpportunityID is already denormalized
  *                        directly onto this table from its linked Sales Order (no join needed).
  *
+ * YEAR-TO-DATE ONLY (2026-09-21): the whole page is now limited to the current year. Every
+ * opportunity-grain visual (Opportunity by Stage, Probabilities Distribution, Expected Closure,
+ * Opportunity Details, the Full Pipeline chain, Data Quality) only includes opportunities CREATED
+ * from Jan 1 of the current year through the anchor -- filtered on OpportunityCreatedDate, not
+ * expected-close or last-modified date -- in the SQL WHERE clause, so earlier years are never
+ * loaded. The anchor is clamped to the current year by filters.ts's parsePipelineAnchor. This
+ * supersedes the "deliberately NOT B2B/YTD-scoped" remark below for those visuals (they are YTD
+ * now; only the Full Pipeline funnel/chain is additionally B2B-only).
+ *
  * Full Pipeline funnel is scoped to B2B (Fact_*.SalesSegment = 'B2B', confirmed live as a clean,
  * consistently-cased value on all 4 tables) + YTD -- "consistent with the existing rule that this
  * funnel only reflects CRM-managed transactions" (CRM/Odoo opportunity tracking in this business is
@@ -150,6 +159,12 @@ export interface FunnelSalesRecord {
   salesperson: string | null;
   documentDate: string | null;
   value: number;
+  /** Fact_Sales.OrderDate (confirmation date for a Sales Order). */
+  orderDate: string | null;
+  /** Raw Odoo sale.order state (draft/sent/sale/done/cancel). */
+  orderState: string | null;
+  /** 'Quotation' | 'Sales Order' -- the row's CURRENT type (see module docstring). */
+  documentType: string | null;
   /** null = no linked Opportunity ("Tracking > Opportunity" empty on the Odoo form). */
   opportunityId: string | null;
 }
@@ -161,6 +176,9 @@ export interface FunnelDeliveryRecord {
   salesperson: string | null;
   orderDate: string | null;
   deliveryStatus: string | null;
+  /** Picking/delivery reference; null for a sales order with no picking yet. */
+  deliveryReference: string | null;
+  deliveryDate: string | null;
   opportunityId: string | null;
 }
 
@@ -178,6 +196,9 @@ function toFunnelSalesRecord(r: any): FunnelSalesRecord {
     salesperson: r.salesperson ?? null,
     documentDate: r.documentDate ? toDateOnlyString(r.documentDate) : null,
     value: Number(r.value ?? 0),
+    orderDate: r.orderDate ? toDateOnlyString(r.orderDate) : null,
+    orderState: r.orderState ?? null,
+    documentType: r.documentType ?? null,
     opportunityId: r.opportunityId != null ? String(r.opportunityId) : null,
   };
 }
@@ -193,6 +214,7 @@ async function fetchQuotationRecords(pool: Pool, anchor: Date, filters: Filters)
     SELECT fs.OrderNumber AS orderNumber, fs.Customer AS customer, fs.Company AS company,
            COALESCE(sap.admin_name_override, fs.Salesperson) AS salesperson,
            fs.QuotationDate AS documentDate, fs.OrderValue AS value,
+           fs.OrderDate AS orderDate, fs.OrderState AS orderState, fs.SalesDocumentType AS documentType,
            fs.OpportunityID AS opportunityId
     FROM Fact_Sales fs
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
@@ -209,6 +231,7 @@ async function fetchSalesOrderRecords(pool: Pool, anchor: Date, filters: Filters
     SELECT fs.OrderNumber AS orderNumber, fs.Customer AS customer, fs.Company AS company,
            COALESCE(sap.admin_name_override, fs.Salesperson) AS salesperson,
            fs.QuotationDate AS documentDate, fs.OrderValue AS value,
+           fs.OrderDate AS orderDate, fs.OrderState AS orderState, fs.SalesDocumentType AS documentType,
            fs.OpportunityID AS opportunityId
     FROM Fact_Sales fs
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
@@ -229,6 +252,7 @@ async function fetchDeliveryRecords(pool: Pool, anchor: Date, filters: Filters):
     SELECT fd.OrderNumber AS orderNumber, fd.Customer AS customer, fd.Company AS company,
            COALESCE(sap.admin_name_override, fd.Salesperson) AS salesperson,
            fd.OrderDate AS orderDate, fd.DeliveryStatus AS deliveryStatus,
+           fd.DeliveryReference AS deliveryReference, fd.DeliveryDate AS deliveryDate,
            fd.OpportunityID AS opportunityId
     FROM Fact_Delivery fd
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fd.SalespersonKey
@@ -242,6 +266,8 @@ async function fetchDeliveryRecords(pool: Pool, anchor: Date, filters: Filters):
     salesperson: r.salesperson ?? null,
     orderDate: r.orderDate ? toDateOnlyString(r.orderDate) : null,
     deliveryStatus: r.deliveryStatus ?? null,
+    deliveryReference: r.deliveryReference != null ? String(r.deliveryReference) : null,
+    deliveryDate: r.deliveryDate ? toDateOnlyString(r.deliveryDate) : null,
     opportunityId: r.opportunityId != null ? String(r.opportunityId) : null,
   }));
 }
@@ -446,6 +472,7 @@ export async function fetchExpectedClosureByMonth(pool: Pool, anchor: Date, filt
   const startYear = anchor.getUTCFullYear();
   const startMonth = anchor.getUTCMonth() + 1;
   const rangeStart = new Date(Date.UTC(startYear, startMonth - 1, 1));
+  const window = ytdWindow(anchor);
 
   const sql = `
     SELECT
@@ -454,11 +481,11 @@ export async function fetchExpectedClosureByMonth(pool: Pool, anchor: Date, filt
       COUNT(*) AS expectedCount,
       COALESCE(SUM(fo.ExpectedRevenue), 0) AS expectedValue
     FROM Fact_Opportunity fo
-    WHERE fo.ExpectedCloseDate >= ? AND ${clause} AND fo.IsOpen = 1
+    WHERE fo.ExpectedCloseDate >= ? AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND fo.IsOpen = 1
     GROUP BY YEAR(fo.ExpectedCloseDate), MONTH(fo.ExpectedCloseDate)
     ORDER BY year, month
   `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(rangeStart), ...params]);
+  const [rows] = await pool.query(sql, [toDateOnlyString(rangeStart), toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   const byYearMonth = new Map<string, { count: number; value: number }>();
   let monthsAhead = 1;
   for (const r of rows as any[]) {
@@ -493,19 +520,22 @@ export interface StageValueSlice {
   value: number;
 }
 
-/** Deliberately unfiltered by Won/Lost -- this is the one exception to the page's Won/Lost-exclusion
+/** Only opportunities CREATED in the current year (DATE(OpportunityCreatedDate) from Jan 1 through
+ * the anchor) -- earlier-year opportunities are excluded at the query level. Deliberately
+ * unfiltered by Won/Lost -- this is the one exception to the page's Won/Lost-exclusion
  * policy (see module docstring), so it stays the one place to see where every current-stage dollar
  * sits, including deals that already closed won or lost. */
-export async function fetchOpportunityByStage(pool: Pool, filters: Filters): Promise<StageValueSlice[]> {
+export async function fetchOpportunityByStage(pool: Pool, anchor: Date, filters: Filters): Promise<StageValueSlice[]> {
+  const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT fo.Stage AS stage, COALESCE(SUM(fo.ExpectedRevenue), 0) AS value
     FROM Fact_Opportunity fo
-    WHERE ${clause}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
     GROUP BY fo.Stage
     ORDER BY value DESC
   `;
-  const [rows] = await pool.query(sql, params);
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   return (rows as any[]).map((r) => ({ stage: String(r.stage ?? 'Unspecified'), value: Number(r.value) }));
 }
 
@@ -521,16 +551,17 @@ export interface ProbabilityBucketSlice {
   count: number;
 }
 
-export async function fetchProbabilityDistribution(pool: Pool, filters: Filters): Promise<ProbabilityBucketSlice[]> {
+export async function fetchProbabilityDistribution(pool: Pool, anchor: Date, filters: Filters): Promise<ProbabilityBucketSlice[]> {
+  const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const placeholders = PROBABILITY_BUCKETS.map(() => '?').join(', ');
   const sql = `
     SELECT fo.ProbabilityBucket AS bucket, COUNT(*) AS cnt
     FROM Fact_Opportunity fo
-    WHERE fo.ProbabilityBucket IN (${placeholders}) AND ${clause} AND ${excludeLostClause('fo')}
+    WHERE fo.ProbabilityBucket IN (${placeholders}) AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${excludeLostClause('fo')}
     GROUP BY fo.ProbabilityBucket
   `;
-  const [rows] = await pool.query(sql, [...PROBABILITY_BUCKETS, ...params]);
+  const [rows] = await pool.query(sql, [...PROBABILITY_BUCKETS, toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   const byBucket = new Map<string, number>();
   for (const r of rows as any[]) byBucket.set(String(r.bucket), Number(r.cnt));
   return PROBABILITY_BUCKETS.map((bucket) => ({ bucket, count: byBucket.get(bucket) ?? 0 }));
@@ -566,7 +597,8 @@ export interface OpportunityDetailRow {
  * is the page's one exception that keeps both). Returning the full universe here and filtering by
  * `isOpen` per drill-down path on the frontend (see pipeline-health/page.tsx's matchesFilter) keeps
  * every drill-down table's rows consistent with whichever bar/segment/bucket was clicked. */
-export async function fetchOpportunityDetails(pool: Pool, filters: Filters): Promise<OpportunityDetailRow[]> {
+export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters: Filters): Promise<OpportunityDetailRow[]> {
+  const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT
@@ -585,9 +617,9 @@ export async function fetchOpportunityDetails(pool: Pool, filters: Filters): Pro
       fo.IsOpen AS isOpen
     FROM Fact_Opportunity fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
-    WHERE ${clause}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
-  const [rows] = await pool.query(sql, params);
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   return (rows as any[]).map((r) => ({
     opportunityId: String(r.opportunityId),
     name: String(r.name ?? ''),
@@ -605,6 +637,184 @@ export async function fetchOpportunityDetails(pool: Pool, filters: Filters): Pro
 }
 
 // ---------------------------------------------------------------------------
+// Full Pipeline chain -- one row per B2B, current-year opportunity (same population as the funnel's
+// Opportunities bar: created YTD, Lost excluded), with every linked Quotation / Sales Order /
+// Delivery. Links used (all already in the warehouse, nothing inferred):
+//   Opportunity -> Quotation / Sales Order : Fact_Sales.OpportunityID (one Fact_Sales row is the
+//                                            quotation and, once confirmed, the same row is the SO)
+//   Sales Order -> Delivery                : Fact_Delivery.OpportunityID (denormalised from the SO)
+//                                            + Fact_Delivery.OrderNumber
+// Built from the funnel's stage records (already B2B + YTD scoped), so the chain can never disagree
+// with the funnel's drill-downs.
+// ---------------------------------------------------------------------------
+
+export type ChainStage = 'opportunity' | 'quotation' | 'salesOrder' | 'delivery';
+
+export interface ChainDocument {
+  number: string;
+  date: string | null;
+  value: number;
+  status: string | null;
+}
+
+export interface OpportunityChainRow {
+  opportunityId: string;
+  name: string;
+  customer: string | null;
+  salesperson: string | null;
+  stage: string | null;
+  createdDate: string | null;
+  isWon: boolean;
+  opportunity: ChainDocument;
+  quotations: ChainDocument[];
+  salesOrders: ChainDocument[];
+  deliveries: ChainDocument[];
+  /** Furthest stage the opportunity has reached. */
+  reachedStage: ChainStage;
+}
+
+export interface ChainStageTotal {
+  /** Distinct opportunities that reached this stage. */
+  opportunities: number;
+  /** Documents at this stage (an opportunity can have several). */
+  documents: number;
+  value: number;
+}
+
+export interface OpportunityChains {
+  rows: OpportunityChainRow[];
+  totals: Record<'opportunities' | 'quotations' | 'salesOrders' | 'deliveries', ChainStageTotal>;
+}
+
+const QUOTATION_STATE_LABEL: Record<string, string> = { draft: 'Draft', sent: 'Sent', cancel: 'Cancelled' };
+const ORDER_STATE_LABEL: Record<string, string> = { sale: 'Confirmed', done: 'Locked', cancel: 'Cancelled', draft: 'Draft', sent: 'Sent' };
+
+function quotationStatus(r: FunnelSalesRecord): string | null {
+  if (r.documentType === 'Sales Order') return 'Converted to Sales Order';
+  return r.orderState ? QUOTATION_STATE_LABEL[r.orderState] ?? r.orderState : null;
+}
+
+function salesOrderStatus(r: FunnelSalesRecord): string | null {
+  return r.orderState ? ORDER_STATE_LABEL[r.orderState] ?? r.orderState : null;
+}
+
+async function fetchChainOpportunities(pool: Pool, anchor: Date, filters: Filters) {
+  const window = ytdWindow(anchor);
+  const { clause, params } = buildCrmWhereClause(filters, 'fo');
+  const sql = `
+    SELECT fo.OpportunityID AS opportunityId, fo.OpportunityName AS name, fo.Customer AS customer,
+           COALESCE(sap.admin_name_override, fo.Salesperson) AS salesperson, fo.Stage AS stage,
+           fo.OpportunityCreatedDate AS createdDate, fo.ExpectedRevenue AS expectedRevenue, fo.IsWon AS isWon
+    FROM Fact_Opportunity fo
+    LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${excludeLostClause('fo')}
+    ORDER BY fo.OpportunityCreatedDate DESC
+  `;
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  return rows as any[];
+}
+
+function groupByOpportunity<T extends { opportunityId: string | null }>(rows: T[]): Map<string, T[]> {
+  const map = new Map<string, T[]>();
+  for (const r of rows) {
+    if (r.opportunityId == null) continue;
+    const list = map.get(r.opportunityId);
+    if (list) list.push(r);
+    else map.set(r.opportunityId, [r]);
+  }
+  return map;
+}
+
+export async function computeOpportunityChains(pool: Pool, anchor: Date, filters: Filters, stageRecords: FunnelStageRecords): Promise<OpportunityChains> {
+  const opps = await fetchChainOpportunities(pool, anchor, filters);
+  const quotesByOpp = groupByOpportunity(stageRecords.quotations);
+  const ordersByOpp = groupByOpportunity(stageRecords.salesOrders);
+  const deliveriesByOpp = groupByOpportunity(stageRecords.deliveries);
+  const valueByOrderNumber = new Map<string, number>();
+  for (const q of stageRecords.quotations) if (q.orderNumber) valueByOrderNumber.set(q.orderNumber, q.value);
+
+  const totals: OpportunityChains['totals'] = {
+    opportunities: { opportunities: 0, documents: 0, value: 0 },
+    quotations: { opportunities: 0, documents: 0, value: 0 },
+    salesOrders: { opportunities: 0, documents: 0, value: 0 },
+    deliveries: { opportunities: 0, documents: 0, value: 0 },
+  };
+
+  const rows: OpportunityChainRow[] = opps.map((o) => {
+    const opportunityId = String(o.opportunityId);
+    const opportunity: ChainDocument = {
+      number: opportunityId,
+      date: o.createdDate ? toDateOnlyString(o.createdDate) : null,
+      value: Number(o.expectedRevenue ?? 0),
+      status: o.stage ?? null,
+    };
+    const quotations = (quotesByOpp.get(opportunityId) ?? []).map<ChainDocument>((r) => ({
+      number: r.orderNumber,
+      date: r.documentDate,
+      value: r.value,
+      status: quotationStatus(r),
+    }));
+    const salesOrders = (ordersByOpp.get(opportunityId) ?? []).map<ChainDocument>((r) => ({
+      number: r.orderNumber,
+      date: r.orderDate ?? r.documentDate,
+      value: r.value,
+      status: salesOrderStatus(r),
+    }));
+    // One order can have several partial pickings; its value is attributed to the first picking only
+    // so the per-opportunity and grand totals never double-count an order.
+    const seenOrders = new Set<string>();
+    const deliveries = (deliveriesByOpp.get(opportunityId) ?? []).map<ChainDocument>((r) => {
+      const first = r.orderNumber != null && !seenOrders.has(r.orderNumber);
+      if (r.orderNumber != null) seenOrders.add(r.orderNumber);
+      return {
+        number: r.deliveryReference ?? r.orderNumber ?? '',
+        date: r.deliveryDate ?? r.orderDate,
+        value: first && r.orderNumber != null ? valueByOrderNumber.get(r.orderNumber) ?? 0 : 0,
+        status: r.deliveryStatus,
+      };
+    });
+
+    const reachedStage: ChainStage = deliveries.length
+      ? 'delivery'
+      : salesOrders.length
+        ? 'salesOrder'
+        : quotations.length
+          ? 'quotation'
+          : 'opportunity';
+
+    totals.opportunities.opportunities += 1;
+    totals.opportunities.documents += 1;
+    totals.opportunities.value += opportunity.value;
+    const bump = (key: 'quotations' | 'salesOrders' | 'deliveries', docs: ChainDocument[]) => {
+      if (!docs.length) return;
+      totals[key].opportunities += 1;
+      totals[key].documents += docs.length;
+      totals[key].value += docs.reduce((sum, d) => sum + d.value, 0);
+    };
+    bump('quotations', quotations);
+    bump('salesOrders', salesOrders);
+    bump('deliveries', deliveries);
+
+    return {
+      opportunityId,
+      name: String(o.name ?? ''),
+      customer: o.customer ?? null,
+      salesperson: o.salesperson ?? null,
+      stage: o.stage ?? null,
+      createdDate: opportunity.date,
+      isWon: Number(o.isWon ?? 0) === 1,
+      opportunity,
+      quotations,
+      salesOrders,
+      deliveries,
+      reachedStage,
+    };
+  });
+
+  return { rows, totals };
+}
+
+// ---------------------------------------------------------------------------
 // Orchestrator
 // ---------------------------------------------------------------------------
 
@@ -613,6 +823,7 @@ export interface PipelineHealthOverview {
   funnelValues: FunnelValues;
   funnelOpportunityIds: FunnelOpportunityIds;
   funnelStageRecords: FunnelStageRecords;
+  opportunityChains: OpportunityChains;
   stageBenchmark: StageBenchmarkRow[];
   expectedClosureByMonth: ExpectedClosureMonthPoint[];
   opportunityByStage: StageValueSlice[];
@@ -624,16 +835,17 @@ export interface PipelineHealthOverview {
 
 export async function computePipelineHealthOverview(pool: Pool, anchor: Date, filters: Filters, includeDataQuality = true): Promise<PipelineHealthOverview> {
   const funnelStageRecords = await fetchFunnelStageRecords(pool, anchor, filters);
-  const [funnelCounted, funnelOpportunityIds, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities, dataQuality] = await Promise.all([
+  const [funnelCounted, funnelOpportunityIds, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities, opportunityChains, dataQuality] = await Promise.all([
     computeFunnelCounts(pool, anchor, filters, funnelStageRecords),
     fetchFunnelOpportunityIds(pool, anchor, filters),
     fetchExpectedClosureByMonth(pool, anchor, filters),
-    fetchOpportunityByStage(pool, filters),
-    fetchProbabilityDistribution(pool, filters),
-    fetchOpportunityDetails(pool, filters),
-    includeDataQuality ? computeOpportunityDataQuality(pool, filters) : Promise.resolve(undefined),
+    fetchOpportunityByStage(pool, anchor, filters),
+    fetchProbabilityDistribution(pool, anchor, filters),
+    fetchOpportunityDetails(pool, anchor, filters),
+    computeOpportunityChains(pool, anchor, filters, funnelStageRecords),
+    includeDataQuality ? computeOpportunityDataQuality(pool, filters, anchor) : Promise.resolve(undefined),
   ]);
   const { counts: funnel, values: funnelValues } = funnelCounted;
   const stageBenchmark = computeStageBenchmark(funnel);
-  return { funnel, funnelValues, funnelOpportunityIds, funnelStageRecords, stageBenchmark, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities, dataQuality };
+  return { funnel, funnelValues, funnelOpportunityIds, funnelStageRecords, opportunityChains, stageBenchmark, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities, dataQuality };
 }

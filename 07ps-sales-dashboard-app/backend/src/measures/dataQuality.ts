@@ -15,7 +15,7 @@
  */
 
 import type { Pool } from 'mysql2/promise';
-import { buildCrmWhereClause, type Filters } from './filters';
+import { buildCrmWhereClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
 import { classifyRate, TargetStatus } from './classify';
 
 export const DATA_QUALITY_YELLOW_PCT = 0.02;
@@ -48,7 +48,15 @@ const CONFLICTING_STATUS_FLAGS = `(
 )`;
 const DIRTY = `(${MISSING_STAGE} OR ${MISSING_SALES_SEGMENT} OR ${MISSING_CREATED_DATE} OR ${OPEN_MISSING_EXPECTED_CLOSE} OR ${CONFLICTING_STATUS_FLAGS})`;
 
-export async function computeOpportunityDataQuality(pool: Pool, filters: Filters): Promise<DataQualityOverview> {
+/** Scoped to the same current-year window as the rest of the Pipeline pages (opportunities created
+ * Jan 1 of the current year through the anchor), so its counts tie out with the visuals above it.
+ * A row with no creation date cannot be placed in that window, so it is outside this scope. */
+export async function computeOpportunityDataQuality(
+  pool: Pool,
+  filters: Filters,
+  anchor: Date = parsePipelineAnchor(undefined),
+): Promise<DataQualityOverview> {
+  const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT
@@ -60,9 +68,9 @@ export async function computeOpportunityDataQuality(pool: Pool, filters: Filters
       SUM(CASE WHEN ${CONFLICTING_STATUS_FLAGS} THEN 1 ELSE 0 END) AS conflictingStatusFlags,
       SUM(CASE WHEN ${DIRTY} THEN 1 ELSE 0 END) AS dirtyRecords
     FROM Fact_Opportunity fo
-    WHERE ${clause}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
-  const [rows] = await pool.query(sql, params);
+  const [rows] = await pool.query(sql, [window.start.toISOString().slice(0, 10), window.end.toISOString().slice(0, 10), ...params]);
   const row = (rows as any[])[0];
   const totalRecords = Number(row.totalRecords ?? 0);
   const dirtyRecords = Number(row.dirtyRecords ?? 0);
