@@ -618,10 +618,11 @@ export interface PipelineHealthOverview {
   opportunityByStage: StageValueSlice[];
   probabilityDistribution: ProbabilityBucketSlice[];
   opportunities: OpportunityDetailRow[];
-  dataQuality: DataQualityOverview;
+  /** Present only for Admin callers -- see routes/pipelineHealth.ts. */
+  dataQuality?: DataQualityOverview;
 }
 
-export async function computePipelineHealthOverview(pool: Pool, anchor: Date, filters: Filters): Promise<PipelineHealthOverview> {
+export async function computePipelineHealthOverview(pool: Pool, anchor: Date, filters: Filters, includeDataQuality = true): Promise<PipelineHealthOverview> {
   const funnelStageRecords = await fetchFunnelStageRecords(pool, anchor, filters);
   const [funnelCounted, funnelOpportunityIds, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities, dataQuality] = await Promise.all([
     computeFunnelCounts(pool, anchor, filters, funnelStageRecords),
@@ -630,7 +631,7 @@ export async function computePipelineHealthOverview(pool: Pool, anchor: Date, fi
     fetchOpportunityByStage(pool, filters),
     fetchProbabilityDistribution(pool, filters),
     fetchOpportunityDetails(pool, filters),
-    computeOpportunityDataQuality(pool, filters),
+    includeDataQuality ? computeOpportunityDataQuality(pool, filters) : Promise.resolve(undefined),
   ]);
   const { counts: funnel, values: funnelValues } = funnelCounted;
   const stageBenchmark = computeStageBenchmark(funnel);

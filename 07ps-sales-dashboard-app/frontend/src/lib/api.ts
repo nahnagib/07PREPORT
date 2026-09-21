@@ -1763,7 +1763,8 @@ export interface PipelineHealthOverview {
   opportunityByStage: StageValueSlice[];
   probabilityDistribution: ProbabilityBucketSlice[];
   opportunities: OpportunityDetailRow[];
-  dataQuality: DataQualityOverview;
+  /** Admin-only: the backend omits it for every other role. */
+  dataQuality?: DataQualityOverview;
 }
 
 export function fetchPipelineHealthOverview(token: string, filters: TachometerFilters): Promise<PipelineHealthOverview> {

@@ -86,6 +86,10 @@ export function AppHeader({
   const secondary = buLogo[businessUnit];
   const router = useRouter();
 
+  React.useEffect(() => {
+    document.title = pageTitle ? `${pageTitle} | BMH - 7Ps Dashboard` : 'BMH - 7Ps Dashboard';
+  }, [pageTitle]);
+
   const initials = (roleLabel ?? 'U')
     .split(' ')
     .map((w) => w[0])

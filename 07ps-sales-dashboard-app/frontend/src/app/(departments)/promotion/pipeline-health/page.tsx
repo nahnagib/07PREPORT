@@ -154,7 +154,7 @@ function toExecutiveSummaryRows(data?: PipelineHealthOverview | null): Performan
       takeaway: stageBenchmarkTakeaway(b),
     });
   }
-  rows.push({
+  if (data.dataQuality) rows.push({
     id: 'dataQuality',
     metric: 'Data Quality',
     actualLabel: formatPct(data.dataQuality.dirtyPct),
@@ -640,7 +640,9 @@ export default function PipelineHealthPage() {
           lastRefreshTime={lastRefreshLabel}
         />
 
-        <DataQualityCard dataQuality={overview.data?.dataQuality} loading={overview.loading} />
+        {user?.role.name === 'ADMIN' && (
+          <DataQualityCard dataQuality={overview.data?.dataQuality} loading={overview.loading} />
+        )}
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)' }}>
           {view === 'summary' ? (

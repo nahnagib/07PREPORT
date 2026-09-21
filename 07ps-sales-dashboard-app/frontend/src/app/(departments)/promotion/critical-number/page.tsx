@@ -368,7 +368,7 @@ export default function CriticalNumberPage() {
                   justifyContent: 'center',
                 }}
               >
-                <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+                <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} isAdmin={user?.role.name === 'ADMIN'} />
               </div>
             </section>
 
@@ -501,11 +501,13 @@ function DailyCriticalNumberCard({
   loading,
   error,
   onRetry,
+  isAdmin,
 }: {
   value: number | null;
   loading: boolean;
   error?: string;
   onRetry: () => void;
+  isAdmin: boolean;
 }) {
   if (loading) {
     return (
@@ -551,10 +553,12 @@ function DailyCriticalNumberCard({
       >
         {value != null ? formatCompactCurrency(value) : '—'}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', maxWidth: 320 }}>
-        Baseline daily sales target -- the figure every Daily/Monthly/Yearly Counter below is measured against. Scales with
-        the active Company/Customer Group filters (Admin Panel &gt; Companies / Customer Groups sets each one's share).
-      </div>
+      {isAdmin && (
+        <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', maxWidth: 320 }}>
+          Baseline daily sales target -- the figure every Daily/Monthly/Yearly Counter below is measured against. Scales with
+          the active Company/Customer Group filters (Admin Panel &gt; Companies / Customer Groups sets each one's share).
+        </div>
+      )}
     </Card>
   );
 }

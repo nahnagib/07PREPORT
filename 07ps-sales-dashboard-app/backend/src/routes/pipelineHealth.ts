@@ -43,7 +43,7 @@ pipelineHealthRouter.get('/overview', async (req, res, next) => {
   try {
     const filters = req.scopedFilters!;
     const anchor = parseAnchorDate(req.query.anchorDate);
-    const overview = await computePipelineHealthOverview(pool, anchor, filters);
+    const overview = await computePipelineHealthOverview(pool, anchor, filters, req.user?.roleName === 'ADMIN');
     res.json(overview);
   } catch (err) {
     next(err);
