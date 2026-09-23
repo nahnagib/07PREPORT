@@ -21,6 +21,8 @@ const TABS = [
 ] as const;
 
 const ETL_TAB = { label: 'ETL Control Center', href: '/admin/etl-control' } as const;
+// Admin-role-only like the ETL tab (backend: requireAdminRole) -- shows ETL input-file uploads etc.
+const AUDIT_TAB = { label: 'Audit Log', href: '/admin/audit-log' } as const;
 
 /** Shared chrome for every admin page -- header + a small tab row switching between the
  * Administration sections, each individually gated by canView so a section a user can't reach
@@ -32,7 +34,7 @@ export function AdminLayout({ title, children }: { title: string; children: Reac
   const { user, canView, logout } = useAuth();
   const visibleTabs = [
     ...TABS.filter((t) => canView(t.pageKey)),
-    ...(user?.role.name === 'ADMIN' ? [ETL_TAB] : []),
+    ...(user?.role.name === 'ADMIN' ? [ETL_TAB, AUDIT_TAB] : []),
   ];
 
   return (

@@ -13,6 +13,10 @@ Endpoints:
                                       tracker (terminates the tracked subprocess if still alive)
   GET  /etl/preflight              - are the manual input workbooks reachable/valid from THIS
                                       process (the same check the pipeline's first step makes)
+  GET  /etl/input-files            - the 5 manual input workbooks: size/modified, expected
+                                      structure, recent backups (see input_files.py)
+  PUT  /etl/input-files/<name>     - replace one workbook (raw .xlsx body): validated, previous
+                                      version backed up, then swapped in. Never starts a run.
   GET  /health                     - unauthenticated
 
 Local dev: `python app.py`. Production (cPanel/gunicorn): gunicorn against wsgi:app (see wsgi.py).
@@ -42,6 +46,7 @@ from config.input_check import (
     env_dir,
     inspect_input_dir,
 )
+from input_files import MAX_UPLOAD_BYTES, UploadRejected, describe_slots, replace_file
 from job_tracker import tracker
 
 app = Flask(__name__)
@@ -126,6 +131,37 @@ def _product_mapping_status(report: dict) -> dict:
         return {"ok": False, "count": None, "detail": str(exc)}
     allow_empty = os.getenv("ETL_ALLOW_EMPTY_PRODUCT_MAPPING", "").strip().lower() in {"1", "true", "yes", "on"}
     return {"ok": count > 0 or allow_empty, "count": count, "detail": "" if count else "0 mappings loaded"}
+
+
+@app.route("/etl/input-files", methods=["GET"])
+@require_api_key
+def etl_input_files():
+    try:
+        return jsonify(describe_slots()), 200
+    except Exception as exc:  # noqa: BLE001 - e.g. a Windows ETL_INPUT_DIR on Linux; reported, not raised
+        logger.exception("Could not describe ETL input files")
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/etl/input-files/<name>", methods=["PUT"])
+@require_api_key
+def etl_input_file_replace(name: str):
+    """Body: the raw .xlsx bytes. Validated before anything on disk is touched; see input_files.py."""
+    if request.content_length is not None and request.content_length > MAX_UPLOAD_BYTES:
+        return jsonify({"error": f"The file is larger than the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."}), 413
+    content = request.get_data(cache=False)
+    try:
+        result = replace_file(name, content, lambda: tracker.active_job() is not None)
+    except UploadRejected as exc:
+        logger.info("Rejected upload of %s: %s %s", name, exc, exc.problems)
+        return jsonify({"error": str(exc), "problems": exc.problems}), exc.status
+    logger.info(
+        "Replaced ETL input file %s (backup=%s, sha256=%s)",
+        name,
+        (result["backup"] or {}).get("path"),
+        (result["current"] or {}).get("sha256"),
+    )
+    return jsonify(result), 200
 
 
 @app.route("/etl/run", methods=["POST"])

@@ -53,17 +53,24 @@ services:
     env_file: ./data/etl/.env
     # `environment` wins over data/etl/.env, so a stale host path or DB host left in that file (a
     # C:/... INPUT_DIR, DB_HOST=localhost) cannot break the run. The manual input workbooks come from a
-    # host folder (ETL_INPUT_HOST_DIR) mounted READ-ONLY at the fixed container path /etl/input.
+    # host folder (ETL_INPUT_HOST_DIR) mounted READ-WRITE at the fixed container path /etl/input: admins
+    # replace them from the ETL Control Center (PUT /etl/input-files, data/etl/api/input_files.py), and
+    # the pipeline itself writes IsActive back into PRODUCTS.xlsx. The file being replaced is first
+    # copied to /etl/input_backups (ETL_INPUT_BACKUP_HOST_DIR), a separate folder from the inputs.
     environment:
       TZ: ${APP_TIMEZONE:-Africa/Tripoli}
       TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli} # business zone the ETL converts Odoo UTC times to; must equal APP_TIMEZONE
       DB_SESSION_TIMEZONE: '+00:00' # ETL's DB sessions run in UTC (CURRENT_TIMESTAMP, TIMESTAMP columns)
       DB_HOST: ${DB_HOST_FOR_CONTAINERS:-host.docker.internal}
       ETL_INPUT_DIR: /etl/input
+      ETL_INPUT_BACKUP_DIR: /etl/input_backups
       ETL_OUTPUT_DIR: /etl/output
     extra_hosts: *host-gateway
     volumes:
-      - ${ETL_INPUT_HOST_DIR:-../Input}:/etl/input:ro
+      - ${ETL_INPUT_HOST_DIR:-../Input}:/etl/input
+      # Previous versions of replaced input workbooks (<name>.<UTC timestamp>.xlsx). A named volume by
+      # default; set ETL_INPUT_BACKUP_HOST_DIR to a host folder to bind-mount instead.
+      - ${ETL_INPUT_BACKUP_HOST_DIR:-etl_input_backups}:/etl/input_backups
       # A named volume by default; set ETL_OUTPUT_HOST_DIR to a host folder to bind-mount instead.
       - ${ETL_OUTPUT_HOST_DIR:-etl_output}:/etl/output
     ports:
@@ -205,6 +212,8 @@ volumes:
   redisdata:
     driver: local
   etl_output:
+    driver: local
+  etl_input_backups:
     driver: local
   etl_logs:
     driver: local

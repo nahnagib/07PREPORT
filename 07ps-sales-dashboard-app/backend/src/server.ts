@@ -28,6 +28,8 @@ import { adminClosuresRouter } from './routes/admin/closures';
 import { adminLoginHistoryRouter } from './routes/admin/loginHistory';
 import { adminEtlRunsRouter } from './routes/admin/etlRuns';
 import { adminEtlControlRouter } from './routes/admin/etlControl';
+import { adminEtlInputFilesRouter } from './routes/admin/etlInputFiles';
+import { adminAuditLogRouter } from './routes/admin/auditLog';
 import { marcomUploadRouter, marcomFreshnessRouter } from './routes/marcomUpload';
 import { marcomKpiRouter } from './routes/marcomKpi';
 import { cleanupExpiredStaged } from './marcom/staging';
@@ -89,7 +91,9 @@ app.use('/admin/closures', adminClosuresRouter);
 app.use('/admin/login-history', adminLoginHistoryRouter);
 // Mounted before /admin/etl (a shorter prefix) to avoid any ambiguity in route matching.
 app.use('/admin/etl-runs', adminEtlRunsRouter);
+app.use('/admin/etl/input-files', adminEtlInputFilesRouter);
 app.use('/admin/etl', adminEtlControlRouter);
+app.use('/admin/audit-log', adminAuditLogRouter);
 // MARCOM Contribution (Promotion): Excel upload admin + freshness for the four report pages.
 app.use('/marcom/upload', marcomUploadRouter);
 app.use('/marcom/freshness', marcomFreshnessRouter);

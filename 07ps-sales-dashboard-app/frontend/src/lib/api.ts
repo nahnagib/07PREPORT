@@ -12,10 +12,13 @@ export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhos
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** The parsed JSON error body, when there was one (e.g. `problems` from an upload validation). */
+  body?: unknown;
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.status = status;
     this.name = 'ApiError';
+    this.body = body;
   }
 }
 
@@ -54,7 +57,7 @@ async function request<T>(path: string, token: string | null, init?: RequestInit
     }
     // eslint-disable-next-line no-console
     console.error(`[api] ${url} responded ${res.status}:`, rawBody ?? '(non-JSON body)');
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, rawBody);
   }
   return res.json() as Promise<T>;
 }
@@ -753,6 +756,29 @@ export const adminApi = {
 
   getEtlPreflight: (token: string): Promise<EtlPreflightResponse> => request('/admin/etl/preflight', token),
 
+  /** The ETL's manual input workbooks, as the ETL service sees them, plus the last upload of each. */
+  getEtlInputFiles: (token: string): Promise<EtlInputFilesResponse> => request('/admin/etl/input-files', token),
+
+  /** Replaces one input workbook in place (validated + backed up by the ETL service). Never starts a run. */
+  replaceEtlInputFile: (token: string, name: string, file: File): Promise<EtlInputFileReplaced> => {
+    const form = new FormData();
+    form.append('file', file);
+    return request(`/admin/etl/input-files/${encodeURIComponent(name)}`, token, { method: 'PUT', body: form });
+  },
+
+  listAuditLog: (
+    token: string,
+    params: { entityType?: string; page?: number; pageSize?: number },
+  ): Promise<{ rows: AuditLogRow[]; total: number; page: number; pageSize: number }> => {
+    const qs = new URLSearchParams();
+    if (params.entityType) qs.set('entityType', params.entityType);
+    qs.set('page', String(params.page ?? 1));
+    qs.set('pageSize', String(params.pageSize ?? 25));
+    return request(`/admin/audit-log?${qs.toString()}`, token);
+  },
+
+  listAuditEntityTypes: (token: string): Promise<{ entityTypes: string[] }> => request('/admin/audit-log/entity-types', token),
+
   /** Re-runs the last failed/cancelled run (or `runId`) with the same mode. */
   retryEtlRun: (token: string, runId?: number): Promise<{ ok: boolean; runId: number; retriedRunId: number }> =>
     request('/admin/etl/retry', token, {
@@ -1066,6 +1092,53 @@ export interface EtlPreflightResponse {
   hint?: string;
   config_error?: string | null;
   output?: { dir: string | null; writable: boolean; detail: string };
+}
+
+/** GET /admin/etl/input-files: one entry per manual input workbook the ETL reads. */
+export interface EtlInputFileSlot {
+  name: string;
+  required: boolean;
+  feeds: string;
+  exists: boolean;
+  size_bytes: number | null;
+  /** ISO-8601 UTC. */
+  modified: string | null;
+  sheets: { label: string; sheet_names: string[] | null; required: string[]; optional: string[] }[];
+  recent_backups: { name: string; size_bytes: number; modified: string }[];
+  lastUpload: { at: string; byUserId: number | null; byName: string | null } | null;
+}
+
+export interface EtlInputFilesResponse {
+  input_dir: string;
+  backup_dir: string;
+  max_bytes: number;
+  files: EtlInputFileSlot[];
+}
+
+export interface EtlInputFileReplaced {
+  name: string;
+  input_dir: string;
+  previous: { path: string; size_bytes: number; modified: string; sha256: string } | null;
+  current: { path: string; size_bytes: number; modified: string; sha256: string };
+  backup: { path: string; size_bytes: number } | null;
+  validation: { sheets: Record<string, string>; counts: Record<string, number> };
+  /** false = the file WAS replaced, but its audit_log entry could not be written. */
+  auditLogged: boolean;
+}
+
+/** GET /admin/audit-log row. before/after are free-form JSON snapshots. */
+export interface AuditLogRow {
+  [key: string]: unknown;
+  audit_id: number;
+  entity_type: string;
+  entity_id: string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
+  changed_by: number | null;
+  changed_by_name: string | null;
+  changed_by_email: string | null;
+  changed_at: string;
+  before_value: unknown;
+  after_value: unknown;
 }
 
 export interface EtlStatusResponse {

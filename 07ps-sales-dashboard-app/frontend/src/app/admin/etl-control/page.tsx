@@ -5,6 +5,7 @@ import { Button, Card, ConfirmDialog, DataTable, EmptyState, ErrorState, Loading
 import { AdminLayout } from '../../../components/AdminLayout';
 import { useFilterState } from '../../../components/FilterProvider';
 import { EtlLogPanel } from '../../../components/EtlLogPanel';
+import { EtlInputFilesCard } from '../../../components/EtlInputFilesCard';
 import { useAuth } from '../../../lib/AuthProvider';
 import {
   adminApi,
@@ -534,6 +535,9 @@ function EtlControlBody() {
 
       {/* --- Input files preflight --- */}
       <PreflightCard preflight={preflight} onRecheck={loadPreflight} />
+
+      {/* --- Replace input files (does not start a run) --- */}
+      <EtlInputFilesCard etlRunActive={isActive} nextFullRun={status?.nextFullRun ?? null} />
 
       {/* --- Manual Refresh --- */}
       <Card>

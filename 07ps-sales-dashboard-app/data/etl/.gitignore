@@ -21,6 +21,7 @@ logs/
 # Runtime input/output data, not code
 Input/
 input/
+input_backups/
 Exports/
 
 .pytest_cache/

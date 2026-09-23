@@ -311,3 +311,100 @@ export async function getEtlPreflight(): Promise<{ report: EtlPreflight } | { er
     return { error: describeError(err) };
   }
 }
+
+/** One manual input workbook as GET /etl/input-files describes it (data/etl/api/input_files.py). */
+export interface EtlInputFileSlot {
+  name: string;
+  required: boolean;
+  /** Which warehouse tables the workbook feeds -- display text only. */
+  feeds: string;
+  exists: boolean;
+  size_bytes: number | null;
+  /** ISO-8601 UTC. */
+  modified: string | null;
+  sheets: { label: string; sheet_names: string[] | null; required: string[]; optional: string[] }[];
+  recent_backups: { name: string; size_bytes: number; modified: string }[];
+}
+
+export interface EtlInputFiles {
+  input_dir: string;
+  backup_dir: string;
+  max_bytes: number;
+  files: EtlInputFileSlot[];
+}
+
+export interface EtlFileMeta {
+  path: string;
+  size_bytes: number;
+  modified: string;
+  sha256: string;
+}
+
+export interface EtlInputFileReplaced {
+  name: string;
+  input_dir: string;
+  previous: EtlFileMeta | null;
+  current: EtlFileMeta;
+  backup: { path: string; size_bytes: number } | null;
+  validation: { sheets: Record<string, string>; counts: Record<string, number> };
+}
+
+/** A non-2xx answer from the ETL API's input-files endpoints, carrying its status and message. */
+export class EtlInputFileError extends Error {
+  readonly status: number;
+  readonly problems: string[];
+
+  constructor(status: number, message: string, problems: string[] = []) {
+    super(message);
+    this.name = 'EtlInputFileError';
+    this.status = status;
+    this.problems = problems;
+  }
+}
+
+/** Validating a workbook runs the ETL's own loaders on it (a few seconds for sales_targets.xlsx). */
+const INPUT_FILE_UPLOAD_TIMEOUT_MS = 120_000;
+
+function inputFileClient(timeout = REQUEST_TIMEOUT_MS): AxiosInstance {
+  const config = getEtlConfig();
+  if (!config.etlApi.url || !config.etlApi.apiKey) {
+    throw new EtlInputFileError(503, 'The ETL service is not configured (ETL_API_URL/ETL_API_KEY).');
+  }
+  const client = buildClient(config.etlApi.url, config.etlApi.apiKey);
+  client.defaults.timeout = timeout;
+  return client;
+}
+
+function toInputFileError(err: unknown): EtlInputFileError {
+  if (axios.isAxiosError(err) && err.response) {
+    const data = err.response.data as { error?: string; problems?: string[] } | undefined;
+    return new EtlInputFileError(err.response.status, data?.error ?? describeError(err), data?.problems ?? []);
+  }
+  return new EtlInputFileError(503, `The ETL service could not be reached: ${describeError(err)}`);
+}
+
+/** Lists the manual input workbooks as the ETL service itself sees them (its own ETL_INPUT_DIR). */
+export async function getEtlInputFiles(): Promise<EtlInputFiles> {
+  try {
+    return (await inputFileClient().get<EtlInputFiles>('/etl/input-files')).data;
+  } catch (err) {
+    throw err instanceof EtlInputFileError ? err : toInputFileError(err);
+  }
+}
+
+/**
+ * Hands a new workbook to the ETL service, which validates it, backs up the current file and swaps
+ * the new one in at the exact path the pipeline reads. Does not start or schedule a run.
+ */
+export async function replaceEtlInputFile(name: string, content: Buffer): Promise<EtlInputFileReplaced> {
+  try {
+    const response = await inputFileClient(INPUT_FILE_UPLOAD_TIMEOUT_MS).put<EtlInputFileReplaced>(
+      `/etl/input-files/${encodeURIComponent(name)}`,
+      content,
+      { headers: { 'Content-Type': 'application/octet-stream' }, maxBodyLength: Infinity },
+    );
+    return response.data;
+  } catch (err) {
+    throw err instanceof EtlInputFileError ? err : toInputFileError(err);
+  }
+}
