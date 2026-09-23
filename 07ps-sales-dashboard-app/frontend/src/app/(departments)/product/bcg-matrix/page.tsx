@@ -16,12 +16,15 @@ import {
   ErrorState,
   exportRowsAsPdf,
   PerformanceReportTable,
+  exportPerformanceTablePdf,
+  SEMANTIC_STATUS_LABEL,
   type DataGridColumn,
   type Column,
   type SemanticStatus,
   type DonutSegment,
   type PdfExportColumn,
   type PerformanceReportRow,
+  type PerformanceTablePdfColumn,
 } from '@07ps/ui';
 import {
   fmtLYD,
@@ -129,6 +132,21 @@ interface BcgClassStat {
   valueYTD: number;
   deltaPct: number;
 }
+
+// Mirrors the on-screen PerformanceReportTable's default layout (Trend sparkline omitted -- it has
+// no text form), same shared exportPerformanceTablePdf used by the Promotion pages.
+function pctLabel(v: number | null): string {
+  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
+}
+const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
+  { header: 'Metric Name', getValue: (row) => row.metric },
+  { header: 'Actual', getValue: (row) => row.actualLabel },
+  { header: 'Target', getValue: (row) => row.targetLabel },
+  { header: 'Variance%', getValue: (row) => pctLabel(row.variancePct) },
+  { header: 'Variance LY', getValue: (row) => pctLabel(row.varianceLyPct) },
+  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
+  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
+];
 
 function toExecutiveSummaryRows(classStats: BcgClassStat[], movementSegments: DonutSegment[]): PerformanceReportRow[] {
   const rows: PerformanceReportRow[] = classStats.map((s) => ({
@@ -436,6 +454,20 @@ export default function BcgMatrixPage() {
     </div>
   );
 
+  const performanceRows = toExecutiveSummaryRows(classStats, movementSegments);
+  async function handleExportPerformanceTablePdf() {
+    try {
+      await exportPerformanceTablePdf({
+        title: 'Performance Details',
+        rows: performanceRows,
+        columns: PERFORMANCE_PDF_COLUMNS,
+        fileName: 'bcg-matrix-performance-details',
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    }
+  }
+
   return (
     <PermissionGuard pageKey="bcg_matrix">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
@@ -584,11 +616,13 @@ export default function BcgMatrixPage() {
                 />
               )}
             </Card>
-
-            {!overview.loading && !overview.error && (
-              <PerformanceReportTable title="Performance Details" rows={toExecutiveSummaryRows(classStats, movementSegments)} showStatus showTakeaway />
-            )}
           </div>
+
+          {/* Outside the donut/Product Detail grid above so it spans the full page width rather
+              than wrapping into that grid's narrow 4fr column. */}
+          {!overview.loading && !overview.error && (
+            <PerformanceReportTable title="Performance Details" rows={performanceRows} showStatus showTakeaway onExportPdf={handleExportPerformanceTablePdf} />
+          )}
         </main>
 
         <BottomNavBar active="BCG Matrix" />

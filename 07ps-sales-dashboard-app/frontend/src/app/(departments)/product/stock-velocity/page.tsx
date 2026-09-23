@@ -13,9 +13,12 @@ import {
   GroupedBarChart,
   exportRowsAsPdf,
   PerformanceReportTable,
+  exportPerformanceTablePdf,
+  SEMANTIC_STATUS_LABEL,
   type SelectOption,
   type GroupedBarChartPoint,
   type PerformanceReportRow,
+  type PerformanceTablePdfColumn,
   type SemanticStatus,
 } from '@07ps/ui';
 import {
@@ -33,6 +36,21 @@ import {
 
 const BCG_CLASSES = ['Stars', 'Cash Cows', 'Strategic', 'Dogs'] as const;
 type BcgClass = (typeof BCG_CLASSES)[number];
+
+// Mirrors the on-screen PerformanceReportTable's default layout (Trend sparkline omitted -- it has
+// no text form), same shared exportPerformanceTablePdf used by the Promotion pages.
+function pctLabel(v: number | null): string {
+  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
+}
+const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
+  { header: 'Metric Name', getValue: (row) => row.metric },
+  { header: 'Actual', getValue: (row) => row.actualLabel },
+  { header: 'Target', getValue: (row) => row.targetLabel },
+  { header: 'Variance%', getValue: (row) => pctLabel(row.variancePct) },
+  { header: 'Variance LY', getValue: (row) => pctLabel(row.varianceLyPct) },
+  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
+  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
+];
 
 // ---------------------------------------------------------------------------
 // Executive Summary -- this page has no prior-period comparison anywhere in its data model (every
@@ -304,6 +322,20 @@ export default function StockVelocityPage() {
       );
     };
 
+  const performanceRows = toExecutiveSummaryRows(avgDOH, overRows.length, overValue, riskRows.length, riskValue, fastCount, currentStockQty, inventoryValue);
+  async function handleExportPerformanceTablePdf() {
+    try {
+      await exportPerformanceTablePdf({
+        title: 'Performance Details',
+        rows: performanceRows,
+        columns: PERFORMANCE_PDF_COLUMNS,
+        fileName: 'stock-velocity-performance-details',
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    }
+  }
+
   return (
     <PermissionGuard pageKey="stock_velocity">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
@@ -477,9 +509,10 @@ export default function StockVelocityPage() {
 
           <PerformanceReportTable
             title="Performance Details"
-            rows={toExecutiveSummaryRows(avgDOH, overRows.length, overValue, riskRows.length, riskValue, fastCount, currentStockQty, inventoryValue)}
+            rows={performanceRows}
             showStatus
             showTakeaway
+            onExportPdf={handleExportPerformanceTablePdf}
           />
         </main>
 

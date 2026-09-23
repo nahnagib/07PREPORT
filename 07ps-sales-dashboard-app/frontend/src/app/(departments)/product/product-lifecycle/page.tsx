@@ -17,9 +17,12 @@ import {
   DataTable,
   exportRowsAsPdf,
   PerformanceReportTable,
+  exportPerformanceTablePdf,
+  SEMANTIC_STATUS_LABEL,
   type SelectOption,
   type Column,
   type PerformanceReportRow,
+  type PerformanceTablePdfColumn,
 } from '@07ps/ui';
 import {
   FACTS,
@@ -45,6 +48,21 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
 interface TableRow extends MaterialsAnalogyFact, Record<string, unknown> {
   id: string;
 }
+
+// Mirrors the on-screen PerformanceReportTable's default layout (Trend sparkline omitted -- it has
+// no text form), same shared exportPerformanceTablePdf used by the Promotion pages.
+function pctLabel(v: number | null): string {
+  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
+}
+const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
+  { header: 'Metric Name', getValue: (row) => row.metric },
+  { header: 'Actual', getValue: (row) => row.actualLabel },
+  { header: 'Target', getValue: (row) => row.targetLabel },
+  { header: 'Variance%', getValue: (row) => pctLabel(row.variancePct) },
+  { header: 'Variance LY', getValue: (row) => pctLabel(row.varianceLyPct) },
+  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
+  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
+];
 
 // ---------------------------------------------------------------------------
 // Executive Summary -- Mature/Discontinued/Freshness KPI tiles have no prior-period comparison in
@@ -233,6 +251,20 @@ export default function ProductLifecyclePage() {
       fileName: 'product-lifecycle-detail',
     });
 
+  const performanceRows = toExecutiveSummaryRows(matureRows.length, filtered.length, discRows.length, sum(discRows, (r) => r.total_value_LYTD), freshPct, newRows.length, segEntries);
+  async function handleExportPerformanceTablePdf() {
+    try {
+      await exportPerformanceTablePdf({
+        title: 'Performance Details',
+        rows: performanceRows,
+        columns: PERFORMANCE_PDF_COLUMNS,
+        fileName: 'product-lifecycle-performance-details',
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    }
+  }
+
   return (
     <PermissionGuard pageKey="product_lifecycle">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
@@ -375,17 +407,10 @@ export default function ProductLifecyclePage() {
 
           <PerformanceReportTable
             title="Performance Details"
-            rows={toExecutiveSummaryRows(
-              matureRows.length,
-              filtered.length,
-              discRows.length,
-              sum(discRows, (r) => r.total_value_LYTD),
-              freshPct,
-              newRows.length,
-              segEntries,
-            )}
+            rows={performanceRows}
             showStatus
             showTakeaway
+            onExportPdf={handleExportPerformanceTablePdf}
           />
         </main>
 

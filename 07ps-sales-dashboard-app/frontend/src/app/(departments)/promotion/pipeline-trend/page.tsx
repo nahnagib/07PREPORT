@@ -481,13 +481,18 @@ export default function PipelineTrendPage() {
               />
             </div>
 
+            {/* Spans both grid columns so the table is full page width instead of landing in the
+                left column under the Rates/Aging panels. minWidth 0 lets its own overflowX scroll
+                kick in on narrow screens rather than stretching the grid. */}
             {!overview.loading && !overview.error && (
-              <PerformanceReportTable
-                title="Performance Details"
-                rows={toExecutiveSummaryRows(data?.quotationRates, data?.aging, data?.opportunitiesByMonth, data?.quotationsByMonth, data?.salesOrdersByMonth)}
-                showStatus
-                showTakeaway
-              />
+              <div style={{ gridColumn: '1 / -1', minWidth: 0 }}>
+                <PerformanceReportTable
+                  title="Performance Details"
+                  rows={toExecutiveSummaryRows(data?.quotationRates, data?.aging, data?.opportunitiesByMonth, data?.quotationsByMonth, data?.salesOrdersByMonth)}
+                  showStatus
+                  showTakeaway
+                />
+              </div>
             )}
           </div>
         </main>

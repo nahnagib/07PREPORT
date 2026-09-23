@@ -18,9 +18,12 @@ import {
   LoadingSkeleton,
   ErrorState,
   PerformanceReportTable,
+  exportPerformanceTablePdf,
+  SEMANTIC_STATUS_LABEL,
   type SelectOption,
   type DonutSegment,
   type PerformanceReportRow,
+  type PerformanceTablePdfColumn,
 } from '@07ps/ui';
 import {
   FACTS,
@@ -65,6 +68,21 @@ function topNWithOther(entries: [string, number][], n = 8): [string, number][] {
   const otherVal = rest.reduce((a, e) => a + e[1], 0);
   return [...top, [`Other (+${rest.length})`, otherVal]];
 }
+
+// Mirrors the on-screen PerformanceReportTable's default layout (Trend sparkline omitted -- it has
+// no text form), same shared exportPerformanceTablePdf used by the Promotion pages.
+function pctLabel(v: number | null): string {
+  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
+}
+const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
+  { header: 'Metric Name', getValue: (row) => row.metric },
+  { header: 'Actual', getValue: (row) => row.actualLabel },
+  { header: 'Target', getValue: (row) => row.targetLabel },
+  { header: 'Variance%', getValue: (row) => pctLabel(row.variancePct) },
+  { header: 'Variance LY', getValue: (row) => pctLabel(row.varianceLyPct) },
+  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
+  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
+];
 
 // ---------------------------------------------------------------------------
 // Executive Summary -- the top 4 KPI tiles have no prior-period comparison in this page's data
@@ -338,6 +356,20 @@ export default function PimContributionPage() {
     [brandPerf.data, company, category, bcgClass],
   );
 
+  const performanceRows = toExecutiveSummaryRows(categoryCount, familyCount, filtered.length, topVal, topVol, foundBrandStats);
+  async function handleExportPerformanceTablePdf() {
+    try {
+      await exportPerformanceTablePdf({
+        title: 'Performance Details',
+        rows: performanceRows,
+        columns: PERFORMANCE_PDF_COLUMNS,
+        fileName: 'pim-contribution-performance-details',
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    }
+  }
+
   return (
     <PermissionGuard pageKey="pim_contribution">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
@@ -471,9 +503,10 @@ export default function PimContributionPage() {
           {!brandPerf.loading && !brandPerf.error && (
             <PerformanceReportTable
               title="Performance Details"
-              rows={toExecutiveSummaryRows(categoryCount, familyCount, filtered.length, topVal, topVol, foundBrandStats)}
+              rows={performanceRows}
               showStatus
               showTakeaway
+              onExportPdf={handleExportPerformanceTablePdf}
             />
           )}
         </main>
