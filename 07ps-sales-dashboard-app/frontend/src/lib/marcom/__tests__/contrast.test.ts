@@ -75,7 +75,7 @@ describe.each([['light', light], ['dark', dark]] as const)('%s theme', (_name, s
   });
 
   it('chart series colours are at least 3:1 on the card', () => {
-    for (const k of ['--ps-color-accent', '--ps-color-last-year', '--ps-color-trend-target']) {
+    for (const k of ['--ps-color-accent', '--ps-color-last-year', '--ps-color-trend-target', '--ps-chart-target']) {
       expect(ratio(c(k), surface), `${k}`).toBeGreaterThanOrEqual(3);
     }
   });

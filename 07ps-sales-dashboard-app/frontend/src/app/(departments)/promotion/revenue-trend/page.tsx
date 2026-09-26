@@ -13,6 +13,7 @@ import {
   LoadingSkeleton,
   ErrorState,
   TrendChart,
+  chartColors,
   exportRowsAsPdf,
   exportPerformanceTablePdf,
   PerformanceReportTable,
@@ -334,8 +335,8 @@ export default function RevenueTrendPage() {
                   points={valuePoints}
                   valueFormatter={formatMillions}
                   tooltipValueFormatter={(v) => formatCurrency(v)}
-                  lastYearColor="var(--ps-color-trend-y1)"
-                  targetColor="var(--ps-color-trend-target)"
+                  lastYearColor={chartColors.lastYear}
+                  targetColor={chartColors.target}
                 />
               )}
             </ChartPanel>
@@ -368,8 +369,8 @@ export default function RevenueTrendPage() {
                   points={volumePoints}
                   valueFormatter={formatMillions}
                   tooltipValueFormatter={(v) => formatVolume(v)}
-                  lastYearColor="var(--ps-color-trend-y1)"
-                  targetColor="var(--ps-color-trend-target)"
+                  lastYearColor={chartColors.lastYear}
+                  targetColor={chartColors.target}
                 />
               )}
             </ChartPanel>
@@ -402,8 +403,8 @@ export default function RevenueTrendPage() {
                   points={aspPoints}
                   valueFormatter={formatPlainNumber}
                   tooltipValueFormatter={(v) => formatAsp(v)}
-                  lastYearColor="var(--ps-color-trend-y1)"
-                  targetColor="var(--ps-color-trend-target)"
+                  lastYearColor={chartColors.lastYear}
+                  targetColor={chartColors.target}
                 />
               )}
             </ChartPanel>

@@ -36,4 +36,16 @@ export const chartSeries = {
   target: semantic.alertRed,
 } as const;
 
+/**
+ * Trend-chart series colors as CSS custom properties (light/dark pairs live in the frontend's
+ * tokens.css), so every chart that draws an Actual / Y-1 / Target line shares one definition
+ * instead of hard-coding a color per chart. Line style stays the differentiator too: Actual solid,
+ * Y-1 dotted, Target dashed (see TrendChart).
+ */
+export const chartColors = {
+  actual: 'var(--ps-color-accent)',
+  lastYear: 'var(--ps-color-trend-y1)',
+  target: 'var(--ps-chart-target)',
+} as const;
+
 export type BusinessUnit = 'all' | 'majaal' | 'tika';

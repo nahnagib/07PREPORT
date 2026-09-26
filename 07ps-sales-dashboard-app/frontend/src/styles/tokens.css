@@ -31,6 +31,13 @@
   --ps-color-trend-y1: #f2994a;
   --ps-color-trend-target: #8b5cf6;
 
+  /* Target series on trend charts (Revenue Trend round: purple -> green). Its own token rather
+     than a new value for --ps-color-trend-target above, because that purple is also used as a
+     plain categorical color (funnel stages, donut slices, invoice classes) with no "target"
+     meaning. Consumed from JS via @07ps/ui's chartColors.target. Green-700 here (5.0:1 on the
+     white card), green-400 in dark (9.7:1 on the dark card). */
+  --ps-chart-target: #15803d;
+
   /* Light theme surface/text */
   --ps-color-page-bg: #f5f6f8;
   --ps-color-gold: #b8860b;
@@ -127,6 +134,7 @@
    * specific [data-business-unit='tika'] selector).
    */
   --ps-color-accent: #6f9ceb;
+  --ps-chart-target: #4ade80;
 
   /* Soft status backgrounds re-tinted for the dark surface using the dark-mode success/watch/alert
      hues above, at slightly higher alpha (dark backgrounds need more alpha to read as "tinted"
