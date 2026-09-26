@@ -27,7 +27,13 @@ const buLogo: Record<string, { light: string; dark: string; alt: string } | null
     dark: `${BASE_PATH}/logos/majaal/majaal-mark-light.png`,
     alt: 'Majaal',
   },
-  tika: { light: `${BASE_PATH}/logos/tika/tikalogo.png`, dark: `${BASE_PATH}/logos/tika/tikalogo.png`, alt: 'Tika' },
+  // New Tika mark (assets/brand/Tika/logo Tika-01.png): white ink on the dark theme, the same mark in
+  // Tika navy (#003366) on the light theme.
+  tika: {
+    light: `${BASE_PATH}/logos/tika/tika-mark-dark.png`,
+    dark: `${BASE_PATH}/logos/tika/tika-mark-light.png`,
+    alt: 'Tika',
+  },
 };
 
 export interface AppHeaderProps {
