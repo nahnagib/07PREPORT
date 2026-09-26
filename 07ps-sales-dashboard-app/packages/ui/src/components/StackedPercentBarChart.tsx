@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LabelList } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { useCanExport } from '../exportPermission';
 
 export interface StackedPercentSegment {
   key: string;
@@ -48,6 +49,7 @@ export function StackedPercentBarChart({
 }: StackedPercentBarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const canExport = useCanExport();
   const handleExportImage = () => {
     exportSvgAsImage(containerRef.current, (title ?? 'stacked-chart').replace(/\s+/g, '-').toLowerCase());
   };
@@ -67,6 +69,7 @@ export function StackedPercentBarChart({
         }}
       >
         {showTitle && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>}
+        {canExport && (
         <button
           type="button"
           onClick={handleExportImage}
@@ -83,6 +86,7 @@ export function StackedPercentBarChart({
         >
           Export image
         </button>
+        )}
       </div>
       <div ref={containerRef} style={{ width: '100%' }}>
         <ResponsiveContainer width="100%" height={height}>

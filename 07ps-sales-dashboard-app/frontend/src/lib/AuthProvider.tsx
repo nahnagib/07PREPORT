@@ -3,6 +3,8 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { useRouter } from 'next/navigation';
 import {
   EffectivePermissions,
+  PermissionAction,
+  PermissionRegistryEntry,
   PublicUser,
   changePassword as apiChangePassword,
   fetchMe,
@@ -16,6 +18,8 @@ interface AuthContextValue {
   token: string | null;
   user: PublicUser | null;
   permissions: EffectivePermissions;
+  /** The backend's permission registry (pages/modules x actions), from /auth/me. */
+  registry: PermissionRegistryEntry[];
   /** True only while the stored token is being validated on first mount. */
   loading: boolean;
   /** Session-level error (token invalid/expired, backend unreachable) -- distinct from a single
@@ -35,7 +39,24 @@ interface AuthContextValue {
   retryAuth: () => void;
   canView: (pageKey: string) => boolean;
   canExport: (pageKey: string) => boolean;
+  canCreate: (pageKey: string) => boolean;
+  canEdit: (pageKey: string) => boolean;
+  canDelete: (pageKey: string) => boolean;
+  can: (pageKey: string, action: PermissionAction) => boolean;
+  /** Holds the built-in Admin role (sees the Admin-only ETL Control Center / Audit Log). */
+  isAdmin: boolean;
 }
+
+const ACTION_FLAG = {
+  view: 'canView',
+  create: 'canCreate',
+  edit: 'canEdit',
+  delete: 'canDelete',
+  export: 'canExport',
+} as const;
+
+/** How stale the session's permissions may get before a returning tab re-checks them. */
+const REFRESH_ON_FOCUS_AFTER_MS = 30_000;
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -57,23 +78,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<PublicUser | null>(null);
   const [permissions, setPermissions] = useState<EffectivePermissions>({});
+  const [registry, setRegistry] = useState<PermissionRegistryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const lastLoadedAt = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const hydrated = useRef(false);
 
-  const applySession = useCallback((nextToken: string, nextUser: PublicUser, nextPermissions: EffectivePermissions) => {
-    localStorage.setItem(TOKEN_STORAGE_KEY, nextToken);
-    setToken(nextToken);
-    setUser(nextUser);
-    setPermissions(nextPermissions);
-    setError(null);
-  }, []);
+  const applySession = useCallback(
+    (nextToken: string, nextUser: PublicUser, nextPermissions: EffectivePermissions, nextRegistry: PermissionRegistryEntry[] = []) => {
+      localStorage.setItem(TOKEN_STORAGE_KEY, nextToken);
+      setToken(nextToken);
+      setUser(nextUser);
+      setPermissions(nextPermissions);
+      setRegistry(nextRegistry);
+      setError(null);
+      lastLoadedAt.current = Date.now();
+    },
+    [],
+  );
 
   const clearSession = useCallback(() => {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     setToken(null);
     setUser(null);
     setPermissions({});
+    setRegistry([]);
   }, []);
 
   const refreshMe = useCallback(
@@ -85,8 +114,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setLoading(true);
       try {
-        const { user: freshUser, permissions: freshPermissions } = await fetchMe(useToken);
-        applySession(useToken, freshUser, freshPermissions);
+        const { user: freshUser, permissions: freshPermissions, registry: freshRegistry } = await fetchMe(useToken);
+        applySession(useToken, freshUser, freshPermissions, freshRegistry);
       } catch (err) {
         clearSession();
         const message = err instanceof Error ? err.message : 'Your session has expired.';
@@ -113,7 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       const result = await apiLogin(email, password);
-      applySession(result.token, result.user, result.permissions);
+      applySession(result.token, result.user, result.permissions, result.registry);
       return result.user;
     },
     [applySession],
@@ -141,8 +170,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [token, refreshMe],
   );
 
-  const canView = useCallback((pageKey: string) => Boolean(permissions[pageKey]?.canView), [permissions]);
-  const canExport = useCallback((pageKey: string) => Boolean(permissions[pageKey]?.canExport), [permissions]);
+  // Role/permission changes made by an admin apply on the backend at the user's next request; this
+  // brings the UI (menus, buttons) in line when the user comes back to the tab, without a re-login.
+  // A failed background check leaves the session as it is -- only an explicit load clears it.
+  useEffect(() => {
+    const onFocus = () => {
+      const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+      if (!stored || !user || Date.now() - lastLoadedAt.current < REFRESH_ON_FOCUS_AFTER_MS) return;
+      lastLoadedAt.current = Date.now();
+      fetchMe(stored)
+        .then(({ user: freshUser, permissions: freshPermissions, registry: freshRegistry }) =>
+          applySession(stored, freshUser, freshPermissions, freshRegistry),
+        )
+        .catch(() => undefined);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [user, applySession]);
+
+  const can = useCallback(
+    (pageKey: string, action: PermissionAction) => Boolean(permissions[pageKey]?.[ACTION_FLAG[action]]),
+    [permissions],
+  );
+  const canView = useCallback((pageKey: string) => can(pageKey, 'view'), [can]);
+  const canExport = useCallback((pageKey: string) => can(pageKey, 'export'), [can]);
+  const canCreate = useCallback((pageKey: string) => can(pageKey, 'create'), [can]);
+  const canEdit = useCallback((pageKey: string) => can(pageKey, 'edit'), [can]);
+  const canDelete = useCallback((pageKey: string) => can(pageKey, 'delete'), [can]);
 
   return (
     <AuthContext.Provider
@@ -150,6 +204,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         user,
         permissions,
+        registry,
         loading,
         error,
         isSalesperson: user?.isSalesperson ?? false,
@@ -161,6 +216,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         retryAuth: () => refreshMe(),
         canView,
         canExport,
+        canCreate,
+        canEdit,
+        canDelete,
+        can,
+        isAdmin: user?.isAdmin ?? false,
       }}
     >
       {children}

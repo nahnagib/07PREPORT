@@ -3,6 +3,7 @@ import { ValidationError } from '../lib/errors';
 import { generateTempPassword, hashPassword, validatePasswordPolicy } from '../lib/password';
 import { sendTempPasswordEmail } from './emailService';
 import { recordLoginHistory } from './loginHistoryService';
+import { assertCanDeactivate } from './roleService';
 
 export type UserStatus = 'ACTIVE' | 'INACTIVE' | 'LOCKED' | 'PENDING_PASSWORD_CHANGE';
 
@@ -28,6 +29,8 @@ export interface AppUserRow {
   role_name?: string | null;
   role_label?: string | null;
   role_tier_code?: string | null;
+  /** Every business role the user holds (user_roles); filled by listUsers. */
+  roles?: { role_id: number; role_label: string; role_name: string }[];
 }
 
 export interface RoleRow {
@@ -108,7 +111,10 @@ async function syncRoleTierAssignment(userId: number, roleTierCode: string | nul
 export interface CreateUserInput {
   fullName: string;
   email: string;
+  /** Primary role (data-scope tier). */
   roleId: number;
+  /** Further roles the user also holds; permissions are the union of all of them. */
+  extraRoleIds?: number[];
   status?: UserStatus;
   tempPassword?: string;
   salespersonKey?: number | null;
@@ -178,6 +184,15 @@ export async function createUser(input: CreateUserInput): Promise<CreateUserResu
     ],
   );
   const userId = (result as { insertId: number }).insertId;
+  const allRoleIds = Array.from(new Set([input.roleId, ...(input.extraRoleIds ?? [])]));
+  const [knownRoles] = await pool.query('SELECT role_id FROM roles WHERE role_id IN (?)', [allRoleIds]);
+  for (const r of knownRoles as { role_id: number }[]) {
+    await pool.query('INSERT IGNORE INTO user_roles (user_id, role_id, assigned_by) VALUES (?, ?, ?)', [
+      userId,
+      r.role_id,
+      input.actorUserId ?? null,
+    ]);
+  }
   await syncRoleTierAssignment(userId, role.default_role_tier_code);
   if (input.salespersonKey ?? null) {
     await recordSalespersonLinkChange(userId, null, input.salespersonKey ?? null, input.actorUserId);
@@ -213,7 +228,7 @@ export async function listUsers(
     params.push(filters.status);
   }
   if (filters.roleId !== undefined) {
-    clauses.push('au.role_id = ?');
+    clauses.push('EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = au.user_id AND ur.role_id = ?)');
     params.push(filters.roleId);
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -226,8 +241,26 @@ export async function listUsers(
     `${USER_WITH_ROLE_SELECT} ${where} ORDER BY au.created_at DESC LIMIT ? OFFSET ?`,
     [...params, filters.pageSize, offset],
   );
+  const users = rows as AppUserRow[];
+  await attachRoles(users);
+  return { rows: users, total };
+}
 
-  return { rows: rows as AppUserRow[], total };
+/** Fills `roles` (every role held, from user_roles) on each row. */
+export async function attachRoles(users: AppUserRow[]): Promise<void> {
+  for (const u of users) u.roles = [];
+  if (users.length === 0) return;
+  const [rows] = await pool.query(
+    `SELECT ur.user_id, r.role_id, r.role_label, r.role_name
+       FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id
+      WHERE ur.user_id IN (?)
+      ORDER BY r.role_label`,
+    [users.map((u) => u.user_id)],
+  );
+  const byUser = new Map(users.map((u) => [u.user_id, u]));
+  for (const r of rows as { user_id: number; role_id: number; role_label: string; role_name: string }[]) {
+    byUser.get(r.user_id)?.roles!.push({ role_id: r.role_id, role_label: r.role_label, role_name: r.role_name });
+  }
 }
 
 export interface UpdateUserInput {
@@ -270,6 +303,7 @@ export async function setUserStatus(
   status: UserStatus,
   actorEmail: string,
 ): Promise<void> {
+  if (status === 'INACTIVE' || status === 'LOCKED') await assertCanDeactivate(userId);
   await pool.query('UPDATE app_user SET status = ?, failed_login_count = 0 WHERE user_id = ?', [
     status,
     userId,
@@ -283,12 +317,6 @@ export async function setUserStatus(
   void actorEmail; // reserved for a future actor-attribution column; not modeled yet
 }
 
-export async function changeUserRole(userId: number, roleId: number): Promise<void> {
-  const role = await getRoleById(roleId);
-  if (!role) throw new ValidationError('Unknown role.');
-  await pool.query('UPDATE app_user SET role_id = ? WHERE user_id = ?', [roleId, userId]);
-  await syncRoleTierAssignment(userId, role.default_role_tier_code);
-}
 
 export async function forcePasswordChange(userId: number): Promise<void> {
   await pool.query(

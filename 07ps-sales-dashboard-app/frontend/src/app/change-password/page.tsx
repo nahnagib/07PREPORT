@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, TextInput } from '@07ps/ui';
 import { AuthLayout } from '../../components/AuthLayout';
+import { firstAccessiblePath } from '../../lib/navItems';
 import { useAuth } from '../../lib/AuthProvider';
 import { ApiError } from '../../lib/api';
 
@@ -15,7 +16,7 @@ import { ApiError } from '../../lib/api';
  */
 export default function ChangePasswordPage() {
   const router = useRouter();
-  const { user, changePassword, logout } = useAuth();
+  const { user, changePassword, logout, canView, isAdmin } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -35,7 +36,7 @@ export default function ChangePasswordPage() {
       // AuthGuard only redirects *into* /change-password when mustChangePassword is true; it has
       // no effect that redirects back *out* once this succeeds (whether this was the forced
       // first-login flow or a voluntary change), so this page always sends the user home itself.
-      router.push('/');
+      router.push(firstAccessiblePath(canView, isAdmin));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
     } finally {

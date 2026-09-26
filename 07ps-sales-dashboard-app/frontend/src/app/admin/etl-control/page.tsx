@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { APP_TIMEZONE } from '../../../lib/format';
 import { Button, Card, ConfirmDialog, DataTable, EmptyState, ErrorState, LoadingSkeleton, type Column } from '@07ps/ui';
 import { AdminLayout } from '../../../components/AdminLayout';
+import { AdminOnlyGuard } from '../../../components/AuthGuard';
 import { useFilterState } from '../../../components/FilterProvider';
 import { EtlLogPanel } from '../../../components/EtlLogPanel';
 import { EtlInputFilesCard } from '../../../components/EtlInputFilesCard';
@@ -27,35 +28,12 @@ const POLL_INTERVAL_MS = 5000;
  * `admin_etl` permission is ever granted to a non-Admin role.
  */
 export default function AdminEtlControlPage() {
-  const { user, loading } = useAuth();
-
-  if (loading) return null;
-  if (user?.role.name !== 'ADMIN') {
-    return (
-      <AdminLayout title="ETL Control Center">
-        <div
-          style={{
-            minHeight: '50vh',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8,
-            color: 'var(--ps-color-muted-text)',
-            textAlign: 'center',
-          }}
-        >
-          <h2 style={{ margin: 0, fontSize: 18, color: 'var(--ps-color-text)' }}>Access restricted</h2>
-          <p style={{ margin: 0, fontSize: 14 }}>The ETL Control Center is available to Admins only.</p>
-        </div>
-      </AdminLayout>
-    );
-  }
-
   return (
-    <AdminLayout title="ETL Control Center">
-      <EtlControlBody />
-    </AdminLayout>
+    <AdminOnlyGuard>
+      <AdminLayout title="ETL Control Center">
+        <EtlControlBody />
+      </AdminLayout>
+    </AdminOnlyGuard>
   );
 }
 

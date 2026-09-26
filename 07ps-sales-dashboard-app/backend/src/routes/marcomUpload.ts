@@ -67,7 +67,7 @@ marcomUploadRouter.get('/template', (_req, res, next) => {
 
 // ---------------------------------------------------------------- validate (dry run)
 
-marcomUploadRouter.post('/validate', validateLimiter, rejectOversize, upload.single('file'), async (req, res, next) => {
+marcomUploadRouter.post('/validate', requirePermission('admin_marcom_upload', 'create'), validateLimiter, rejectOversize, upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
       res.status(400).json({ error: 'No file uploaded (expected multipart field "file").', code: 'NO_FILE' });
@@ -82,7 +82,7 @@ marcomUploadRouter.post('/validate', validateLimiter, rejectOversize, upload.sin
 
 // ---------------------------------------------------------------- commit
 
-marcomUploadRouter.post('/commit', async (req, res, next) => {
+marcomUploadRouter.post('/commit', requirePermission('admin_marcom_upload', 'create'), async (req, res, next) => {
   try {
     const { stagedUploadId, confirmNewBrands } = req.body ?? {};
     if (typeof stagedUploadId !== 'string' || !isUuid(stagedUploadId)) {
@@ -98,7 +98,7 @@ marcomUploadRouter.post('/commit', async (req, res, next) => {
 
 // ---------------------------------------------------------------- error report
 
-marcomUploadRouter.get('/staged/:id/errors.csv', async (req, res, next) => {
+marcomUploadRouter.get('/staged/:id/errors.csv', requirePermission('admin_marcom_upload', 'export'), async (req, res, next) => {
   try {
     if (!isUuid(req.params.id)) {
       res.status(404).json({ error: 'Upload not found.', code: 'STAGED_NOT_FOUND' });
@@ -133,7 +133,7 @@ marcomUploadRouter.get('/batches/:id', async (req, res, next) => {
   }
 });
 
-marcomUploadRouter.get('/batches/:id/file', async (req, res, next) => {
+marcomUploadRouter.get('/batches/:id/file', requirePermission('admin_marcom_upload', 'export'), async (req, res, next) => {
   try {
     const id = intParam(req.params.id);
     if (id === null) { res.status(404).json({ error: 'Batch not found.', code: 'BATCH_NOT_FOUND' }); return; }
@@ -147,7 +147,7 @@ marcomUploadRouter.get('/batches/:id/file', async (req, res, next) => {
   }
 });
 
-marcomUploadRouter.post('/batches/:id/rollback', async (req, res, next) => {
+marcomUploadRouter.post('/batches/:id/rollback', requirePermission('admin_marcom_upload', 'delete'), async (req, res, next) => {
   try {
     const id = intParam(req.params.id);
     if (id === null) { res.status(404).json({ error: 'Batch not found.', code: 'BATCH_NOT_FOUND' }); return; }

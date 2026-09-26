@@ -7,6 +7,8 @@
  * on-screen compact "LYD 1.2M" formatting is deliberately not what gets exported.
  */
 
+import { authorizeExport } from './exportPermission';
+
 export type TableExportCell = string | number | null;
 
 export interface TableExportOptions {
@@ -33,12 +35,14 @@ function downloadBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function exportRowsAsCsv({ headers, rows, fileName }: TableExportOptions): void {
+export async function exportRowsAsCsv({ headers, rows, fileName }: TableExportOptions): Promise<void> {
+  if (!(await authorizeExport('csv'))) return;
   const lines = [headers, ...rows].map((row) => row.map(csvEscape).join(','));
   downloadBlob(new Blob([`﻿${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8;' }), `${fileName}.csv`);
 }
 
 export async function exportRowsAsXlsx({ headers, rows, fileName, sheetName = 'Data' }: TableExportOptions): Promise<void> {
+  if (!(await authorizeExport('xlsx'))) return;
   // Loaded on demand: xlsx is large and only needed at the moment someone clicks Export.
   const XLSX = await import('xlsx');
   const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);

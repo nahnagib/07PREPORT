@@ -29,7 +29,8 @@ export async function writeAuditLog(entry: {
   entityType: string;
   entityId: string;
   action: AuditAction;
-  changedBy: number;
+  /** Null when there is no signed-in actor (e.g. a scripted import). */
+  changedBy: number | null;
   before?: unknown;
   after?: unknown;
 }): Promise<boolean> {

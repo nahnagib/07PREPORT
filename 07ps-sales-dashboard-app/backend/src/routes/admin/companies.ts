@@ -43,7 +43,7 @@ adminCompaniesRouter.get('/', async (req, res, next) => {
   }
 });
 
-adminCompaniesRouter.post('/', async (req, res, next) => {
+adminCompaniesRouter.post('/', requirePermission('admin_companies', 'create'), async (req, res, next) => {
   try {
     const { name, definition, etlCompanyKey, displayOrder, criticalNumberPct } = req.body ?? {};
     const row = await createCompany(
@@ -79,7 +79,7 @@ adminCompaniesRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-adminCompaniesRouter.patch('/:id', async (req, res, next) => {
+adminCompaniesRouter.patch('/:id', requirePermission('admin_companies', 'edit'), async (req, res, next) => {
   try {
     const { name, definition, etlCompanyKey, displayOrder, criticalNumberPct, isActive } = req.body ?? {};
     const row = await updateCompany(
@@ -104,7 +104,7 @@ adminCompaniesRouter.patch('/:id', async (req, res, next) => {
   }
 });
 
-adminCompaniesRouter.delete('/:id', async (req, res, next) => {
+adminCompaniesRouter.delete('/:id', requirePermission('admin_companies', 'delete'), async (req, res, next) => {
   try {
     await deleteCompany(Number(req.params.id), req.user!.id);
     res.json({ success: true });

@@ -21,6 +21,7 @@ import type { SemanticStatus } from './KpiTile';
 import { chunkRows, PDF_MAX_ROWS } from '../pdfPagination';
 import { assemblePaginatedPdf } from '../pdfPageAssembly';
 import { appendPdfMetaBlock } from '../pdfExportContext';
+import { authorizeExport, useCanExport } from '../exportPermission';
 
 export interface DataGridColumn<T> {
   key: keyof T;
@@ -101,6 +102,7 @@ export function DataGrid<T extends Record<string, unknown>>({
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize });
   const [exporting, setExporting] = useState(false);
   const [pdfNotice, setPdfNotice] = useState<string | null>(null);
+  const canExport = useCanExport();
 
   const columnDefs = useMemo<ColumnDef<T>[]>(
     () =>
@@ -352,8 +354,9 @@ export function DataGrid<T extends Record<string, unknown>>({
     return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
   }
 
-  function exportCsv() {
+  async function exportCsv() {
     if (exportRows.length === 0) return;
+    if (!(await authorizeExport('csv'))) return;
     const header = columns.map((c) => csvEscape(c.header)).join(',');
     const lines = exportRows.map((row) => columns.map((c) => csvEscape(cellTextValue(c, row))).join(','));
     // UTF-8 BOM so Excel (and other CSV readers that default to a legacy codepage) detect UTF-8 and
@@ -416,15 +419,17 @@ export function DataGrid<T extends Record<string, unknown>>({
             }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <ToolbarButton icon={Download} label="Export CSV" onClick={exportCsv} disabled={exportRows.length === 0} />
-          <ToolbarButton
-            icon={FileJson}
-            label={exporting ? 'Exporting...' : 'Export as PDF'}
-            onClick={exportPdf}
-            disabled={exporting}
-          />
-        </div>
+        {canExport && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <ToolbarButton icon={Download} label="Export CSV" onClick={exportCsv} disabled={exportRows.length === 0} />
+            <ToolbarButton
+              icon={FileJson}
+              label={exporting ? 'Exporting...' : 'Export as PDF'}
+              onClick={exportPdf}
+              disabled={exporting}
+            />
+          </div>
+        )}
       </div>
 
       {pdfNotice && (

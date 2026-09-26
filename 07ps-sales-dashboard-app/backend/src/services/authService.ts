@@ -3,7 +3,8 @@ import { ValidationError } from '../lib/errors';
 import { hashPassword, hashResetToken, generateResetToken, validatePasswordPolicy, verifyPassword } from '../lib/password';
 import { issueAccessToken } from '../lib/token';
 import { sendPasswordResetEmail } from './emailService';
-import { getEffectivePermissions, EffectivePermissions } from './permissionService';
+import { ADMIN_ROLE_NAME, getEffectivePermissions, getUserRoles, EffectivePermissions } from './permissionService';
+import { PERMISSION_REGISTRY, type RegistryEntry } from '../config/permissionRegistry';
 import { recordLoginHistory } from './loginHistoryService';
 import { AppUserRow, getUserByEmail, getUserById } from './userService';
 
@@ -22,7 +23,12 @@ export interface PublicUser {
   fullName: string;
   status: AppUserRow['status'];
   mustChangePassword: boolean;
+  /** Primary role (supplies the data-scope tier). */
   role: { id: number | null; name: string | null; label: string | null };
+  /** Every role the user holds; permissions are their union. */
+  roles: { id: number; name: string; label: string }[];
+  /** Holds the built-in Admin role. */
+  isAdmin: boolean;
   lastLoginAt: Date | null;
   /** Mirrors the existing data-scope lock (Standards Section 4.10/5.2) so the frontend can grey
    * out/lock filter controls the same way it already does -- the real enforcement is always
@@ -32,7 +38,7 @@ export interface PublicUser {
   salespersonKey: number | null;
 }
 
-export function toPublicUser(user: AppUserRow): PublicUser {
+export function toPublicUser(user: AppUserRow, roles: { role_id: number; role_name: string; role_label: string }[] = []): PublicUser {
   return {
     id: user.user_id,
     email: user.email,
@@ -40,6 +46,8 @@ export function toPublicUser(user: AppUserRow): PublicUser {
     status: user.status,
     mustChangePassword: Boolean(user.must_change_password),
     role: { id: user.role_id, name: user.role_name ?? null, label: user.role_label ?? null },
+    roles: roles.map((r) => ({ id: r.role_id, name: r.role_name, label: r.role_label })),
+    isAdmin: roles.some((r) => r.role_name === ADMIN_ROLE_NAME),
     lastLoginAt: user.last_login_at,
     isSalesperson: user.role_tier_code === 'SALESPERSON',
     salespersonKey: user.salesperson_key,
@@ -48,15 +56,19 @@ export function toPublicUser(user: AppUserRow): PublicUser {
 
 export async function buildMeResponse(
   user: AppUserRow,
-): Promise<{ user: PublicUser; permissions: EffectivePermissions }> {
-  const permissions = await getEffectivePermissions(user.user_id, user.role_id);
-  return { user: toPublicUser(user), permissions };
+): Promise<{ user: PublicUser; permissions: EffectivePermissions; registry: readonly RegistryEntry[] }> {
+  const [permissions, roles] = await Promise.all([
+    getEffectivePermissions(user.user_id, user.role_id),
+    getUserRoles(user.user_id, user.role_id),
+  ]);
+  return { user: toPublicUser(user, roles), permissions, registry: PERMISSION_REGISTRY };
 }
 
 export interface LoginResult {
   token: string;
   user: PublicUser;
   permissions: EffectivePermissions;
+  registry: readonly RegistryEntry[];
 }
 
 export async function login(
@@ -138,8 +150,8 @@ export async function login(
 
   const { token } = issueAccessToken(user.user_id);
   const refreshedUser = (await getUserById(user.user_id))!;
-  const { user: publicUser, permissions } = await buildMeResponse(refreshedUser);
-  return { token, user: publicUser, permissions };
+  const { user: publicUser, permissions, registry } = await buildMeResponse(refreshedUser);
+  return { token, user: publicUser, permissions, registry };
 }
 
 export async function logout(

@@ -25,6 +25,7 @@ import {
   type PdfExportColumn,
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
+  useCanExport,
 } from '@07ps/ui';
 import {
   fmtLYD,
@@ -844,6 +845,9 @@ function DrillBreadcrumb({ active, rootLabel, onReset }: { active: string | null
  * headerActions uses (see stock-velocity/page.tsx's own PdfButton) -- duplicated locally per that
  * same established per-page convention, not centralized in @07ps/ui. */
 function PdfButton({ label, onClick }: { label: string; onClick: () => void }) {
+  // Hidden without Export permission on this page (the backend refuses the export anyway).
+  const canExport = useCanExport();
+  if (!canExport) return null;
   return (
     <button
       type="button"

@@ -44,7 +44,7 @@ adminClosuresRouter.get('/', async (req, res, next) => {
   }
 });
 
-adminClosuresRouter.post('/', async (req, res, next) => {
+adminClosuresRouter.post('/', requirePermission('admin_closures', 'create'), async (req, res, next) => {
   try {
     const { branchKey, company, closureDate, durationDays, reason } = req.body ?? {};
     const row = await createClosure(
@@ -80,7 +80,7 @@ adminClosuresRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-adminClosuresRouter.patch('/:id', async (req, res, next) => {
+adminClosuresRouter.patch('/:id', requirePermission('admin_closures', 'edit'), async (req, res, next) => {
   try {
     const { branchKey, company, closureDate, durationDays, reason, isActive } = req.body ?? {};
     const row = await updateClosure(
@@ -105,7 +105,7 @@ adminClosuresRouter.patch('/:id', async (req, res, next) => {
   }
 });
 
-adminClosuresRouter.delete('/:id', async (req, res, next) => {
+adminClosuresRouter.delete('/:id', requirePermission('admin_closures', 'delete'), async (req, res, next) => {
   try {
     await deleteClosure(Number(req.params.id), req.user!.id);
     res.json({ success: true });

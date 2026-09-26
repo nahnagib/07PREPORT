@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import type { SemanticStatus } from './KpiTile';
 import { exportSvgAsImage } from '../chartExport';
+import { useCanExport } from '../exportPermission';
 
 export interface BreakdownChartRow {
   id: string;
@@ -81,6 +82,7 @@ export function BreakdownChart({
     setHidden((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const canExport = useCanExport();
   const handleExportImage = () => {
     exportSvgAsImage(containerRef.current, (title ?? 'breakdown-chart').replace(/\s+/g, '-').toLowerCase());
   };
@@ -103,6 +105,7 @@ export function BreakdownChart({
           }}
         >
           <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>
+          {canExport && (
           <button
             type="button"
             onClick={handleExportImage}
@@ -119,6 +122,7 @@ export function BreakdownChart({
           >
             Export image
           </button>
+          )}
         </div>
       )}
       <div ref={containerRef} style={{ width: '100%' }}>

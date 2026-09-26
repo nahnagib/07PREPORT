@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
-import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
+import { requireAnyDashboardView, requirePasswordChangeCleared } from '../middleware/permission';
 import { attachUserContext } from '../middleware/scopeContext';
 import { fetchRefreshStatus } from '../measures/refreshStatus';
 
@@ -15,7 +15,9 @@ import { fetchRefreshStatus } from '../measures/refreshStatus';
 
 export const metaRouter = Router();
 
-metaRouter.use(requireAuth, requirePasswordChangeCleared, requirePermission('tachometer', 'view'), attachUserContext);
+// Shared by every report page's filter bar/footer: open to anyone who can View at least one dashboard
+// (was Tachometer only, which broke the filters on every other page for a role without Tachometer).
+metaRouter.use(requireAuth, requirePasswordChangeCleared, requireAnyDashboardView, attachUserContext);
 
 metaRouter.get('/refresh-status', async (_req, res, next) => {
   try {

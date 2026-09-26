@@ -41,7 +41,10 @@ export default function AdminCustomerGroupsPage() {
 }
 
 function CustomerGroupsPageBody() {
-  const { token } = useAuth();
+  const { token, canCreate, canEdit, canDelete } = useAuth();
+  const mayCreate = canCreate('admin_customer_groups');
+  const mayEdit = canEdit('admin_customer_groups');
+  const mayDelete = canDelete('admin_customer_groups');
   const [rows, setRows] = useState<CustomerGroupRow[]>([]);
   const [total, setTotal] = useState(0);
   const [etlOptions, setEtlOptions] = useState<{ segment_key: number; segment_name: string }[]>([]);
@@ -119,13 +122,17 @@ function CustomerGroupsPageBody() {
         const busy = actionBusy === r.customer_group_id;
         return (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {mayEdit && (
             <Button variant="secondary" disabled={busy} onClick={() => setEditingId(editingId === r.customer_group_id ? null : r.customer_group_id)} style={{ padding: '4px 8px', fontSize: 12 }}>
               {editingId === r.customer_group_id ? 'Cancel' : 'Edit'}
             </Button>
+            )}
+            {mayEdit && (
             <Button variant="secondary" disabled={busy} onClick={() => handleToggleActive(r)} style={{ padding: '4px 8px', fontSize: 12 }}>
               {r.is_active ? 'Deactivate' : 'Reactivate'}
             </Button>
-            {r.usage_count === 0 && (
+            )}
+            {mayDelete && r.usage_count === 0 && (
               <Button variant="secondary" disabled={busy} onClick={() => handleDelete(r)} style={{ padding: '4px 8px', fontSize: 12, color: 'var(--ps-color-alert)' }}>
                 Delete
               </Button>
@@ -167,12 +174,12 @@ function CustomerGroupsPageBody() {
             Show inactive
           </label>
         </div>
-        <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : '+ Create Customer Group'}</Button>
+        {mayCreate && <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : '+ Create Customer Group'}</Button>}
       </div>
 
       {actionError && <ErrorState message={actionError} onRetry={() => setActionError(null)} />}
 
-      {showCreate && (
+      {mayCreate && showCreate && (
         <CreatePanel
           etlOptions={etlOptions}
           onCreated={() => {

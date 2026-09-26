@@ -43,7 +43,7 @@ adminDistributionChannelsRouter.get('/', async (req, res, next) => {
   }
 });
 
-adminDistributionChannelsRouter.post('/', async (req, res, next) => {
+adminDistributionChannelsRouter.post('/', requirePermission('admin_distribution_channels', 'create'), async (req, res, next) => {
   try {
     const { name, definition, etlChannelKey, displayOrder } = req.body ?? {};
     const row = await createDistributionChannel(
@@ -78,7 +78,7 @@ adminDistributionChannelsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-adminDistributionChannelsRouter.patch('/:id', async (req, res, next) => {
+adminDistributionChannelsRouter.patch('/:id', requirePermission('admin_distribution_channels', 'edit'), async (req, res, next) => {
   try {
     const { name, definition, etlChannelKey, displayOrder, isActive } = req.body ?? {};
     const row = await updateDistributionChannel(
@@ -102,7 +102,7 @@ adminDistributionChannelsRouter.patch('/:id', async (req, res, next) => {
   }
 });
 
-adminDistributionChannelsRouter.delete('/:id', async (req, res, next) => {
+adminDistributionChannelsRouter.delete('/:id', requirePermission('admin_distribution_channels', 'delete'), async (req, res, next) => {
   try {
     await deleteDistributionChannel(Number(req.params.id), req.user!.id);
     res.json({ success: true });

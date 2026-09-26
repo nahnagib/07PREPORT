@@ -363,7 +363,7 @@ export default function CriticalNumberPage() {
             {/* Section 1 -- Hero Metrics: the Daily Critical Number (the baseline every counter is
                 measured against) as a full-width first row, then the Daily/Monthly/Yearly counters. */}
             <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
-              <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} isAdmin={user?.role.name === 'ADMIN'} />
+              <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} isAdmin={user?.isAdmin === true} />
 
               <div
                 style={{

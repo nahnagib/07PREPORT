@@ -57,7 +57,8 @@ export default function AdminSalespersonsPage() {
 }
 
 function SalespersonsPageBody() {
-  const { token } = useAuth();
+  const { token, canEdit } = useAuth();
+  const mayEdit = canEdit('admin_salespersons');
   const [rows, setRows] = useState<SalespersonAdminRow[]>([]);
   const [total, setTotal] = useState(0);
   const [channels, setChannels] = useState<DimOption[]>([]);
@@ -196,6 +197,7 @@ function SalespersonsPageBody() {
       key: 'salesperson_key',
       header: 'Actions',
       render: (r) => (
+        mayEdit ? (
         <Button
           variant="secondary"
           onClick={() => setEditingKey(editingKey === r.salesperson_key ? null : r.salesperson_key)}
@@ -203,6 +205,7 @@ function SalespersonsPageBody() {
         >
           {editingKey === r.salesperson_key ? 'Cancel' : 'Edit'}
         </Button>
+        ) : null
       ),
     },
   ];
@@ -269,7 +272,7 @@ function SalespersonsPageBody() {
         </div>
       </div>
 
-      {selected.size > 0 && (
+      {mayEdit && selected.size > 0 && (
         <BulkActionBar
           count={selected.size}
           channels={channels}

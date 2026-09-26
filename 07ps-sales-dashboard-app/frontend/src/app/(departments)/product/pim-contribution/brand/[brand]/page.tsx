@@ -17,6 +17,7 @@ import {
   type Column,
   type PdfExportColumn,
   type PerformanceReportRow,
+  useCanExport,
 } from '@07ps/ui';
 import {
   fmtLYD,
@@ -482,6 +483,9 @@ function TooltipRow({ label, value, valueColor }: { label: string; value: string
 /** Same bordered-pill "Export as PDF" convention every other report page uses (see BCG Matrix's
  * own PdfButton), duplicated locally per that established per-page convention. */
 function PdfButton({ label, onClick }: { label: string; onClick: () => void }) {
+  // Hidden without Export permission on this page (the backend refuses the export anyway).
+  const canExport = useCanExport();
+  if (!canExport) return null;
   return (
     <button
       type="button"

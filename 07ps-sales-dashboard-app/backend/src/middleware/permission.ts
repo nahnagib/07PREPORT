@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express';
-import { hasPermission } from '../services/permissionService';
+import type { PermissionAction } from '../config/permissionRegistry';
+import { allows, canViewAnyDashboard, getRequestPermissions } from '../services/permissionService';
 
 /** Routes reachable even while a forced password change is pending -- everything else is
  * blocked (403 PASSWORD_CHANGE_REQUIRED) until the user clears it. Enforced here, not just on
@@ -29,26 +30,52 @@ export function requireAdminRole(req: Request, res: Response, next: NextFunction
     res.status(401).json({ error: 'Unauthenticated' });
     return;
   }
-  if (req.user.roleName !== 'ADMIN') {
+  if (!req.user.isAdmin) {
     res.status(403).json({ error: 'Admin access required.' });
     return;
   }
   next();
 }
 
+const FORBIDDEN = { error: 'You do not have permission to access this resource.' };
+
 /** Must run after requireAuth. 403s with a clean, generic message on denial -- never leaks which
- * permission rule matched (Section 5.9). */
-export function requirePermission(pageKey: string, action: 'view' | 'export') {
+ * permission rule matched (Section 5.9). `action` is any registry action: routes that change data
+ * check create/edit/delete, not just view. */
+export function requirePermission(pageKey: string, action: PermissionAction) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (!req.user) {
       res.status(401).json({ error: 'Unauthenticated' });
       return;
     }
-    const allowed = await hasPermission(req.user.id, req.user.roleId, pageKey, action);
-    if (!allowed) {
-      res.status(403).json({ error: 'You do not have permission to access this resource.' });
+    try {
+      if (!allows(await getRequestPermissions(req), pageKey, action)) {
+        res.status(403).json(FORBIDDEN);
+        return;
+      }
+    } catch (err) {
+      next(err);
       return;
     }
     next();
   };
+}
+
+/** Gate for shared dashboard endpoints (filter options, refresh status) that every report page
+ * uses: allowed for anyone who can View at least one dashboard, not tied to a particular page. */
+export async function requireAnyDashboardView(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (!req.user) {
+    res.status(401).json({ error: 'Unauthenticated' });
+    return;
+  }
+  try {
+    if (!canViewAnyDashboard(await getRequestPermissions(req))) {
+      res.status(403).json(FORBIDDEN);
+      return;
+    }
+  } catch (err) {
+    next(err);
+    return;
+  }
+  next();
 }

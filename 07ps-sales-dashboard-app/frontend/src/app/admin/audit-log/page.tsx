@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, type Column } from '@07ps/ui';
 import { AdminLayout } from '../../../components/AdminLayout';
+import { AdminOnlyGuard } from '../../../components/AuthGuard';
 import { useAuth } from '../../../lib/AuthProvider';
 import { APP_TIMEZONE } from '../../../lib/format';
 import { adminApi, ApiError, AuditLogRow } from '../../../lib/api';
@@ -18,22 +19,12 @@ const ENTITY_LABEL: Record<string, string> = {
  * away. Gated on the Admin role directly, like the ETL Control Center (backend: requireAdminRole).
  */
 export default function AdminAuditLogPage() {
-  const { user, loading } = useAuth();
-  if (loading) return null;
-  if (user?.role.name !== 'ADMIN') {
-    return (
-      <AdminLayout title="Audit Log">
-        <div style={{ minHeight: '50vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--ps-color-muted-text)', textAlign: 'center' }}>
-          <h2 style={{ margin: 0, fontSize: 18, color: 'var(--ps-color-text)' }}>Access restricted</h2>
-          <p style={{ margin: 0, fontSize: 14 }}>The Audit Log is available to Admins only.</p>
-        </div>
-      </AdminLayout>
-    );
-  }
   return (
-    <AdminLayout title="Audit Log">
-      <AuditLogBody />
-    </AdminLayout>
+    <AdminOnlyGuard>
+      <AdminLayout title="Audit Log">
+        <AuditLogBody />
+      </AdminLayout>
+    </AdminOnlyGuard>
   );
 }
 

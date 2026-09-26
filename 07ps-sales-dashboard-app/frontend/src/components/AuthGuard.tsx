@@ -2,6 +2,9 @@
 import React, { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '../lib/AuthProvider';
+import type { PermissionAction } from '../lib/api';
+import { firstAccessiblePath } from '../lib/navItems';
+import { NoAccess } from './NoAccess';
 
 const PUBLIC_ROUTES = new Set(['/login', '/forgot-password', '/reset-password']);
 
@@ -23,14 +26,15 @@ const PUBLIC_ROUTES = new Set(['/login', '/forgot-password', '/reset-password'])
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { loading, user, token } = useAuth();
+  const { loading, user, token, canView, isAdmin } = useAuth();
   const isPublicRoute = PUBLIC_ROUTES.has(pathname);
   const isChangePasswordRoute = pathname === '/change-password';
 
   useEffect(() => {
     if (loading) return;
     if (isPublicRoute) {
-      if (user && pathname === '/login') router.replace('/');
+      // Signed in: start on the first page this user can actually open, not a fixed page.
+      if (user && pathname === '/login') router.replace(firstAccessiblePath(canView, isAdmin));
       return;
     }
     if (!token || !user) {
@@ -40,7 +44,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     if (user.mustChangePassword && !isChangePasswordRoute) {
       router.replace('/change-password');
     }
-  }, [loading, isPublicRoute, isChangePasswordRoute, token, user, pathname, router]);
+  }, [loading, isPublicRoute, isChangePasswordRoute, token, user, pathname, router, canView, isAdmin]);
 
   if (isPublicRoute) return <>{children}</>;
 
@@ -69,27 +73,24 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
  * (per the spec) also prevents direct-URL access to a page the user can't view, not just hiding
  * it from navigation. Every API call the page then makes is still independently 403'd server-side
  * if permissions were somehow bypassed here. */
-export function PermissionGuard({ pageKey, children }: { pageKey: string; children: React.ReactNode }) {
-  const { canView } = useAuth();
-  if (!canView(pageKey)) {
-    return (
-      <div
-        style={{
-          minHeight: '60vh',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 8,
-          color: 'var(--ps-color-muted-text)',
-          textAlign: 'center',
-          padding: 32,
-        }}
-      >
-        <h2 style={{ margin: 0, fontSize: 18, color: 'var(--ps-color-text)' }}>Access restricted</h2>
-        <p style={{ margin: 0, fontSize: 14 }}>You don&apos;t have permission to view this page.</p>
-      </div>
-    );
-  }
+export function PermissionGuard({
+  pageKey,
+  action = 'view',
+  children,
+}: {
+  pageKey: string;
+  action?: PermissionAction;
+  children: React.ReactNode;
+}) {
+  const { can } = useAuth();
+  if (!can(pageKey, 'view') || !can(pageKey, action)) return <NoAccess />;
+  return <>{children}</>;
+}
+
+/** Gate for the Admin-role-only sections (ETL Control Center, Audit Log). */
+export function AdminOnlyGuard({ children }: { children: React.ReactNode }) {
+  const { isAdmin, loading } = useAuth();
+  if (loading) return null;
+  if (!isAdmin) return <NoAccess message="This section is available to the Admin role only." />;
   return <>{children}</>;
 }

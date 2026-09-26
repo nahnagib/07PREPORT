@@ -2,11 +2,18 @@ import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../../middleware/permission';
 import { ValidationError } from '../../lib/errors';
-import { setUserPermissionOverride, getEffectivePermissions } from '../../services/permissionService';
+import {
+  getEffectivePermissions,
+  getUserPermissionOverrides,
+  getUserRoles,
+  setUserPermissionOverride,
+} from '../../services/permissionService';
+import { isRegisteredAction } from '../../config/permissionRegistry';
+import { setUserRoles } from '../../services/roleService';
+import { writeAuditLog } from '../../services/auditLogService';
 import { listLoginHistory } from '../../services/loginHistoryService';
 import {
   adminResetPassword,
-  changeUserRole,
   createUser,
   forcePasswordChange,
   getSalespersonOptions,
@@ -26,6 +33,16 @@ adminUsersRouter.use(
   requirePasswordChangeCleared,
   requirePermission('admin_users', 'view'),
 );
+
+/** Reads need View (router-level above); creating a user needs Create; every change to an existing
+ * user (profile, status, password, sessions, roles, permission overrides) needs Edit. */
+const canCreate = requirePermission('admin_users', 'create');
+const canEdit = requirePermission('admin_users', 'edit');
+
+function parseRoleIds(raw: unknown): number[] {
+  const values = Array.isArray(raw) ? raw : raw === undefined || raw === null ? [] : [raw];
+  return values.map(Number).filter((n) => Number.isInteger(n) && n > 0);
+}
 
 function sanitizeUser(user: Awaited<ReturnType<typeof getUserById>>) {
   if (!user) return null;
@@ -67,17 +84,21 @@ adminUsersRouter.get('/', async (req, res, next) => {
   }
 });
 
-adminUsersRouter.post('/', async (req, res, next) => {
+adminUsersRouter.post('/', canCreate, async (req, res, next) => {
   try {
-    const { fullName, email, roleId, tempPassword, status, salespersonKey, companyScope } = req.body ?? {};
-    if (!fullName || !email || !roleId) {
-      res.status(400).json({ error: 'fullName, email, and roleId are required.' });
+    const { fullName, email, roleId, roleIds, tempPassword, status, salespersonKey, companyScope } = req.body ?? {};
+    // roleIds (several roles) is the current shape; a single roleId is still accepted.
+    const allRoleIds = parseRoleIds(roleIds ?? roleId);
+    const primaryRoleId = roleId ? Number(roleId) : allRoleIds[0];
+    if (!fullName || !email || !primaryRoleId) {
+      res.status(400).json({ error: 'fullName, email, and at least one role are required.' });
       return;
     }
     const result = await createUser({
       fullName,
       email,
-      roleId: Number(roleId),
+      roleId: primaryRoleId,
+      extraRoleIds: allRoleIds.filter((id) => id !== primaryRoleId),
       tempPassword: tempPassword || undefined,
       status: status || undefined,
       salespersonKey: salespersonKey !== undefined && salespersonKey !== null ? Number(salespersonKey) : null,
@@ -103,8 +124,12 @@ adminUsersRouter.get('/:id', async (req, res, next) => {
       res.status(404).json({ error: 'User not found.' });
       return;
     }
-    const permissions = await getEffectivePermissions(userId, user.role_id);
-    res.json({ user: sanitizeUser(user), permissions });
+    const [permissions, roles, overrides] = await Promise.all([
+      getEffectivePermissions(userId, user.role_id),
+      getUserRoles(userId, user.role_id),
+      getUserPermissionOverrides(userId),
+    ]);
+    res.json({ user: { ...sanitizeUser(user), roles }, permissions, overrides });
   } catch (err) {
     next(err);
   }
@@ -122,7 +147,7 @@ adminUsersRouter.get('/:id/login-history', async (req, res, next) => {
   }
 });
 
-adminUsersRouter.patch('/:id', async (req, res, next) => {
+adminUsersRouter.patch('/:id', canEdit, async (req, res, next) => {
   try {
     const userId = Number(req.params.id);
     const { fullName, salespersonKey, companyScope } = req.body ?? {};
@@ -144,7 +169,7 @@ adminUsersRouter.patch('/:id', async (req, res, next) => {
 
 const VALID_STATUSES: UserStatus[] = ['ACTIVE', 'INACTIVE', 'LOCKED', 'PENDING_PASSWORD_CHANGE'];
 
-adminUsersRouter.post('/:id/status', async (req, res, next) => {
+adminUsersRouter.post('/:id/status', canEdit, async (req, res, next) => {
   try {
     const userId = Number(req.params.id);
     const { status } = req.body ?? {};
@@ -156,11 +181,15 @@ adminUsersRouter.post('/:id/status', async (req, res, next) => {
     const user = await getUserById(userId);
     res.json({ user: sanitizeUser(user) });
   } catch (err) {
+    if (err instanceof ValidationError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
     next(err);
   }
 });
 
-adminUsersRouter.post('/:id/reset-password', async (req, res, next) => {
+adminUsersRouter.post('/:id/reset-password', canEdit, async (req, res, next) => {
   try {
     const userId = Number(req.params.id);
     const { tempPassword } = req.body ?? {};
@@ -175,7 +204,7 @@ adminUsersRouter.post('/:id/reset-password', async (req, res, next) => {
   }
 });
 
-adminUsersRouter.post('/:id/force-password-change', async (req, res, next) => {
+adminUsersRouter.post('/:id/force-password-change', canEdit, async (req, res, next) => {
   try {
     const userId = Number(req.params.id);
     await forcePasswordChange(userId);
@@ -186,7 +215,25 @@ adminUsersRouter.post('/:id/force-password-change', async (req, res, next) => {
   }
 });
 
-adminUsersRouter.patch('/:id/role', async (req, res, next) => {
+/** Replaces the user's roles: { roleIds: number[], primaryRoleId?: number }. */
+adminUsersRouter.put('/:id/roles', canEdit, async (req, res, next) => {
+  try {
+    const userId = Number(req.params.id);
+    const { roleIds, primaryRoleId } = req.body ?? {};
+    await setUserRoles(userId, parseRoleIds(roleIds), req.user!.id, primaryRoleId ? Number(primaryRoleId) : null);
+    const user = await getUserById(userId);
+    res.json({ user: { ...sanitizeUser(user), roles: await getUserRoles(userId, user?.role_id) } });
+  } catch (err) {
+    if (err instanceof ValidationError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    next(err);
+  }
+});
+
+/** Older single-role form, kept for compatibility: the user ends up with exactly this one role. */
+adminUsersRouter.patch('/:id/role', canEdit, async (req, res, next) => {
   try {
     const userId = Number(req.params.id);
     const { roleId } = req.body ?? {};
@@ -194,7 +241,7 @@ adminUsersRouter.patch('/:id/role', async (req, res, next) => {
       res.status(400).json({ error: 'roleId is required.' });
       return;
     }
-    await changeUserRole(userId, Number(roleId));
+    await setUserRoles(userId, [Number(roleId)], req.user!.id, Number(roleId));
     const user = await getUserById(userId);
     res.json({ user: sanitizeUser(user) });
   } catch (err) {
@@ -206,7 +253,7 @@ adminUsersRouter.patch('/:id/role', async (req, res, next) => {
   }
 });
 
-adminUsersRouter.patch('/:id/permissions', async (req, res, next) => {
+adminUsersRouter.patch('/:id/permissions', canEdit, async (req, res, next) => {
   try {
     const userId = Number(req.params.id);
     const { overrides } = req.body ?? {};
@@ -215,16 +262,28 @@ adminUsersRouter.patch('/:id/permissions', async (req, res, next) => {
       return;
     }
     for (const override of overrides) {
-      const { pageKey, action, allowed } = override ?? {};
-      if (typeof pageKey !== 'string' || (action !== 'view' && action !== 'export')) {
-        res.status(400).json({ error: 'Each override needs a pageKey and action of "view"|"export".' });
+      const { pageKey, action } = override ?? {};
+      if (typeof pageKey !== 'string' || typeof action !== 'string' || !isRegisteredAction(pageKey, action)) {
+        res.status(400).json({ error: 'Each override needs a registered pageKey and action.' });
         return;
       }
-      await setUserPermissionOverride(userId, pageKey, action, allowed === null ? null : Boolean(allowed));
     }
+    const before = await getUserPermissionOverrides(userId);
+    for (const { pageKey, action, allowed } of overrides) {
+      await setUserPermissionOverride(userId, pageKey, action, allowed === null || allowed === undefined ? null : Boolean(allowed));
+    }
+    const after = await getUserPermissionOverrides(userId);
+    await writeAuditLog({
+      entityType: 'user_permission_overrides',
+      entityId: String(userId),
+      action: 'UPDATE',
+      changedBy: req.user!.id,
+      before,
+      after,
+    });
     const user = await getUserById(userId);
     const permissions = await getEffectivePermissions(userId, user?.role_id ?? null);
-    res.json({ permissions });
+    res.json({ permissions, overrides: after });
   } catch (err) {
     if (err instanceof ValidationError) {
       res.status(400).json({ error: err.message });
@@ -234,7 +293,7 @@ adminUsersRouter.patch('/:id/permissions', async (req, res, next) => {
   }
 });
 
-adminUsersRouter.post('/:id/revoke-sessions', async (req, res, next) => {
+adminUsersRouter.post('/:id/revoke-sessions', canEdit, async (req, res, next) => {
   try {
     const userId = Number(req.params.id);
     await revokeSessions(userId);

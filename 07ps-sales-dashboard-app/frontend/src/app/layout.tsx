@@ -7,6 +7,7 @@ import { AuthProvider } from '../lib/AuthProvider';
 import { AuthGuard } from '../components/AuthGuard';
 import { FilterProvider } from '../components/FilterProvider';
 import { PdfExportContextBridge } from '../components/PdfExportContextBridge';
+import { ExportPermissionBridge } from '../components/ExportPermissionBridge';
 
 export const metadata: Metadata = {
   title: 'BMH - 7Ps Dashboard',
@@ -29,7 +30,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <AuthProvider>
               <FilterProvider>
                 <PdfExportContextBridge />
-                <AuthGuard>{children}</AuthGuard>
+                <ExportPermissionBridge>
+                  <AuthGuard>{children}</AuthGuard>
+                </ExportPermissionBridge>
               </FilterProvider>
             </AuthProvider>
           </BusinessUnitProvider>

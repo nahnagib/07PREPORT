@@ -5,37 +5,16 @@ import { usePathname } from 'next/navigation';
 import { AppHeader } from './AppHeader';
 import { BottomNavBar } from './BottomNavBar';
 import { useAuth } from '../lib/AuthProvider';
-
-const TABS = [
-  { label: 'Users', href: '/admin/users', pageKey: 'admin_users' },
-  { label: 'Roles & Permissions', href: '/admin/roles', pageKey: 'admin_roles' },
-  { label: 'Salespersons', href: '/admin/salespersons', pageKey: 'admin_salespersons' },
-  { label: 'Sales Teams', href: '/admin/salesteams', pageKey: 'admin_salesteams' },
-  { label: 'Customer Groups', href: '/admin/customer-groups', pageKey: 'admin_customer_groups' },
-  { label: 'Distribution Channels', href: '/admin/distribution-channels', pageKey: 'admin_distribution_channels' },
-  { label: 'Companies', href: '/admin/companies', pageKey: 'admin_companies' },
-  { label: 'Official Holidays', href: '/admin/holidays', pageKey: 'admin_holidays' },
-  { label: 'Forced Closures', href: '/admin/closures', pageKey: 'admin_closures' },
-  { label: 'MARCOM Data Upload', href: '/admin/marcom-upload', pageKey: 'admin_marcom_upload' },
-  { label: 'Login History', href: '/admin/login-history', pageKey: 'admin_login_history' },
-] as const;
-
-const ETL_TAB = { label: 'ETL Control Center', href: '/admin/etl-control' } as const;
-// Admin-role-only like the ETL tab (backend: requireAdminRole) -- shows ETL input-file uploads etc.
-const AUDIT_TAB = { label: 'Audit Log', href: '/admin/audit-log' } as const;
+import { visibleAdminTabs } from '../lib/navItems';
 
 /** Shared chrome for every admin page -- header + a small tab row switching between the
  * Administration sections, each individually gated by canView so a section a user can't reach
- * doesn't even show as a tab. The ETL Control Center tab is the one exception: it's hard-gated to
- * the Admin role directly (not canView) so it stays hidden even if the vestigial `admin_etl`
- * permission is ever granted to another role -- see backend's requireAdminRole. */
+ * doesn't even show as a tab. The ETL Control Center and Audit Log tabs are the exception: they're
+ * reserved for the Admin role (see lib/navItems.ts's ADMIN_TABS and backend's requireAdminRole). */
 export function AdminLayout({ title, children }: { title: string; children: React.ReactNode }) {
   const pathname = usePathname();
-  const { user, canView, logout } = useAuth();
-  const visibleTabs = [
-    ...TABS.filter((t) => canView(t.pageKey)),
-    ...(user?.role.name === 'ADMIN' ? [ETL_TAB, AUDIT_TAB] : []),
-  ];
+  const { user, canView, isAdmin, logout } = useAuth();
+  const visibleTabs = visibleAdminTabs(canView, isAdmin);
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>

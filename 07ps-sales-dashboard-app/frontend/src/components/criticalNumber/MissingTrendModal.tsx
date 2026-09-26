@@ -14,7 +14,7 @@ import {
   type TooltipProps,
 } from 'recharts';
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, FileDown, FileSpreadsheet, Image as ImageIcon, TrendingDown, TrendingUp, X } from 'lucide-react';
-import { ErrorState, LoadingSkeleton, exportRowsAsCsv, exportRowsAsPdf, exportRowsAsXlsx, exportSvgAsImage } from '@07ps/ui';
+import { ErrorState, LoadingSkeleton, exportRowsAsCsv, exportRowsAsPdf, exportRowsAsXlsx, exportSvgAsImage, useCanExport } from '@07ps/ui';
 import type { MissingTrendGranularity, MissingTrendPeriod, TachometerFilters } from '../../lib/api';
 import { useCriticalNumberMissingTrend } from '../../lib/hooks';
 import { formatCompactCurrency, formatCurrency, formatVariance } from '../../lib/format';
@@ -587,6 +587,9 @@ function ExportButton({
   onClick: () => void;
   disabled?: boolean;
 }) {
+  // Hidden without Export permission on this page (the backend refuses the export anyway).
+  const canExport = useCanExport();
+  if (!canExport) return null;
   return (
     <button type="button" onClick={onClick} disabled={disabled} className="ps-cn-export-btn">
       <Icon size={13} />

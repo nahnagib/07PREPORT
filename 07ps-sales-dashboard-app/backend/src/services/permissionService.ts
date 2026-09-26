@@ -1,166 +1,242 @@
+import type { Request } from 'express';
 import { ValidationError } from '../lib/errors';
 import { pool } from '../db/pool';
+import {
+  PERMISSION_ACTIONS,
+  PERMISSION_REGISTRY,
+  dashboardPageKeys,
+  isRegisteredAction,
+  navGroupOf,
+  type PermissionAction,
+} from '../config/permissionRegistry';
+
+/** The built-in super-administrator role (roles.role_name). */
+export const ADMIN_ROLE_NAME = 'ADMIN';
 
 export interface PagePermission {
   canView: boolean;
+  canCreate: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
   canExport: boolean;
 }
 
 export type EffectivePermissions = Record<string, PagePermission>;
 
-interface PermissionRow {
+const FLAG: Record<PermissionAction, keyof PagePermission> = {
+  view: 'canView',
+  create: 'canCreate',
+  edit: 'canEdit',
+  delete: 'canDelete',
+  export: 'canExport',
+};
+
+export function emptyPagePermission(): PagePermission {
+  return { canView: false, canCreate: false, canEdit: false, canDelete: false, canExport: false };
+}
+
+export function allows(permissions: EffectivePermissions, pageKey: string, action: PermissionAction): boolean {
+  return permissions[pageKey]?.[FLAG[action]] ?? false;
+}
+
+interface GrantRow {
   page_key: string;
-  action: 'view' | 'export';
-  allowed: number | null;
+  action: PermissionAction;
+  allowed: number | boolean | null;
 }
 
 /**
- * Effective permission = per-user override (user_permissions) if one exists for that page+action,
- * else the user's role default (role_permissions), else deny. Computed fresh on every call (no
- * caching) so an admin changing a role's or a user's permissions takes effect on the very next
- * request -- consistent with how requireAuth re-loads role/status fresh rather than trusting the
- * (deliberately minimal, long-lived) JWT.
+ * Pure permission evaluation (unit-tested directly):
+ *
+ *   - Admin (holds the ADMIN role)  -> every registered action on every registered page.
+ *   - otherwise, per page+action     -> the user's own override if one exists, else allowed if ANY
+ *                                        of the user's roles allows it (roles combine as a union).
+ *   - only actions the registry lists for a page count; a stale row for anything else is ignored.
+ *   - every action requires View: without View on a page, nothing else on it is allowed either.
  */
-export async function getEffectivePermissions(
-  userId: number,
-  roleId: number | null,
-): Promise<EffectivePermissions> {
-  const [rows] = await pool.query(
-    `SELECT pg.page_key, p.action, COALESCE(up.allowed, rp.allowed, FALSE) AS allowed
-     FROM pages pg
-     JOIN permissions p ON p.page_id = pg.page_id
-     LEFT JOIN role_permissions rp ON rp.permission_id = p.permission_id AND rp.role_id = ?
-     LEFT JOIN user_permissions up ON up.permission_id = p.permission_id AND up.user_id = ?`,
-    [roleId, userId],
-  );
+export function computeEffectivePermissions(input: {
+  isAdmin: boolean;
+  roleGrants: GrantRow[];
+  overrides: GrantRow[];
+}): EffectivePermissions {
+  const key = (pageKey: string, action: string) => `${pageKey}\u0000${action}`;
+  const roleAllowed = new Set<string>();
+  for (const g of input.roleGrants) if (g.allowed) roleAllowed.add(key(g.page_key, g.action));
+  const override = new Map<string, boolean>();
+  for (const o of input.overrides) if (o.allowed !== null) override.set(key(o.page_key, o.action), Boolean(o.allowed));
 
   const result: EffectivePermissions = {};
-  for (const row of rows as PermissionRow[]) {
-    if (!result[row.page_key]) {
-      result[row.page_key] = { canView: false, canExport: false };
+  for (const entry of PERMISSION_REGISTRY) {
+    const page = emptyPagePermission();
+    for (const action of entry.actions) {
+      const k = key(entry.key, action);
+      page[FLAG[action]] = input.isAdmin || (override.has(k) ? override.get(k)! : roleAllowed.has(k));
     }
-    const allowed = Boolean(row.allowed);
-    if (row.action === 'view') result[row.page_key].canView = allowed;
-    else result[row.page_key].canExport = allowed;
+    if (!page.canView) {
+      page.canCreate = false;
+      page.canEdit = false;
+      page.canDelete = false;
+      page.canExport = false;
+    }
+    result[entry.key] = page;
   }
   return result;
+}
+
+export interface UserRoleRef {
+  role_id: number;
+  role_name: string;
+  role_label: string;
+}
+
+/** Every business role the user holds (user_roles), falling back to app_user.role_id for a row the
+ * migration hasn't reached (e.g. a user created by an older build between deploys). */
+export async function getUserRoles(userId: number, fallbackRoleId?: number | null): Promise<UserRoleRef[]> {
+  const [rows] = await pool.query(
+    `SELECT r.role_id, r.role_name, r.role_label
+       FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id
+      WHERE ur.user_id = ?
+      ORDER BY r.role_label`,
+    [userId],
+  );
+  const roles = rows as UserRoleRef[];
+  if (roles.length > 0 || fallbackRoleId == null) return roles;
+  const [fallback] = await pool.query('SELECT role_id, role_name, role_label FROM roles WHERE role_id = ?', [fallbackRoleId]);
+  return fallback as UserRoleRef[];
+}
+
+/**
+ * Effective permissions, computed fresh from the database on every call -- no cross-request cache,
+ * so a role, permission or role-assignment change applies to the user's very next request. Within
+ * one request the result is memoized on the request (see getRequestPermissions).
+ */
+export async function getEffectivePermissions(userId: number, roleId?: number | null): Promise<EffectivePermissions> {
+  const roles = await getUserRoles(userId, roleId);
+  const isAdmin = roles.some((r) => r.role_name === ADMIN_ROLE_NAME);
+  if (isAdmin) return computeEffectivePermissions({ isAdmin: true, roleGrants: [], overrides: [] });
+
+  const roleIds = roles.map((r) => r.role_id);
+  let roleGrants: GrantRow[] = [];
+  if (roleIds.length > 0) {
+    const [grantRows] = await pool.query(
+      `SELECT pg.page_key, p.action, rp.allowed
+         FROM role_permissions rp
+         JOIN permissions p ON p.permission_id = rp.permission_id
+         JOIN pages pg ON pg.page_id = p.page_id
+        WHERE rp.role_id IN (?)`,
+      [roleIds],
+    );
+    roleGrants = grantRows as GrantRow[];
+  }
+  const [overrideRows] = await pool.query(
+    `SELECT pg.page_key, p.action, up.allowed
+       FROM user_permissions up
+       JOIN permissions p ON p.permission_id = up.permission_id
+       JOIN pages pg ON pg.page_id = p.page_id
+      WHERE up.user_id = ?`,
+    [userId],
+  );
+  return computeEffectivePermissions({ isAdmin: false, roleGrants, overrides: overrideRows as GrantRow[] });
+}
+
+/** Per-request memo: several checks in one request load permissions once. Keyed by the request
+ * object, so it's dropped with the request -- nothing is cached across requests. */
+const requestPermissions = new WeakMap<Request, Promise<EffectivePermissions>>();
+
+/** The request user's effective permissions, loaded once per request however many checks run. */
+export function getRequestPermissions(req: Request): Promise<EffectivePermissions> {
+  if (!req.user) return Promise.resolve({});
+  let pending = requestPermissions.get(req);
+  if (!pending) {
+    pending = getEffectivePermissions(req.user.id, req.user.roleId);
+    requestPermissions.set(req, pending);
+  }
+  return pending;
 }
 
 export async function hasPermission(
   userId: number,
   roleId: number | null,
   pageKey: string,
-  action: 'view' | 'export',
+  action: PermissionAction,
 ): Promise<boolean> {
-  const permissions = await getEffectivePermissions(userId, roleId);
-  const page = permissions[pageKey];
-  if (!page) return false;
-  return action === 'view' ? page.canView : page.canExport;
+  return allows(await getEffectivePermissions(userId, roleId), pageKey, action);
 }
 
-export interface RoleMatrixRow {
-  role_id: number;
-  role_name: string;
-  role_label: string;
+/** True when the user can View at least one dashboard page -- the gate for shared, page-agnostic
+ * dashboard endpoints (filter options, refresh status). */
+export function canViewAnyDashboard(permissions: EffectivePermissions): boolean {
+  return dashboardPageKeys().some((k) => allows(permissions, k, 'view'));
 }
 
-export interface RolePermissionMatrix {
-  roles: RoleMatrixRow[];
-  pages: { page_id: number; page_key: string; page_label: string; nav_group: string | null }[];
-  // roleId -> pageKey -> { canView, canExport }
-  matrix: Record<number, EffectivePermissions>;
-}
-
-/** Powers the Role & Permission Management admin page: every role x every page, defaults only
- * (per-user overrides are edited on the User Details page, not here). */
-export async function getRolePermissionMatrix(): Promise<RolePermissionMatrix> {
-  const [roleRows] = await pool.query('SELECT role_id, role_name, role_label FROM roles ORDER BY role_id');
-  const [pageRows] = await pool.query(
-    'SELECT page_id, page_key, page_label, nav_group FROM pages ORDER BY sort_order',
+/**
+ * Brings `pages` / `permissions` in line with the registry: inserts any page or page+action the
+ * registry has and the database doesn't, and refreshes each page's label/group/order. Never deletes
+ * (a page removed from the registry simply stops being evaluated). Also keeps the Admin role's rows
+ * complete. Runs at backend startup; idempotent.
+ */
+export async function syncPermissionRegistry(): Promise<void> {
+  // Before migration 0026 the action column only knows view/export, and a non-strict server would
+  // silently store the new actions as ''. Skip until the migration has run.
+  const [colRows] = await pool.query(
+    `SELECT COLUMN_TYPE AS type FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'permissions' AND COLUMN_NAME = 'action'`,
   );
-  const [permRows] = await pool.query(
-    `SELECT rp.role_id, pg.page_key, p.action, rp.allowed
-     FROM role_permissions rp
-     JOIN permissions p ON p.permission_id = rp.permission_id
-     JOIN pages pg ON pg.page_id = p.page_id`,
-  );
-
-  const matrix: Record<number, EffectivePermissions> = {};
-  for (const row of permRows as (PermissionRow & { role_id: number })[]) {
-    matrix[row.role_id] = matrix[row.role_id] ?? {};
-    if (!matrix[row.role_id][row.page_key]) {
-      matrix[row.role_id][row.page_key] = { canView: false, canExport: false };
-    }
-    const allowed = Boolean(row.allowed);
-    if (row.action === 'view') matrix[row.role_id][row.page_key].canView = allowed;
-    else matrix[row.role_id][row.page_key].canExport = allowed;
+  const columnType = String((colRows as { type: string }[])[0]?.type ?? '');
+  const missing = PERMISSION_ACTIONS.filter((a) => !columnType.includes(`'${a}'`));
+  if (missing.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[permissions] registry sync skipped: permissions.action lacks ${missing.join(', ')} -- apply migration 0026_roles_permissions.sql.`,
+    );
+    return;
   }
-
-  return {
-    roles: roleRows as RoleMatrixRow[],
-    pages: pageRows as RolePermissionMatrix['pages'],
-    matrix,
-  };
-}
-
-/** Upserts one role's default permission for one page+action. */
-export async function setRolePermission(
-  roleId: number,
-  pageKey: string,
-  action: 'view' | 'export',
-  allowed: boolean,
-): Promise<void> {
-  // Guard rail: the Admin role must always be able to reach the admin panel itself, or a
-  // well-intentioned permission edit could lock every administrator out with no recovery path
-  // short of direct DB access (there is no superuser bypass in this system by design).
-  if (!allowed && action === 'view' && (pageKey === 'admin_users' || pageKey === 'admin_roles')) {
-    const [roleRows] = await pool.query('SELECT role_name FROM roles WHERE role_id = ?', [roleId]);
-    const roleName = (roleRows as { role_name: string }[])[0]?.role_name;
-    if (roleName === 'ADMIN') {
-      throw new ValidationError(
-        'The Admin role must always retain access to User Management and Role & Permission Management.',
+  for (const [index, entry] of PERMISSION_REGISTRY.entries()) {
+    await pool.query(
+      `INSERT INTO pages (page_key, page_label, nav_group, sort_order) VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE page_label = VALUES(page_label), nav_group = VALUES(nav_group), sort_order = VALUES(sort_order)`,
+      [entry.key, entry.label, navGroupOf(entry.group), index + 1],
+    );
+    for (const action of entry.actions) {
+      await pool.query(
+        `INSERT IGNORE INTO permissions (page_id, action)
+         SELECT page_id, ? FROM pages WHERE page_key = ?`,
+        [action, entry.key],
       );
     }
   }
+  await pool.query(
+    `INSERT IGNORE INTO role_permissions (role_id, permission_id, allowed)
+     SELECT r.role_id, p.permission_id, TRUE FROM roles r JOIN permissions p ON TRUE WHERE r.role_name = ?`,
+    [ADMIN_ROLE_NAME],
+  );
+}
 
-  const [permRows] = await pool.query(
+/** permission_id for a registered page+action, or a ValidationError. */
+export async function getPermissionId(pageKey: string, action: string): Promise<number> {
+  if (!isRegisteredAction(pageKey, action)) throw new ValidationError(`Unknown page/action: ${pageKey}/${action}`);
+  const [rows] = await pool.query(
     `SELECT p.permission_id FROM permissions p JOIN pages pg ON pg.page_id = p.page_id
      WHERE pg.page_key = ? AND p.action = ?`,
     [pageKey, action],
   );
-  const permissionId = (permRows as { permission_id: number }[])[0]?.permission_id;
+  const permissionId = (rows as { permission_id: number }[])[0]?.permission_id;
   if (!permissionId) throw new ValidationError(`Unknown page/action: ${pageKey}/${action}`);
-
-  await pool.query(
-    `INSERT INTO role_permissions (role_id, permission_id, allowed) VALUES (?, ?, ?)
-     ON DUPLICATE KEY UPDATE allowed = VALUES(allowed)`,
-    [roleId, permissionId, allowed],
-  );
+  return permissionId;
 }
 
 /** Upserts (or clears, when allowed === null) one user's override for one page+action. */
 export async function setUserPermissionOverride(
   userId: number,
   pageKey: string,
-  action: 'view' | 'export',
+  action: PermissionAction,
   allowed: boolean | null,
 ): Promise<void> {
-  const [permRows] = await pool.query(
-    `SELECT p.permission_id FROM permissions p JOIN pages pg ON pg.page_id = p.page_id
-     WHERE pg.page_key = ? AND p.action = ?`,
-    [pageKey, action],
-  );
-  const permissionId = (permRows as { permission_id: number }[])[0]?.permission_id;
-  if (!permissionId) throw new ValidationError(`Unknown page/action: ${pageKey}/${action}`);
-
+  const permissionId = await getPermissionId(pageKey, action);
   if (allowed === null) {
-    await pool.query('DELETE FROM user_permissions WHERE user_id = ? AND permission_id = ?', [
-      userId,
-      permissionId,
-    ]);
+    await pool.query('DELETE FROM user_permissions WHERE user_id = ? AND permission_id = ?', [userId, permissionId]);
     return;
   }
-
   await pool.query(
     `INSERT INTO user_permissions (user_id, permission_id, allowed) VALUES (?, ?, ?)
      ON DUPLICATE KEY UPDATE allowed = VALUES(allowed)`,
@@ -168,9 +244,20 @@ export async function setUserPermissionOverride(
   );
 }
 
-export async function listPages(): Promise<
-  { page_id: number; page_key: string; page_label: string; nav_group: string | null; sort_order: number }[]
-> {
-  const [rows] = await pool.query('SELECT * FROM pages ORDER BY sort_order');
-  return rows as never;
+/** A user's raw overrides as { pageKey: { action: allowed } }, for the User Details screen. */
+export async function getUserPermissionOverrides(userId: number): Promise<Record<string, Partial<Record<PermissionAction, boolean>>>> {
+  const [rows] = await pool.query(
+    `SELECT pg.page_key, p.action, up.allowed
+       FROM user_permissions up
+       JOIN permissions p ON p.permission_id = up.permission_id
+       JOIN pages pg ON pg.page_id = p.page_id
+      WHERE up.user_id = ?`,
+    [userId],
+  );
+  const out: Record<string, Partial<Record<PermissionAction, boolean>>> = {};
+  for (const r of rows as GrantRow[]) {
+    out[r.page_key] = out[r.page_key] ?? {};
+    out[r.page_key][r.action] = Boolean(r.allowed);
+  }
+  return out;
 }

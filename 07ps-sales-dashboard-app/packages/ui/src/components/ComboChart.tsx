@@ -12,6 +12,7 @@ import {
   Legend,
 } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { useCanExport } from '../exportPermission';
 
 export interface ComboBarSeries {
   key: string;
@@ -116,6 +117,7 @@ export function ComboChart({
     return isRightAxis ? rightAxisFormatter : leftAxisFormatter;
   };
 
+  const canExport = useCanExport();
   const handleExportImage = () => {
     exportSvgAsImage(containerRef.current, (title ?? 'chart').replace(/\s+/g, '-').toLowerCase());
   };
@@ -131,6 +133,7 @@ export function ComboChart({
         }}
       >
         {showTitle && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>}
+        {canExport && (
         <button
           type="button"
           onClick={handleExportImage}
@@ -147,6 +150,7 @@ export function ComboChart({
         >
           Export image
         </button>
+        )}
       </div>
       <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default' }}>
         <ResponsiveContainer width="100%" height={height}>

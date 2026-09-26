@@ -1,7 +1,7 @@
 import { Request, Router } from 'express';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
-import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
+import { requireAnyDashboardView, requirePasswordChangeCleared } from '../middleware/permission';
 import { attachUserContext } from '../middleware/scopeContext';
 import { DataScopeError, SalespersonLockError, applyRoleDataScope, applySalespersonLock, type Filters } from '../measures/filters';
 import { emptySelection, type Selection } from '../filters/cascade';
@@ -53,7 +53,9 @@ import { getFilterOptions } from '../filters/optionsService';
 
 export const filtersRouter = Router();
 
-filtersRouter.use(requireAuth, requirePasswordChangeCleared, requirePermission('tachometer', 'view'), attachUserContext);
+// Shared by every report page's filter bar/footer: open to anyone who can View at least one dashboard
+// (was Tachometer only, which broke the filters on every other page for a role without Tachometer).
+filtersRouter.use(requireAuth, requirePasswordChangeCleared, requireAnyDashboardView, attachUserContext);
 
 /** Values this dimension is restricted to by the caller's role, or null if unrestricted. */
 function allowedValues(req: Request, dimension: keyof Filters): Set<string> | null {

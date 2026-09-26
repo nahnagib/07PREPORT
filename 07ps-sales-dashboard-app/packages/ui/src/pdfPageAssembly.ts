@@ -1,3 +1,5 @@
+import { authorizeExport } from './exportPermission';
+
 /**
  * Shared "one already-built DOM container per PDF page" assembly step for every html2canvas/jsPDF
  * table export in this package. Callers (performanceTablePdfExport.ts, pdfExport.ts,
@@ -34,6 +36,8 @@ export interface PdfPageAssemblyOptions {
 
 export async function assemblePaginatedPdf({ pages, orientation = 'landscape', fileName }: PdfPageAssemblyOptions): Promise<void> {
   if (pages.length === 0) return;
+  // Every PDF in this package (exportRowsAsPdf, exportPerformanceTablePdf, DataGrid) ends here.
+  if (!(await authorizeExport('pdf'))) return;
 
   const html2canvas = (await import('html2canvas')).default;
   const jsPDF = (await import('jspdf')).jsPDF;

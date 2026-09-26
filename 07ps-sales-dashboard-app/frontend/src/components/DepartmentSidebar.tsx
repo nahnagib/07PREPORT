@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Home, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { DEPARTMENTS } from '../lib/departments';
-import { ADMIN_NAV_ITEM } from '../lib/navItems';
+import { ADMIN_NAV_ITEM, adminNavHref, departmentIsBuilt, departmentReports } from '../lib/navItems';
 import { useAuth } from '../lib/AuthProvider';
 
 /**
@@ -21,10 +21,10 @@ import { useAuth } from '../lib/AuthProvider';
  */
 export function DepartmentSidebar() {
   const pathname = usePathname();
-  const { canView } = useAuth();
+  const { canView, isAdmin } = useAuth();
   const [expanded, setExpanded] = useState(true);
-  const showAdmin =
-    canView('admin_users') || canView('admin_roles') || canView('admin_login_history') || canView('admin_etl');
+  const adminHref = adminNavHref(canView, isAdmin);
+  const showAdmin = adminHref !== null;
 
   // Default to collapsed on narrower viewports (tablet and below) so it doesn't eat into content
   // width on first load; user's manual toggle afterwards always wins.
@@ -58,7 +58,9 @@ export function DepartmentSidebar() {
           style={{ height: 1, background: 'rgba(255,255,255,0.12)', margin: '8px 4px 12px' }}
         />
 
-        {DEPARTMENTS.map((dept) => {
+        {/* Same rule as the hub page: a department with built reports, none of which this user can
+            view, is hidden; not-yet-built departments still show their "Coming soon" page. */}
+        {DEPARTMENTS.filter((d) => !departmentIsBuilt(d.key) || departmentReports(d.key, canView).length > 0).map((dept) => {
           const active = pathname === dept.href || pathname.startsWith(`${dept.href}/`);
           return (
             <SidebarItem
@@ -78,7 +80,7 @@ export function DepartmentSidebar() {
         <div style={{ padding: '0 12px 12px', borderTop: '1px solid rgba(255,255,255,0.12)', marginTop: 4 }}>
           <div style={{ paddingTop: 12 }}>
             <SidebarItem
-              href={ADMIN_NAV_ITEM.href}
+              href={adminHref ?? ADMIN_NAV_ITEM.href}
               label={ADMIN_NAV_ITEM.label}
               icon={ADMIN_NAV_ITEM.icon}
               active={pathname.startsWith('/admin')}

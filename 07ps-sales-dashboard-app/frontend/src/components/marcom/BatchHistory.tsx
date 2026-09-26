@@ -33,8 +33,10 @@ export interface BatchHistoryProps {
   onRetry: () => void;
   onOpen: (id: number) => void;
   onCloseDetail: () => void;
-  onDownload: (id: number) => void;
-  onRollback: (batch: BatchItem) => void;
+  /** Omitted when the user may not export (download the original file). */
+  onDownload?: (id: number) => void;
+  /** Omitted when the user may not delete (roll back). */
+  onRollback?: (batch: BatchItem) => void;
 }
 
 export function BatchHistory(p: BatchHistoryProps) {
@@ -65,11 +67,11 @@ export function BatchHistory(p: BatchHistoryProps) {
                 <td style={td}>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <Button variant="secondary" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => p.onOpen(b.batchId)}>Details</Button>
-                    {b.status !== 'FAILED' && (
-                      <Button variant="secondary" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => p.onDownload(b.batchId)}>Download file</Button>
+                    {b.status !== 'FAILED' && p.onDownload && (
+                      <Button variant="secondary" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => p.onDownload?.(b.batchId)}>Download file</Button>
                     )}
-                    {b.canRollback && (
-                      <Button variant="secondary" style={{ padding: '4px 8px', fontSize: 12, color: 'var(--ps-color-alert)' }} onClick={() => p.onRollback(b)}>
+                    {b.canRollback && p.onRollback && (
+                      <Button variant="secondary" style={{ padding: '4px 8px', fontSize: 12, color: 'var(--ps-color-alert)' }} onClick={() => p.onRollback?.(b)}>
                         Roll back latest batch
                       </Button>
                     )}

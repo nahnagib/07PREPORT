@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ResponsiveContainer, FunnelChart as RechartsFunnelChart, Funnel, Cell, LabelList, Tooltip } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { useCanExport } from '../exportPermission';
 
 export interface FunnelStage {
   id: string;
@@ -102,6 +103,7 @@ export function FunnelChart({
   const displayWidths = computeDisplayWidths(stages.length);
   const chartData = stages.map((s, i) => ({ ...s, displayWidth: displayWidths[i] }));
 
+  const canExport = useCanExport();
   const handleExportImage = () => {
     exportSvgAsImage(containerRef.current, (title ?? 'funnel-chart').replace(/\s+/g, '-').toLowerCase());
   };
@@ -121,6 +123,7 @@ export function FunnelChart({
         }}
       >
         {showTitle && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>}
+        {canExport && (
         <button
           type="button"
           onClick={handleExportImage}
@@ -137,6 +140,7 @@ export function FunnelChart({
         >
           Export image
         </button>
+        )}
       </div>
 
       <div ref={containerRef} style={{ width: '100%' }}>

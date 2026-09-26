@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { useCanExport } from '../exportPermission';
 
 export interface GroupedBarSeries {
   key: string;
@@ -112,6 +113,7 @@ export function GroupedBarChart({
 
   const tooltipFormatterFor = (dataKey: string) => tooltipFormatters?.[dataKey] ?? valueFormatter;
 
+  const canExport = useCanExport();
   const handleExportImage = () => {
     exportSvgAsImage(containerRef.current, (title ?? 'chart').replace(/\s+/g, '-').toLowerCase());
   };
@@ -131,6 +133,7 @@ export function GroupedBarChart({
         }}
       >
         {showTitle && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>}
+        {canExport && (
         <button
           type="button"
           onClick={handleExportImage}
@@ -147,6 +150,7 @@ export function GroupedBarChart({
         >
           Export image
         </button>
+        )}
       </div>
       <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default' }}>
         <ResponsiveContainer width="100%" height={height}>

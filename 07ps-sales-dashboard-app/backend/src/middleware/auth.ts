@@ -3,6 +3,7 @@ import { pool } from '../db/pool';
 import { isConnectionError, sendServiceUnavailable } from '../lib/dbErrors';
 import { InvalidTokenError, verifyAccessToken } from '../lib/token';
 import { AppUserRow, UserStatus, getUserById } from '../services/userService';
+import { ADMIN_ROLE_NAME, getUserRoles, type UserRoleRef } from '../services/permissionService';
 import type { RoleTier } from '../config/roles';
 
 export interface RequestUser {
@@ -11,9 +12,14 @@ export interface RequestUser {
   fullName: string;
   status: UserStatus;
   mustChangePassword: boolean;
+  /** Primary role (app_user.role_id): supplies the data-scope tier and role_data_scope rules. */
   roleId: number | null;
   roleName: string | null;
   roleLabel: string | null;
+  /** Every business role the user holds (user_roles); permissions are their union. */
+  roles: UserRoleRef[];
+  /** Holds the built-in ADMIN role (super administrator). */
+  isAdmin: boolean;
   /** Existing data-scope tier (see backend/src/measures/filters.ts) this user's business role
    * maps to by default -- untouched scope-lock system, just fed from a real user now. */
   roleTierCode: RoleTier | null;
@@ -63,6 +69,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 
   let user;
+  let roles: UserRoleRef[] = [];
   try {
     if (await isTokenRevoked(verified.jti)) {
       res.status(401).json({ error: 'Session has been signed out' });
@@ -70,6 +77,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     }
 
     user = await getUserById(verified.userId);
+    if (user) roles = await getUserRoles(user.user_id, user.role_id);
   } catch (err) {
     // Fail CLOSED: if we can't reach the DB to confirm this token isn't revoked, we must not treat
     // it as valid -- a revoked/signed-out token slipping through on a DB blip is a security hole.
@@ -110,6 +118,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     roleId: user.role_id,
     roleName: user.role_name ?? null,
     roleLabel: user.role_label ?? null,
+    roles,
+    isAdmin: roles.some((r) => r.role_name === ADMIN_ROLE_NAME),
     roleTierCode: (user.role_tier_code as RoleTier | null) ?? null,
     salespersonKey: user.salesperson_key,
     companyScope: user.company_scope,

@@ -244,22 +244,43 @@ export interface PublicUser {
   fullName: string;
   status: UserStatus;
   mustChangePassword: boolean;
+  /** Primary role: supplies the data-scope tier and data-scope rules. */
   role: { id: number | null; name: string | null; label: string | null };
+  /** Every role the user holds; permissions are their union. */
+  roles: { id: number; name: string; label: string }[];
+  /** Holds the built-in Admin (super administrator) role. */
+  isAdmin: boolean;
   lastLoginAt: string | null;
   isSalesperson: boolean;
   salespersonKey: number | null;
 }
 
+export type PermissionAction = 'view' | 'create' | 'edit' | 'delete' | 'export';
+export const PERMISSION_ACTIONS: PermissionAction[] = ['view', 'create', 'edit', 'delete', 'export'];
+
 export interface PagePermission {
   canView: boolean;
+  canCreate: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
   canExport: boolean;
 }
 export type EffectivePermissions = Record<string, PagePermission>;
+
+/** One entry of the backend's central permission registry (backend/src/config/permissionRegistry.ts):
+ * a page/module and the actions that apply to it. */
+export interface PermissionRegistryEntry {
+  key: string;
+  label: string;
+  group: 'dashboard' | 'admin';
+  actions: PermissionAction[];
+}
 
 export interface LoginResponse {
   token: string;
   user: PublicUser;
   permissions: EffectivePermissions;
+  registry: PermissionRegistryEntry[];
 }
 
 export function login(email: string, password: string): Promise<LoginResponse> {
@@ -274,8 +295,20 @@ export function logout(token: string): Promise<{ ok: boolean }> {
   return request('/auth/logout', token, { method: 'POST' });
 }
 
-export function fetchMe(token: string): Promise<{ user: PublicUser; permissions: EffectivePermissions }> {
+export function fetchMe(
+  token: string,
+): Promise<{ user: PublicUser; permissions: EffectivePermissions; registry: PermissionRegistryEntry[] }> {
   return request('/auth/me', token);
+}
+
+/** Server-side Export check (backend/src/routes/exports.ts): resolves when allowed, rejects with a
+ * 403 ApiError when the user has no Export permission on the page. */
+export function authorizeExport(token: string, pageKey: string, format: 'image' | 'pdf' | 'xlsx' | 'csv'): Promise<{ ok: boolean }> {
+  return request('/exports/authorize', token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pageKey, format }),
+  });
 }
 
 export function changePassword(
@@ -331,6 +364,8 @@ export interface AdminUser {
   role_name: string | null;
   role_label: string | null;
   role_tier_code: string | null;
+  /** Every role the user holds (the list endpoint fills role_id/role_label/role_name). */
+  roles?: { role_id?: number; id?: number; role_label?: string; label?: string; role_name?: string; name?: string }[];
 }
 
 export interface AdminRole {
@@ -340,6 +375,52 @@ export interface AdminRole {
   default_role_tier_code: string | null;
   is_system: number;
 }
+
+/** Admin Panel > Roles list row (backend roleService.RoleSummary). */
+export interface RoleSummary {
+  role_id: number;
+  role_name: string;
+  role_label: string;
+  description: string | null;
+  is_system: boolean;
+  is_admin: boolean;
+  default_role_tier_code: string | null;
+  user_count: number;
+  created_at: string;
+  updated_at: string;
+  created_by: number | null;
+  created_by_name: string | null;
+}
+
+/** pageKey -> allowed actions. */
+export type RolePermissionSet = Record<string, PermissionAction[]>;
+
+export interface RoleDetail extends RoleSummary {
+  permissions: RolePermissionSet;
+}
+
+export interface RoleTier {
+  role_code: string;
+  role_label: string;
+  scope_description: string;
+}
+
+export interface RolesAdminView {
+  roles: RoleSummary[];
+  registry: PermissionRegistryEntry[];
+  tiers: RoleTier[];
+  dataScope: Record<number, DataScopeRule[]>;
+  dimensions: DataScopeDimension[];
+}
+
+export interface RoleInput {
+  name: string;
+  description: string | null;
+  tierCode: string;
+  permissions: RolePermissionSet;
+}
+
+export type UserPermissionOverrides = Record<string, Partial<Record<PermissionAction, boolean>>>;
 
 /**
  * Admin Salesperson Management (backend/src/routes/admin/salespersons.ts). UPDATED
@@ -582,7 +663,10 @@ export const adminApi = {
     return request(`/admin/users?${qs.toString()}`, token);
   },
 
-  getUser: (token: string, userId: number): Promise<{ user: AdminUser; permissions: EffectivePermissions }> =>
+  getUser: (
+    token: string,
+    userId: number,
+  ): Promise<{ user: AdminUser & { roles: { role_id: number; role_name: string; role_label: string }[] }; permissions: EffectivePermissions; overrides: UserPermissionOverrides }> =>
     request(`/admin/users/${userId}`, token),
 
   createUser: (
@@ -590,7 +674,10 @@ export const adminApi = {
     input: {
       fullName: string;
       email: string;
+      /** Primary role (data-scope tier). */
       roleId: number;
+      /** Every role to assign, primary included. */
+      roleIds?: number[];
       status?: UserStatus;
       tempPassword?: string;
       salespersonKey?: number | null;
@@ -635,18 +722,23 @@ export const adminApi = {
   forcePasswordChange: (token: string, userId: number): Promise<{ user: AdminUser }> =>
     request(`/admin/users/${userId}/force-password-change`, token, { method: 'POST' }),
 
-  changeRole: (token: string, userId: number, roleId: number): Promise<{ user: AdminUser }> =>
-    request(`/admin/users/${userId}/role`, token, {
-      method: 'PATCH',
+  setUserRoles: (
+    token: string,
+    userId: number,
+    roleIds: number[],
+    primaryRoleId?: number | null,
+  ): Promise<{ user: AdminUser }> =>
+    request(`/admin/users/${userId}/roles`, token, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roleId }),
+      body: JSON.stringify({ roleIds, primaryRoleId }),
     }),
 
   updatePermissions: (
     token: string,
     userId: number,
-    overrides: { pageKey: string; action: 'view' | 'export'; allowed: boolean | null }[],
-  ): Promise<{ permissions: EffectivePermissions }> =>
+    overrides: { pageKey: string; action: PermissionAction; allowed: boolean | null }[],
+  ): Promise<{ permissions: EffectivePermissions; overrides: UserPermissionOverrides }> =>
     request(`/admin/users/${userId}/permissions`, token, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -672,19 +764,32 @@ export const adminApi = {
 
   downloadImportTemplateUrl: () => `${API_BASE}/admin/users/import/template`,
 
-  getRoleMatrix: (token: string): Promise<RolePermissionMatrix> => request('/admin/roles', token),
+  getRolesAdmin: (token: string): Promise<RolesAdminView> => request('/admin/roles', token),
 
-  setRolePermission: (
-    token: string,
-    roleId: number,
-    pageKey: string,
-    action: 'view' | 'export',
-    allowed: boolean,
-  ): Promise<RolePermissionMatrix> =>
-    request(`/admin/roles/${roleId}/permissions`, token, {
-      method: 'PATCH',
+  getRole: (token: string, roleId: number): Promise<{ role: RoleDetail }> => request(`/admin/roles/${roleId}`, token),
+
+  createRole: (token: string, input: RoleInput): Promise<{ role: RoleDetail }> =>
+    request('/admin/roles', token, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pageKey, action, allowed }),
+      body: JSON.stringify(input),
+    }),
+
+  updateRole: (token: string, roleId: number, input: Partial<RoleInput>): Promise<{ role: RoleDetail }> =>
+    request(`/admin/roles/${roleId}`, token, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }),
+
+  duplicateRole: (token: string, roleId: number): Promise<{ role: RoleDetail }> =>
+    request(`/admin/roles/${roleId}/duplicate`, token, { method: 'POST' }),
+
+  deleteRole: (token: string, roleId: number, replacementRoleId?: number | null): Promise<{ ok: boolean }> =>
+    request(`/admin/roles/${roleId}`, token, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ replacementRoleId: replacementRoleId ?? null }),
     }),
 
   addRoleDataScope: (
@@ -692,14 +797,14 @@ export const adminApi = {
     roleId: number,
     dimension: string,
     value: string,
-  ): Promise<RolePermissionMatrix> =>
+  ): Promise<{ dataScope: Record<number, DataScopeRule[]> }> =>
     request(`/admin/roles/${roleId}/data-scope`, token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dimension, value }),
     }),
 
-  removeRoleDataScope: (token: string, roleId: number, scopeId: number): Promise<RolePermissionMatrix> =>
+  removeRoleDataScope: (token: string, roleId: number, scopeId: number): Promise<{ dataScope: Record<number, DataScopeRule[]> }> =>
     request(`/admin/roles/${roleId}/data-scope/${scopeId}`, token, { method: 'DELETE' }),
 
   listLoginHistory: (
@@ -1234,11 +1339,6 @@ export interface ImportResult {
   created: ImportRowSuccess[];
 }
 
-export interface RoleMatrixRow {
-  role_id: number;
-  role_name: string;
-  role_label: string;
-}
 export interface DataScopeDimension {
   key: string;
   label: string;
@@ -1248,15 +1348,6 @@ export interface DataScopeRule {
   dimension: string;
   value: string;
   label: string;
-}
-export interface RolePermissionMatrix {
-  roles: RoleMatrixRow[];
-  pages: { page_id: number; page_key: string; page_label: string; nav_group: string | null }[];
-  matrix: Record<number, EffectivePermissions>;
-  /** roleId -> its row-level data-scope rules. No entry (or an empty array) means unrestricted. */
-  dataScope: Record<number, DataScopeRule[]>;
-  /** The 5 dimensions a rule can target, for the "Add rule" dimension picker. */
-  dimensions: DataScopeDimension[];
 }
 
 // ---------------------------------------------------------------------------

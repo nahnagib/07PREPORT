@@ -46,7 +46,7 @@ adminSalesTeamsRouter.get('/:salesTeamKey/history', async (req, res, next) => {
   }
 });
 
-adminSalesTeamsRouter.patch('/:salesTeamKey', async (req, res, next) => {
+adminSalesTeamsRouter.patch('/:salesTeamKey', requirePermission('admin_salesteams', 'edit'), async (req, res, next) => {
   try {
     const { teamNameOverride, teamCode, segmentKeyOverride, companyKeyOverride, targetOverrideAmount, note } =
       req.body ?? {};
@@ -75,7 +75,7 @@ adminSalesTeamsRouter.patch('/:salesTeamKey', async (req, res, next) => {
 /** Restricted to Customer Group only -- "No bulk Name/Code edit (too risky)" per the approved
  * feedback. The request body only ever accepts segmentKeyOverride; any other field is ignored,
  * not silently applied. */
-adminSalesTeamsRouter.post('/bulk', async (req, res, next) => {
+adminSalesTeamsRouter.post('/bulk', requirePermission('admin_salesteams', 'edit'), async (req, res, next) => {
   try {
     const { salesTeamKeys, patch } = req.body ?? {};
     if (!Array.isArray(salesTeamKeys) || salesTeamKeys.length === 0) {
@@ -98,7 +98,7 @@ adminSalesTeamsRouter.post('/bulk', async (req, res, next) => {
 /** Company Link + Cascading Filter Bar, 2026-09 -- a separate route (not folded into /bulk above)
  * so that route's existing "segment only, rejects anything else" guard stays intact and easy to
  * reason about. Same restricted-to-one-field shape, just companyKeyOverride instead. */
-adminSalesTeamsRouter.post('/bulk-company', async (req, res, next) => {
+adminSalesTeamsRouter.post('/bulk-company', requirePermission('admin_salesteams', 'edit'), async (req, res, next) => {
   try {
     const { salesTeamKeys, patch } = req.body ?? {};
     if (!Array.isArray(salesTeamKeys) || salesTeamKeys.length === 0) {

@@ -21,6 +21,7 @@ import {
   type Column,
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
+  useCanExport,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
@@ -300,6 +301,9 @@ const classificationTableColumns: Column<ClassificationTableRow>[] = [
 /** Same visual shell as Revenue Trend's ExportPdfButton -- copied per-page rather than shared, same
  * convention that component already established. */
 function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => void; downloading: boolean; disabled?: boolean }) {
+  // Hidden without Export permission on this page (the backend refuses the export anyway).
+  const canExport = useCanExport();
+  if (!canExport) return null;
   return (
     <button
       type="button"

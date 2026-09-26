@@ -34,7 +34,7 @@ adminHolidaysRouter.get('/', async (req, res, next) => {
   }
 });
 
-adminHolidaysRouter.post('/', async (req, res, next) => {
+adminHolidaysRouter.post('/', requirePermission('admin_holidays', 'create'), async (req, res, next) => {
   try {
     const { holidayName, holidayDate, recurring, company } = req.body ?? {};
     const row = await createHoliday(
@@ -69,7 +69,7 @@ adminHolidaysRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-adminHolidaysRouter.patch('/:id', async (req, res, next) => {
+adminHolidaysRouter.patch('/:id', requirePermission('admin_holidays', 'edit'), async (req, res, next) => {
   try {
     const { holidayName, holidayDate, recurring, company, isActive } = req.body ?? {};
     const row = await updateHoliday(
@@ -93,7 +93,7 @@ adminHolidaysRouter.patch('/:id', async (req, res, next) => {
   }
 });
 
-adminHolidaysRouter.delete('/:id', async (req, res, next) => {
+adminHolidaysRouter.delete('/:id', requirePermission('admin_holidays', 'delete'), async (req, res, next) => {
   try {
     await deleteHoliday(Number(req.params.id), req.user!.id);
     res.json({ success: true });

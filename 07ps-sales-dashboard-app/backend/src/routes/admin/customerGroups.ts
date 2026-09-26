@@ -43,7 +43,7 @@ adminCustomerGroupsRouter.get('/', async (req, res, next) => {
   }
 });
 
-adminCustomerGroupsRouter.post('/', async (req, res, next) => {
+adminCustomerGroupsRouter.post('/', requirePermission('admin_customer_groups', 'create'), async (req, res, next) => {
   try {
     const { name, definition, etlSegmentKey, displayOrder, criticalNumberPct } = req.body ?? {};
     const row = await createCustomerGroup(
@@ -79,7 +79,7 @@ adminCustomerGroupsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-adminCustomerGroupsRouter.patch('/:id', async (req, res, next) => {
+adminCustomerGroupsRouter.patch('/:id', requirePermission('admin_customer_groups', 'edit'), async (req, res, next) => {
   try {
     const { name, definition, etlSegmentKey, displayOrder, criticalNumberPct, isActive } = req.body ?? {};
     const row = await updateCustomerGroup(
@@ -104,7 +104,7 @@ adminCustomerGroupsRouter.patch('/:id', async (req, res, next) => {
   }
 });
 
-adminCustomerGroupsRouter.delete('/:id', async (req, res, next) => {
+adminCustomerGroupsRouter.delete('/:id', requirePermission('admin_customer_groups', 'delete'), async (req, res, next) => {
   try {
     await deleteCustomerGroup(Number(req.params.id), req.user!.id);
     res.json({ success: true });

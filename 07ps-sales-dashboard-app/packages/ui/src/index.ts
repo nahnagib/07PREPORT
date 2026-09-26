@@ -5,6 +5,7 @@ export * from './pdfExport';
 export * from './performanceTablePdfExport';
 export * from './chartExport';
 export * from './tableExport';
+export * from './exportPermission';
 export * from './pdfPagination';
 export * from './pdfPageAssembly';
 export * from './pdfExportContext';

@@ -30,7 +30,7 @@ const upload = multer({
   },
 });
 
-adminImportRouter.post('/', upload.single('file'), async (req, res, next) => {
+adminImportRouter.post('/', requirePermission('admin_users', 'create'), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
       res.status(400).json({ error: 'No file uploaded (expected multipart field "file").' });

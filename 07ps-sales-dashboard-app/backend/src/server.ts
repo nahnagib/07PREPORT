@@ -32,6 +32,8 @@ import { adminEtlInputFilesRouter } from './routes/admin/etlInputFiles';
 import { adminAuditLogRouter } from './routes/admin/auditLog';
 import { marcomUploadRouter, marcomFreshnessRouter } from './routes/marcomUpload';
 import { marcomKpiRouter } from './routes/marcomKpi';
+import { exportsRouter } from './routes/exports';
+import { syncPermissionRegistry } from './services/permissionService';
 import { cleanupExpiredStaged } from './marcom/staging';
 import { registerEtlSchedules } from './etl/scheduler/registerSchedules';
 import { reconcileOrphanedEtlRuns, reconcileStaleQueuedRuns } from './etl/services/etlReconciliation';
@@ -98,6 +100,7 @@ app.use('/admin/audit-log', adminAuditLogRouter);
 app.use('/marcom/upload', marcomUploadRouter);
 app.use('/marcom/freshness', marcomFreshnessRouter);
 app.use('/marcom/kpi', marcomKpiRouter);
+app.use('/exports', exportsRouter);
 
 // Section 5.9 - system-tier fallback: no stack traces, no raw DB errors, ever.
 app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -133,6 +136,16 @@ async function start(): Promise<void> {
     // eslint-disable-next-line no-console
     console.error('[startup] FATAL: database/auth store unreachable in production -- exiting.');
     process.exit(1);
+  }
+
+  // Bring pages/permissions in line with config/permissionRegistry.ts (adds new pages/actions only).
+  if (dbUp) {
+    try {
+      await syncPermissionRegistry();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[startup] permission registry sync failed (existing permissions still apply):', err);
+    }
   }
 
   app.listen(port, '0.0.0.0', () => {

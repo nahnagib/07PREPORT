@@ -47,7 +47,7 @@ adminSalespersonsRouter.get('/:salespersonKey/history', async (req, res, next) =
   }
 });
 
-adminSalespersonsRouter.patch('/:salespersonKey', async (req, res, next) => {
+adminSalespersonsRouter.patch('/:salespersonKey', requirePermission('admin_salespersons', 'edit'), async (req, res, next) => {
   try {
     const salespersonKey = Number(req.params.salespersonKey);
     const {
@@ -85,7 +85,7 @@ adminSalespersonsRouter.patch('/:salespersonKey', async (req, res, next) => {
 /** Simple loop of single upserts, one history row per salesperson -- no separate bulk-batch
  * table, no all-or-nothing transaction. Returns per-key success/failure so a partial failure
  * (e.g. one invalid key in the batch) doesn't roll back the rest. */
-adminSalespersonsRouter.post('/bulk', async (req, res, next) => {
+adminSalespersonsRouter.post('/bulk', requirePermission('admin_salespersons', 'edit'), async (req, res, next) => {
   try {
     const { salespersonKeys, patch } = req.body ?? {};
     if (!Array.isArray(salespersonKeys) || salespersonKeys.length === 0) {

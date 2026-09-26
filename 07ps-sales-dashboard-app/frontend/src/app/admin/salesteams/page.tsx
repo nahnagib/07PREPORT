@@ -52,7 +52,8 @@ export default function AdminSalesTeamsPage() {
 }
 
 function SalesTeamsPageBody() {
-  const { token } = useAuth();
+  const { token, canEdit } = useAuth();
+  const mayEdit = canEdit('admin_salesteams');
   const [rows, setRows] = useState<SalesTeamAdminRow[]>([]);
   const [total, setTotal] = useState(0);
   const [segments, setSegments] = useState<DimOption[]>([]);
@@ -163,6 +164,7 @@ function SalesTeamsPageBody() {
       key: 'sales_team_key',
       header: 'Actions',
       render: (r) => (
+        mayEdit ? (
         <Button
           variant="secondary"
           onClick={() => setEditingKey(editingKey === r.sales_team_key ? null : r.sales_team_key)}
@@ -170,6 +172,7 @@ function SalesTeamsPageBody() {
         >
           {editingKey === r.sales_team_key ? 'Cancel' : 'Edit'}
         </Button>
+        ) : null
       ),
     },
   ];
@@ -210,7 +213,7 @@ function SalesTeamsPageBody() {
         </div>
       </div>
 
-      {selected.size > 0 && (
+      {mayEdit && selected.size > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <BulkSegmentBar count={selected.size} segments={segments} onApply={applyBulkSegment} onClear={() => setSelected(new Set())} />
           <BulkCompanyBar count={selected.size} companies={companies} onApply={applyBulkCompany} onClear={() => setSelected(new Set())} />

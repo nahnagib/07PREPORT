@@ -11,6 +11,7 @@ import {
   Brush,
 } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { useCanExport } from '../exportPermission';
 
 export interface TrendPoint {
   label: string;
@@ -101,6 +102,7 @@ export function TrendChart({
     setHidden((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const canExport = useCanExport();
   const handleExportImage = () => {
     exportSvgAsImage(containerRef.current, title.replace(/\s+/g, '-').toLowerCase());
   };
@@ -116,6 +118,7 @@ export function TrendChart({
         }}
       >
         {showTitle && <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>}
+        {canExport && (
         <button
           type="button"
           onClick={handleExportImage}
@@ -132,6 +135,7 @@ export function TrendChart({
         >
           Export image
         </button>
+        )}
       </div>
       <div ref={containerRef}>
         <ResponsiveContainer width="100%" height={height}>

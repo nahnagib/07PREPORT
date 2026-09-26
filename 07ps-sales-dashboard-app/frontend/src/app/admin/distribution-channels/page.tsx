@@ -37,7 +37,10 @@ export default function AdminDistributionChannelsPage() {
 }
 
 function DistributionChannelsPageBody() {
-  const { token } = useAuth();
+  const { token, canCreate, canEdit, canDelete } = useAuth();
+  const mayCreate = canCreate('admin_distribution_channels');
+  const mayEdit = canEdit('admin_distribution_channels');
+  const mayDelete = canDelete('admin_distribution_channels');
   const [rows, setRows] = useState<DistributionChannelRow[]>([]);
   const [total, setTotal] = useState(0);
   const [etlOptions, setEtlOptions] = useState<{ channel_key: number; channel_name: string }[]>([]);
@@ -114,13 +117,17 @@ function DistributionChannelsPageBody() {
         const busy = actionBusy === r.distribution_channel_id;
         return (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {mayEdit && (
             <Button variant="secondary" disabled={busy} onClick={() => setEditingId(editingId === r.distribution_channel_id ? null : r.distribution_channel_id)} style={{ padding: '4px 8px', fontSize: 12 }}>
               {editingId === r.distribution_channel_id ? 'Cancel' : 'Edit'}
             </Button>
+            )}
+            {mayEdit && (
             <Button variant="secondary" disabled={busy} onClick={() => handleToggleActive(r)} style={{ padding: '4px 8px', fontSize: 12 }}>
               {r.is_active ? 'Deactivate' : 'Reactivate'}
             </Button>
-            {r.usage_count === 0 && (
+            )}
+            {mayDelete && r.usage_count === 0 && (
               <Button variant="secondary" disabled={busy} onClick={() => handleDelete(r)} style={{ padding: '4px 8px', fontSize: 12, color: 'var(--ps-color-alert)' }}>
                 Delete
               </Button>
@@ -149,12 +156,12 @@ function DistributionChannelsPageBody() {
             Show inactive
           </label>
         </div>
-        <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : '+ Create Distribution Channel'}</Button>
+        {mayCreate && <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : '+ Create Distribution Channel'}</Button>}
       </div>
 
       {actionError && <ErrorState message={actionError} onRetry={() => setActionError(null)} />}
 
-      {showCreate && (
+      {mayCreate && showCreate && (
         <CreatePanel
           etlOptions={etlOptions}
           onCreated={() => {

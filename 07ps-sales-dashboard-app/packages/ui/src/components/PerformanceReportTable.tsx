@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { useCanExport } from '../exportPermission';
 import { Download } from 'lucide-react';
 import { Sparkline } from './Sparkline';
 import { SemanticBadge } from './SemanticBadge';
@@ -87,6 +88,7 @@ function trendStatus(v: number | null): SemanticStatus {
  * this data model doesn't actually back.
  */
 export function PerformanceReportTable({ title, rows, showStatus, showTakeaway, showLytdColumn, lastColumnLabel = 'LYTD', compactColumns, lastUpdatedLabel, filtersSummary, onExportPdf }: PerformanceReportTableProps) {
+  const canExport = useCanExport();
   const hideVarianceLy = compactColumns && !showLytdColumn;
   const hideTrend = compactColumns && !showLytdColumn;
   const tableRef = useRef<HTMLTableElement>(null);
@@ -113,7 +115,7 @@ export function PerformanceReportTable({ title, rows, showStatus, showTakeaway, 
       >
         <h3 style={{ fontSize: theme.table.titleFontSize, fontWeight: 700, margin: 0 }}>{title}</h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto' }}>
-          {onExportPdf && (
+          {onExportPdf && canExport && (
             <button
               onClick={onExportPdf}
               style={{

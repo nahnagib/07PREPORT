@@ -1,3 +1,5 @@
+import { authorizeExport } from './exportPermission';
+
 /**
  * Shared "export the rendered chart to a PNG" utility, factored out of what used to be 7 nearly
  * identical `handleExportImage` implementations (one per chart component). All of them clone the
@@ -42,8 +44,9 @@ function inlineComputedColors(source: SVGElement, clone: SVGElement) {
  * preserving the chart's actual theme colors (see inlineComputedColors above) and using the
  * page's real computed background so light/dark exports both stay readable.
  */
-export function exportSvgAsImage(container: HTMLElement | null, fileName: string): void {
+export async function exportSvgAsImage(container: HTMLElement | null, fileName: string): Promise<void> {
   if (!container) return;
+  if (!(await authorizeExport('image'))) return;
   const svg = container.querySelector('svg');
   if (!svg) return;
   try {

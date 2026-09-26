@@ -44,8 +44,58 @@ export const NAV_ITEMS = [
   { label: 'Product Lifecycle', icon: RefreshCw, href: '/product/product-lifecycle', pageKey: 'product_lifecycle', department: 'product' },
 ] as const;
 
-/** Administration lands on User Management; the admin section itself has its own internal nav. */
+/** Admin Panel sections, in tab order -- AdminLayout's tab row, the Admin nav link's landing
+ * section and route->page lookups all read this one list. `adminOnly` sections (ETL Control Center,
+ * Audit Log) aren't in the permission registry: they are reserved for the Admin role. */
+export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string | null; adminOnly?: boolean }[] = [
+  { label: 'Users', href: '/admin/users', pageKey: 'admin_users' },
+  { label: 'Roles & Permissions', href: '/admin/roles', pageKey: 'admin_roles' },
+  { label: 'Salespersons', href: '/admin/salespersons', pageKey: 'admin_salespersons' },
+  { label: 'Sales Teams', href: '/admin/salesteams', pageKey: 'admin_salesteams' },
+  { label: 'Customer Groups', href: '/admin/customer-groups', pageKey: 'admin_customer_groups' },
+  { label: 'Distribution Channels', href: '/admin/distribution-channels', pageKey: 'admin_distribution_channels' },
+  { label: 'Companies', href: '/admin/companies', pageKey: 'admin_companies' },
+  { label: 'Official Holidays', href: '/admin/holidays', pageKey: 'admin_holidays' },
+  { label: 'Forced Closures', href: '/admin/closures', pageKey: 'admin_closures' },
+  { label: 'MARCOM Data Upload', href: '/admin/marcom-upload', pageKey: 'admin_marcom_upload' },
+  { label: 'Login History', href: '/admin/login-history', pageKey: 'admin_login_history' },
+  { label: 'ETL Control Center', href: '/admin/etl-control', pageKey: null, adminOnly: true },
+  { label: 'Audit Log', href: '/admin/audit-log', pageKey: null, adminOnly: true },
+];
+
+/** Admin tabs this user may open. */
+export function visibleAdminTabs(canView: (pageKey: string) => boolean, isAdmin: boolean) {
+  return ADMIN_TABS.filter((t) => (t.adminOnly ? isAdmin : t.pageKey !== null && canView(t.pageKey)));
+}
+
+/** The Admin nav entry. Its href is the first Admin Panel section the user can open (see
+ * adminNavHref), not always User Management -- a role may see Roles but not Users. */
 export const ADMIN_NAV_ITEM = { label: 'Admin', icon: ShieldCheck, href: '/admin/users', pageKey: 'admin_users' } as const;
+
+/** Where the Admin nav link should go for this user, or null when no admin section is visible. */
+export function adminNavHref(canView: (pageKey: string) => boolean, isAdmin: boolean): string | null {
+  return visibleAdminTabs(canView, isAdmin)[0]?.href ?? null;
+}
+
+/** The permission page key a route belongs to (longest matching prefix), e.g.
+ * /promotion/tachometer/ytdValue -> tachometer. Null for routes outside the registry. */
+export function pageKeyForPath(pathname: string | null | undefined): string | null {
+  if (!pathname) return null;
+  const candidates: { href: string; pageKey: string | null }[] = [...NAV_ITEMS, ...ADMIN_TABS];
+  let best: { href: string; pageKey: string | null } | null = null;
+  for (const c of candidates) {
+    if ((pathname === c.href || pathname.startsWith(`${c.href}/`)) && (!best || c.href.length > best.href.length)) best = c;
+  }
+  return best?.pageKey ?? null;
+}
+
+/** First page this user can open, in navigation order -- where they land after signing in. Falls
+ * back to the hub (which then explains there's nothing to show). */
+export function firstAccessiblePath(canView: (pageKey: string) => boolean, isAdmin: boolean): string {
+  const report = NAV_ITEMS.find((item) => canView(item.pageKey));
+  if (report) return report.href;
+  return adminNavHref(canView, isAdmin) ?? '/';
+}
 
 /** Every NAV_ITEMS entry registered to `departmentKey`, gated by the caller's `canView` -- the one
  * place "which reports does this department have" is answered from, so BottomNavBar,

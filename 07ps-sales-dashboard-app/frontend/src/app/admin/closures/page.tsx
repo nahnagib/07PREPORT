@@ -37,7 +37,10 @@ export default function AdminClosuresPage() {
 }
 
 function ClosuresPageBody() {
-  const { token } = useAuth();
+  const { token, canCreate, canEdit, canDelete } = useAuth();
+  const mayCreate = canCreate('admin_closures');
+  const mayEdit = canEdit('admin_closures');
+  const mayDelete = canDelete('admin_closures');
   const [rows, setRows] = useState<ClosureRow[]>([]);
   const [total, setTotal] = useState(0);
   const [branchOptions, setBranchOptions] = useState<{ branch_key: string; branch_name: string }[]>([]);
@@ -114,15 +117,21 @@ function ClosuresPageBody() {
         const busy = actionBusy === r.closure_id;
         return (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {mayEdit && (
             <Button variant="secondary" disabled={busy} onClick={() => setEditingId(editingId === r.closure_id ? null : r.closure_id)} style={{ padding: '4px 8px', fontSize: 12 }}>
               {editingId === r.closure_id ? 'Cancel' : 'Edit'}
             </Button>
+            )}
+            {mayEdit && (
             <Button variant="secondary" disabled={busy} onClick={() => handleToggleActive(r)} style={{ padding: '4px 8px', fontSize: 12 }}>
               {r.is_active ? 'Deactivate' : 'Reactivate'}
             </Button>
+            )}
+            {mayDelete && (
             <Button variant="secondary" disabled={busy} onClick={() => handleDelete(r)} style={{ padding: '4px 8px', fontSize: 12, color: 'var(--ps-color-alert)' }}>
               Delete
             </Button>
+            )}
           </div>
         );
       },
@@ -147,12 +156,12 @@ function ClosuresPageBody() {
             Show inactive
           </label>
         </div>
-        <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : '+ Add Closure'}</Button>
+        {mayCreate && <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : '+ Add Closure'}</Button>}
       </div>
 
       {actionError && <ErrorState message={actionError} onRetry={() => setActionError(null)} />}
 
-      {showCreate && (
+      {mayCreate && showCreate && (
         <CreatePanel
           branchOptions={branchOptions}
           onCreated={() => {

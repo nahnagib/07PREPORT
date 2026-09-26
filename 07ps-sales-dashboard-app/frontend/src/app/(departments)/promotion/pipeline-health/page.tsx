@@ -28,6 +28,7 @@ import {
   type Column,
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
+  useCanExport,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
@@ -642,7 +643,7 @@ export default function PipelineHealthPage() {
           lastRefreshTime={lastRefreshLabel}
         />
 
-        {user?.role.name === 'ADMIN' && (
+        {user?.isAdmin === true && (
           <DataQualityCard dataQuality={overview.data?.dataQuality} loading={overview.loading} />
         )}
 
@@ -972,6 +973,9 @@ function PdfButton({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  // Hidden without Export permission on this page (the backend refuses the export anyway).
+  const canExport = useCanExport();
+  if (!canExport) return null;
   return (
     <button
       type="button"

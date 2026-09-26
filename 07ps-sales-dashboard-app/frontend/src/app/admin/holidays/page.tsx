@@ -25,7 +25,10 @@ export default function AdminHolidaysPage() {
 }
 
 function HolidaysPageBody() {
-  const { token } = useAuth();
+  const { token, canCreate, canEdit, canDelete } = useAuth();
+  const mayCreate = canCreate('admin_holidays');
+  const mayEdit = canEdit('admin_holidays');
+  const mayDelete = canDelete('admin_holidays');
   const [rows, setRows] = useState<HolidayRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -98,15 +101,21 @@ function HolidaysPageBody() {
         const busy = actionBusy === r.holiday_id;
         return (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {mayEdit && (
             <Button variant="secondary" disabled={busy} onClick={() => setEditingId(editingId === r.holiday_id ? null : r.holiday_id)} style={{ padding: '4px 8px', fontSize: 12 }}>
               {editingId === r.holiday_id ? 'Cancel' : 'Edit'}
             </Button>
+            )}
+            {mayEdit && (
             <Button variant="secondary" disabled={busy} onClick={() => handleToggleActive(r)} style={{ padding: '4px 8px', fontSize: 12 }}>
               {r.is_active ? 'Deactivate' : 'Reactivate'}
             </Button>
+            )}
+            {mayDelete && (
             <Button variant="secondary" disabled={busy} onClick={() => handleDelete(r)} style={{ padding: '4px 8px', fontSize: 12, color: 'var(--ps-color-alert)' }}>
               Delete
             </Button>
+            )}
           </div>
         );
       },
@@ -131,12 +140,12 @@ function HolidaysPageBody() {
             Show inactive
           </label>
         </div>
-        <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : '+ Add Holiday'}</Button>
+        {mayCreate && <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : '+ Add Holiday'}</Button>}
       </div>
 
       {actionError && <ErrorState message={actionError} onRetry={() => setActionError(null)} />}
 
-      {showCreate && (
+      {mayCreate && showCreate && (
         <CreatePanel
           onCreated={() => {
             setShowCreate(false);

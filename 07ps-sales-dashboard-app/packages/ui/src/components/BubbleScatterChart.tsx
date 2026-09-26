@@ -1,6 +1,7 @@
 import React, { useMemo, useRef } from 'react';
 import { ResponsiveContainer, ScatterChart, Scatter, Cell, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ReferenceLine } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { useCanExport } from '../exportPermission';
 
 export interface BubblePoint {
   id: string;
@@ -149,6 +150,7 @@ export function BubbleScatterChart({
 }: BubbleScatterChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const canExport = useCanExport();
   const handleExportImage = () => {
     exportSvgAsImage(containerRef.current, (title ?? 'bubble-chart').replace(/\s+/g, '-').toLowerCase());
   };
@@ -242,6 +244,7 @@ export function BubbleScatterChart({
               {outOfRangeCount} product{outOfRangeCount === 1 ? '' : 's'} beyond chart range
             </span>
           )}
+          {canExport && (
           <button
             type="button"
             onClick={handleExportImage}
@@ -253,6 +256,7 @@ export function BubbleScatterChart({
           >
             Export image
           </button>
+          )}
         </div>
       </div>
 

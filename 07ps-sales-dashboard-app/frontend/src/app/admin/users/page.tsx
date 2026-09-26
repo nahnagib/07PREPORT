@@ -1,7 +1,7 @@
 'use client';
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Button, Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, SemanticBadge, TextInput, type Column } from '@07ps/ui';
+import { Button, Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, Select, TextInput, type Column } from '@07ps/ui';
 import { AdminLayout } from '../../../components/AdminLayout';
 import { PermissionGuard } from '../../../components/AuthGuard';
 import { useAuth } from '../../../lib/AuthProvider';
@@ -61,8 +61,32 @@ export default function AdminUsersPage() {
   );
 }
 
+/** Every role a user holds, primary (data-scope) role first and highlighted. */
+function RolePills({ user }: { user: AdminUser }) {
+  const roles = (user.roles ?? []).map((r) => ({ id: r.role_id ?? r.id, label: r.role_label ?? r.label ?? '' }));
+  if (roles.length === 0) return <>{user.role_label ?? '—'}</>;
+  roles.sort((a, b) => (a.id === user.role_id ? -1 : b.id === user.role_id ? 1 : a.label.localeCompare(b.label)));
+  return (
+    <span>
+      {roles.map((r) => (
+        <span
+          key={r.id}
+          className="ps-role-pill"
+          data-primary={r.id === user.role_id}
+          title={r.id === user.role_id ? 'Primary role (supplies the data scope)' : undefined}
+          dir="auto"
+        >
+          {r.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function UsersPageBody() {
-  const { token } = useAuth();
+  const { token, canCreate, canEdit } = useAuth();
+  const mayCreate = canCreate('admin_users');
+  const mayEdit = canEdit('admin_users');
   const [rows, setRows] = useState<AdminUser[]>([]);
   const [total, setTotal] = useState(0);
   const [roles, setRoles] = useState<AdminRole[]>([]);
@@ -112,7 +136,7 @@ function UsersPageBody() {
   const columns: Column<AdminUser>[] = [
     { key: 'display_name', header: 'Full Name', render: (r) => <Link href={`/admin/users/${r.user_id}`}>{r.display_name}</Link> },
     { key: 'email', header: 'Email' },
-    { key: 'role_label', header: 'Role', render: (r) => r.role_label ?? '—' },
+    { key: 'role_label', header: 'Roles', render: (r) => <RolePills user={r} /> },
     { key: 'status', header: 'Status', render: (r) => <StatusPill status={r.status} /> },
     {
       key: 'last_login_at',
@@ -126,7 +150,7 @@ function UsersPageBody() {
         const busy = actionBusy === r.user_id;
         return (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {r.status !== 'ACTIVE' && (
+            {mayEdit && r.status !== 'ACTIVE' && (
               <Button
                 variant="secondary"
                 disabled={busy}
@@ -136,7 +160,7 @@ function UsersPageBody() {
                 Activate
               </Button>
             )}
-            {r.status !== 'LOCKED' && (
+            {mayEdit && r.status !== 'LOCKED' && (
               <Button
                 variant="secondary"
                 disabled={busy}
@@ -146,7 +170,7 @@ function UsersPageBody() {
                 Lock
               </Button>
             )}
-            {r.status !== 'INACTIVE' && (
+            {mayEdit && r.status !== 'INACTIVE' && (
               <Button
                 variant="secondary"
                 disabled={busy}
@@ -156,14 +180,16 @@ function UsersPageBody() {
                 Disable
               </Button>
             )}
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() => runAction(r.user_id, () => adminApi.revokeSessions(token as string, r.user_id))}
-              style={{ padding: '4px 8px', fontSize: 12 }}
-            >
-              Revoke Sessions
-            </Button>
+            {mayEdit && (
+              <Button
+                variant="secondary"
+                disabled={busy}
+                onClick={() => runAction(r.user_id, () => adminApi.revokeSessions(token as string, r.user_id))}
+                style={{ padding: '4px 8px', fontSize: 12 }}
+              >
+                Revoke Sessions
+              </Button>
+            )}
             <Link href={`/admin/users/${r.user_id}`} style={{ fontSize: 12, alignSelf: 'center', color: 'var(--ps-color-accent)' }}>
               Details
             </Link>
@@ -206,15 +232,17 @@ function UsersPageBody() {
             </select>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Link href="/admin/users/import">
-            <Button variant="secondary">Import from Excel</Button>
-          </Link>
-          <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : 'Create User'}</Button>
-        </div>
+        {mayCreate && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Link href="/admin/users/import">
+              <Button variant="secondary">Import from Excel</Button>
+            </Link>
+            <Button onClick={() => setShowCreate((s) => !s)}>{showCreate ? 'Cancel' : 'Create User'}</Button>
+          </div>
+        )}
       </div>
 
-      {showCreate && (
+      {mayCreate && showCreate && (
         <CreateUserPanel
           roles={roles}
           onCreated={() => {
@@ -246,7 +274,7 @@ function CreateUserPanel({ roles, onCreated }: { roles: AdminRole[]; onCreated: 
   const { token } = useAuth();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
-  const [roleId, setRoleId] = useState<number | ''>('');
+  const [roleIds, setRoleIds] = useState<string[]>([]);
   const [salespersonKey, setSalespersonKey] = useState('');
   const [salespersonOptions, setSalespersonOptions] = useState<SalespersonOption[]>([]);
   const [tempPassword, setTempPassword] = useState('');
@@ -254,8 +282,8 @@ function CreateUserPanel({ roles, onCreated }: { roles: AdminRole[]; onCreated: 
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ email: string; tempPassword: string } | null>(null);
 
-  const selectedRole = roles.find((r) => r.role_id === roleId);
-  const isSalesperson = selectedRole?.role_name === 'SALESPERSON';
+  const primaryRoleId = roleIds.length ? Number(roleIds[0]) : null;
+  const isSalesperson = roles.some((r) => r.role_name === 'SALESPERSON' && roleIds.includes(String(r.role_id)));
 
   // Loaded lazily -- most user creations aren't for the Salesperson role, so there's no need to
   // fetch all of Dim_Salesperson on every panel open.
@@ -267,21 +295,22 @@ function CreateUserPanel({ roles, onCreated }: { roles: AdminRole[]; onCreated: 
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!token || !roleId) return;
+    if (!token || primaryRoleId === null) return;
     setSubmitting(true);
     setError(null);
     try {
       const res = await adminApi.createUser(token, {
         fullName,
         email,
-        roleId: Number(roleId),
+        roleId: primaryRoleId,
+        roleIds: roleIds.map(Number),
         tempPassword: tempPassword || undefined,
         salespersonKey: isSalesperson && salespersonKey ? Number(salespersonKey) : null,
       });
       setResult({ email: res.user.email, tempPassword: res.tempPassword });
       setFullName('');
       setEmail('');
-      setRoleId('');
+      setRoleIds([]);
       setSalespersonKey('');
       setTempPassword('');
       onCreated();
@@ -314,23 +343,18 @@ function CreateUserPanel({ roles, onCreated }: { roles: AdminRole[]; onCreated: 
         <TextInput label="Full Name" value={fullName} onChange={(e) => setFullName(e.target.value)} required disabled={submitting} />
         <TextInput label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required disabled={submitting} />
         <div>
-          <label style={{ display: 'block', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--ps-color-muted-text)', marginBottom: 4 }}>
-            Role
-          </label>
-          <select
-            value={roleId}
-            onChange={(e) => setRoleId(e.target.value ? Number(e.target.value) : '')}
-            required
+          <Select
+            label="Roles"
+            multiSelect
+            options={roles.map((r) => ({ value: String(r.role_id), label: r.role_label }))}
+            value={roleIds}
+            onChange={setRoleIds}
             disabled={submitting}
-            style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--ps-color-border)', background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', fontSize: 14, boxSizing: 'border-box' }}
-          >
-            <option value="">Select a role</option>
-            {roles.map((r) => (
-              <option key={r.role_id} value={r.role_id}>
-                {r.role_label}
-              </option>
-            ))}
-          </select>
+            placeholder="Select one or more roles"
+          />
+          <p style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', margin: '4px 0 0' }}>
+            Permissions combine across roles. The first role picked sets the data scope.
+          </p>
         </div>
         {isSalesperson && (
           <div>
@@ -365,7 +389,7 @@ function CreateUserPanel({ roles, onCreated }: { roles: AdminRole[]; onCreated: 
           disabled={submitting}
         />
         <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-          <Button type="submit" disabled={submitting}>
+          <Button type="submit" disabled={submitting || roleIds.length === 0}>
             {submitting ? 'Creating...' : 'Create User'}
           </Button>
         </div>

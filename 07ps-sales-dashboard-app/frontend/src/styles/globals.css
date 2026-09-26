@@ -414,3 +414,136 @@ html, body {
   color: var(--ps-color-watch);
   border: 1px solid var(--ps-color-watch);
 }
+
+/* ---------------------------------------------------------------------------
+   Admin Panel: shared modal, tables, role permission matrix. Logical properties so RTL mirrors.
+   --------------------------------------------------------------------------- */
+.ps-modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ps-space-3, 16px);
+}
+.ps-modal {
+  width: 100%;
+  max-height: 92vh;
+  overflow: auto;
+  background: var(--ps-color-surface);
+  color: var(--ps-color-text);
+  border: 1px solid var(--ps-color-border);
+  border-radius: var(--ps-card-radius, 14px);
+  box-shadow: var(--ps-card-shadow-hover);
+  padding: var(--ps-space-4, 24px);
+}
+@media (max-width: 767px) {
+  .ps-modal-scrim { padding: 0; }
+  .ps-modal { max-height: 100vh; height: 100vh; border-radius: 0; padding: var(--ps-space-3, 16px); }
+}
+
+.ps-admin-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.ps-admin-table th {
+  text-align: start;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ps-color-muted-text);
+  border-bottom: 2px solid var(--ps-color-border);
+  white-space: nowrap;
+}
+.ps-admin-table td { padding: 10px; border-bottom: 1px solid var(--ps-color-border); vertical-align: middle; }
+
+.ps-lock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ps-color-muted-text);
+  background: var(--ps-color-muted-bg);
+  border: 1px solid var(--ps-color-border);
+  vertical-align: middle;
+}
+
+.ps-admin-notice {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--ps-color-success-bg);
+  border: 1px solid var(--ps-color-success-border);
+  color: var(--ps-color-text);
+}
+
+.ps-admin-label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--ps-color-muted-text);
+  margin-bottom: 4px;
+}
+.ps-admin-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--ps-color-border);
+  background: var(--ps-color-surface);
+  color: var(--ps-color-text);
+  font-size: 14px;
+}
+
+.ps-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--ps-color-border);
+  background: var(--ps-color-muted-bg);
+  color: var(--ps-color-text);
+}
+.ps-chip button { border: none; background: none; cursor: pointer; color: var(--ps-color-muted-text); padding: 0; line-height: 1; font-size: 14px; }
+
+.ps-perm-matrix { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ps-perm-matrix th, .ps-perm-matrix td { padding: 7px 10px; text-align: center; border-bottom: 1px solid var(--ps-color-border); }
+.ps-perm-matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ps-color-muted-bg);
+  font-size: 12px;
+  color: var(--ps-color-muted-text);
+  white-space: nowrap;
+}
+.ps-perm-matrix tbody th { white-space: nowrap; }
+.ps-perm-group th, .ps-perm-group td {
+  background: var(--ps-color-accent-bg);
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.ps-perm-matrix input[type='checkbox'] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--ps-color-accent); }
+.ps-perm-matrix input[type='checkbox']:disabled { cursor: not-allowed; }
+
+.ps-role-pill {
+  display: inline-block;
+  margin: 2px;
+  margin-inline-start: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--ps-color-muted-bg);
+  border: 1px solid var(--ps-color-border);
+  white-space: nowrap;
+}
+.ps-role-pill[data-primary='true'] { border-color: var(--ps-color-accent); color: var(--ps-color-accent); }

@@ -30,6 +30,8 @@ vi.mock('../../middleware/auth', () => ({
       roleId: 1,
       roleName: who === 'admin' ? 'ADMIN' : 'B2B_DIRECTOR',
       roleLabel: null,
+      roles: [],
+      isAdmin: who === 'admin',
       roleTierCode: null,
       salespersonKey: null,
       companyScope: 'ALL',

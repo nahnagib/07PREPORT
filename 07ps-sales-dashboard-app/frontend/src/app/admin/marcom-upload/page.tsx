@@ -24,7 +24,10 @@ export default function MarcomUploadPage() {
 const describe = (err: unknown, fallback: string) => (err instanceof MarcomApiError ? err.message : fallback);
 
 function Body() {
-  const { token } = useAuth();
+  const { token, canCreate, canDelete, canExport } = useAuth();
+  const mayUpload = canCreate('admin_marcom_upload');
+  const mayRollback = canDelete('admin_marcom_upload');
+  const mayDownload = canExport('admin_marcom_upload');
   const [state, dispatch] = useReducer(uploadReducer, initialUploadState);
 
   // ---- history
@@ -123,7 +126,10 @@ function Body() {
       {actionError && <ErrorState message={actionError} onRetry={() => setActionError(null)} />}
 
       <Card style={{ padding: 16 }}>
-        {(state.status === 'idle' || state.status === 'validating') && (
+        {!mayUpload && (
+          <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>You can view the import history, but your role can&apos;t upload new files.</div>
+        )}
+        {mayUpload && (state.status === 'idle' || state.status === 'validating') && (
           <UploadDropzone
             disabled={busy}
             progress={state.status === 'validating' ? state.progress : undefined}
@@ -145,7 +151,7 @@ function Body() {
             onTab={(tab) => dispatch({ type: 'SELECT_TAB', tab })}
             onConfirm={handleConfirm}
             onCancel={() => dispatch({ type: 'RESET' })}
-            onDownloadReport={() => safely(() => marcomApi.downloadErrorReport(token!, state.preview.stagedUploadId), 'Could not download the report.')}
+            onDownloadReport={!mayDownload ? undefined : () => safely(() => marcomApi.downloadErrorReport(token!, state.preview.stagedUploadId), 'Could not download the report.')}
           />
         )}
 
@@ -200,8 +206,8 @@ function Body() {
           onRetry={loadHistory}
           onOpen={openDetail}
           onCloseDetail={() => setDetail(null)}
-          onDownload={(id) => safely(() => marcomApi.downloadBatchFile(token!, id), 'Could not download the original file.')}
-          onRollback={(b) => { setRollbackError(null); setRollbackTarget(b); }}
+          onDownload={!mayDownload ? undefined : (id) => safely(() => marcomApi.downloadBatchFile(token!, id), 'Could not download the original file.')}
+          onRollback={!mayRollback ? undefined : (b) => { setRollbackError(null); setRollbackTarget(b); }}
         />
       </div>
 

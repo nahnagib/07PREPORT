@@ -14,7 +14,8 @@ export interface UploadPreviewProps {
   onTab: (tab: TableId | 'all') => void;
   onConfirm: () => void;
   onCancel: () => void;
-  onDownloadReport: () => void;
+  /** Omitted when the user may not export (download the error report). */
+  onDownloadReport?: () => void;
 }
 
 interface IssueRow extends Record<string, unknown> { id: string; sheet: string; cell: string; code: string; message: string }
@@ -180,7 +181,7 @@ export function UploadPreview(p: UploadPreviewProps) {
       )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {preview.issues.length > 0 && (
+        {preview.issues.length > 0 && p.onDownloadReport && (
           <Button variant="secondary" onClick={p.onDownloadReport} disabled={p.busy}>Download error report (CSV)</Button>
         )}
         <Button variant="secondary" onClick={p.onCancel} disabled={p.busy}>{preview.nothingToImport ? 'Upload another file' : 'Cancel'}</Button>

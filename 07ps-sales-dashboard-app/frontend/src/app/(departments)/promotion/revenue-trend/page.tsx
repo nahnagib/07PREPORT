@@ -22,6 +22,7 @@ import {
   type TrendPoint,
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
+  useCanExport,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
@@ -135,6 +136,9 @@ function toTableRows(
  * disabled/loading treatment as pipeline-health/page.tsx's own handleDownloadPdf button, so PDF
  * export reads as one consistent affordance across the app rather than a page-specific one-off. */
 function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => void; downloading: boolean; disabled?: boolean }) {
+  // Hidden without Export permission on this page (the backend refuses the export anyway).
+  const canExport = useCanExport();
+  if (!canExport) return null;
   return (
     <button
       type="button"
