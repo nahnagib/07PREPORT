@@ -10,6 +10,7 @@ import {
   TrendingDown,
   TrendingUp,
   Info,
+  Maximize2,
 } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
@@ -35,6 +36,7 @@ import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useCriticalNumberOverview, useRefreshStatus } from '../../../../lib/hooks';
 import { formatCompactCurrency, formatCurrency, formatVariance, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
 import type { CriticalNumberOverview } from '../../../../lib/api';
+import { MissingTrendModal, type MissingTrendMetric } from '../../../../components/criticalNumber/MissingTrendModal';
 
 // Not in tokens.css (business-unit accent there is charcoal/blue) -- these are the two brand
 // colors used specifically to tell Majaal/Tika apart in the Forced Closures branch breakdown,
@@ -183,6 +185,28 @@ function toExecutiveSummaryRows(data?: CriticalNumberOverview | null): Performan
   return rows;
 }
 
+const MISSING_VALUE_DESCRIPTION =
+  'Net gap vs. pace: (Working Days YTD x Daily Critical Number) minus Actual YTD Value -- positive means ahead of pace, negative means behind (surplus days offset shortfall days)';
+const MISSING_DAYS_DESCRIPTION = 'Missing Value YTD expressed in day-equivalents (Missing Value / Daily Critical Number)';
+
+/** Card/expanded-view headline for a Missing Value/Days figure. `value` is the raw backend figure
+ * (Target - Actual: positive = behind); it's displayed sign-flipped so ahead-of-pace reads as a
+ * positive/green number -- see ImpactCard's `value` docstring. */
+function impactHeadline(
+  value: number | null,
+  formatMagnitude: (absoluteValue: number) => string,
+  formatFullMagnitude?: (absoluteValue: number) => string,
+) {
+  const gap = value == null ? null : -value;
+  const behind = gap != null && gap < 0;
+  return {
+    headlineLabel: gap == null ? '—' : `${behind ? '-' : '+'}${formatMagnitude(Math.abs(gap))}`,
+    headlineFullLabel: gap == null || !formatFullMagnitude ? undefined : `${behind ? '-' : '+'}${formatFullMagnitude(Math.abs(gap))}`,
+    headlineColor: gap == null ? 'var(--ps-color-text)' : behind ? 'var(--ps-color-alert)' : 'var(--ps-color-success)',
+    headlineCaption: gap == null ? '' : behind ? 'Behind pace' : 'Ahead of / on pace',
+  };
+}
+
 /**
  * Critical Number page (Sales, Level 3) -- 07Ps_Phase1_Architecture_Standards.md Section 2.1.1:
  * "translates the annual target into a required daily value; tracks working-day consumption,
@@ -282,6 +306,9 @@ export default function CriticalNumberPage() {
     }
   }
 
+  const [expandedMetric, setExpandedMetric] = React.useState<MissingTrendMetric | null>(null);
+  const closeExpanded = React.useCallback(() => setExpandedMetric(null), []);
+
   const roleLabel = user?.role.label ?? user?.fullName;
   const lastRefreshLabel = refreshStatus.data ? formatTimestamp(refreshStatus.data.lastRefreshTime) : undefined;
   const data = overview.data;
@@ -333,9 +360,11 @@ export default function CriticalNumberPage() {
               <FallbackDataNotice anchorDate={data.anchorDate} daysAgo={data.fallbackDaysAgo} />
             )}
 
-            {/* Section 1 -- Hero Metrics: Daily/Monthly/Yearly counters side by side on top, the
-                Daily Critical Number card centered below them. */}
+            {/* Section 1 -- Hero Metrics: the Daily Critical Number (the baseline every counter is
+                measured against) as a full-width first row, then the Daily/Monthly/Yearly counters. */}
             <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
+              <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} isAdmin={user?.role.name === 'ADMIN'} />
+
               <div
                 style={{
                   display: 'grid',
@@ -359,16 +388,6 @@ export default function CriticalNumberPage() {
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
                 />
-              </div>
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'minmax(260px, 480px)',
-                  justifyContent: 'center',
-                }}
-              >
-                <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} isAdmin={user?.role.name === 'ADMIN'} />
               </div>
             </section>
 
@@ -410,30 +429,32 @@ export default function CriticalNumberPage() {
             >
               <ImpactCard
                 title="Missing Value YTD"
-                description="Net gap vs. pace: (Working Days YTD x Daily Critical Number) minus Actual YTD Value -- positive means ahead of pace, negative means behind (surplus days offset shortfall days)"
+                description={MISSING_VALUE_DESCRIPTION}
                 value={data?.missingValueYtd.value ?? null}
                 formatMagnitude={formatCompactCurrency}
                 formatFullMagnitude={formatCurrency}
                 trendValues={data?.missingValueYtd.trendValues ?? []}
                 trendPct={data?.missingValueYtd.trendPct ?? null}
                 sparklineLabel="Cumulative missing value, as of each month-end this year"
-                axisTooltip="X-axis: each month of this year, left to right (running total as of that month's end). Y-axis: cumulative gap (LYD) = Actual Value minus (Working Days Elapsed x Daily Critical Number) to that point -- a running total, not that month's own isolated result."
+                axisTooltip="X-axis: each month of this year, left to right (running total as of that month's end). Y-axis: cumulative gap (LYD) = Actual Value minus (Working Days Elapsed x Daily Critical Number) to that point -- a running total, not that month's own isolated result. Today (still trading) is left out. Click to expand."
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
+                onExpand={() => setExpandedMetric('value')}
               />
               <ImpactCard
                 title="Missing Days YTD"
-                description="Missing Value YTD expressed in day-equivalents (Missing Value / Daily Critical Number)"
+                description={MISSING_DAYS_DESCRIPTION}
                 value={data?.missingDaysYtd.value ?? null}
                 formatMagnitude={formatDayCount}
                 trendValues={data?.missingDaysYtd.trendValues ?? []}
                 trendPct={data?.missingDaysYtd.trendPct ?? null}
-                sparklineLabel="Cumulative days behind pace, last 30 days"
-                axisTooltip="X-axis: each of the last 30 calendar days, left to right (running total as of that day). Y-axis: cumulative gap expressed as a number of days at the Daily Critical Number -- a running total, not that single day's own result."
+                sparklineLabel="Cumulative days behind pace, last 30 completed days"
+                axisTooltip="X-axis: each of the last 30 completed calendar days, left to right (running total as of that day; today is still trading, so it's left out). Y-axis: cumulative gap expressed as a number of days at the Daily Critical Number -- a running total, not that single day's own result. Click to expand."
                 loading={overview.loading}
                 error={overview.error ?? undefined}
                 onRetry={overview.retry}
+                onExpand={() => setExpandedMetric('days')}
               />
             </section>
 
@@ -458,6 +479,27 @@ export default function CriticalNumberPage() {
         />
 
         <BottomNavBar active="Critical Number" />
+
+        {expandedMetric && data && (
+          <MissingTrendModal
+            metric={expandedMetric}
+            title={expandedMetric === 'value' ? 'Missing Value YTD' : 'Missing Days YTD'}
+            {...impactHeadline(
+              expandedMetric === 'value' ? data.missingValueYtd.value : data.missingDaysYtd.value,
+              expandedMetric === 'value' ? formatCompactCurrency : formatDayCount,
+              expandedMetric === 'value' ? formatCurrency : undefined,
+            )}
+            trendPct={expandedMetric === 'value' ? data.missingValueYtd.trendPct : data.missingDaysYtd.trendPct}
+            description={expandedMetric === 'value' ? MISSING_VALUE_DESCRIPTION : MISSING_DAYS_DESCRIPTION}
+            token={token}
+            anchorDate={anchorDate}
+            filters={effectiveFilters}
+            authError={authError}
+            retryAuth={retryAuth}
+            filterParts={buildFilterSummaryParts().filter((p) => !p.startsWith('Date:'))}
+            onClose={closeExpanded}
+          />
+        )}
       </div>
     </PermissionGuard>
   );
@@ -525,40 +567,33 @@ function DailyCriticalNumberCard({
     );
   }
   return (
-    <Card
-      style={{
-        width: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        textAlign: 'center',
-        gap: 6,
-        borderLeft: '4px solid var(--ps-color-accent)',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ps-color-muted-text)' }}>
-        <Target size={16} />
-        <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Critical Number</span>
-      </div>
-      <div
-        style={{
-          fontSize: 40,
-          fontWeight: 700,
-          color: 'var(--ps-color-text)',
-          fontVariantNumeric: 'tabular-nums',
-          lineHeight: 1.1,
-        }}
-        title={value != null ? formatCurrency(value) : undefined}
-      >
-        {value != null ? formatCompactCurrency(value) : '—'}
-      </div>
-      {isAdmin && (
-        <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', maxWidth: 320 }}>
-          Baseline daily sales target -- the figure every Daily/Monthly/Yearly Counter below is measured against. Scales with
-          the active Company/Customer Group filters (Admin Panel &gt; Companies / Customer Groups sets each one's share).
+    <Card style={{ width: '100%', borderInlineStart: '4px solid var(--ps-color-accent)' }}>
+      <div className={isAdmin ? 'ps-cn-hero' : undefined}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ps-color-muted-text)' }}>
+            <Target size={16} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Critical Number</span>
+          </div>
+          <div
+            style={{
+              fontSize: 40,
+              fontWeight: 700,
+              color: 'var(--ps-color-text)',
+              fontVariantNumeric: 'tabular-nums',
+              lineHeight: 1.1,
+            }}
+            title={value != null ? formatCurrency(value) : undefined}
+          >
+            {value != null ? formatCompactCurrency(value) : '—'}
+          </div>
         </div>
-      )}
+        {isAdmin && (
+          <div className="ps-cn-hero-desc" style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--ps-color-muted-text)' }}>
+            Baseline daily sales target -- the figure every Daily/Monthly/Yearly Counter below is measured against. Scales with
+            the active Company/Customer Group filters (Admin Panel &gt; Companies / Customer Groups sets each one&apos;s share).
+          </div>
+        )}
+      </div>
     </Card>
   );
 }
@@ -1013,6 +1048,7 @@ function ImpactCard({
   loading,
   error,
   onRetry,
+  onExpand,
 }: {
   title: string;
   description: string;
@@ -1033,6 +1069,8 @@ function ImpactCard({
   loading: boolean;
   error?: string;
   onRetry: () => void;
+  /** Opens the expanded (large chart + breakdown table) view. */
+  onExpand: () => void;
 }) {
   if (loading) {
     return (
@@ -1054,25 +1092,43 @@ function ImpactCard({
   const TrendIcon = improving ? TrendingDown : TrendingUp;
   const trendStatus = trendPct == null ? 'neutral' : improving ? 'success' : 'alert';
 
-  const gap = value == null ? null : -value;
-  const behind = gap != null && gap < 0;
-  const gapColor = gap == null ? 'var(--ps-color-text)' : behind ? 'var(--ps-color-alert)' : 'var(--ps-color-success)';
-  const valueLabel = gap == null ? '—' : `${behind ? '-' : '+'}${formatMagnitude(Math.abs(gap))}`;
-  const valueFullLabel = gap == null || !formatFullMagnitude ? undefined : `${behind ? '-' : '+'}${formatFullMagnitude(Math.abs(gap))}`;
+  const headline = impactHeadline(value, formatMagnitude, formatFullMagnitude);
 
   return (
-    <Card style={{ width: '100%', borderLeft: `4px solid ${gapColor}` }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>{title}</div>
-      <div style={{ fontSize: 30, fontWeight: 700, color: gapColor, marginBottom: 10 }} title={valueFullLabel}>
-        {valueLabel}
+    <Card style={{ width: '100%', borderInlineStart: `4px solid ${headline.headlineColor}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{title}</span>
+        <button type="button" onClick={onExpand} aria-label={`Expand ${title}`} title={`Expand ${title}`} className="ps-cn-icon-btn">
+          <Maximize2 size={14} />
+        </button>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: -6, marginBottom: 10 }}>
-        {gap == null ? '' : behind ? 'Behind pace' : 'Ahead of / on pace'}
+      <div style={{ fontSize: 30, fontWeight: 700, color: headline.headlineColor, marginBottom: 10 }} title={headline.headlineFullLabel}>
+        {headline.headlineLabel}
       </div>
+      <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: -6, marginBottom: 10 }}>{headline.headlineCaption}</div>
 
       {trendValues.length > 1 && (
-        <div style={{ borderTop: '1px solid var(--ps-color-border)', paddingTop: 10, marginBottom: 10 }} title={axisTooltip}>
-          <Sparkline values={trendValues} status={trendStatus as any} label={sparklineLabel} width={260} height={44} />
+        <div style={{ borderTop: '1px solid var(--ps-color-border)', paddingTop: 10, marginBottom: 10 }}>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={onExpand}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onExpand();
+              }
+            }}
+            title={axisTooltip}
+            aria-label={`${sparklineLabel}. Open expanded view.`}
+            className="ps-cn-expandable"
+            style={{ display: 'inline-block', padding: 2 }}
+          >
+            {/* Plotted sign-flipped (Actual - Target), same as the headline and the expanded chart, so
+                up always means "better" -- the raw series (Target - Actual) drew a big sales day as a
+                sharp drop. */}
+            <Sparkline values={trendValues.map((v) => -v)} status={trendStatus as any} label={sparklineLabel} width={260} height={44} />
+          </div>
         </div>
       )}
 

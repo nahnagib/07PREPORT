@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'mysql2/promise';
 import {
   DAILY_CRITICAL_NUMBER,
+  bucketPaceDays,
   computeDailyCriticalNumber,
+  computeMissingSummary,
+  type PaceDay,
   computeForcedClosuresYtd,
   computeOfficialHolidaysYtd,
   computeWorkingDaysYtd,
@@ -195,5 +198,87 @@ describe('computeDailyCriticalNumber -- Company/Customer Group percentage scalin
     await expect(
       computeDailyCriticalNumber(pool, dateOnlyUTC(2026, 3, 10), { companyKeys: [1], segmentKeys: [1] }, new Map()),
     ).resolves.toBe(DAILY_CRITICAL_NUMBER);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Missing Value / Missing Days -- in-progress day and expanded-view bucketing
+// ---------------------------------------------------------------------------
+
+function makeSalesMockPool(dailyValues: Record<number, number>): Pool {
+  const query = vi.fn(async (sql: string) => {
+    if (sql.includes('FROM fact_saleslines')) {
+      return [Object.entries(dailyValues).map(([dateKey, value]) => ({ dateKey: Number(dateKey), value }))];
+    }
+    if (sql.includes('FROM official_holidays')) return [[]];
+    throw new Error(`Unexpected SQL in test mock: ${sql.slice(0, 120)}`);
+  });
+  return { query } as unknown as Pool;
+}
+
+describe('computeMissingSummary -- in-progress day', () => {
+  // 2026-01-01 (Thu) .. 2026-01-05 (Mon): Jan 2 is a Friday (rest day), so 4 working days.
+  // Every finished working day hits the Critical Number exactly; Jan 5 (the anchor, still
+  // trading) has no sales loaded yet.
+  const dcn = 100;
+  const anchor = dateOnlyUTC(2026, 1, 5);
+  const sales = { 20260101: 100, 20260103: 100, 20260104: 100 };
+
+  it('keeps the in-progress day in the headline figures (matches the Yearly Counter gap)', async () => {
+    const result = await computeMissingSummary(makeSalesMockPool(sales), anchor, {}, new Map(), dcn, anchor);
+    expect(result.missingValue.value).toBe(100);
+    expect(result.missingDays.value).toBe(1);
+  });
+
+  it('leaves the in-progress day out of the trend series, so it does not end in a false plunge', async () => {
+    const withToday = await computeMissingSummary(makeSalesMockPool(sales), anchor, {}, new Map(), dcn, null);
+    const withoutToday = await computeMissingSummary(makeSalesMockPool(sales), anchor, {}, new Map(), dcn, anchor);
+    expect(withToday.missingDays.trendValues).toEqual([0, 0, 0, 0, 1]);
+    expect(withoutToday.missingDays.trendValues).toEqual([0, 0, 0, 0]);
+  });
+});
+
+describe('bucketPaceDays', () => {
+  const dcn = 100;
+  // 2026-01-01 (Thu) .. 2026-01-10 (Sat). Fridays (Jan 2, Jan 9) are rest days.
+  const days: PaceDay[] = Array.from({ length: 10 }, (_, i) => {
+    const date = dateOnlyUTC(2026, 1, i + 1);
+    return { date, isWorkingDay: date.getUTCDay() !== 5, actual: 80 };
+  });
+
+  it('daily: one row per calendar day, gap signed as Actual - Target, running totals carried', () => {
+    const rows = bucketPaceDays(days, dcn, 'daily', null);
+    expect(rows).toHaveLength(10);
+    expect(rows[0]).toMatchObject({ start: '2026-01-01', workingDays: 1, target: 100, actual: 80, gapValue: -20, gapDays: -0.2 });
+    // Friday: no target, the day's sales count as pure surplus.
+    expect(rows[1]).toMatchObject({ start: '2026-01-02', workingDays: 0, target: 0, gapValue: 80 });
+    expect(rows[9].cumulativeTarget).toBe(800);
+    expect(rows[9].cumulativeActual).toBe(800);
+    expect(rows[9].cumulativeGap).toBe(0);
+  });
+
+  it('weekly: Saturday-to-Friday weeks, first week clipped to Jan 1', () => {
+    const rows = bucketPaceDays(days, dcn, 'weekly', null);
+    expect(rows.map((r) => [r.start, r.end, r.workingDays])).toEqual([
+      ['2026-01-01', '2026-01-02', 1],
+      ['2026-01-03', '2026-01-09', 6],
+      ['2026-01-10', '2026-01-10', 1],
+    ]);
+    expect(rows[1].target).toBe(600);
+    expect(rows[1].actual).toBe(560);
+  });
+
+  it('monthly: one row per month; the period holding the in-progress day is flagged', () => {
+    const rows = bucketPaceDays(days, dcn, 'monthly', dateOnlyUTC(2026, 1, 10));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ start: '2026-01-01', end: '2026-01-10', workingDays: 8, inProgress: true });
+  });
+
+  it('per-period gaps sum to the final cumulative gap', () => {
+    for (const granularity of ['daily', 'weekly', 'monthly'] as const) {
+      const rows = bucketPaceDays(days, dcn, granularity, null);
+      const summed = rows.reduce((acc, r) => acc + r.gapValue, 0);
+      expect(summed).toBeCloseTo(rows[rows.length - 1].cumulativeGap, 9);
+    }
   });
 });

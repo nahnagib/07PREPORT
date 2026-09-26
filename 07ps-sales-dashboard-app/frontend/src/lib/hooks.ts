@@ -6,6 +6,7 @@ import {
   BcgMatrixScopeFilters,
   BrandPerformanceOverview,
   BreakdownGroupBy,
+  CriticalNumberMissingTrend,
   CriticalNumberOverview,
   CustomerGrowthOverview,
   CustomerGrowthScope,
@@ -23,6 +24,7 @@ import {
   fetchBrandPerformanceOverview,
   fetchBranches,
   fetchBusinessUnits,
+  fetchCriticalNumberMissingTrend,
   fetchCriticalNumberOverview,
   fetchCustomerGroups,
   fetchCustomerGrowthOverview,
@@ -269,6 +271,43 @@ export function useCriticalNumberOverview(
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
+/** Expanded Missing Value / Missing Days breakdown (backend's /critical-number/missing-trend).
+ * Only fetches while `enabled` (i.e. while the expanded view is open), so the page's first load
+ * isn't slowed by a view most visits never open. */
+export function useCriticalNumberMissingTrend(
+  token: string | null,
+  anchorDate: string,
+  filters: TachometerFilters,
+  authError: string | null,
+  retryAuth: () => void,
+  enabled: boolean,
+) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
+  const [state, setState] = useState<AsyncState<CriticalNumberMissingTrend>>({
+    data: null,
+    loading: true,
+    error: null,
+  });
+
+  const load = useCallback(() => {
+    if (!enabled) return;
+    if (authGate(token, authError, setState)) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
+    fetchCriticalNumberMissingTrend(token as string, anchorDate, filters)
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();

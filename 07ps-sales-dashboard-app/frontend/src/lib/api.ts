@@ -1432,6 +1432,9 @@ export interface CriticalNumberOverview {
   weeklyRestDaysYtd: { value: number };
   missingDaysYtd: CriticalNumberTrendCard;
   missingValueYtd: CriticalNumberTrendCard;
+  /** The anchor date when it is the current, still-trading business day (its actual is partial,
+   * so it's left out of the trend series above), else null. */
+  inProgressDate: string | null;
 }
 
 export function fetchCriticalNumberOverview(
@@ -1440,6 +1443,44 @@ export function fetchCriticalNumberOverview(
   filters: TachometerFilters,
 ): Promise<CriticalNumberOverview> {
   return request(`/critical-number/overview?${buildQuery(anchorDate, filters)}`, token);
+}
+
+export type MissingTrendGranularity = 'daily' | 'weekly' | 'monthly';
+
+/** One period of the expanded Missing Value / Missing Days view -- see
+ * backend/src/measures/criticalNumber.ts's MissingTrendPeriod. Gaps are Actual - Target
+ * (negative = behind pace), the same sign the cards display. */
+export interface MissingTrendPeriod {
+  key: string;
+  start: string;
+  end: string;
+  workingDays: number;
+  target: number;
+  actual: number;
+  gapValue: number;
+  gapDays: number;
+  cumulativeTarget: number;
+  cumulativeActual: number;
+  cumulativeGap: number;
+  cumulativeGapDays: number;
+  inProgress: boolean;
+}
+
+export interface CriticalNumberMissingTrend {
+  anchorDate: string;
+  inProgressDate: string | null;
+  dailyCriticalNumber: number;
+  daily: MissingTrendPeriod[];
+  weekly: MissingTrendPeriod[];
+  monthly: MissingTrendPeriod[];
+}
+
+export function fetchCriticalNumberMissingTrend(
+  token: string,
+  anchorDate: string,
+  filters: TachometerFilters,
+): Promise<CriticalNumberMissingTrend> {
+  return request(`/critical-number/missing-trend?${buildQuery(anchorDate, filters)}`, token);
 }
 
 // ---------------------------------------------------------------------------

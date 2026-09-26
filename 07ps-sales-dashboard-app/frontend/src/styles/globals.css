@@ -266,3 +266,151 @@ html, body {
   opacity: 0;
   cursor: pointer;
 }
+
+/* ---------------------------------------------------------------------------
+   Critical Number page (round 2): full-width Daily Critical Number hero card and the expanded
+   Missing Value / Missing Days view. Logical properties (inline-start/end) so RTL mirrors.
+   --------------------------------------------------------------------------- */
+.ps-cn-hero {
+  display: grid;
+  grid-template-columns: minmax(220px, auto) 1fr;
+  align-items: center;
+  gap: var(--ps-space-4, 24px);
+}
+.ps-cn-hero-desc {
+  border-inline-start: 1px solid var(--ps-color-border);
+  padding-inline-start: var(--ps-space-4, 24px);
+}
+@media (max-width: 767px) {
+  .ps-cn-hero { grid-template-columns: 1fr; gap: var(--ps-space-2, 8px); }
+  .ps-cn-hero-desc { border-inline-start: none; padding-inline-start: 0; border-top: 1px solid var(--ps-color-border); padding-top: var(--ps-space-2, 8px); }
+}
+
+.ps-cn-expandable { cursor: zoom-in; border-radius: 8px; }
+.ps-cn-expandable:hover { background: var(--ps-color-muted-bg); }
+.ps-cn-expandable:focus-visible { outline: 2px solid var(--ps-color-accent); outline-offset: 2px; }
+
+.ps-cn-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid var(--ps-color-border);
+  background: var(--ps-color-muted-bg);
+  color: var(--ps-color-muted-text);
+  cursor: pointer;
+}
+.ps-cn-icon-btn:hover { color: var(--ps-color-text); }
+.ps-cn-icon-btn:focus-visible { outline: 2px solid var(--ps-color-accent); outline-offset: 2px; }
+
+.ps-cn-modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ps-space-3, 16px);
+}
+.ps-cn-modal {
+  width: 100%;
+  max-width: 1200px;
+  max-height: 94vh;
+  overflow: auto;
+  background: var(--ps-color-surface);
+  color: var(--ps-color-text);
+  border: 1px solid var(--ps-color-border);
+  border-radius: var(--ps-card-radius, 14px);
+  box-shadow: var(--ps-card-shadow-hover);
+  padding: var(--ps-space-4, 24px);
+}
+@media (max-width: 767px) {
+  .ps-cn-modal-scrim { padding: 0; }
+  .ps-cn-modal { max-height: 100vh; height: 100vh; border-radius: 0; padding: var(--ps-space-3, 16px); }
+}
+.ps-cn-modal-headline {
+  display: grid;
+  grid-template-columns: minmax(200px, auto) 1fr;
+  gap: var(--ps-space-4, 24px);
+  margin-top: var(--ps-space-3, 16px);
+  padding: var(--ps-space-3, 16px);
+  border-radius: var(--ps-card-radius-sm, 10px);
+  background: var(--ps-color-muted-bg);
+}
+@media (max-width: 767px) {
+  .ps-cn-modal-headline { grid-template-columns: 1fr; gap: var(--ps-space-2, 8px); }
+}
+
+.ps-cn-segmented {
+  display: inline-flex;
+  border: 1px solid var(--ps-color-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.ps-cn-segmented button {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  background: var(--ps-color-surface);
+  color: var(--ps-color-muted-text);
+  cursor: pointer;
+}
+.ps-cn-segmented button + button { border-inline-start: 1px solid var(--ps-color-border); }
+.ps-cn-segmented button[data-active='true'] { background: var(--ps-color-accent); color: var(--ps-color-on-accent); }
+.ps-cn-segmented button:focus-visible { outline: 2px solid var(--ps-color-accent); outline-offset: -2px; }
+
+.ps-cn-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ps-color-muted-text);
+  background: var(--ps-color-muted-bg);
+  border: 1px solid var(--ps-color-border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.ps-cn-export-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.ps-cn-table-wrap {
+  margin-top: var(--ps-space-3, 16px);
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--ps-color-border);
+  border-radius: var(--ps-card-radius-sm, 10px);
+}
+.ps-cn-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.ps-cn-table th, .ps-cn-table td { padding: 8px 10px; text-align: end; border-bottom: 1px solid var(--ps-color-border); }
+.ps-cn-table thead th { position: sticky; top: 0; z-index: 1; background: var(--ps-color-muted-bg); }
+.ps-cn-table tfoot td { position: sticky; bottom: 0; background: var(--ps-color-muted-bg); font-weight: 700; border-top: 2px solid var(--ps-color-border); border-bottom: none; }
+.ps-cn-sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--ps-color-text);
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.ps-cn-chip {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ps-color-watch);
+  border: 1px solid var(--ps-color-watch);
+}

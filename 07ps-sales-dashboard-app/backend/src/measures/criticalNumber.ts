@@ -678,6 +678,41 @@ export interface MissingSummary {
   missingValue: MissingValueCard;
 }
 
+/** One calendar day of the YTD pace walk shared by computeMissingSummary and
+ * computeMissingTrend: whether it counts as a working day (not a Friday, not a scope-matched
+ * official holiday -- same rule as computeWorkingDays) and that day's own actual sales value. */
+export interface PaceDay {
+  date: Date;
+  isWorkingDay: boolean;
+  actual: number;
+}
+
+async function fetchYtdPaceDays(
+  pool: Pool,
+  anchor: Date,
+  filters: Filters,
+  companyNamesByKey: Map<number, string>,
+): Promise<PaceDay[]> {
+  const ytd = ytdWindow(anchor);
+  const [dailyActuals, officialRows] = await Promise.all([
+    fetchDailyActuals(pool, ytd, filters),
+    fetchOffDayRows(pool, 'official', ytd),
+  ]);
+  const scopedHolidayDateKeys = new Set(
+    officialRows.filter((r) => offDayMatchesScope(r, filters, companyNamesByKey)).map((r) => dateKeyOf(r.date)),
+  );
+  const days: PaceDay[] = [];
+  for (let cur = ytd.start; cur.getTime() <= ytd.end.getTime(); cur = addDaysUTC(cur, 1)) {
+    const key = dateKeyOf(cur);
+    days.push({
+      date: cur,
+      isWorkingDay: !isFriday(cur) && !scopedHolidayDateKeys.has(key),
+      actual: dailyActuals.get(key) ?? 0,
+    });
+  }
+  return days;
+}
+
 /**
  * Net-aggregate gap against the flat Daily Critical Number (dashboard revision pass -- replaces an
  * earlier unnetted per-day-shortfall sum, which read as far worse than actual YTD performance
@@ -700,6 +735,13 @@ export interface MissingSummary {
  * Trend series are the running value of this same net formula evaluated as of each earlier
  * point (last 30 calendar days for Missing Days, each month-end for Missing Value) -- a
  * cumulative-so-far reading, not that single day/month's own isolated result.
+ *
+ * In-progress day (2026-09 round 2 fix): when `inProgressDate` is the anchor (i.e. the anchor is
+ * the current business day), that day is walked for the headline figures -- unchanged, so they
+ * still agree with the Yearly Counter's gapValue -- but left OUT of both trend series. A day still
+ * being traded contributes its full Daily Critical Number to the expected side while only a
+ * partial (often zero, before the first ETL load) actual, so plotting it made every sparkline end
+ * in a spurious ~1-day plunge.
  */
 export async function computeMissingSummary(
   pool: Pool,
@@ -707,32 +749,25 @@ export async function computeMissingSummary(
   filters: Filters,
   companyNamesByKey: Map<number, string>,
   dailyCriticalNumber: number,
+  inProgressDate: Date | null = null,
 ): Promise<MissingSummary> {
-  const ytd = ytdWindow(anchor);
-  const [dailyActuals, officialRows] = await Promise.all([
-    fetchDailyActuals(pool, ytd, filters),
-    fetchOffDayRows(pool, 'official', ytd),
-  ]);
-  const scopedHolidayDateKeys = new Set(
-    officialRows.filter((r) => offDayMatchesScope(r, filters, companyNamesByKey)).map((r) => dateKeyOf(r.date)),
-  );
+  const days = await fetchYtdPaceDays(pool, anchor, filters, companyNamesByKey);
 
   let cumWorkingDays = 0;
   let cumActual = 0;
   const dailyRunningMissingDays: number[] = [];
   const monthlyRunningMissingValue = new Map<string, number>(); // 'YYYY-MM' -> running value as of that month's last walked day
 
-  for (let cur = ytd.start; cur.getTime() <= ytd.end.getTime(); cur = addDaysUTC(cur, 1)) {
-    const key = dateKeyOf(cur);
-    const isWorkingDay = !isFriday(cur) && !scopedHolidayDateKeys.has(key);
-    const actual = dailyActuals.get(key) ?? 0;
-    cumActual += actual;
-    if (isWorkingDay) cumWorkingDays += 1;
+  for (const day of days) {
+    cumActual += day.actual;
+    if (day.isWorkingDay) cumWorkingDays += 1;
+    if (inProgressDate && day.date.getTime() >= inProgressDate.getTime()) continue;
 
     const runningMissingValue = dailyCriticalNumber > 0 ? cumWorkingDays * dailyCriticalNumber - cumActual : 0;
     const runningMissingDays = dailyCriticalNumber > 0 ? runningMissingValue / dailyCriticalNumber : 0;
 
     dailyRunningMissingDays.push(runningMissingDays);
+    const cur = day.date;
     const monthKey = `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, '0')}`;
     monthlyRunningMissingValue.set(monthKey, runningMissingValue);
   }
@@ -759,6 +794,128 @@ export async function computeMissingSummary(
       trendPct: trendPctFromHalves(monthlySeries),
       expectedValue: expectedValueToDate,
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Missing Value / Missing Days -- expanded-view breakdown (Daily / Weekly / Monthly)
+// ---------------------------------------------------------------------------
+
+export type MissingTrendGranularity = 'daily' | 'weekly' | 'monthly';
+
+/**
+ * One row of the expanded Missing Value / Missing Days view. Gap sign follows what the page
+ * DISPLAYS (Actual - Target: negative = behind pace, positive = ahead), not computeMissingSummary's
+ * raw Target - Actual, so the chart/table read the same way as the card's headline figure.
+ */
+export interface MissingTrendPeriod {
+  /** Stable id: the period's first date (YYYY-MM-DD). */
+  key: string;
+  /** First / last calendar date the period covers, clipped to the YTD window (YYYY-MM-DD). */
+  start: string;
+  end: string;
+  workingDays: number;
+  /** workingDays x Daily Critical Number -- the pace target for this period alone. */
+  target: number;
+  actual: number;
+  /** actual - target for this period alone. */
+  gapValue: number;
+  /** gapValue / Daily Critical Number. */
+  gapDays: number;
+  /** Running totals from Jan 1 through this period's end -- the values the trend chart plots. */
+  cumulativeTarget: number;
+  cumulativeActual: number;
+  cumulativeGap: number;
+  cumulativeGapDays: number;
+  /** True when the period contains the in-progress (current, still-trading) day: its actual is
+   * partial, so the frontend marks it rather than presenting it as a finished result. */
+  inProgress: boolean;
+}
+
+function periodKeyOf(date: Date, granularity: MissingTrendGranularity): string {
+  if (granularity === 'daily') return toDateOnlyString(date);
+  if (granularity === 'monthly') return toDateOnlyString(date).slice(0, 7);
+  // Weekly: Saturday-to-Friday business weeks (Friday is the weekly rest day), keyed by the
+  // Saturday that starts the week.
+  const daysSinceSaturday = (date.getUTCDay() + 1) % 7;
+  return toDateOnlyString(addDaysUTC(date, -daysSinceSaturday));
+}
+
+/**
+ * Buckets the YTD pace walk into daily / weekly / monthly periods. Pure (no DB access), so the
+ * aggregation is unit-tested directly -- see criticalNumber.test.ts.
+ */
+export function bucketPaceDays(
+  days: PaceDay[],
+  dailyCriticalNumber: number,
+  granularity: MissingTrendGranularity,
+  inProgressDate: Date | null,
+): MissingTrendPeriod[] {
+  const periods: MissingTrendPeriod[] = [];
+  const byKey = new Map<string, MissingTrendPeriod>();
+  let cumTarget = 0;
+  let cumActual = 0;
+  for (const day of days) {
+    const key = periodKeyOf(day.date, granularity);
+    let period = byKey.get(key);
+    if (!period) {
+      period = {
+        key: toDateOnlyString(day.date),
+        start: toDateOnlyString(day.date),
+        end: toDateOnlyString(day.date),
+        workingDays: 0,
+        target: 0,
+        actual: 0,
+        gapValue: 0,
+        gapDays: 0,
+        cumulativeTarget: 0,
+        cumulativeActual: 0,
+        cumulativeGap: 0,
+        cumulativeGapDays: 0,
+        inProgress: false,
+      };
+      byKey.set(key, period);
+      periods.push(period);
+    }
+    const dayTarget = day.isWorkingDay ? dailyCriticalNumber : 0;
+    cumTarget += dayTarget;
+    cumActual += day.actual;
+    period.end = toDateOnlyString(day.date);
+    if (day.isWorkingDay) period.workingDays += 1;
+    period.target += dayTarget;
+    period.actual += day.actual;
+    period.cumulativeTarget = cumTarget;
+    period.cumulativeActual = cumActual;
+    if (inProgressDate && day.date.getTime() === inProgressDate.getTime()) period.inProgress = true;
+  }
+  for (const p of periods) {
+    p.gapValue = p.actual - p.target;
+    p.cumulativeGap = p.cumulativeActual - p.cumulativeTarget;
+    p.gapDays = dailyCriticalNumber > 0 ? p.gapValue / dailyCriticalNumber : 0;
+    p.cumulativeGapDays = dailyCriticalNumber > 0 ? p.cumulativeGap / dailyCriticalNumber : 0;
+  }
+  return periods;
+}
+
+export interface MissingTrend {
+  daily: MissingTrendPeriod[];
+  weekly: MissingTrendPeriod[];
+  monthly: MissingTrendPeriod[];
+}
+
+export async function computeMissingTrend(
+  pool: Pool,
+  anchor: Date,
+  filters: Filters,
+  companyNamesByKey: Map<number, string>,
+  dailyCriticalNumber: number,
+  inProgressDate: Date | null,
+): Promise<MissingTrend> {
+  const days = await fetchYtdPaceDays(pool, anchor, filters, companyNamesByKey);
+  return {
+    daily: bucketPaceDays(days, dailyCriticalNumber, 'daily', inProgressDate),
+    weekly: bucketPaceDays(days, dailyCriticalNumber, 'weekly', inProgressDate),
+    monthly: bucketPaceDays(days, dailyCriticalNumber, 'monthly', inProgressDate),
   };
 }
 
