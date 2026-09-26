@@ -25,8 +25,7 @@ const buLogo: Record<string, { light: string; dark: string; alt: string } | null
     dark: `${BASE_PATH}/logos/majaal/majaal-mark-light.jpg`,
     alt: 'Majaal',
   },
-  // New Tika mark (assets/brand/Tika/logo Tika-01.png): white ink on the dark theme, the same mark in
-  // Tika navy (#003366) on the light theme.
+  // Tika mark (assets/brand/Tika/logo Tika-01.png): white on the dark theme, black on the light theme.
   tika: {
     light: `${BASE_PATH}/logos/tika/tika-mark-dark.png`,
     dark: `${BASE_PATH}/logos/tika/tika-mark-light.png`,
