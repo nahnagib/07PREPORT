@@ -6,7 +6,7 @@ import { AppHeader } from './AppHeader';
 import { Card } from '@07ps/ui';
 import { useAuth } from '../lib/AuthProvider';
 import { getDepartment } from '../lib/departments';
-import { departmentReports, navLabel, type NavDepartment } from '../lib/navItems';
+import { departmentReports, type NavDepartment } from '../lib/navItems';
 import { useLanguage } from '../lib/i18n/LanguageProvider';
 import type { MessageKey } from '../lib/i18n/messages';
 
@@ -20,7 +20,7 @@ import type { MessageKey } from '../lib/i18n/messages';
 export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartment }) {
   const { user, canView, logout } = useAuth();
   const department = getDepartment(departmentKey);
-  const { lang, t } = useLanguage();
+  const { t } = useLanguage();
   if (!department) return null;
   const roleLabel = user?.role.label ?? user?.fullName;
   const items = departmentReports(departmentKey, canView);
@@ -78,7 +78,7 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
                 >
                   <Icon size={22} />
                 </div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{navLabel(item, lang)}</div>
+                <div style={{ fontSize: 16, fontWeight: 700 }}>{label}</div>
                 <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', flex: 1 }}>
                   {live ? t('shell.liveReport') : t('shell.notBuilt')}
                 </div>

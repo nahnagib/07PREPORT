@@ -17,10 +17,10 @@ import {
  * MARCOM upload: a dry run that reports every problem row, then a commit that re-validates and
  * inserts everything in one transaction -- or nothing, if any row is invalid.
  *
- *   - Headers are matched by name (English or Arabic, case/spacing-insensitive), in any order.
- *   - Department / Card Type / Card Priority text must match an existing value's English or Arabic
- *     label (inactive values included, since old cards may use them). Unknown text is reported, never
- *     created as a new value.
+ *   - Headers are matched by name (case/spacing-insensitive), in any order.
+ *   - Department / Card Type / Card Priority text must match an existing value's label (inactive
+ *     values included, since old cards may use them). Unknown text is reported, never created as a
+ *     new value.
  *   - A "No" column keeps the numbers already written on the physical board; without it, cards get
  *     the next numbers. A number already taken (even by a deleted card) is reported.
  *   - Allowed once: a commit is refused while any imported card exists (delete them to redo it).
@@ -31,21 +31,21 @@ type Field =
   | 'impact' | 'priorityId' | 'proposedSolution' | 'expectedDate' | 'closerDate' | 'responsibleParty' | 'status';
 
 const HEADER_ALIASES: Record<Field, string[]> = {
-  cardNo: ['no', 'no.', '#', 'number', 'card no', 'رقم', 'الرقم', 'رقم البطاقة'],
-  creatorName: ['card creator', 'creator', 'submitter', 'card creator / submitter', 'card creator/submitter', 'منشئ البطاقة', 'مقدم البطاقة', 'صاحب البطاقة'],
-  cardDate: ['date', 'التاريخ', 'تاريخ البطاقة'],
-  departmentId: ['department', 'الإدارة', 'الادارة', 'القسم'],
-  cardName: ['card name', 'name', 'اسم البطاقة'],
-  cardTypeId: ['card type', 'type', 'نوع البطاقة'],
-  issue: ['issue', 'المشكلة'],
-  rootCause: ['root cause', 'السبب الجذري'],
-  impact: ['impact', 'التأثير', 'الأثر'],
-  priorityId: ['card priority', 'priority', 'أهمية البطاقة', 'الأهمية', 'الأولوية'],
-  proposedSolution: ['proposed solution', 'solution', 'الحل المقترح'],
-  expectedDate: ['expected date', 'target date', 'التاريخ المتوقع', 'تاريخ الإغلاق المتوقع'],
-  closerDate: ['closer date', 'closing date', 'close date', 'closed date', 'تاريخ الإغلاق'],
-  responsibleParty: ['responsible party', 'responsible', 'الجهة المسؤولة', 'المسؤول'],
-  status: ['status', 'الحالة', 'حالة البطاقة'],
+  cardNo: ['no', 'no.', '#', 'number', 'card no'],
+  creatorName: ['card creator', 'creator', 'submitter', 'card creator / submitter', 'card creator/submitter'],
+  cardDate: ['date'],
+  departmentId: ['department'],
+  cardName: ['card name', 'name'],
+  cardTypeId: ['card type', 'type'],
+  issue: ['issue'],
+  rootCause: ['root cause'],
+  impact: ['impact'],
+  priorityId: ['card priority', 'priority'],
+  proposedSolution: ['proposed solution', 'solution'],
+  expectedDate: ['expected date', 'target date'],
+  closerDate: ['closer date', 'closing date', 'close date', 'closed date'],
+  responsibleParty: ['responsible party', 'responsible'],
+  status: ['status'],
 };
 
 const REQUIRED_HEADERS: Field[] = ['creatorName', 'cardDate', 'departmentId', 'cardName', 'cardTypeId', 'issue', 'priorityId'];
@@ -53,14 +53,8 @@ const REQUIRED_HEADERS: Field[] = ['creatorName', 'cardDate', 'departmentId', 'c
 const STATUS_WORDS: Record<string, 'OPEN' | 'CLOSED'> = {
   open: 'OPEN',
   opened: 'OPEN',
-  'مفتوحة': 'OPEN',
-  'مفتوح': 'OPEN',
   closed: 'CLOSED',
   close: 'CLOSED',
-  'تم الإغلاق': 'CLOSED',
-  'تم الاغلاق': 'CLOSED',
-  'مغلقة': 'CLOSED',
-  'مغلق': 'CLOSED',
 };
 
 function norm(value: string): string {
@@ -161,7 +155,7 @@ async function parseWorkbook(buffer: Buffer): Promise<{ parsed: ParsedRow[]; fil
   const dropdowns = await listDropdownValues();
   const lookup = (listKey: KaizenListKey, text: string): number | undefined => {
     const n = norm(text);
-    return dropdowns.find((d) => d.list_key === listKey && (norm(d.label_en) === n || norm(d.label_ar) === n))?.value_id;
+    return dropdowns.find((d) => d.list_key === listKey && norm(d.label) === n)?.value_id;
   };
   const unmatched: KaizenImportResult['unmatched'] = { department: [], card_type: [], card_priority: [] };
   const problems: KaizenImportProblem[] = [];

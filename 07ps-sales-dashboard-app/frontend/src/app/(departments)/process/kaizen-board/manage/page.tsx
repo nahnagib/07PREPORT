@@ -12,8 +12,7 @@ import { KaizenImportPanel } from '../../../../../components/kaizen/KaizenImport
 import { useKaizenOptions } from '../../../../../components/kaizen/useKaizenOptions';
 import { useUrlFilters } from '../../../../../components/kaizen/useUrlFilters';
 import { useAuth } from '../../../../../lib/AuthProvider';
-import { useLanguage } from '../../../../../lib/i18n/LanguageProvider';
-import type { MessageKey } from '../../../../../lib/i18n/messages';
+import { formatNumber, kt as t, type KaizenTextKey } from '../../../../../lib/kaizen/text';
 import { ApiError } from '../../../../../lib/api';
 import { kaizenApi, type KaizenCard } from '../../../../../lib/kaizen/api';
 
@@ -36,7 +35,6 @@ const SERVER_SORTS = new Set<SortKey>(['card_no', 'card_date', 'card_name', 'res
 
 function ManageBody() {
   const { token, canCreate, canEdit, canDelete, canExport, isAdmin } = useAuth();
-  const { t, lang, formatNumber } = useLanguage();
   const options = useKaizenOptions();
   const { filters, setFilters, openNo, setOpenNo } = useUrlFilters();
   const [rows, setRows] = useState<KaizenCard[] | null>(null);
@@ -80,10 +78,10 @@ function ManageBody() {
     return [...rows].sort((a, b) => {
       const x = val(a);
       const y = val(b);
-      const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), lang);
+      const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'en');
       return cmp * mult || b.card_no - a.card_no;
     });
-  }, [rows, sort, options, lang]);
+  }, [rows, sort, options]);
 
   const actions = (
         <>
@@ -104,7 +102,7 @@ function ManageBody() {
                 setExporting(true);
                 setActionError(null);
                 try {
-                  await kaizenApi.exportCards(token, filters, SERVER_SORTS.has(sort.key) ? { by: sort.key, dir: sort.dir } : { by: 'card_no', dir: 'desc' }, lang);
+                  await kaizenApi.exportCards(token, filters, SERVER_SORTS.has(sort.key) ? { by: sort.key, dir: sort.dir } : { by: 'card_no', dir: 'desc' });
                 } catch (err) {
                   setActionError(err instanceof ApiError ? err.message : t('err.generic'));
                 } finally {
@@ -127,7 +125,7 @@ function ManageBody() {
 
   const body = (() => {
     if (error) return <ErrorState message={error} />;
-    if (!filters || !rows || options.loading) return <p style={{ color: 'var(--ps-color-muted-text)' }}>{t('shell.loading')}</p>;
+    if (!filters || !rows || options.loading) return <p style={{ color: 'var(--ps-color-muted-text)' }}>{t('kaizen.loading')}</p>;
 
     if (openNo !== null) {
       const card = rows.find((r) => r.card_no === openNo);
@@ -146,7 +144,7 @@ function ManageBody() {
       );
     }
 
-    const header = (key: SortKey, labelKey: MessageKey) => (
+    const header = (key: SortKey, labelKey: KaizenTextKey) => (
       <th aria-sort={sort.key === key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
         <button type="button" onClick={() => setSort((s) => ({ key, dir: s.key === key && s.dir === 'desc' ? 'asc' : 'desc' }))}>
           {t(labelKey)} {sort.key === key && (sort.dir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
@@ -202,7 +200,7 @@ function ManageBody() {
                     <td><ValueTag id={c.department_id} options={options} /></td>
                     <td><ValueTag id={c.card_type_id} options={options} /></td>
                     <td><ValueTag id={c.priority_id} options={options} /></td>
-                    <td>{c.responsible_party ?? <span style={{ color: 'var(--ps-color-muted-text)' }}>{t('kaizen.notAssigned')}</span>}</td>
+                    <td dir="auto">{c.responsible_party ?? <span style={{ color: 'var(--ps-color-muted-text)' }}>{t('kaizen.notAssigned')}</span>}</td>
                     <td><StatusPill status={c.status} overdue={c.is_overdue} /></td>
                     <td style={c.is_overdue ? { color: 'var(--ps-color-alert)', fontWeight: 700 } : undefined}>{c.expected_date ?? '—'}</td>
                     <td>{c.closer_date ?? '—'}</td>

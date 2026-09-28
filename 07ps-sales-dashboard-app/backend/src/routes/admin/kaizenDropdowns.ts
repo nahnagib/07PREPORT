@@ -43,9 +43,9 @@ adminKaizenDropdownsRouter.get('/', async (_req, res, next) => {
 
 adminKaizenDropdownsRouter.post('/', async (req, res, next) => {
   try {
-    const { listKey, labelEn, labelAr, sortOrder, color, isActive } = req.body ?? {};
+    const { listKey, label, sortOrder, color, isActive } = req.body ?? {};
     const row = await createDropdownValue(
-      { listKey, labelEn, labelAr, sortOrder: numberOrUndefined(sortOrder), color, isActive: isActive === undefined ? undefined : Boolean(isActive) },
+      { listKey, label, sortOrder: numberOrUndefined(sortOrder), color, isActive: isActive === undefined ? undefined : Boolean(isActive) },
       req.user!.id,
     );
     res.status(201).json({ row });
@@ -66,10 +66,10 @@ adminKaizenDropdownsRouter.post('/reorder', async (req, res, next) => {
 
 adminKaizenDropdownsRouter.patch('/:id', async (req, res, next) => {
   try {
-    const { labelEn, labelAr, sortOrder, color, isActive } = req.body ?? {};
+    const { label, sortOrder, color, isActive } = req.body ?? {};
     const row = await updateDropdownValue(
       Number(req.params.id),
-      { labelEn, labelAr, sortOrder: numberOrUndefined(sortOrder), color, isActive: isActive === undefined ? undefined : Boolean(isActive) },
+      { label, sortOrder: numberOrUndefined(sortOrder), color, isActive: isActive === undefined ? undefined : Boolean(isActive) },
       req.user!.id,
     );
     res.json({ row });

@@ -549,8 +549,7 @@ html, body {
 .ps-role-pill[data-primary='true'] { border-color: var(--ps-color-accent); color: var(--ps-color-accent); }
 
 /* ---------------------------------------------------------------------------
- * Kaizen Board (Process). Logical properties throughout, so the Arabic (RTL) view mirrors:
- * the KPI column sits at the inline-start side (right in Arabic, as in the draft).
+ * Kaizen Board (Process). English-only, always left-to-right (see KaizenShell).
  * ------------------------------------------------------------------------- */
 .ps-kaizen-board { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
 .ps-kaizen-kpis { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
@@ -584,7 +583,6 @@ textarea.ps-kaizen-input { min-height: 84px; resize: vertical; }
 .ps-kaizen-table tr.ps-kaizen-overdue td { background: var(--ps-color-alert-bg); }
 /* Actions stay in view while the wide table scrolls. */
 .ps-kaizen-table th:last-child, .ps-kaizen-table td:last-child { position: sticky; inset-inline-end: 0; background: var(--ps-card-bg); box-shadow: -1px 0 0 var(--ps-color-border); }
-[dir='rtl'] .ps-kaizen-table th:last-child, [dir='rtl'] .ps-kaizen-table td:last-child { box-shadow: 1px 0 0 var(--ps-color-border); }
 .ps-kaizen-table th:last-child { background: var(--ps-color-muted-bg); z-index: 1; }
 .ps-kaizen-table tr.ps-kaizen-overdue td:last-child { background: color-mix(in srgb, var(--ps-color-alert) 10%, var(--ps-card-bg)); }
 .ps-kaizen-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }

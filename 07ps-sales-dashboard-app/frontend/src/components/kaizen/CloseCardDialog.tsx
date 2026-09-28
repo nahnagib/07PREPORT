@@ -2,15 +2,13 @@
 import React, { useState } from 'react';
 import { Button } from '@07ps/ui';
 import { useAuth } from '../../lib/AuthProvider';
-import { useLanguage } from '../../lib/i18n/LanguageProvider';
-import type { MessageKey } from '../../lib/i18n/messages';
+import { errorText, kt as t } from '../../lib/kaizen/text';
 import { ApiError } from '../../lib/api';
 import { errorCode, kaizenApi, todayIso, type KaizenCard } from '../../lib/kaizen/api';
 
 /** Quick "Close card": asks for the Closer Date (default today, not before the card's Date). */
 export function CloseCardDialog({ card, onCancel, onClosed }: { card: KaizenCard; onCancel: () => void; onClosed: (card: KaizenCard) => void }) {
   const { token } = useAuth();
-  const { t } = useLanguage();
   const [date, setDate] = useState(() => (todayIso() < card.card_date ? card.card_date : todayIso()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +22,7 @@ export function CloseCardDialog({ card, onCancel, onClosed }: { card: KaizenCard
       onClosed((await kaizenApi.closeCard(token, card.card_no, date)).card);
     } catch (err) {
       const code = errorCode(err);
-      setError(code ? t(`err.${code}` as MessageKey) : err instanceof ApiError ? err.message : t('err.generic'));
+      setError(errorText(code) ?? (err instanceof ApiError ? err.message : t('err.generic')));
     } finally {
       setBusy(false);
     }

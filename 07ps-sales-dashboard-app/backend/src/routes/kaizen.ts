@@ -137,8 +137,7 @@ kaizenRouter.get('/cards', requireKaizenRead, async (req, res, next) => {
 // Before /cards/:no so "export" isn't read as a card number.
 kaizenRouter.get('/cards/export', requirePermission('kaizen_cards', 'export'), async (req, res, next) => {
   try {
-    const lang = req.query.lang === 'ar' ? 'ar' : 'en';
-    const buffer = await buildKaizenExport(parseKaizenFilters(req.query), { by: str(req.query.sortBy), dir: str(req.query.sortDir) }, lang);
+    const buffer = await buildKaizenExport(parseKaizenFilters(req.query), { by: str(req.query.sortBy), dir: str(req.query.sortDir) });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="kaizen-cards.xlsx"');
     res.send(buffer);

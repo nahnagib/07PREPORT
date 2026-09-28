@@ -2,8 +2,8 @@
 import React, { useState } from 'react';
 import { Button, Card } from '@07ps/ui';
 import { useAuth } from '../../lib/AuthProvider';
-import { useLanguage } from '../../lib/i18n/LanguageProvider';
-import type { MessageKey } from '../../lib/i18n/messages';
+import { errorText, kt as t } from '../../lib/kaizen/text';
+import type { KaizenTextKey as MessageKey } from '../../lib/kaizen/text';
 import { ApiError } from '../../lib/api';
 import { kaizenApi, type KaizenImportResult } from '../../lib/kaizen/api';
 
@@ -11,7 +11,6 @@ import { kaizenApi, type KaizenImportResult } from '../../lib/kaizen/api';
  * backend refuses the import while any row has a problem, and after a first successful import. */
 export function KaizenImportPanel({ onImported }: { onImported: () => void }) {
   const { token } = useAuth();
-  const { t } = useLanguage();
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<KaizenImportResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -67,7 +66,7 @@ export function KaizenImportPanel({ onImported }: { onImported: () => void }) {
               {t('kaizen.imp.unmatched')}
               <ul style={{ margin: '4px 0 0', paddingInlineStart: 18 }}>
                 {Object.entries(result.unmatched).filter(([, v]) => v.length > 0).map(([k, v]) => (
-                  <li key={k}>{listLabel(k)}: {v.join('، ')}</li>
+                  <li key={k}>{listLabel(k)}: {v.join(', ')}</li>
                 ))}
               </ul>
             </div>
@@ -77,7 +76,7 @@ export function KaizenImportPanel({ onImported }: { onImported: () => void }) {
               {result.problems.map((p, i) => (
                 <li key={i}>
                   {p.row > 0 && <strong>{t('kaizen.imp.row', { row: p.row })}: </strong>}
-                  {t(`err.${p.code}` as MessageKey) !== `err.${p.code}` ? t(`err.${p.code}` as MessageKey) : p.message}
+                  {errorText(p.code) ?? p.message}
                 </li>
               ))}
             </ul>

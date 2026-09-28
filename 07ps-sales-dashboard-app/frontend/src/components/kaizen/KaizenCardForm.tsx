@@ -7,8 +7,7 @@ import { KaizenShell, KAIZEN_BASE } from './KaizenShell';
 import { CloseCardDialog } from './CloseCardDialog';
 import { useKaizenOptions } from './useKaizenOptions';
 import { useAuth } from '../../lib/AuthProvider';
-import { useLanguage } from '../../lib/i18n/LanguageProvider';
-import type { MessageKey } from '../../lib/i18n/messages';
+import { errorText, kt as t, type KaizenTextKey } from '../../lib/kaizen/text';
 import { ApiError } from '../../lib/api';
 import { errorCode, kaizenApi, todayIso, type KaizenCard, type KaizenCardInput, type KaizenListKey } from '../../lib/kaizen/api';
 
@@ -84,7 +83,6 @@ export function KaizenCardForm({ cardNo }: { cardNo?: number }) {
 
 function FormBody({ cardNo }: { cardNo?: number }) {
   const { token, canEdit } = useAuth();
-  const { t, pick } = useLanguage();
   const router = useRouter();
   const options = useKaizenOptions();
   const [original, setOriginal] = useState<KaizenCard | null | undefined>(cardNo === undefined ? null : undefined);
@@ -107,7 +105,7 @@ function FormBody({ cardNo }: { cardNo?: number }) {
   }, [cardNo, token]);
 
   if (loadError) return <ErrorState message={t('kaizen.notFound')} />;
-  if (original === undefined || options.loading) return <p style={{ color: 'var(--ps-color-muted-text)' }}>{t('shell.loading')}</p>;
+  if (original === undefined || options.loading) return <p style={{ color: 'var(--ps-color-muted-text)' }}>{t('kaizen.loading')}</p>;
 
   const set = <K extends Field>(field: K, value: KaizenCardInput[K]) => {
     setValues((v) => {
@@ -134,19 +132,19 @@ function FormBody({ cardNo }: { cardNo?: number }) {
       const code = errorCode(err);
       const field = err instanceof ApiError && err.body && typeof err.body === 'object' ? (err.body as { field?: Field }).field : undefined;
       if (code && field) setErrors({ [field]: code });
-      else setFormError(code ? t(`err.${code}` as MessageKey) : err instanceof ApiError ? err.message : t('err.generic'));
+      else setFormError(errorText(code) ?? (err instanceof ApiError ? err.message : t('err.generic')));
     } finally {
       setSaving(false);
     }
   }
 
-  const errText = (field: Field) => (errors[field] ? t(`err.${errors[field]}` as MessageKey) : null);
-  const label = (key: MessageKey, required: boolean) => (
+  const errText = (field: Field) => (errors[field] ? errorText(errors[field]) ?? t('err.generic') : null);
+  const label = (key: KaizenTextKey, required: boolean) => (
     <span>
       {t(key)} {required ? <span style={{ color: 'var(--ps-color-alert)' }} aria-hidden>*</span> : <em style={{ fontStyle: 'normal', opacity: 0.7 }}>({t('kaizen.optional')})</em>}
     </span>
   );
-  const fieldWrap = (field: Field, labelKey: MessageKey, required: boolean, control: React.ReactNode, full = false, hint?: string) => (
+  const fieldWrap = (field: Field, labelKey: KaizenTextKey, required: boolean, control: React.ReactNode, full = false, hint?: string) => (
     <label className={`ps-kaizen-field${full ? ' ps-kaizen-full' : ''}`}>
       {label(labelKey, required)}
       {control}
@@ -183,7 +181,7 @@ function FormBody({ cardNo }: { cardNo?: number }) {
         <option value="">{t('kaizen.choose')}</option>
         {choices.map((d) => (
           <option key={d.value_id} value={d.value_id}>
-            {pick(d.label_en, d.label_ar)}
+            {d.label}
             {d.is_active ? '' : ` (${t('kaizen.inactive')})`}
           </option>
         ))}

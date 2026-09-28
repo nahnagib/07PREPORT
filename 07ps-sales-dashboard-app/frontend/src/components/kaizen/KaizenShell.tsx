@@ -6,8 +6,7 @@ import { LayoutDashboard, ListChecks, ClipboardList, type LucideIcon } from 'luc
 import { AppHeader } from '../AppHeader';
 import { BottomNavBar } from '../BottomNavBar';
 import { useAuth } from '../../lib/AuthProvider';
-import { useLanguage } from '../../lib/i18n/LanguageProvider';
-import type { MessageKey } from '../../lib/i18n/messages';
+import { kt as t, type KaizenTextKey } from '../../lib/kaizen/text';
 
 export const KAIZEN_BASE = '/process/kaizen-board';
 
@@ -23,16 +22,15 @@ export function useKaizenListHref() {
  * shown only with its permission), and the department bottom nav used on phones.
  */
 export function KaizenShell({ titleKey, titleVars, actions, children }: {
-  titleKey: MessageKey;
+  titleKey: KaizenTextKey;
   titleVars?: Record<string, string | number>;
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const { user, logout, canView } = useAuth();
-  const { t } = useLanguage();
   const pathname = usePathname() ?? '';
 
-  const tabs: { href: string; key: MessageKey; icon: LucideIcon; show: boolean; active: boolean }[] = [
+  const tabs: { href: string; key: KaizenTextKey; icon: LucideIcon; show: boolean; active: boolean }[] = [
     { href: KAIZEN_BASE, key: 'kaizen.board', icon: LayoutDashboard, show: canView('kaizen_board'), active: pathname === KAIZEN_BASE },
     { href: `${KAIZEN_BASE}/cards`, key: 'kaizen.detailsLink', icon: ListChecks, show: canView('kaizen_board'), active: pathname.startsWith(`${KAIZEN_BASE}/cards`) },
     { href: `${KAIZEN_BASE}/manage`, key: 'kaizen.manageLink', icon: ClipboardList, show: canView('kaizen_cards'), active: pathname.startsWith(`${KAIZEN_BASE}/manage`) },
@@ -49,7 +47,8 @@ export function KaizenShell({ titleKey, titleVars, actions, children }: {
         onLogout={logout}
         showDateInput={false}
       />
-      <main style={{ flex: 1, padding: 'var(--ps-space-3, 16px)', display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+      {/* The Kaizen module is English-only: always left-to-right, whatever the app's language switch says. */}
+      <main dir="ltr" lang="en" style={{ flex: 1, padding: 'var(--ps-space-3, 16px)', display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
         {(visible.length > 1 || actions) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
             <nav className="ps-kaizen-subnav" aria-label={t('kaizen.board')}>

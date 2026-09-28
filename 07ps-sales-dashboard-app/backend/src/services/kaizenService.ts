@@ -9,9 +9,9 @@ import { writeAuditLog } from './auditLogService';
  * Kaizen Board (Process department): cards entered by the Excellence Manager and the admin-managed
  * dropdown lists they reference. Schema and rationale: data/warehouse/migrations/0027_kaizen_board.sql.
  *
- * Every read excludes soft-deleted cards (deleted_at IS NOT NULL); card_no is never reused.
- * Validation failures throw KaizenValidationError, whose `code` the frontend translates (EN/AR)
- * and whose message is the English fallback.
+ * Every read excludes soft-deleted cards (deleted_at IS NOT NULL); card_no is never reused. The
+ * module is English-only. Validation failures throw KaizenValidationError: a stable `code` plus the
+ * message shown to the user.
  */
 
 export const KAIZEN_LISTS = ['department', 'card_type', 'card_priority'] as const;
@@ -34,8 +34,7 @@ export class KaizenValidationError extends ValidationError {
 export interface KaizenDropdownValue {
   value_id: number;
   list_key: KaizenListKey;
-  label_en: string;
-  label_ar: string;
+  label: string;
   sort_order: number;
   color: string;
   is_active: boolean;
@@ -78,7 +77,7 @@ export function kaizenToday(): string {
 // ---------------------------------------------------------------------------
 
 const DROPDOWN_SELECT = `
-  SELECT v.value_id, v.list_key, v.label_en, v.label_ar, v.sort_order, v.color, v.is_active,
+  SELECT v.value_id, v.list_key, v.label, v.sort_order, v.color, v.is_active,
          (SELECT COUNT(*) FROM kaizen_cards c
            WHERE c.department_id = v.value_id OR c.card_type_id = v.value_id OR c.priority_id = v.value_id) AS usage_count
     FROM kaizen_dropdown_value v`;
@@ -89,7 +88,7 @@ function normalizeDropdown(row: KaizenDropdownValue): KaizenDropdownValue {
 
 /** Every value of every list (active and inactive), in display order. */
 export async function listDropdownValues(): Promise<KaizenDropdownValue[]> {
-  const [rows] = await pool.query(`${DROPDOWN_SELECT} ORDER BY v.list_key, v.sort_order, v.label_en`);
+  const [rows] = await pool.query(`${DROPDOWN_SELECT} ORDER BY v.list_key, v.sort_order, v.label`);
   return (rows as KaizenDropdownValue[]).map(normalizeDropdown);
 }
 
@@ -103,51 +102,45 @@ const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
 export interface DropdownInput {
   listKey?: string;
-  labelEn?: string;
-  labelAr?: string;
+  label?: string;
   sortOrder?: number;
   color?: string;
   isActive?: boolean;
 }
 
-async function labelTaken(listKey: string, column: 'label_en' | 'label_ar', label: string, excludeId: number): Promise<boolean> {
+async function labelTaken(listKey: string, label: string, excludeId: number): Promise<boolean> {
   const [rows] = await pool.query(
-    `SELECT 1 FROM kaizen_dropdown_value WHERE list_key = ? AND ${column} = ? AND value_id <> ? LIMIT 1`,
+    'SELECT 1 FROM kaizen_dropdown_value WHERE list_key = ? AND label = ? AND value_id <> ? LIMIT 1',
     [listKey, label, excludeId],
   );
   return (rows as unknown[]).length > 0;
 }
 
-async function validateDropdown(listKey: string, labelEn: string, labelAr: string, color: string, sortOrder: number, excludeId: number) {
+async function validateDropdown(listKey: string, label: string, color: string, sortOrder: number, excludeId: number) {
   if (!KAIZEN_LISTS.includes(listKey as KaizenListKey)) throw new KaizenValidationError('dropdown.list', 'Unknown list.', 'listKey');
-  if (!labelEn) throw new KaizenValidationError('dropdown.labelEn', 'English label is required.', 'labelEn');
-  if (!labelAr) throw new KaizenValidationError('dropdown.labelAr', 'Arabic label is required.', 'labelAr');
-  if (labelEn.length > 100 || labelAr.length > 100) throw new KaizenValidationError('dropdown.labelLength', 'Labels are limited to 100 characters.');
+  if (!label) throw new KaizenValidationError('dropdown.label', 'Label is required.', 'label');
+  if (label.length > 100) throw new KaizenValidationError('dropdown.labelLength', 'Labels are limited to 100 characters.', 'label');
   if (!COLOR_RE.test(color)) throw new KaizenValidationError('dropdown.color', 'Colour must be a hex value like #4d88c4.', 'color');
   if (!Number.isInteger(sortOrder)) throw new KaizenValidationError('dropdown.sortOrder', 'Sort order must be a whole number.', 'sortOrder');
-  if (await labelTaken(listKey, 'label_en', labelEn, excludeId)) {
-    throw new KaizenValidationError('dropdown.duplicate', `"${labelEn}" already exists in this list.`, 'labelEn');
-  }
-  if (await labelTaken(listKey, 'label_ar', labelAr, excludeId)) {
-    throw new KaizenValidationError('dropdown.duplicate', `"${labelAr}" already exists in this list.`, 'labelAr');
+  if (await labelTaken(listKey, label, excludeId)) {
+    throw new KaizenValidationError('dropdown.duplicate', `"${label}" already exists in this list.`, 'label');
   }
 }
 
 export async function createDropdownValue(input: DropdownInput, actorUserId: number): Promise<KaizenDropdownValue> {
   const listKey = String(input.listKey ?? '');
-  const labelEn = (input.labelEn ?? '').trim();
-  const labelAr = (input.labelAr ?? '').trim();
+  const label = (input.label ?? '').trim();
   const color = (input.color ?? '#4d88c4').trim();
   let sortOrder = input.sortOrder;
   if (sortOrder === undefined) {
     const [rows] = await pool.query('SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM kaizen_dropdown_value WHERE list_key = ?', [listKey]);
     sortOrder = Number((rows as { next: number }[])[0]?.next ?? 1);
   }
-  await validateDropdown(listKey, labelEn, labelAr, color, sortOrder, -1);
+  await validateDropdown(listKey, label, color, sortOrder, -1);
   const [result] = await pool.query(
-    `INSERT INTO kaizen_dropdown_value (list_key, label_en, label_ar, sort_order, color, is_active, created_by, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [listKey, labelEn, labelAr, sortOrder, color, input.isActive ?? true, actorUserId, actorUserId],
+    `INSERT INTO kaizen_dropdown_value (list_key, label, sort_order, color, is_active, created_by, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [listKey, label, sortOrder, color, input.isActive ?? true, actorUserId, actorUserId],
   );
   const row = await getDropdownValue((result as { insertId: number }).insertId);
   if (!row) throw new ValidationError('Value not found after creation.');
@@ -158,16 +151,14 @@ export async function createDropdownValue(input: DropdownInput, actorUserId: num
 export async function updateDropdownValue(id: number, input: DropdownInput, actorUserId: number): Promise<KaizenDropdownValue> {
   const existing = await getDropdownValue(id);
   if (!existing) throw new KaizenValidationError('dropdown.notFound', 'Value not found.');
-  const labelEn = input.labelEn !== undefined ? input.labelEn.trim() : existing.label_en;
-  const labelAr = input.labelAr !== undefined ? input.labelAr.trim() : existing.label_ar;
+  const label = input.label !== undefined ? input.label.trim() : existing.label;
   const color = input.color !== undefined ? input.color.trim() : existing.color;
   const sortOrder = input.sortOrder !== undefined ? input.sortOrder : existing.sort_order;
   const isActive = input.isActive !== undefined ? input.isActive : existing.is_active;
-  await validateDropdown(existing.list_key, labelEn, labelAr, color, sortOrder, id);
+  await validateDropdown(existing.list_key, label, color, sortOrder, id);
   await pool.query(
-    `UPDATE kaizen_dropdown_value SET label_en = ?, label_ar = ?, sort_order = ?, color = ?, is_active = ?, updated_by = ?
-      WHERE value_id = ?`,
-    [labelEn, labelAr, sortOrder, color, isActive, actorUserId, id],
+    'UPDATE kaizen_dropdown_value SET label = ?, sort_order = ?, color = ?, is_active = ?, updated_by = ? WHERE value_id = ?',
+    [label, sortOrder, color, isActive, actorUserId, id],
   );
   const row = await getDropdownValue(id);
   if (!row) throw new ValidationError('Value not found after update.');
@@ -632,8 +623,8 @@ export interface KaizenDashboard {
   byDepartment: KaizenCountByValue[];
   byPriority: KaizenCountByValue[];
   byType: KaizenCountByValue[];
-  /** name null = "(Not assigned)". */
-  byResponsible: { name: string | null; count: number }[];
+  /** Every Responsible Party, most cards first, split by status; name null = "(Not assigned)". */
+  byResponsible: { name: string | null; count: number; open: number; closed: number }[];
 }
 
 async function countBy(column: string, where: string, params: unknown[]): Promise<KaizenCountByValue[]> {
@@ -674,8 +665,10 @@ export async function getDashboard(filters: Pick<KaizenFilters, 'dateFrom' | 'da
     params,
   );
   const [responsibleRows] = await pool.query(
-    `SELECT NULLIF(TRIM(c.responsible_party), '') AS name, COUNT(*) AS count FROM kaizen_cards c ${where}
-      GROUP BY NULLIF(TRIM(c.responsible_party), '') ORDER BY count DESC, name`,
+    `SELECT NULLIF(TRIM(c.responsible_party), '') AS name, COUNT(*) AS count,
+            SUM(c.status = 'OPEN') AS open_count, SUM(c.status = 'CLOSED') AS closed_count
+       FROM kaizen_cards c ${where}
+      GROUP BY NULLIF(TRIM(c.responsible_party), '') ORDER BY count DESC, name IS NULL, name`,
     params,
   );
   const submitter = (submitterRows as { name: string; count: number }[])[0];
@@ -695,6 +688,11 @@ export async function getDashboard(filters: Pick<KaizenFilters, 'dateFrom' | 'da
     byDepartment,
     byPriority,
     byType,
-    byResponsible: (responsibleRows as { name: string | null; count: number }[]).map((r) => ({ name: r.name, count: Number(r.count) })),
+    byResponsible: (responsibleRows as { name: string | null; count: number; open_count: number; closed_count: number }[]).map((r) => ({
+      name: r.name,
+      count: Number(r.count),
+      open: Number(r.open_count),
+      closed: Number(r.closed_count),
+    })),
   };
 }

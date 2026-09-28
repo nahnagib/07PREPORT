@@ -1,8 +1,8 @@
 -- Kaizen Board (Process department): cards entered by the Excellence Manager, the admin-managed
 -- dropdown lists they reference, the two permission pages, and the Excellence Manager role.
 --
---   kaizen_dropdown_value  Department / Card Type / Card Priority values (EN + AR label, sort order,
---                          chart colour, active flag). A value used by a card can't be deleted: the
+--   kaizen_dropdown_value  Department / Card Type / Card Priority values (label, sort order, chart
+--                          colour, active flag). The Kaizen module is English-only. A value used by a card can't be deleted: the
 --                          FKs from kaizen_cards have no ON DELETE, so the database refuses it too.
 --                          Deactivating hides it from the entry form only.
 --   kaizen_cards           One row per accepted card. card_no is the "#7" shown to users: an
@@ -28,8 +28,7 @@ SET NAMES utf8mb4;
 CREATE TABLE IF NOT EXISTS kaizen_dropdown_value (
     value_id        INT AUTO_INCREMENT PRIMARY KEY,
     list_key        ENUM('department', 'card_type', 'card_priority') NOT NULL,
-    label_en        VARCHAR(100) NOT NULL,
-    label_ar        VARCHAR(100) NOT NULL,
+    label           VARCHAR(100) NOT NULL,
     sort_order      INT NOT NULL DEFAULT 0,
     color           CHAR(7) NOT NULL DEFAULT '#4d88c4',
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
@@ -37,23 +36,22 @@ CREATE TABLE IF NOT EXISTS kaizen_dropdown_value (
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_by      INT NULL,
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_kaizen_dd_en (list_key, label_en),
-    UNIQUE KEY uq_kaizen_dd_ar (list_key, label_ar),
+    UNIQUE KEY uq_kaizen_dd_label (list_key, label),
     INDEX idx_kaizen_dd_list (list_key, sort_order),
     CONSTRAINT chk_kaizen_dd_color CHECK (color REGEXP '^#[0-9A-Fa-f]{6}$'),
     FOREIGN KEY (created_by) REFERENCES app_user(user_id) ON DELETE SET NULL,
     FOREIGN KEY (updated_by) REFERENCES app_user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT IGNORE INTO kaizen_dropdown_value (list_key, label_en, label_ar, sort_order, color) VALUES
-    ('department',    'EXCO',                     'EXCO',                 1, '#4d88c4'),
-    ('department',    'Operations & Warehouses',  'العمليات و المخازن',    2, '#c48a3f'),
-    ('department',    'Sales',                    'المبيعات',             3, '#5a9e6f'),
-    ('department',    'Tika',                     'تيكا',                 4, '#a06fc4'),
-    ('card_type',     'System issue',             'مشكلة نظام',           1, '#3f9bc4'),
-    ('card_type',     'Person issue',             'مشكلة شخص',            2, '#cc7a3f'),
-    ('card_priority', 'Urgent card',              'بطاقة عاجلة',          1, '#d9534f'),
-    ('card_priority', 'Task card',                'بطاقة مهام',           2, '#4d88c4');
+INSERT IGNORE INTO kaizen_dropdown_value (list_key, label, sort_order, color) VALUES
+    ('department',    'EXCO',                     1, '#4d88c4'),
+    ('department',    'Operations & Warehouses',  2, '#c48a3f'),
+    ('department',    'Sales',                    3, '#5a9e6f'),
+    ('department',    'Tika',                     4, '#a06fc4'),
+    ('card_type',     'System issue',             1, '#3f9bc4'),
+    ('card_type',     'Person issue',             2, '#cc7a3f'),
+    ('card_priority', 'Urgent card',              1, '#d9534f'),
+    ('card_priority', 'Task card',                2, '#4d88c4');
 
 -- ---------------------------------------------------------------------------
 -- 2. Cards.

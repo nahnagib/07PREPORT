@@ -1,8 +1,7 @@
 'use client';
 import React from 'react';
 import { Card } from '@07ps/ui';
-import { useLanguage } from '../../lib/i18n/LanguageProvider';
-import type { MessageKey } from '../../lib/i18n/messages';
+import { kt as t, type KaizenTextKey } from '../../lib/kaizen/text';
 import type { KaizenCard } from '../../lib/kaizen/api';
 import type { useKaizenOptions } from './useKaizenOptions';
 
@@ -12,12 +11,11 @@ type Options = ReturnType<typeof useKaizenOptions>;
 export const STATUS_COLOR = { OPEN: 'var(--ps-color-alert)', CLOSED: 'var(--ps-color-success)' } as const;
 
 export function StatusPill({ status, overdue }: { status: KaizenCard['status']; overdue?: boolean }) {
-  const { t } = useLanguage();
   return (
     <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
       <span className="ps-kaizen-pill" style={{ background: `color-mix(in srgb, ${STATUS_COLOR[status]} 16%, transparent)`, color: STATUS_COLOR[status] }}>
         <span className="ps-kaizen-dot" style={{ background: STATUS_COLOR[status] }} />
-        {t(`kaizen.status.${status}` as MessageKey)}
+        {t(`kaizen.status.${status}` as KaizenTextKey)}
       </span>
       {overdue && (
         <span className="ps-kaizen-pill" title={t('kaizen.overdueHint')} style={{ background: 'var(--ps-color-alert)', color: '#fff' }}>
@@ -39,7 +37,7 @@ export function ValueTag({ id, options }: { id: number; options: Options }) {
 }
 
 /** KPI tile: label on top, big value + unit, optional sub-line; the whole tile is a button when
- * it links somewhere. Long Arabic department/person names wrap instead of overflowing. */
+ * it links somewhere. Long department/person names wrap instead of overflowing. */
 export function KaizenKpi({
   label,
   value,
@@ -61,7 +59,7 @@ export function KaizenKpi({
     <>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{label}</div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-        <span style={{ fontSize: value.length > 14 ? 18 : value.length > 8 ? 20 : 30, fontWeight: 800, lineHeight: 1.25, overflowWrap: 'break-word', minWidth: 0, color: accent ?? 'var(--ps-color-text)' }}>
+        <span dir="auto" style={{ fontSize: value.length > 14 ? 16 : value.length > 8 ? 20 : 30, fontWeight: 800, lineHeight: 1.25, overflowWrap: 'break-word', minWidth: 0, color: accent ?? 'var(--ps-color-text)' }}>
           {value}
         </span>
         {unit && <span style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>{unit}</span>}
@@ -86,11 +84,10 @@ export function KaizenKpi({
 
 /** Every field of a card, read-only (details page and the entry list's View). */
 export function CardDetail({ card, options }: { card: KaizenCard; options: Options }) {
-  const { t } = useLanguage();
-  const row = (labelKey: MessageKey, value: React.ReactNode, wide = false) => (
+  const row = (labelKey: KaizenTextKey, value: React.ReactNode, wide = false) => (
     <div className={wide ? 'ps-kaizen-full' : undefined} style={{ minWidth: 0 }}>
       <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 3 }}>{t(labelKey)}</div>
-      {/* dir="auto": free text keeps its own direction (English text inside the Arabic UI and vice versa). */}
+      {/* dir="auto": free text keeps its own direction, so Arabic typed into a card displays correctly. */}
       <div dir="auto" style={{ fontSize: 14, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textAlign: 'start' }}>{value === null || value === '' ? '—' : value}</div>
     </div>
   );

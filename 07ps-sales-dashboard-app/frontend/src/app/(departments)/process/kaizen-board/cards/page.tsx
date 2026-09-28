@@ -10,7 +10,7 @@ import { CardDetail, StatusPill, ValueTag } from '../../../../../components/kaiz
 import { useKaizenOptions } from '../../../../../components/kaizen/useKaizenOptions';
 import { useUrlFilters } from '../../../../../components/kaizen/useUrlFilters';
 import { useAuth } from '../../../../../lib/AuthProvider';
-import { useLanguage } from '../../../../../lib/i18n/LanguageProvider';
+import { formatNumber, kt as t } from '../../../../../lib/kaizen/text';
 import { kaizenApi, type KaizenCard } from '../../../../../lib/kaizen/api';
 
 /**
@@ -31,7 +31,6 @@ export default function KaizenCardDetailsPage() {
 
 function CardsBody() {
   const { token, canEdit } = useAuth();
-  const { t, formatNumber } = useLanguage();
   const options = useKaizenOptions();
   const { filters, setFilters, openNo, setOpenNo } = useUrlFilters();
   const [rows, setRows] = useState<KaizenCard[] | null>(null);
@@ -54,7 +53,7 @@ function CardsBody() {
   }, [token, filters]);
 
   if (error) return <ErrorState message={error} />;
-  if (!filters || !rows || options.loading) return <p style={{ color: 'var(--ps-color-muted-text)' }}>{t('shell.loading')}</p>;
+  if (!filters || !rows || options.loading) return <p style={{ color: 'var(--ps-color-muted-text)' }}>{t('kaizen.loading')}</p>;
 
   const open = openNo !== null ? rows.find((r) => r.card_no === openNo) : undefined;
   if (openNo !== null) {
@@ -108,7 +107,7 @@ function CardsBody() {
                   <ValueTag id={c.priority_id} options={options} />
                 </div>
                 <div style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)' }}>
-                  {t('kaizen.f.responsible')}: {c.responsible_party ?? t('kaizen.notAssigned')}
+                  {t('kaizen.f.responsible')}: <span dir="auto">{c.responsible_party ?? t('kaizen.notAssigned')}</span>
                 </div>
               </button>
             </li>
@@ -134,7 +133,6 @@ function OpenCard({
   onBack: () => void;
 }) {
   const { token } = useAuth();
-  const { t } = useLanguage();
   const [card, setCard] = useState<KaizenCard | null | undefined>(fromList);
 
   useEffect(() => {
@@ -150,7 +148,7 @@ function OpenCard({
           onClick={onBack}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', borderRadius: 8, border: '1px solid var(--ps-color-border)', background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', cursor: 'pointer', fontSize: 13 }}
         >
-          <ArrowLeft size={15} className="ps-rtl-flip" />
+          <ArrowLeft size={15} />
           {t('kaizen.detailsLink')}
         </button>
         {canEdit && card && (
@@ -165,7 +163,7 @@ function OpenCard({
       </div>
       <Card>
         {card === undefined ? (
-          <p style={{ margin: 0 }}>{t('shell.loading')}</p>
+          <p style={{ margin: 0 }}>{t('kaizen.loading')}</p>
         ) : card === null ? (
           <p style={{ margin: 0, color: 'var(--ps-color-muted-text)' }}>{t('kaizen.notFound')}</p>
         ) : (

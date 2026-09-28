@@ -46,10 +46,6 @@ export interface DonutChartProps {
    * percentages. Opt-in -- defaults to false so every existing caller's ring stays exactly as
    * before. */
   showPercentLabels?: boolean;
-  /** Text for the Export image button and the no-data message, for callers that translate their UI
-   * (the Kaizen Board, EN/AR). Default to the existing English text. */
-  exportLabel?: string;
-  emptyText?: string;
 }
 
 function defaultFormatter(v: number): string {
@@ -100,8 +96,6 @@ export function DonutChart({
   centerLabel,
   centerSubLabel,
   showPercentLabels = false,
-  exportLabel = 'Export image',
-  emptyText = 'No data to chart.',
 }: DonutChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const total = segments.reduce((sum, s) => sum + s.value, 0);
@@ -112,7 +106,7 @@ export function DonutChart({
   };
 
   if (segments.length === 0 || total === 0) {
-    return <p style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>{emptyText}</p>;
+    return <p style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>No data to chart.</p>;
   }
 
   return (
@@ -141,7 +135,7 @@ export function DonutChart({
             cursor: 'pointer',
           }}
         >
-          {exportLabel}
+          Export image
         </button>
         )}
       </div>
@@ -239,7 +233,7 @@ export function DonutChart({
                 margin: 0,
                 cursor: onSegmentClick ? 'pointer' : 'default',
                 font: 'inherit',
-                textAlign: 'start',
+                textAlign: 'left',
                 opacity: dimmed ? 0.55 : 1,
               };
               const rowContent = (

@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LabelList } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
 import { useCanExport } from '../exportPermission';
 
@@ -55,6 +55,13 @@ export interface GroupedBarChartProps {
    * wider alongside a taller `height`; the untruncated name remains available via the hover
    * tooltip either way. */
   yAxisWidth?: number;
+  /** Stack the series into one bar per category (e.g. Open + Closed = all cards) instead of
+   * drawing them side by side. Opt-in; defaults to the grouped layout every existing caller uses. */
+  stacked?: boolean;
+  /** Print each category's total (sum of all series) at the end of its bar. Opt-in. */
+  showTotals?: boolean;
+  /** Whole-number value axis (for counts): no fractional ticks that would round to duplicates. */
+  integerAxis?: boolean;
 }
 
 /** Renders a category-axis tick with the label truncated (character-count approximation, not a
@@ -65,9 +72,12 @@ export interface GroupedBarChartProps {
 function CategoryTick({ x, y, payload, width }: { x: number; y: number; payload: { value: string }; width: number }) {
   const text = String(payload.value);
   const maxChars = Math.max(4, Math.floor(width / 6.2));
-  const display = text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+  const truncated = text.length > maxChars;
+  const display = truncated ? `${text.slice(0, maxChars - 1)}…` : text;
   return (
     <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fill="var(--ps-color-muted-text)">
+      {/* Native hover tooltip with the full name whenever it had to be cut. */}
+      {truncated && <title>{text}</title>}
       {display}
     </text>
   );
@@ -102,6 +112,9 @@ export function GroupedBarChart({
   tooltipContent,
   colorForPoint,
   yAxisWidth,
+  stacked = false,
+  showTotals = false,
+  integerAxis = false,
 }: GroupedBarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -163,6 +176,7 @@ export function GroupedBarChart({
             <CartesianGrid stroke="var(--ps-color-border)" strokeDasharray="3 3" horizontal={false} />
             <XAxis
               type="number"
+              allowDecimals={!integerAxis}
               tick={{ fontSize: 11, fill: 'var(--ps-color-muted-text)' }}
               axisLine={{ stroke: 'var(--ps-color-border)' }}
               tickLine={false}
@@ -207,16 +221,26 @@ export function GroupedBarChart({
               }
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            {bars.map((b) => (
+            {bars.map((b, barIndex) => (
               <Bar
                 key={b.key}
                 dataKey={b.key}
                 name={b.name}
                 fill={b.color}
-                radius={[0, 4, 4, 0]}
-                barSize={points.length > 6 ? 12 : 18}
+                stackId={stacked ? 'stack' : undefined}
+                // Stacked: only the outermost segment gets the rounded end.
+                radius={!stacked || barIndex === bars.length - 1 ? [0, 4, 4, 0] : 0}
+                barSize={stacked ? 18 : points.length > 6 ? 12 : 18}
                 isAnimationActive={false}
               >
+                {showTotals && barIndex === bars.length - 1 && (
+                  <LabelList
+                    position="right"
+                    valueAccessor={(entry: any) => bars.reduce((sum, s) => sum + (Number(entry?.payload?.[s.key]) || 0), 0)}
+                    formatter={(v: number) => valueFormatter(v)}
+                    style={{ fontSize: 12, fontWeight: 700, fill: 'var(--ps-color-text)' }}
+                  />
+                )}
                 {points.map((p) => {
                   const isSelected = highlightedCategory === p.label;
                   const dimmed = highlightedCategory != null && !isSelected;

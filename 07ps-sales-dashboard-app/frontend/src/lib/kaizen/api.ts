@@ -8,8 +8,7 @@ export type KaizenStatus = 'OPEN' | 'CLOSED';
 export interface KaizenDropdownValue {
   value_id: number;
   list_key: KaizenListKey;
-  label_en: string;
-  label_ar: string;
+  label: string;
   sort_order: number;
   color: string;
   is_active: boolean;
@@ -65,7 +64,7 @@ export interface KaizenDashboard {
   byDepartment: KaizenCountByValue[];
   byPriority: KaizenCountByValue[];
   byType: KaizenCountByValue[];
-  byResponsible: { name: string | null; count: number }[];
+  byResponsible: { name: string | null; count: number; open: number; closed: number }[];
 }
 
 /** Every filter the cards list understands; the dashboard uses dateFrom/dateTo/departmentIds. */
@@ -166,8 +165,8 @@ export const kaizenApi = {
   deleteCard: (token: string, no: number) => apiRequest<{ success: boolean }>(`/kaizen/cards/${no}`, token, { method: 'DELETE' }),
 
   /** Downloads the filtered list as .xlsx (a Bearer-authenticated fetch, then a local blob link). */
-  exportCards: async (token: string, f: KaizenFilters, sort: { by: string; dir: 'asc' | 'desc' }, lang: 'en' | 'ar') => {
-    const res = await fetch(`${API_BASE}/kaizen/cards/export?${filtersToQuery(f, { sortBy: sort.by, sortDir: sort.dir, lang })}`, {
+  exportCards: async (token: string, f: KaizenFilters, sort: { by: string; dir: 'asc' | 'desc' }) => {
+    const res = await fetch(`${API_BASE}/kaizen/cards/export?${filtersToQuery(f, { sortBy: sort.by, sortDir: sort.dir })}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
@@ -197,9 +196,9 @@ export const kaizenApi = {
 
   // Admin: dropdown values
   adminListDropdowns: (token: string) => apiRequest<{ rows: KaizenDropdownValue[] }>('/admin/kaizen-dropdowns', token),
-  adminCreateDropdown: (token: string, input: { listKey: KaizenListKey; labelEn: string; labelAr: string; color: string }) =>
+  adminCreateDropdown: (token: string, input: { listKey: KaizenListKey; label: string; color: string }) =>
     apiRequest<{ row: KaizenDropdownValue }>('/admin/kaizen-dropdowns', token, { method: 'POST', ...json(input) }),
-  adminUpdateDropdown: (token: string, id: number, input: Partial<{ labelEn: string; labelAr: string; color: string; isActive: boolean }>) =>
+  adminUpdateDropdown: (token: string, id: number, input: Partial<{ label: string; color: string; isActive: boolean }>) =>
     apiRequest<{ row: KaizenDropdownValue }>(`/admin/kaizen-dropdowns/${id}`, token, { method: 'PATCH', ...json(input) }),
   adminReorderDropdowns: (token: string, listKey: KaizenListKey, orderedIds: number[]) =>
     apiRequest<{ rows: KaizenDropdownValue[] }>('/admin/kaizen-dropdowns/reorder', token, { method: 'POST', ...json({ listKey, orderedIds }) }),

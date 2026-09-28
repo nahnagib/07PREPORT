@@ -43,14 +43,8 @@ export const NAV_ITEMS = [
   { label: 'PIM Contribution', icon: PieChart, href: '/product/pim-contribution', pageKey: 'pim_contribution', department: 'product' },
   { label: 'Product Lifecycle', icon: RefreshCw, href: '/product/product-lifecycle', pageKey: 'product_lifecycle', department: 'product' },
   // Process department. The card list/entry screens live under this href (see ROUTE_PAGE_KEYS).
-  { label: 'Kaizen Board', labelAr: 'لوحة كايزن', icon: ClipboardList, href: '/process/kaizen-board', pageKey: 'kaizen_board', department: 'process' },
+  { label: 'Kaizen Board', icon: ClipboardList, href: '/process/kaizen-board', pageKey: 'kaizen_board', department: 'process' },
 ] as const;
-
-/** A nav entry's label in the UI language: the Arabic label where one is defined (reports built
- * bilingual), else the English one -- the older sales reports are still English-only. */
-export function navLabel(item: (typeof NAV_ITEMS)[number], lang: 'en' | 'ar'): string {
-  return lang === 'ar' && 'labelAr' in item ? item.labelAr : item.label;
-}
 
 /** Admin Panel sections, in tab order -- AdminLayout's tab row, the Admin nav link's landing
  * section and route->page lookups all read this one list. `adminOnly` sections (ETL Control Center,

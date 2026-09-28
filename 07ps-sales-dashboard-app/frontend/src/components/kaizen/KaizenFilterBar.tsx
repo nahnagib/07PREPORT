@@ -1,8 +1,7 @@
 'use client';
 import React from 'react';
 import { RotateCcw } from 'lucide-react';
-import { useLanguage } from '../../lib/i18n/LanguageProvider';
-import type { MessageKey } from '../../lib/i18n/messages';
+import { kt as t, type KaizenTextKey } from '../../lib/kaizen/text';
 import type { KaizenFilters, KaizenListKey } from '../../lib/kaizen/api';
 import type { useKaizenOptions } from './useKaizenOptions';
 
@@ -24,10 +23,9 @@ export function KaizenFilterBar({
   options: Options;
   full?: boolean;
 }) {
-  const { t, pick } = useLanguage();
   const set = (patch: Partial<KaizenFilters>) => onChange({ ...filters, ...patch });
 
-  const listSelect = (key: KaizenListKey, field: 'departmentIds' | 'typeIds' | 'priorityIds', labelKey: MessageKey, allKey: MessageKey) => (
+  const listSelect = (key: KaizenListKey, field: 'departmentIds' | 'typeIds' | 'priorityIds', labelKey: KaizenTextKey, allKey: KaizenTextKey) => (
     <label className="ps-kaizen-field" style={{ minWidth: 150 }}>
       <span>{t(labelKey)}</span>
       <select
@@ -38,7 +36,7 @@ export function KaizenFilterBar({
         <option value="">{t(allKey)}</option>
         {options.listValues(key).map((d) => (
           <option key={d.value_id} value={d.value_id}>
-            {pick(d.label_en, d.label_ar)}
+            {d.label}
             {d.is_active ? '' : ` (${t('kaizen.inactive')})`}
           </option>
         ))}
