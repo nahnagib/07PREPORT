@@ -62,6 +62,9 @@ async function request<T>(path: string, token: string | null, init?: RequestInit
   return res.json() as Promise<T>;
 }
 
+/** The shared request helper, for feature modules with their own API file (e.g. lib/kaizen/api.ts). */
+export { request as apiRequest };
+
 export interface DimOption {
   [key: string]: string | number | null;
 }
@@ -272,7 +275,7 @@ export type EffectivePermissions = Record<string, PagePermission>;
 export interface PermissionRegistryEntry {
   key: string;
   label: string;
-  group: 'dashboard' | 'admin';
+  group: 'dashboard' | 'data_entry' | 'admin';
   actions: PermissionAction[];
 }
 

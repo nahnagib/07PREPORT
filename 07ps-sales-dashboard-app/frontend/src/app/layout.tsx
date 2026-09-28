@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import '../styles/globals.css';
 import { BASE_PATH } from '../lib/basePath';
 import { ThemeProvider } from '../components/ThemeProvider';
+import { LanguageProvider } from '../lib/i18n/LanguageProvider';
 import { BusinessUnitProvider } from '../components/BusinessUnitProvider';
 import { AuthProvider } from '../lib/AuthProvider';
 import { AuthGuard } from '../components/AuthGuard';
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <ThemeProvider>
+          <LanguageProvider>
           <BusinessUnitProvider>
             <AuthProvider>
               <FilterProvider>
@@ -36,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </FilterProvider>
             </AuthProvider>
           </BusinessUnitProvider>
+          </LanguageProvider>
         </ThemeProvider>
       </body>
     </html>

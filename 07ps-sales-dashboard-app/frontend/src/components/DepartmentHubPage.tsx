@@ -6,7 +6,9 @@ import { AppHeader } from './AppHeader';
 import { Card } from '@07ps/ui';
 import { useAuth } from '../lib/AuthProvider';
 import { getDepartment } from '../lib/departments';
-import { departmentReports, type NavDepartment } from '../lib/navItems';
+import { departmentReports, navLabel, type NavDepartment } from '../lib/navItems';
+import { useLanguage } from '../lib/i18n/LanguageProvider';
+import type { MessageKey } from '../lib/i18n/messages';
 
 /**
  * Shared body for a department's report-card hub (grid of report cards, each linking to its live
@@ -18,6 +20,7 @@ import { departmentReports, type NavDepartment } from '../lib/navItems';
 export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartment }) {
   const { user, canView, logout } = useAuth();
   const department = getDepartment(departmentKey);
+  const { lang, t } = useLanguage();
   if (!department) return null;
   const roleLabel = user?.role.label ?? user?.fullName;
   const items = departmentReports(departmentKey, canView);
@@ -25,7 +28,7 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppHeader
-        pageTitle={`${department.pTerm} — ${department.name}`}
+        pageTitle={`${t(`dept.${departmentKey}.pTerm` as MessageKey)} — ${t(`dept.${departmentKey}.name` as MessageKey)}`}
         anchorDate=""
         onAnchorDateChange={() => {}}
         roleLabel={roleLabel}
@@ -35,7 +38,7 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
 
       <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)' }}>
         <p style={{ margin: '0 0 var(--ps-space-4, 24px)', fontSize: 14, color: 'var(--ps-color-muted-text)' }}>
-          Reports available in the {department.pTerm} ({department.name}) department.
+          {t('shell.deptReports', { pTerm: t(`dept.${departmentKey}.pTerm` as MessageKey), name: t(`dept.${departmentKey}.name` as MessageKey) })}
         </p>
 
         <div
@@ -45,7 +48,8 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
             gap: 'var(--ps-space-3, 16px)',
           }}
         >
-          {items.map(({ label, icon: Icon, href }) => {
+          {items.map((item) => {
+            const { label, icon: Icon, href } = item;
             const live = Boolean(href);
             const content = (
               <Card
@@ -74,9 +78,9 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
                 >
                   <Icon size={22} />
                 </div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{label}</div>
+                <div style={{ fontSize: 16, fontWeight: 700 }}>{navLabel(item, lang)}</div>
                 <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', flex: 1 }}>
-                  {live ? 'Live report, wired to the validation warehouse.' : 'Not built yet.'}
+                  {live ? t('shell.liveReport') : t('shell.notBuilt')}
                 </div>
                 <div
                   style={{
@@ -88,8 +92,8 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
                     color: live ? 'var(--ps-color-accent)' : 'var(--ps-color-muted-text)',
                   }}
                 >
-                  {live ? 'Open report' : 'Coming Soon'}
-                  {live && <ArrowRight size={14} />}
+                  {live ? t('shell.openReport') : t('shell.comingSoon')}
+                  {live && <ArrowRight size={14} className="ps-rtl-flip" />}
                 </div>
               </Card>
             );

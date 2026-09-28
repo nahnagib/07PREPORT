@@ -7,6 +7,8 @@ import { Card } from '@07ps/ui';
 import { useAuth } from '../lib/AuthProvider';
 import { DEPARTMENTS } from '../lib/departments';
 import { departmentIsBuilt, departmentReports } from '../lib/navItems';
+import { useLanguage } from '../lib/i18n/LanguageProvider';
+import type { MessageKey } from '../lib/i18n/messages';
 
 /**
  * 7Ps Dashboard Hub -- the new landing page (bmh.com.ly/Dashboard). Replaces what used to be the
@@ -21,12 +23,13 @@ import { departmentIsBuilt, departmentReports } from '../lib/navItems';
 export default function DashboardHubPage() {
   const { user, canView, logout } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
+  const { t } = useLanguage();
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppHeader
         showBack={false}
-        pageTitle="7Ps Dashboard Hub"
+        pageTitle={t('shell.hubTitle')}
         anchorDate=""
         onAnchorDateChange={() => {}}
         roleLabel={roleLabel}
@@ -37,9 +40,9 @@ export default function DashboardHubPage() {
       <main style={{ flex: 1, padding: 'var(--ps-space-6, 40px) var(--ps-space-4, 24px)' }}>
         <div style={{ maxWidth: 1160, margin: '0 auto' }}>
           <div style={{ marginBottom: 'var(--ps-space-5, 32px)', textAlign: 'center' }}>
-            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800 }}>7Ps Dashboard Hub</h1>
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800 }}>{t('shell.hubTitle')}</h1>
             <p style={{ margin: '8px 0 0', fontSize: 14, color: 'var(--ps-color-muted-text)' }}>
-              Select a department to view its performance dashboard.
+              {t('shell.hubSubtitle')}
             </p>
           </div>
 
@@ -53,11 +56,12 @@ export default function DashboardHubPage() {
             {DEPARTMENTS.filter((d) => !departmentIsBuilt(d.key) || departmentReports(d.key, canView).length > 0).map((dept) => {
               const Icon = dept.icon;
               const isLive = departmentReports(dept.key, canView).length > 0;
+              const dk = (k: string) => t(`dept.${dept.key}.${k}` as MessageKey);
               return (
                 <Link key={dept.key} href={dept.href} style={{ textDecoration: 'none', color: 'inherit' }}>
                   <Card
                     className="ps-hub-card"
-                    aria-label={`${dept.pTerm} — ${dept.name}`}
+                    aria-label={`${dk('pTerm')} — ${dk('name')}`}
                     style={{
                       height: '100%',
                       minHeight: 220,
@@ -84,10 +88,10 @@ export default function DashboardHubPage() {
                     </div>
 
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 20, fontWeight: 800 }}>{dept.pTerm}</div>
-                      <div style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{dept.name}</div>
+                      <div style={{ fontSize: 20, fontWeight: 800 }}>{dk('pTerm')}</div>
+                      <div style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{dk('name')}</div>
                       <p style={{ fontSize: 13, color: 'var(--ps-color-muted-text)', marginTop: 10, marginBottom: 0 }}>
-                        {dept.tagline}
+                        {dk('tagline')}
                       </p>
                     </div>
 
@@ -101,8 +105,8 @@ export default function DashboardHubPage() {
                         color: isLive ? dept.accent : 'var(--ps-color-muted-text)',
                       }}
                     >
-                      {isLive ? 'View KPIs' : 'Coming Soon'}
-                      <ArrowRight size={14} />
+                      {isLive ? t('shell.viewKpis') : t('shell.comingSoon')}
+                      <ArrowRight size={14} className="ps-rtl-flip" />
                     </div>
                   </Card>
                 </Link>

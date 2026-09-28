@@ -18,7 +18,9 @@
 export const PERMISSION_ACTIONS = ['view', 'create', 'edit', 'delete', 'export'] as const;
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 
-export type RegistryGroup = 'dashboard' | 'admin';
+/** dashboard = read-only reports (View/Export); data_entry = pages that record business data
+ * (e.g. Kaizen cards); admin = the Admin Panel. */
+export type RegistryGroup = 'dashboard' | 'data_entry' | 'admin';
 
 export interface RegistryEntry {
   key: string;
@@ -48,6 +50,11 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   { key: 'stock_velocity', label: 'Stock Velocity', group: 'dashboard', actions: DASHBOARD },
   { key: 'pim_contribution', label: 'PIM Contribution', group: 'dashboard', actions: DASHBOARD },
   { key: 'product_lifecycle', label: 'Product Lifecycle', group: 'dashboard', actions: DASHBOARD },
+  // Process department. kaizen_board = the dashboard + read-only card details (the QR page);
+  // kaizen_cards = data entry: View opens the cards list, Edit also covers closing a card, Delete is
+  // a soft delete, Export is the Excel download. Seeded for the Excellence Manager role (0027).
+  { key: 'kaizen_board', label: 'Kaizen Board', group: 'dashboard', actions: DASHBOARD },
+  { key: 'kaizen_cards', label: 'Kaizen Cards', group: 'data_entry', actions: ['view', 'create', 'edit', 'delete', 'export'] },
 
   // Admin Panel sections. Actions mirror the endpoints each section actually has (e.g. users can't
   // be deleted, only disabled -- an edit; salespersons/sales teams are ETL-owned, edit only).
@@ -82,7 +89,8 @@ export function dashboardPageKeys(): string[] {
 }
 
 /** `pages.nav_group` value for a registry group (kept identical to the pre-registry values). */
-export function navGroupOf(group: RegistryGroup): 'Sales' | 'Administration' {
+export function navGroupOf(group: RegistryGroup): 'Sales' | 'Data Entry' | 'Administration' {
+  if (group === 'data_entry') return 'Data Entry';
   return group === 'dashboard' ? 'Sales' : 'Administration';
 }
 

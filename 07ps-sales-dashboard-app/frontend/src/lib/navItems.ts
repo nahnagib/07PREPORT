@@ -1,4 +1,4 @@
-import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store } from 'lucide-react';
+import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store, ClipboardList } from 'lucide-react';
 
 /** Which department hub (PromotionHubPage/ProductHubPage via DepartmentHubPage) lists a given
  * report card, and which sidebar tab it's grouped under. Normally matches the `href`'s route
@@ -6,7 +6,7 @@ import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldC
  * whose Next.js routes were moved from app/(departments)/promotion/* to
  * app/(departments)/product/* to match `department: 'product'` (a card's "Open report" link and
  * its actual route must agree). */
-export type NavDepartment = 'promotion' | 'product';
+export type NavDepartment = 'promotion' | 'product' | 'process';
 
 /** Single source of truth for primary nav entries, each tied to a `pages.page_key` from the
  * permissions model (0009_auth_identity.sql). Every nav component (BottomNavBar, DepartmentHubPage,
@@ -42,7 +42,15 @@ export const NAV_ITEMS = [
   { label: 'Stock Velocity', icon: Boxes, href: '/product/stock-velocity', pageKey: 'stock_velocity', department: 'product' },
   { label: 'PIM Contribution', icon: PieChart, href: '/product/pim-contribution', pageKey: 'pim_contribution', department: 'product' },
   { label: 'Product Lifecycle', icon: RefreshCw, href: '/product/product-lifecycle', pageKey: 'product_lifecycle', department: 'product' },
+  // Process department. The card list/entry screens live under this href (see ROUTE_PAGE_KEYS).
+  { label: 'Kaizen Board', labelAr: 'لوحة كايزن', icon: ClipboardList, href: '/process/kaizen-board', pageKey: 'kaizen_board', department: 'process' },
 ] as const;
+
+/** A nav entry's label in the UI language: the Arabic label where one is defined (reports built
+ * bilingual), else the English one -- the older sales reports are still English-only. */
+export function navLabel(item: (typeof NAV_ITEMS)[number], lang: 'en' | 'ar'): string {
+  return lang === 'ar' && 'labelAr' in item ? item.labelAr : item.label;
+}
 
 /** Admin Panel sections, in tab order -- AdminLayout's tab row, the Admin nav link's landing
  * section and route->page lookups all read this one list. `adminOnly` sections (ETL Control Center,
@@ -61,7 +69,12 @@ export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string
   { label: 'Login History', href: '/admin/login-history', pageKey: 'admin_login_history' },
   { label: 'ETL Control Center', href: '/admin/etl-control', pageKey: null, adminOnly: true },
   { label: 'Audit Log', href: '/admin/audit-log', pageKey: null, adminOnly: true },
+  { label: 'Kaizen Dropdowns', href: '/admin/kaizen-dropdowns', pageKey: null, adminOnly: true },
 ];
+
+/** Routes whose permission page differs from the nav entry they sit under: the Kaizen card entry
+ * screens belong to kaizen_cards, not to the kaizen_board report they're nested in. */
+const ROUTE_PAGE_KEYS: { href: string; pageKey: string }[] = [{ href: '/process/kaizen-board/manage', pageKey: 'kaizen_cards' }];
 
 /** Admin tabs this user may open. */
 export function visibleAdminTabs(canView: (pageKey: string) => boolean, isAdmin: boolean) {
@@ -81,7 +94,7 @@ export function adminNavHref(canView: (pageKey: string) => boolean, isAdmin: boo
  * /promotion/tachometer/ytdValue -> tachometer. Null for routes outside the registry. */
 export function pageKeyForPath(pathname: string | null | undefined): string | null {
   if (!pathname) return null;
-  const candidates: { href: string; pageKey: string | null }[] = [...NAV_ITEMS, ...ADMIN_TABS];
+  const candidates: { href: string; pageKey: string | null }[] = [...NAV_ITEMS, ...ADMIN_TABS, ...ROUTE_PAGE_KEYS];
   let best: { href: string; pageKey: string | null } | null = null;
   for (const c of candidates) {
     if ((pathname === c.href || pathname.startsWith(`${c.href}/`)) && (!best || c.href.length > best.href.length)) best = c;

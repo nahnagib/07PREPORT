@@ -8,6 +8,15 @@ import { NoAccess } from './NoAccess';
 
 const PUBLIC_ROUTES = new Set(['/login', '/forgot-password', '/reset-password']);
 
+/** Where to go after signing in: the `next` query param, if it's a path inside this app. Only a
+ * single leading slash is accepted (no `//host` or `/\host`), so it can't send anyone off-site. */
+export function safeNextPath(search: string): string | null {
+  const next = new URLSearchParams(search).get('next');
+  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return null;
+  if (next === '/login' || next.startsWith('/login?')) return null;
+  return next;
+}
+
 /**
  * Global session gate, mounted once in app/layout.tsx around every page. This is UX only --
  * "hide the page, redirect, show Unauthorized" -- the real enforcement is always server-side
@@ -33,12 +42,15 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (loading) return;
     if (isPublicRoute) {
-      // Signed in: start on the first page this user can actually open, not a fixed page.
-      if (user && pathname === '/login') router.replace(firstAccessiblePath(canView, isAdmin));
+      // Signed in: back to the page that sent them here (e.g. a scanned Kaizen QR code), else the
+      // first page this user can actually open.
+      if (user && pathname === '/login') router.replace(safeNextPath(window.location.search) ?? firstAccessiblePath(canView, isAdmin));
       return;
     }
     if (!token || !user) {
-      router.replace('/login');
+      // Remember where they were going so login can bring them back (pathname is basePath-free).
+      const target = `${pathname}${window.location.search}`;
+      router.replace(pathname && pathname !== '/' ? `/login?next=${encodeURIComponent(target)}` : '/login');
       return;
     }
     if (user.mustChangePassword && !isChangePasswordRoute) {

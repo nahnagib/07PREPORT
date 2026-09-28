@@ -2,6 +2,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchFilterOptions, fetchRefreshStatus, type DimOption, type FilterOptionsResponse, type TachometerFilters } from '../lib/api';
 import { useAuth } from '../lib/AuthProvider';
+import { NAV_ITEMS } from '../lib/navItems';
 import { useBusinessUnit } from './BusinessUnitProvider';
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -93,7 +94,12 @@ const FilterContext = createContext<FilterContextValue | null>(null);
  * each page's own handleFiltersChange).
  */
 export function FilterProvider({ children }: { children: React.ReactNode }) {
-  const { isSalesperson, salespersonKey, token } = useAuth();
+  const { isSalesperson, salespersonKey, token: authToken, canView } = useAuth();
+  // Filter options and the refresh poll serve the sales/product reports only. A user with none of
+  // them (e.g. an Excellence Manager, Kaizen Board only) has no data-scope tier, so those endpoints
+  // would just 403 on every page -- don't call them at all.
+  const needsSalesData = NAV_ITEMS.some((item) => item.department !== 'process' && canView(item.pageKey));
+  const token = needsSalesData ? authToken : null;
   const { setBusinessUnit } = useBusinessUnit();
 
   const [filters, setFilters] = useState<TachometerFilters>(DEFAULT_FILTERS);

@@ -2,11 +2,12 @@
 import React from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Bell, User, LogOut, Sun, Moon } from 'lucide-react';
+import { ArrowLeft, Bell, User, LogOut, Sun, Moon, Languages } from 'lucide-react';
 import { DateInput } from '@07ps/ui';
 import { useBusinessUnit } from './BusinessUnitProvider';
 import { useTheme } from './ThemeProvider';
 import { BASE_PATH } from '../lib/basePath';
+import { useLanguage } from '../lib/i18n/LanguageProvider';
 
 /**
  * Logo asset note: the source BMH files ("BenMussa Black.png" / "BenMussa White.png") are named
@@ -88,6 +89,7 @@ export function AppHeader({
 }: AppHeaderProps) {
   const { businessUnit } = useBusinessUnit();
   const { theme, toggle } = useTheme();
+  const { t, toggle: toggleLanguage } = useLanguage();
   const secondary = buLogo[businessUnit];
   const router = useRouter();
 
@@ -117,13 +119,14 @@ export function AppHeader({
         gap: 'var(--ps-space-3, 16px)',
       }}
     >
-      <div className="flex items-center gap-3" style={{ minWidth: 0, flexShrink: 0 }}>
+      {/* The logo/title group gives way (title ellipsizes) so it never slides under the controls. */}
+      <div className="flex items-center gap-3" style={{ minWidth: 0, flex: '0 1 auto' }}>
         <Image
           src={theme === 'dark' ? bmhMark.dark : bmhMark.light}
           alt="Ben Moussa Holding"
           width={160}
           height={32}
-          style={{ objectFit: 'contain', height: 32, width: 'auto' }}
+          style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 0 }}
           priority
         />
         {secondary && (
@@ -138,14 +141,14 @@ export function AppHeader({
               alt={secondary.alt}
               width={96}
               height={32}
-              style={{ objectFit: 'contain', height: 32, width: 'auto' }}
+              style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 0 }}
             />
           </>
         )}
-        <h1 style={{ fontSize: 20, fontWeight: 700, marginLeft: 12, whiteSpace: 'nowrap' }}>{pageTitle}</h1>
+        <h1 style={{ fontSize: 20, fontWeight: 700, marginInlineStart: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pageTitle}</h1>
       </div>
 
-      <div className="flex items-center gap-3" style={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}>
+      <div className="flex items-center gap-3" style={{ flex: '1 0 auto', justifyContent: 'flex-end' }}>
         {/* Inline date selector - drives MTD/YTD for every KPI on the page (see SidebarFilters'
             equivalent, more-explained control; this is the same value, just reachable from the
             header too). Hidden when a FilterBar below already owns this control (Tachometer
@@ -159,8 +162,8 @@ export function AppHeader({
         {showBack && (
           <button
             onClick={() => router.back()}
-            aria-label="Back"
-            title="Back"
+            aria-label={t('shell.back')}
+            title={t('shell.back')}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -178,10 +181,36 @@ export function AppHeader({
           </button>
         )}
 
+        {/* Platform-level EN/AR switch (lib/i18n/LanguageProvider.tsx); shows the language it switches TO. */}
+        <button
+          onClick={toggleLanguage}
+          aria-label={t('shell.languageAria')}
+          title={t('shell.languageAria')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 5,
+            border: '1px solid var(--ps-color-border)',
+            borderRadius: 6,
+            height: 30,
+            padding: '0 8px',
+            background: 'transparent',
+            color: 'var(--ps-color-text)',
+            cursor: 'pointer',
+            fontSize: 12.5,
+            fontWeight: 700,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <Languages size={15} />
+          <span className="hidden sm:inline">{t('shell.language')}</span>
+        </button>
+
         <button
           onClick={toggle}
-          aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-          title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          aria-label={theme === 'light' ? t('shell.darkMode') : t('shell.lightMode')}
+          title={theme === 'light' ? t('shell.darkMode') : t('shell.lightMode')}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -242,7 +271,7 @@ export function AppHeader({
 
         {/* Profile chip -- real signed-in user (AuthProvider), not a dev stand-in. */}
         <div
-          title={roleLabel ? `Signed in as: ${roleLabel}` : 'Signed in'}
+          title={roleLabel ?? t('shell.signedIn')}
           style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}
         >
           <div
@@ -263,15 +292,15 @@ export function AppHeader({
             {initials || <User size={15} />}
           </div>
           <span className="hidden lg:inline" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ps-color-text)' }}>
-            {roleLabel ?? 'Signed in'}
+            {roleLabel ?? t('shell.signedIn')}
           </span>
         </div>
 
         {onLogout && (
           <button
             onClick={onLogout}
-            aria-label="Log out"
-            title="Log out"
+            aria-label={t('shell.logout')}
+            title={t('shell.logout')}
             style={{
               display: 'flex',
               alignItems: 'center',

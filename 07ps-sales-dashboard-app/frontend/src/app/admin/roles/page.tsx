@@ -464,6 +464,7 @@ function PermissionMatrix({
   const groups = useMemo(
     () => [
       { key: 'dashboard', title: 'Dashboards', entries: registry.filter((e) => e.group === 'dashboard') },
+      { key: 'data_entry', title: 'Data Entry', entries: registry.filter((e) => e.group === 'data_entry') },
       { key: 'admin', title: 'Admin Panel', entries: registry.filter((e) => e.group === 'admin') },
     ],
     [registry],
