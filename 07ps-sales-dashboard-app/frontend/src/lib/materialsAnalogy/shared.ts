@@ -140,7 +140,7 @@ export function fmtNum(v: number | null | undefined): string {
   const abs = Math.abs(v);
   if (abs >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
   if (abs >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
-  return abs > 0 && abs < 10 ? v.toFixed(1) : v.toFixed(0);
+  return v.toFixed(0);
 }
 
 export function fmtPct(v: number | null | undefined, digits = 1): string {
@@ -156,15 +156,19 @@ export function sumByUom(rows: { volumeByUom: UomQty[] }[]): UomQty[] {
   return [...acc.entries()].map(([uom, qty]) => ({ uom, qty })).sort((a, b) => b.qty - a.qty);
 }
 
+/** Odoo unit names can be Arabic ("وحدة", "كيس"): each "qty unit" item is wrapped in Unicode bidi
+ * isolates (FSI ... PDI) so a right-to-left unit never reorders the numbers around it. */
+const isolate = (text: string) => `⁨${text}⁩`;
+
 export function fmtUomQty(list: UomQty[], max = 3): string {
   if (!list.length) return '0';
-  const shown = list.slice(0, max).map(({ uom, qty }) => `${fmtNum(qty)}${uom ? ` ${uom}` : ''}`);
+  const shown = list.slice(0, max).map(({ uom, qty }) => isolate(`${fmtNum(qty)}${uom ? ` ${uom}` : ''}`));
   return list.length > max ? `${shown.join(' · ')} · +${list.length - max} more` : shown.join(' · ');
 }
 
 export function fmtVolume(r: Pick<ProductFact, 'volume' | 'volumeByUom' | 'uom'>): string {
   if (r.volume === null) return fmtUomQty(r.volumeByUom);
-  return `${fmtNum(r.volume)}${r.uom ? ` ${r.uom}` : ''}`;
+  return isolate(`${fmtNum(r.volume)}${r.uom ? ` ${r.uom}` : ''}`);
 }
 
 export function fmtDate(iso: string | null | undefined): string {

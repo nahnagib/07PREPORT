@@ -218,6 +218,11 @@ class ProductDashboardBuilder:
         master_keys = set(master["ProductMatchKey"].astype(str))
         base = master[["ProductMatchKey", "Company", *self.PRODUCT_ATTRS, "IsMapped"]].copy()
         base["Company"] = base["Company"].map(normalize_match_company)
+        # Show the sheet's ProductName exactly as typed (Dim_Product.ProductName is re-cased by the
+        # ETL's display normalizer, e.g. "CemAir" -> "Cemair").
+        if "ProductNameRaw" in master.columns:
+            raw = master["ProductNameRaw"].astype("string").str.strip()
+            base["ProductName"] = raw.where(raw.notna() & raw.ne(""), base["ProductName"]).to_numpy()
 
         # Unmapped products seen in sales or stock get a row too (they are part of every total).
         seen = pd.concat([

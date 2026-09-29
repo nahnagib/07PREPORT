@@ -87,7 +87,7 @@ function toExecutiveSummaryRows(
     takeaway,
   });
   return [
-    row('avgDOH', 'Avg Days of Inventory', avgDOH === null ? '—' : `${Math.round(avgDOH)} days`, 'neutral', avgDOH === null ? 'No product has both stock and sales in the look-back window.' : `Stock-value-weighted average of ${Math.round(avgDOH)} days on hand.`),
+    row('avgDOH', 'Avg Days of Inventory', avgDOH === null ? '—' : `${Math.round(avgDOH)} days`, 'neutral', avgDOH === null ? 'No product has both stock and sales in the look-back window.' : `Sales-value-weighted average of ${Math.round(avgDOH)} days on hand.`),
     row('overstocked', 'Overstocked SKUs', String(overCount), 'watch', `${overCount} SKUs are overstocked or not moving, tying up ${fmtLYD(overValue)} at stock valuation.`),
     row('stockOutRisk', 'Stock-Out Risk SKUs', String(riskCount), 'alert', `${riskCount} SKUs are at stock-out risk; they sold ${fmtLYD(riskValue)} in the period.`),
     row('fastMovers', 'Fast Movers (top velocity tercile)', String(fastCount), 'success', `${fastCount} SKUs are in the fastest-moving third of products sold in the period.`),
@@ -143,14 +143,18 @@ export default function StockVelocityPage() {
   );
 
   // ---- KPIs ----
-  const withDoh = filtered.filter((r) => r.daysOfInventory !== null && r.stockValue > 0);
-  const dohWeight = sum(withDoh, (r) => r.stockValue);
-  const avgDOH = dohWeight > 0 ? sum(withDoh, (r) => (r.daysOfInventory as number) * r.stockValue) / dohWeight : null;
+  // Existing rule: DOH averaged over products weighted by their sales value in the period, so the KPI
+  // reflects the portfolio that actually sells (stock with no sales has no DOH and no weight).
+  const withDoh = filtered.filter((r) => r.daysOfInventory !== null && r.value > 0);
+  const dohWeight = sum(withDoh, (r) => r.value);
+  const avgDOH = dohWeight > 0 ? sum(withDoh, (r) => (r.daysOfInventory as number) * r.value) / dohWeight : null;
   const overRows = filtered.filter(isOverstocked);
   const riskRows = filtered.filter((r) => r.stockBand === 'StockOutRisk');
   const overValue = sum(overRows, (r) => r.stockValue);
   const riskValue = sum(riskRows, (r) => r.value);
-  const moving = filtered.filter((r) => r.velocity !== null && r.velocity > 0);
+  // Movers = products that sold in the period (positive value and quantity, single unit). Discount
+  // pseudo-products (negative value) are not product movement.
+  const moving = filtered.filter((r) => r.velocity !== null && r.velocity > 0 && r.value > 0);
   const velocities = moving.map((r) => r.velocity as number).sort((a, b) => a - b);
   const terc = velocities.length ? velocities[Math.floor((velocities.length * 2) / 3)] : 0;
   const fastCount = moving.filter((r) => (r.velocity as number) >= terc).length;

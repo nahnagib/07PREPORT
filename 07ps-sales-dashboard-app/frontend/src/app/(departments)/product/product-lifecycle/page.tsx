@@ -12,7 +12,6 @@ import {
   Card,
   ChartPanel,
   KpiTile,
-  SemanticBadge,
   Select,
   Button,
   TextInput,
@@ -222,16 +221,11 @@ export default function ProductLifecyclePage() {
   const columns: Column<TableRow>[] = [
     { key: 'ProductName', header: 'Product Name' },
     { key: 'Company', header: 'Company' },
-    { key: 'Category', header: 'Category' },
+    { key: 'Category', header: 'Category', render: (row) => row.Category ?? '—' },
     {
       key: 'lifecycle',
       header: 'Lifecycle',
-      render: (row) =>
-        row.lifecycle === 'Discontinued' ? (
-          <SemanticBadge status="alert" />
-        ) : (
-          <span style={{ color: SEGMENT_COLOR[row.lifecycle], fontWeight: 700 }}>{row.lifecycle}</span>
-        ),
+      render: (row) => <span style={{ color: SEGMENT_COLOR[row.lifecycle], fontWeight: 700 }}>{row.lifecycle}</span>,
     },
     { key: 'firstSaleDate', header: 'First Sale', align: 'right', render: (row) => fmtDate(row.firstSaleDate) },
     { key: 'daysSinceLastSale', header: 'Days Since Last Sale', align: 'right', render: (row) => (row.daysSinceLastSale === null ? 'never sold' : String(row.daysSinceLastSale)) },

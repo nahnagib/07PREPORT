@@ -1173,12 +1173,14 @@ class ProductMapper:
 
         matched = out["ProductMappingStatus"].notna()
         stripped = out["OdooProductName"].astype("string").str.replace(r"^\s*\[[^\]]*\]\s*", "", regex=True)
-        raw_display = stripped.apply(TextUtils.normalize_product_display)
-        raw_clean = raw_display.apply(TextUtils.normalize_product_clean)
-        raw_keys = [
-            ProductMapper._raw_product_key(company, clean_name)
-            for company, clean_name in zip(company_source.map(normalize_match_company), raw_clean)
-        ]
+        # PERF: normalize/hash each distinct value once (names repeat thousands of times; the per-row
+        # version spent minutes building one-element Series inside _raw_product_key).
+        unmatched_names = TextUtils.product_name_frame(stripped)
+        raw_display = unmatched_names["ProductName"].fillna(TextUtils.UNKNOWN_PRODUCT_NAME)
+        raw_clean = unmatched_names["ProductNameClean"].fillna(TextUtils.UNKNOWN_PRODUCT_NAME.upper())
+        pairs = pd.DataFrame({"c": company_source.map(normalize_match_company).fillna(""), "n": raw_clean.astype(str)}, index=out.index)
+        key_cache = {pair: ProductMapper._raw_product_key(*pair) for pair in set(zip(pairs["c"], pairs["n"]))}
+        raw_keys = [key_cache[pair] for pair in zip(pairs["c"], pairs["n"])]
 
         out["ProductKey"] = out["_mapped_ProductKey"].where(matched, pd.Series(raw_keys, index=out.index, dtype="string")).astype("string")
         out["ProductName"] = out["_mapped_ProductName"].where(matched, raw_display)

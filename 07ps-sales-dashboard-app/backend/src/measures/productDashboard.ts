@@ -156,7 +156,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     SELECT d.ProductMatchKey AS k, COALESCE(d.UoM, '') AS uom,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS value,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qty,
-      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Lines ELSE 0 END)      AS lines,
+      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Lines ELSE 0 END)      AS lineCount,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.CostValue ELSE 0 END)  AS costValue,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.UncostedQty ELSE 0 END) AS uncostedQty,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS valuePrior,
@@ -182,12 +182,12 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     const key = String(r.k);
     const a = byProduct.get(key) ?? { value: 0, lines: 0, cost: 0, uncosted: 0, valuePrior: 0, qty: new Map(), qtyPrior: new Map() };
     a.value += num(r.value);
-    a.lines += num(r.lines);
+    a.lines += num(r.lineCount);
     a.cost += num(r.costValue);
     a.uncosted += num(r.uncostedQty);
     a.valuePrior += num(r.valuePrior);
     const uom = String(r.uom ?? '');
-    if (num(r.lines) > 0) a.qty.set(uom, (a.qty.get(uom) ?? 0) + num(r.qty));
+    if (num(r.lineCount) > 0) a.qty.set(uom, (a.qty.get(uom) ?? 0) + num(r.qty));
     if (num(r.qtyPrior) !== 0) a.qtyPrior.set(uom, (a.qtyPrior.get(uom) ?? 0) + num(r.qtyPrior));
     intercompanyValue += num(r.icValue);
     byProduct.set(key, a);

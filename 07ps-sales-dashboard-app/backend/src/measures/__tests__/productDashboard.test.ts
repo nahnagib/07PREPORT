@@ -22,7 +22,7 @@ const product = (key: string, company: string, extra: Record<string, unknown> = 
   LifecycleSegment: 'Mature', ValueYTD: 0, QtyYTD: 0, ValueLYTD: 0, QtyLYTD: 0, ...extra,
 });
 const sale = (k: string, uom: string, value: number, qty: number, lines = 1, extra: Record<string, unknown> = {}) => ({
-  k, uom, value, qty, lines, costValue: 0, uncostedQty: qty, valuePrior: 0, qtyPrior: 0, icValue: 0, ...extra,
+  k, uom, value, qty, lineCount: lines, costValue: 0, uncostedQty: qty, valuePrior: 0, qtyPrior: 0, icValue: 0, ...extra,
 });
 
 describe('resolvePeriod', () => {
@@ -74,6 +74,8 @@ describe('computeProductDashboard', () => {
 
     const salesCall = calls.find((c) => c.sql.includes('fact_productsalesdaily'))!;
     expect(salesCall.sql).toContain('d.SalespersonKey IN (?)');
+    // MySQL reserved words (LINES, VALUE is fine) must never be used as bare aliases.
+    expect(salesCall.sql).not.toMatch(/AS lines/i);
     expect(salesCall.params[salesCall.params.length - 1]).toBe(42);
     expect(out.products.map((p) => p.productMatchKey)).toEqual(['MAJAAL|A']);
   });

@@ -459,6 +459,7 @@ export default function PimContributionPage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: '11fr 9fr', gap: 'var(--ps-space-3, 16px)' }}>
             <ChartPanel
+              style={{ minWidth: 0 }}
               title="Product Hierarchy Contribution"
               infoText={
                 isLeaf
@@ -498,6 +499,7 @@ export default function PimContributionPage() {
             </ChartPanel>
 
             <ChartPanel
+              style={{ minWidth: 0 }}
               title="Average Selling Price (ASP)"
               infoText={isLeaf ? 'This product\'s own figures for the period' : `By ${currentLevel?.label}, products sold in ${unit || 'the selected unit'} only — synced to the drill level above`}
             >
@@ -514,8 +516,10 @@ export default function PimContributionPage() {
                 <GroupedBarChart
                   showTitle={false}
                   points={aspPoints}
-                  bars={[{ key: 'asp', name: 'ASP', color: 'var(--ps-color-accent)' }]}
+                  bars={[{ key: 'asp', name: `ASP (LYD per ${unit || 'unit'})`, color: 'var(--ps-color-accent)' }]}
                   valueFormatter={fmtLYD}
+                  yAxisWidth={150}
+                  height={Math.max(280, aspPoints.length * 30 + 60)}
                 />
               )}
             </ChartPanel>

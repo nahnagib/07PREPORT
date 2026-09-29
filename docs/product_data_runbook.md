@@ -104,8 +104,8 @@ message, and the pages keep showing the last good data.
 | **LYD tied up / Inventory value** | Odoo's own stock valuation of that on-hand stock. |
 | **Days of inventory (DOH)** | Stock on hand ÷ average daily sales. Average daily sales = invoiced quantity in the last **90 days** ÷ 90. The look-back is `days_of_inventory.lookback_days` in the config. |
 | **Stock band** | Overstock if DOH is above the company threshold (Majaal 180 days, Tika 60). Stock-out risk if DOH is below the threshold (Majaal 60, Tika 30). **Stock with no sales in the look-back is "No movement" and counts as Overstocked** — never as stock-out risk. |
-| **Avg Days of Inventory (KPI)** | Average DOH across products that have both stock and sales, weighted by stock value. |
-| **Fast vs Slow movers** | Products sold in the period are split at the median velocity. The "Fast Movers" KPI is the top third by velocity. Bars show LYD, because units differ between products. |
+| **Avg Days of Inventory (KPI)** | Average DOH across products that sold in the period, weighted by their sales value (the existing rule). |
+| **Fast vs Slow movers** | Products sold in the period (positive value; discount pseudo-products excluded) are split at the median velocity. The "Fast Movers" KPI is the top third by velocity. Bars show LYD, because units differ between products. |
 | **BCG class** | Calendar YTD. HV = YTD volume ≥ 3,500 (Majaal) or 25,000 (Tika). HP = gross profit ≥ 35%, where GP% = (Value − Qty × Odoo standard cost) ÷ Value, with cost read **per company** in Odoo. Stars = HV/HP, Cash Cows = HV/LP, Strategic = LV/HP, Dogs = LV/LP. Paper Bags and Raw Materials are excluded. **Products sold without a standard cost are "Unclassified (no cost)"** and listed in the data-quality log. |
 | **BCG movement** | YTD class vs the same period last year: New, Stable, Improved, Drop (Declined), or Discontinued (sold last year, not this year). |
 
