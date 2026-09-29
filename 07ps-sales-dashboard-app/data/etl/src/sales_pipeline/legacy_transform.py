@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 from pandas import ExcelFile
 
+from sales_pipeline.product_matching import KNOWN_COMPANIES, match_key_series, normalize_match_company, normalize_match_name
+
 PathLike = Union[str, Path]
 DataFrame = pd.DataFrame
 Series = pd.Series
@@ -102,6 +104,16 @@ SALES_COLUMN_MAP: Dict[str, str] = {
     "Qty Invoiced": "quantity",
     "Status": "order_state",
     "Invoice Status": "invoice_status",
+    # Kept from sale.report so every fact row can be traced to its Odoo line/order/product/partner.
+    "SaleReportLineID": "SaleReportLineID",
+    "OdooOrderID": "OdooOrderID",
+    "OdooProductID": "OdooProductID",
+    "OdooPartnerID": "OdooPartnerID",
+    # Extracted for information; pages use invoiced quantity ("Qty Invoiced") only.
+    "Qty Ordered": "qty_ordered",
+    "Qty Delivered": "qty_delivered",
+    "UoM": "uom",
+    "UoMID": "uom_id",
 }
 
 PEOPLE_SHEET_CANDIDATES = [
@@ -715,37 +727,135 @@ class SalesOrgRepository:
         return result
 
 
+class ProductMasterValidationError(ValueError):
+    """PRODUCTS.xlsx breaks the import contract; the file is rejected as a whole."""
+
+    def __init__(self, message: str, problems: Sequence[str]) -> None:
+        self.problems = list(problems)
+        shown = self.problems[:50]
+        more = f"\n  ... and {len(self.problems) - len(shown)} more" if len(self.problems) > len(shown) else ""
+        super().__init__(message + ("\n  " + "\n  ".join(shown) if shown else "") + more)
+
+
 class ProductMasterLoader:
+    """Loads and validates PRODUCTS.xlsx (sheet 'Products', else the first sheet).
+
+    Contract (the file is rejected as a whole if any rule fails -- a partial master would silently
+    move sales into Unmapped):
+      * every column in EXPECTED is present;
+      * Company is Majaal or Tika and OdooProductName is filled on every row;
+      * Company + normalized OdooProductName (product_matching.normalize_match_name) is unique.
+
+    One row = one Odoo product. ProductKey in the sheet is a family/SKU code and is NOT unique, so
+    the loaded frame keeps it as SheetProductKey and gets a deterministic unique ProductKey: the
+    sheet value when it is unique in the file, otherwise "<sheet key>|<hash of Company+name>".
+    ProductMatchKey ("COMPANY|NAME") is the real product grain every join uses.
+    """
+
+    SHEET_NAME = "Products"
     EXPECTED = [
         "Company", "Category", "Brand", "SubBrand", "Family",
         "ProductName", "OdooProductName", "ProductLevel", "SKU", "Size", "IsActive", "ProductKey",
     ]
+    RENAME = {
+        "Odoo Nmae": "OdooProductName",
+        "Odoo Name": "OdooProductName",
+        "OdooProduct Name": "OdooProductName",
+        "Subbrand": "SubBrand",
+        "Sub Brand": "SubBrand",
+        "ProductLevet": "ProductLevel",
+        "Product Level": "ProductLevel",
+    }
 
     def __init__(self, logger: Logger, export_conflicts: bool, base_dir: Path) -> None:
         self.logger = logger
         self.export_conflicts = export_conflicts
         self.base_dir = base_dir
 
+    @classmethod
+    def read_sheet(cls, path: PathLike) -> DataFrame:
+        workbook = pd.ExcelFile(Path(path))
+        try:
+            by_lower = {name.lower(): name for name in workbook.sheet_names}
+            sheet = by_lower.get(cls.SHEET_NAME.lower(), workbook.sheet_names[0])
+            df = pd.read_excel(workbook, sheet_name=sheet).copy()
+        finally:
+            workbook.close()
+        df.columns = [str(c).strip() for c in df.columns]
+        return df.rename(columns=cls.RENAME)
+
     def load(self, path: PathLike) -> DataFrame:
-        df = pd.read_excel(Path(path)).copy()
-        df = df.rename(columns={
-            "Odoo Nmae": "OdooProductName",
-            "Odoo Name": "OdooProductName",
-            "OdooProduct Name": "OdooProductName",
-            "Subbrand": "SubBrand",
-            "Sub Brand": "SubBrand",
-            "ProductLevet": "ProductLevel",
-            "Product Level": "ProductLevel",
-        })
-        df = DataFrameUtils.ensure_columns(df, self.EXPECTED)
+        df = self.read_sheet(path)
+        missing = [c for c in self.EXPECTED if c not in df.columns]
+        if missing:
+            raise ProductMasterValidationError(
+                f"PRODUCTS.xlsx rejected: missing required column(s): {', '.join(missing)}",
+                [f"found columns: {', '.join(df.columns)}"],
+            )
+        # Excel row number (header is row 1) so every problem points at a row the user can find.
+        df["SourceRow"] = np.arange(2, len(df) + 2)
+        df = df.loc[~df[self.EXPECTED].isna().all(axis=1)].reset_index(drop=True)
         df = self._clean(df)
-        valid_product = df["ProductName"].astype("string").str.strip().replace("", pd.NA).notna()
-        dropped = int((~valid_product).sum())
-        if dropped:
-            self.logger.warn(f"Dropped {dropped} PRODUCTS.xlsx rows without ProductName")
-        df = df.loc[valid_product].reset_index(drop=True)
-        df = ProductKeyUtils.ensure_unique(df)
+        self.validate(df)
+        df["ProductMatchKey"] = match_key_series(df["Company"], df["OdooProductName"])
+        df["OdooProductNameNorm"] = df["OdooProductName"].map(normalize_match_name)
+        # Blank ProductName is allowed (it is a display label, not the key): fall back to the Odoo
+        # name without its [code] prefix instead of dropping the product into Unmapped.
+        blank_name = df["ProductName"].astype("string").str.strip().replace("", pd.NA).isna()
+        df["ProductNameWasBlank"] = blank_name
+        if blank_name.any():
+            self.logger.warn(f"{int(blank_name.sum())} PRODUCTS.xlsx rows have no ProductName; displaying their Odoo name")
+            fallback = df.loc[blank_name, "OdooProductName"].astype("string").str.replace(r"^\s*\[[^\]]*\]\s*", "", regex=True).str.strip()
+            df.loc[blank_name, "ProductName"] = fallback
+        df["SheetProductKey"] = df["ProductKey"]
+        df["ProductKey"] = self.unique_product_keys(df["ProductKey"], df["ProductMatchKey"])
         return df
+
+    @staticmethod
+    def unique_product_keys(sheet_keys: Series, match_keys: Series) -> Series:
+        base = sheet_keys.astype("string").fillna("").str.strip()
+        counts = base.value_counts()
+        needs_suffix = base.eq("") | base.map(counts).gt(1)
+        digest = match_keys.astype(str).map(lambda k: hashlib.sha1(k.encode("utf-8")).hexdigest()[:10].upper())
+        suffixed = base.where(base.ne(""), "PRODUCT") + "|" + digest
+        return base.where(~needs_suffix, suffixed).astype("string")
+
+    @classmethod
+    def validate(cls, df: DataFrame) -> None:
+        problems: list[str] = []
+        company = df["Company"].astype("string")
+        bad_company = ~company.isin(list(KNOWN_COMPANIES))
+        for _, row in df.loc[bad_company].iterrows():
+            problems.append(f"row {row['SourceRow']}: Company '{row['Company']}' is not Majaal or Tika")
+        name_norm = df["OdooProductName"].map(normalize_match_name)
+        for _, row in df.loc[name_norm.eq("")].iterrows():
+            problems.append(f"row {row['SourceRow']}: OdooProductName is blank")
+        keys = match_key_series(df["Company"], df["OdooProductName"])
+        valid = ~bad_company & name_norm.ne("")
+        dup = keys.duplicated(keep=False) & valid
+        for key, group in df.loc[dup].groupby(keys[dup], sort=True):
+            rows = ", ".join(
+                f"row {r['SourceRow']} ('{r['OdooProductName']}')" for _, r in group.iterrows()
+            )
+            problems.append(f"duplicate Company + OdooProductName {key}: {rows}")
+        if problems:
+            raise ProductMasterValidationError(
+                f"PRODUCTS.xlsx rejected: {len(problems)} problem(s). Fix these rows and upload again.", problems
+            )
+
+    @staticmethod
+    def summary(df: DataFrame) -> dict[str, Any]:
+        def blank(col: str) -> int:
+            return int(df[col].astype("string").str.strip().replace("", pd.NA).isna().sum())
+
+        return {
+            "rows": int(len(df)),
+            "rows_per_company": {str(k): int(v) for k, v in df["Company"].value_counts().sort_index().items()},
+            "blank_category": blank("Category"),
+            "blank_product_name": int(df["ProductNameWasBlank"].sum()) if "ProductNameWasBlank" in df else blank("ProductName"),
+            "blank_sku": blank("SKU"),
+            "inactive_rows": int((df["IsActive"] == 0).sum()),
+        }
 
     def _clean(self, df: DataFrame) -> DataFrame:
         out = df.copy()
@@ -994,110 +1104,122 @@ class ProductMapper:
         digest = hashlib.sha1(f"{company_part}|{name_part}".encode("utf-8")).hexdigest()[:12].upper()
         return f"{cls.RAW_KEY_PREFIX}|{digest}"
 
+    STATUS_MATCHED_ID = "MatchedByOdooProductID"
+    STATUS_MATCHED_NAME = "MatchedByCompanyAndName"
+    STATUS_UNMAPPED = "Unmapped"
+    UNMAPPED_STATUSES = {STATUS_UNMAPPED, "RawFromOdoo"}
+
     @staticmethod
     def attach(df_sales: DataFrame, product_master: DataFrame, odoo_products: Optional[DataFrame] = None) -> DataFrame:
+        """Attach PRODUCTS.xlsx attributes to Odoo lines on Company + normalized Odoo product name.
+
+        * Never matches across companies (see product_matching.py).
+        * If the master ever carries an OdooProductID column, an ID hit wins over the name.
+        * Never multiplies or drops rows: the master is unique per ProductMatchKey (enforced by
+          ProductMasterLoader.validate) and both merges are validate="m:1"; the row count is
+          re-checked before returning.
+        * Lines with no product get ProductMappingStatus "Unmapped" and a company-scoped
+          RAW_FROM_ODOO|<hash> key -- they stay in every fact.
+        `odoo_products` is accepted for backward compatibility and not used: Odoo catalog rows are
+        not the product master, so matching one would hide the line from the Unmapped list.
+        """
         if "product_name_clean" not in df_sales.columns:
             raise KeyError("product_name_clean missing. Run clean_product_names() first.")
 
         out = df_sales.copy()
+        rows_in = len(out)
         raw_odoo_name = ProductMapper._coalesce_text(
             out,
-            ["OdooProductName", "product_name_raw", "ProductNameRaw", "product_name", "ProductName", "product_name_clean"],
+            ["_odoo_name_raw", "OdooProductName", "product_name_raw", "ProductNameRaw", "product_name", "ProductName", "product_name_clean"],
         )
         odoo_names = TextUtils.product_name_frame(raw_odoo_name)
         out["OdooProductName"] = odoo_names["ProductNameRaw"]
         out["OdooProductNameClean"] = odoo_names["ProductNameClean"]
-        out["_odoo_product_name_key"] = TextUtils.clean_product_key_part(out["OdooProductNameClean"])
+        company_source = ProductMapper._coalesce_text(out, ["company", "Company", "company_final"])
+        out["ProductMatchKey"] = match_key_series(company_source, out["OdooProductName"])
 
-        pm = ProductDimensionBuilder().build(product_master, raw_odoo_products=odoo_products)
-        pm["IsActive"] = pm["IsActive"].fillna(1).astype(int)
+        pm = ProductMapper._master_bridge(product_master)
         bridge_columns = [
-            "ProductKey", "ProductName", "ProductNameClean", "OdooProductID", "OdooProductName",
-            "OdooProductNameClean", "SKU", "Size", "ProductLevel", "Company",
+            "ProductKey", "ProductName", "ProductNameClean", "SKU", "Size", "ProductLevel", "Company",
+            "Category", "Brand", "SubBrand", "Family", "IsActive",
         ]
-        pm = DataFrameUtils.ensure_columns(pm, bridge_columns)
         out["OdooProductID"] = pd.to_numeric(out.get("OdooProductID", pd.Series(pd.NA, index=out.index)), errors="coerce").astype("Int64")
-        pm["OdooProductID"] = pd.to_numeric(pm["OdooProductID"], errors="coerce").astype("Int64")
-        pm["_odoo_product_name_key"] = TextUtils.clean_product_key_part(pm["OdooProductNameClean"])
-        pm["_odoo_product_id_key"] = pm["OdooProductID"].astype("string").fillna("")
-        out["_odoo_product_id_key"] = out["OdooProductID"].astype("string").fillna("")
-
-        def make_bridge(key: str) -> DataFrame:
-            bridge = pm[pm[key].astype("string").str.strip().ne("")].copy()
-            bridge = (
-                bridge[bridge_columns + [key, "IsActive"]]
-                .sort_values([key, "IsActive", "ProductKey"], ascending=[True, False, True], na_position="last")
-                .drop_duplicates(subset=[key], keep="first")
-            )
-            return bridge.rename(columns={column: f"_mapped_{column}" for column in bridge_columns})
-
-        primary = make_bridge("_odoo_product_id_key")
-        out = out.merge(
-            primary.drop(columns=["IsActive"], errors="ignore"),
-            on="_odoo_product_id_key",
-            how="left",
-            validate="m:1",
-        )
         out["ProductMappingStatus"] = pd.Series(pd.NA, index=out.index, dtype="string")
-        primary_matched = out["_mapped_ProductKey"].notna()
-        out.loc[primary_matched, "ProductMappingStatus"] = "MatchedByOdooProductID"
+        for column in bridge_columns:
+            out[f"_mapped_{column}"] = pd.NA
 
-        name_lookup = make_bridge("_odoo_product_name_key")
-        need_name_match = out["_mapped_ProductKey"].isna()
-        if need_name_match.any():
-            name_candidate = out.loc[need_name_match, ["_odoo_product_name_key"]].merge(
-                name_lookup.drop(columns=["IsActive"], errors="ignore"),
-                on="_odoo_product_name_key",
-                how="left",
-                validate="m:1",
-            )
-            name_candidate.index = out.index[need_name_match]
-            name_hit = name_candidate["_mapped_ProductKey"].notna()
-            if name_hit.any():
-                hit_index = name_candidate.index[name_hit]
-                for column in bridge_columns:
-                    out.loc[hit_index, f"_mapped_{column}"] = name_candidate.loc[name_hit, f"_mapped_{column}"].to_numpy()
-                out.loc[hit_index, "ProductMappingStatus"] = "MatchedByOdooProductName"
+        # 1) OdooProductID -> master row (only when the sheet carries IDs; unused today).
+        with_id = pm[pm["OdooProductID"].notna()]
+        if not with_id.empty and out["OdooProductID"].notna().any():
+            id_bridge = with_id.drop_duplicates("OdooProductID")[["OdooProductID", *bridge_columns]]
+            hit = out[["OdooProductID"]].merge(id_bridge, on="OdooProductID", how="left", validate="m:1")
+            hit.index = out.index
+            matched_id = hit["ProductKey"].notna()
+            for column in bridge_columns:
+                out.loc[matched_id, f"_mapped_{column}"] = hit.loc[matched_id, column]
+            out.loc[matched_id, "ProductMappingStatus"] = ProductMapper.STATUS_MATCHED_ID
 
-        matched = out["_mapped_ProductKey"].notna()
-        raw_display = out["OdooProductName"].apply(TextUtils.normalize_product_display)
+        # 2) Company + normalized name.
+        need = out["ProductMappingStatus"].isna()
+        if need.any():
+            name_bridge = pm[["ProductMatchKey", *bridge_columns]]
+            hit = out.loc[need, ["ProductMatchKey"]].merge(name_bridge, on="ProductMatchKey", how="left", validate="m:1")
+            hit.index = out.index[need]
+            matched_name = hit["ProductKey"].notna()
+            idx = hit.index[matched_name]
+            for column in bridge_columns:
+                out.loc[idx, f"_mapped_{column}"] = hit.loc[matched_name, column].to_numpy()
+            out.loc[idx, "ProductMappingStatus"] = ProductMapper.STATUS_MATCHED_NAME
+
+        matched = out["ProductMappingStatus"].notna()
+        stripped = out["OdooProductName"].astype("string").str.replace(r"^\s*\[[^\]]*\]\s*", "", regex=True)
+        raw_display = stripped.apply(TextUtils.normalize_product_display)
         raw_clean = raw_display.apply(TextUtils.normalize_product_clean)
-        company_source = out["company"] if "company" in out.columns else out.get("Company", pd.Series(pd.NA, index=out.index))
         raw_keys = [
             ProductMapper._raw_product_key(company, clean_name)
-            for company, clean_name in zip(company_source, raw_clean)
+            for company, clean_name in zip(company_source.map(normalize_match_company), raw_clean)
         ]
 
-        out["ProductKey"] = out["_mapped_ProductKey"].where(matched, pd.Series(raw_keys, index=out.index, dtype="string"))
+        out["ProductKey"] = out["_mapped_ProductKey"].where(matched, pd.Series(raw_keys, index=out.index, dtype="string")).astype("string")
         out["ProductName"] = out["_mapped_ProductName"].where(matched, raw_display)
         out["ProductNameClean"] = out["_mapped_ProductNameClean"].where(matched, raw_clean)
         out["product_name"] = out["ProductName"]
         out["product_name_clean"] = out["ProductNameClean"]
         out["ProductNameRaw"] = out["ProductName"]
-        out["SKU"] = out["_mapped_SKU"].where(matched, pd.NA)
-        out["Size"] = out["_mapped_Size"].where(matched, pd.NA)
-        out["ProductLevel"] = out["_mapped_ProductLevel"].where(matched, pd.NA)
-        out["ProductMappingStatus"] = out["ProductMappingStatus"].fillna("RawFromOdoo")
+        for column in ["SKU", "Size", "ProductLevel", "Category", "Brand", "SubBrand", "Family"]:
+            out[column] = out[f"_mapped_{column}"].where(matched, pd.NA)
+        out["ProductIsActive"] = pd.to_numeric(out["_mapped_IsActive"], errors="coerce").where(matched, pd.NA).astype("Int64")
+        out["ProductMappingStatus"] = out["ProductMappingStatus"].fillna(ProductMapper.STATUS_UNMAPPED)
+        out["IsMappedProduct"] = matched
         out["ProductMappingReason"] = np.select(
             [
-                out["ProductMappingStatus"].eq("MatchedByOdooProductID"),
-                out["ProductMappingStatus"].eq("MatchedByOdooProductName"),
+                out["ProductMappingStatus"].eq(ProductMapper.STATUS_MATCHED_ID),
+                out["ProductMappingStatus"].eq(ProductMapper.STATUS_MATCHED_NAME),
             ],
             [
-                "Matched Odoo product_id to Dim_Product[OdooProductID]",
-                "Matched Odoo normalized product name to Dim_Product[OdooProductNameClean]",
+                "Matched Odoo product_id to PRODUCTS.xlsx[OdooProductID]",
+                "Matched Company + normalized Odoo product name to PRODUCTS.xlsx",
             ],
-            default="Loaded directly from Odoo product data",
+            default="No PRODUCTS.xlsx row for this Company + Odoo product name",
         )
-        out["ProductJoinKey"] = out["_mapped_SKU"].where(matched, out["ProductKey"]).astype("string")
-        return out.drop(
-            columns=[
-                "_odoo_product_id_key",
-                "_odoo_product_name_key",
-                *[f"_mapped_{column}" for column in bridge_columns],
-            ],
-            errors="ignore",
-        )
+        out["ProductJoinKey"] = out["_mapped_SKU"].where(matched & out["_mapped_SKU"].notna(), out["ProductKey"]).astype("string")
+        out = out.drop(columns=[f"_mapped_{column}" for column in bridge_columns], errors="ignore")
+        if len(out) != rows_in:
+            raise AssertionError(f"ProductMapper.attach changed the row count ({rows_in} -> {len(out)})")
+        return out
+
+    @staticmethod
+    def _master_bridge(product_master: DataFrame) -> DataFrame:
+        """Master rows keyed by ProductMatchKey, with the same unique ProductKey Dim_Product uses."""
+        pm = ProductDimensionBuilder().build(product_master)
+        pm = pm[pm["ProductSource"].eq(ProductDimensionBuilder.PRODUCT_SOURCE_INPUT)].copy()
+        pm = DataFrameUtils.ensure_columns(pm, ["ProductMatchKey", "OdooProductID", "IsActive"])
+        pm["OdooProductID"] = pd.to_numeric(pm["OdooProductID"], errors="coerce").astype("Int64")
+        pm["IsActive"] = pd.to_numeric(pm["IsActive"], errors="coerce").fillna(1).astype(int)
+        if pm["ProductMatchKey"].duplicated().any():
+            dups = pm.loc[pm["ProductMatchKey"].duplicated(keep=False), "ProductMatchKey"].unique().tolist()
+            raise ProductMasterValidationError("Product master has duplicate Company + OdooProductName keys", dups)
+        return pm
 
 class SalesOrgEnricher:
     def __init__(self, sales_org: SalesOrgMaps) -> None:
@@ -1362,14 +1484,14 @@ class CompanyDimensionBuilder:
 class ProductDimensionBuilder:
     PRODUCT_SOURCE_INPUT = "Input Master"
     PRODUCT_SOURCE_ODOO = "Odoo"
-    PRODUCT_SOURCE_UNMAPPED = PRODUCT_SOURCE_ODOO
+    PRODUCT_SOURCE_UNMAPPED = "Unmapped Odoo"
     COLUMNS = [
         "ProductKey", "Company", "Category", "Brand", "SubBrand", "Family",
         "OdooProductID", "OdooProductTemplateID",
         "ProductNameRaw", "ProductName", "ProductNameClean", "OdooProductName",
         "OdooProductNameClean", "ProductLevel", "SKU", "Size", "IsActive",
         "ProductMappingStatus", "ProductMappingReason", "ProductSource",
-        "IsMappedProduct",
+        "IsMappedProduct", "ProductMatchKey", "SheetProductKey",
     ]
 
     def build(
@@ -1381,10 +1503,18 @@ class ProductDimensionBuilder:
         # Preserve manual product rows for enrichment, then append every product
         # received from Odoo so the product dimension is not gated by PRODUCTS.xlsx.
         pm = product_master.copy()
-        pm = DataFrameUtils.ensure_columns(pm, ["ProductName"])
+        pm = DataFrameUtils.ensure_columns(pm, ["ProductName", "OdooProductName", "Company", "SheetProductKey"])
+        # A blank ProductName is a missing display label, not a reason to drop the product (that
+        # would push its sales into Unmapped): fall back to the Odoo name.
+        blank_name = pm["ProductName"].astype("string").str.strip().replace("", pd.NA).isna()
+        pm.loc[blank_name, "ProductName"] = pm.loc[blank_name, "OdooProductName"]
         valid_product = pm["ProductName"].astype("string").str.strip().replace("", pd.NA).notna()
-        pm = ProductKeyUtils.ensure_unique(pm.loc[valid_product].reset_index(drop=True))
+        pm = pm.loc[valid_product].reset_index(drop=True)
+        pm["SheetProductKey"] = pm["SheetProductKey"].where(pm["SheetProductKey"].notna(), pm.get("ProductKey"))
+        pm = ProductKeyUtils.ensure_unique(pm)
         pm = DataFrameUtils.ensure_columns(pm, ["OdooProductName", "ProductName", *self.COLUMNS])
+        pm["Company"] = pm["Company"].map(lambda v: normalize_match_company(v) or pd.NA)
+        pm["ProductMatchKey"] = match_key_series(pm["Company"], pm["OdooProductName"])
         names = TextUtils.product_name_frame(pm["ProductName"])
         pm["ProductNameRaw"] = names["ProductNameRaw"]
         pm["ProductName"] = names["ProductName"]
@@ -1405,16 +1535,16 @@ class ProductDimensionBuilder:
         odoo_catalog = self._odoo_catalog_rows(raw_odoo_products)
         if not odoo_catalog.empty:
             existing_ids = set(pd.to_numeric(out["OdooProductID"], errors="coerce").dropna().astype("Int64").astype("string"))
-            existing_names = set(TextUtils.clean_product_key_part(out["OdooProductNameClean"]))
+            existing_keys = set(out["ProductMatchKey"].dropna().astype(str))
             catalog = odoo_catalog[
                 ~odoo_catalog["OdooProductID"].astype("string").isin(existing_ids)
-                & ~TextUtils.clean_product_key_part(odoo_catalog["OdooProductNameClean"]).isin(existing_names)
+                & ~odoo_catalog["ProductMatchKey"].astype(str).isin(existing_keys)
             ].copy()
             if not catalog.empty:
                 out = pd.concat([out, catalog[self.COLUMNS]], ignore_index=True)
 
         if raw_sales is not None and not raw_sales.empty and "ProductMappingStatus" in raw_sales.columns:
-            raw = raw_sales[raw_sales["ProductMappingStatus"].astype("string").eq("RawFromOdoo")].copy()
+            raw = raw_sales[raw_sales["ProductMappingStatus"].astype("string").isin(ProductMapper.UNMAPPED_STATUSES)].copy()
             if not raw.empty:
                 raw = DataFrameUtils.ensure_columns(raw, self.COLUMNS)
                 company_fallback = (
@@ -1439,7 +1569,7 @@ class ProductDimensionBuilder:
                 raw["ProductName"] = raw["OdooProductName"].apply(TextUtils.normalize_product_display)
                 raw["ProductNameClean"] = raw["ProductName"].apply(TextUtils.normalize_product_clean)
                 raw["OdooProductNameClean"] = raw["OdooProductName"].apply(TextUtils.normalize_product_clean)
-                raw["ProductMappingStatus"] = "RawFromOdoo"
+                raw["ProductMappingStatus"] = ProductMapper.STATUS_UNMAPPED
                 raw["ProductMappingReason"] = raw["ProductMappingReason"].where(
                     raw["ProductMappingReason"].astype("string").str.strip().replace("", pd.NA).notna(),
                     "Loaded directly from Odoo sales data",
@@ -1449,8 +1579,10 @@ class ProductDimensionBuilder:
                 raw["OdooProductID"] = pd.to_numeric(raw["OdooProductID"], errors="coerce").astype("Int64")
                 raw["OdooProductTemplateID"] = pd.NA
                 raw["IsActive"] = 0
-                raw["ProductSource"] = self.PRODUCT_SOURCE_ODOO
+                raw["ProductSource"] = self.PRODUCT_SOURCE_UNMAPPED
                 raw["IsMappedProduct"] = False
+                raw["ProductMatchKey"] = match_key_series(raw["Company"], raw["OdooProductName"])
+                raw["SheetProductKey"] = pd.NA
                 raw = (
                     raw[self.COLUMNS]
                     .dropna(subset=["ProductKey"])
@@ -1502,7 +1634,9 @@ class ProductDimensionBuilder:
         out["ProductMappingStatus"] = "OdooProduct"
         out["ProductMappingReason"] = "Loaded directly from Odoo product.product"
         out["ProductSource"] = cls.PRODUCT_SOURCE_ODOO
-        out["IsMappedProduct"] = True
+        out["IsMappedProduct"] = False
+        out["ProductMatchKey"] = match_key_series(out["Company"], raw_name)
+        out["SheetProductKey"] = pd.NA
         return out.dropna(subset=["ProductKey"])[cls.COLUMNS].drop_duplicates("ProductKey", keep="first").reset_index(drop=True)
 
 
@@ -1530,7 +1664,10 @@ class ProductCostDimensionBuilder:
         out["OdooProductTemplateID"] = pd.to_numeric(
             raw.get("product_tmpl_id_id", raw.get("product_tmpl_id")), errors="coerce"
         ).astype("Int64")
-        out["Company"] = raw.get("company_id", pd.Series(pd.NA, index=raw.index))
+        # Company = the company whose standard cost this row carries (see ProductCostRepository);
+        # falls back to the product's own company for extracts made before costs were read per company.
+        cost_company = raw["cost_company"] if "cost_company" in raw.columns else pd.Series(pd.NA, index=raw.index)
+        out["Company"] = cost_company.where(cost_company.notna(), raw.get("company_id", pd.Series(pd.NA, index=raw.index)))
         raw_name = raw["display_name"].astype("string").fillna(raw["name"])
         names = TextUtils.product_name_frame(raw_name)
         out["ProductNameRaw"] = names["ProductNameRaw"]
@@ -1708,7 +1845,12 @@ class ProductActiveFlagReconciler:
                 updated += 1
 
         if updated:
-            wb.save(path)
+            try:
+                wb.save(path)
+            except OSError as exc:
+                # e.g. [Errno 30] read-only input mount -- the 2026-09-29 11:09 failure. Never fail a run for this.
+                logger.warn(f"PRODUCTS.xlsx IsActive write-back skipped ({exc}); dashboard data is unaffected")
+                return
             logger.ok(f"PRODUCTS.xlsx IsActive refreshed on disk: {updated} cell(s) updated ({path})")
 
 
@@ -1769,6 +1911,7 @@ class ProductCostMatcher:
 
         matched = pd.Series(False, index=out.index)
         match_specs = [
+            (["_id_key", "_company_key"], "ID_COMPANY"),
             (["_id_key"], "ID"),
             (["_sku_key", "_company_key"], "SKU_COMPANY"),
             (["_sku_key"], "SKU"),
@@ -2525,6 +2668,12 @@ class SalesLinesFactBuilder:
         "ProductNameClean",
         "ProductMappingStatus",
         "ProductMappingReason",
+        "ProductMatchKey",
+        "IsMappedProduct",
+        "Category",
+        "Brand",
+        "SubBrand",
+        "Family",
         "is_discount",
 
         "quantity",
@@ -2532,6 +2681,15 @@ class SalesLinesFactBuilder:
         "line_total",
         "Value",
         "untaxed_total",
+        "qty_ordered",
+        "qty_delivered",
+        "uom",
+        "uom_id",
+
+        "SaleReportLineID",
+        "OdooOrderID",
+        "OdooPartnerID",
+        "IsIntercompany",
 
         "invoice_status",
         "order_state",
@@ -2907,7 +3065,7 @@ class QAService:
             cls.UNMAPPED_PRODUCT_COLUMNS
             + ["ProductMappingReason", "ProductName", "company_final", "company", "order_date_date"],
         )
-        out = out[out["ProductMappingStatus"].astype("string").eq("RawFromOdoo")].copy()
+        out = out[out["ProductMappingStatus"].astype("string").isin(ProductMapper.UNMAPPED_STATUSES)].copy()
         if out.empty:
             return pd.DataFrame(columns=cls.UNMAPPED_PRODUCT_COLUMNS)
         if "Company" not in out.columns and "company_final" in out.columns:

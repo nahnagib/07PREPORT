@@ -5,8 +5,10 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { AppHeader } from '../../../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../../../components/BottomNavBar';
 import { PermissionGuard } from '../../../../../../components/AuthGuard';
+import { useFilterState } from '../../../../../../components/FilterProvider';
+import { ProductDataStatusBar, ProductRefreshFooter } from '../../../../../../components/ProductDataStatus';
 import { useAuth } from '../../../../../../lib/AuthProvider';
-import { useBrandPerformanceOverview } from '../../../../../../lib/hooks';
+import { useProductDashboard, useRefreshStatus } from '../../../../../../lib/hooks';
 import {
   Button,
   DataTable,
@@ -20,10 +22,12 @@ import {
   useCanExport,
 } from '@07ps/ui';
 import {
+  toProductFacts,
   fmtLYD,
   fmtNum,
   fmtPct,
-  getDisplayName,
+  fmtUomQty,
+  fmtVolume,
   filterByPageFilters,
   computeBrandStats,
   findPartnerBrandBySlug,
@@ -32,11 +36,10 @@ import {
   MOVEMENT_LABEL,
   type CompanyFilter,
   type FoundBrandStats,
+  type ProductFact,
 } from '../../../../../../lib/materialsAnalogy/shared';
-import type { BrandPerformanceFact } from '../../../../../../lib/api';
-import displayNamesRaw from '../../../../../../lib/materialsAnalogy/cleanProductNames.json';
 
-const displayNames = displayNamesRaw as Record<string, string>;
+type BrandPerformanceFact = ProductFact;
 
 // ---------------------------------------------------------------------------
 // Executive Summary -- `selected` (a FoundBrandStats) already carries everything needed; this is
@@ -47,47 +50,36 @@ const displayNames = displayNamesRaw as Record<string, string>;
 // ---------------------------------------------------------------------------
 
 function toExecutiveSummaryRows(selected: FoundBrandStats, productCount: number): PerformanceReportRow[] {
-  const skuVarianceLy = selected.skuCountLYTD > 0 ? (selected.skuCount - selected.skuCountLYTD) / selected.skuCountLYTD : null;
   return [
     {
-      id: 'revenueYtd',
-      metric: 'Revenue (YTD)',
-      actualLabel: fmtLYD(selected.revenueYTD),
+      id: 'revenue',
+      metric: 'Revenue (period)',
+      actualLabel: fmtLYD(selected.revenue),
       targetLabel: '—',
       variancePct: null,
-      varianceLyPct: selected.deltaPct / 100,
-      status: selected.deltaPct >= 0 ? 'success' : 'alert',
-      takeaway: `${selected.requested} revenue is ${fmtLYD(selected.revenueYTD)} YTD (${fmtPct(selected.deltaPct)} vs last year).`,
+      varianceLyPct: selected.deltaPct === null ? null : selected.deltaPct / 100,
+      status: selected.deltaPct === null ? 'neutral' : selected.deltaPct >= 0 ? 'success' : 'alert',
+      takeaway: `${selected.requested} revenue is ${fmtLYD(selected.revenue)} in the period${selected.deltaPct === null ? '' : ` (${fmtPct(selected.deltaPct)} vs same period last year)`}.`,
     },
     {
-      id: 'volumeYtd',
-      metric: 'Volume (YTD)',
-      actualLabel: `${fmtNum(selected.volumeYTD)} units`,
+      id: 'volume',
+      metric: 'Volume (period)',
+      actualLabel: fmtUomQty(selected.volumeByUom),
       targetLabel: '—',
       variancePct: null,
       varianceLyPct: null,
       status: 'neutral',
-      takeaway: `${fmtNum(selected.volumeYTD)} units sold YTD.`,
-    },
-    {
-      id: 'asp',
-      metric: 'ASP',
-      actualLabel: fmtLYD(selected.asp),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: `Average selling price is ${fmtLYD(selected.asp)}.`,
+      takeaway: `${fmtUomQty(selected.volumeByUom)} sold in the period (per unit of measure).`,
     },
     {
       id: 'grossProfit',
       metric: 'Gross Profit %',
-      actualLabel: `${selected.gp.toFixed(1)}%`,
+      actualLabel: selected.gp === null ? '—' : `${selected.gp.toFixed(1)}%`,
       targetLabel: '—',
       variancePct: null,
       varianceLyPct: null,
       status: 'neutral',
-      takeaway: `Gross profit margin is ${selected.gp.toFixed(1)}%.`,
+      takeaway: selected.gp === null ? 'No product of this brand has a standard cost in Odoo.' : `Revenue-weighted gross margin of costed products is ${selected.gp.toFixed(1)}%.`,
     },
     {
       id: 'skuCount',
@@ -95,9 +87,9 @@ function toExecutiveSummaryRows(selected: FoundBrandStats, productCount: number)
       actualLabel: fmtNum(selected.skuCount),
       targetLabel: '—',
       variancePct: null,
-      varianceLyPct: skuVarianceLy,
-      status: skuVarianceLy == null ? 'neutral' : skuVarianceLy < 0 ? 'alert' : 'success',
-      takeaway: `${fmtNum(selected.skuCount)} active SKUs${skuVarianceLy != null ? ` (${fmtPct(skuVarianceLy * 100)} vs last year)` : ''}, ${productCount} shown in the current view.`,
+      varianceLyPct: null,
+      status: 'neutral',
+      takeaway: `${fmtNum(selected.skuCount)} SKUs in PRODUCTS.xlsx, ${selected.skuSold} sold in the period, ${productCount} shown in the current view.`,
     },
   ];
 }
@@ -139,7 +131,7 @@ export default function BrandDrillDownPage() {
   const searchParams = useSearchParams();
   const { user, logout, token, error: authError, retryAuth } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
-  const [anchorDate, setAnchorDate] = useState('');
+  const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate } = useFilterState();
   const [companyFilter, setCompanyFilter] = useState<string>('All');
 
   const brandSlug = Array.isArray(params?.brand) ? params.brand[0] : params?.brand ?? '';
@@ -154,32 +146,27 @@ export default function BrandDrillDownPage() {
     [searchParams],
   );
 
-  const brandPerf = useBrandPerformanceOverview(token, authError, retryAuth);
-  const filtered = useMemo(
-    () => filterByPageFilters(brandPerf.data?.facts ?? [], urlFilters),
-    [brandPerf.data, urlFilters],
-  );
-  const { found } = useMemo(
-    () => computeBrandStats(filtered.map((f) => ({ ...f, perc_gross_profit_YTD: f.perc_gross_profit_YTD ?? 0 }))),
-    [filtered],
-  );
+  const brandPerf = useProductDashboard(token, authError, retryAuth, 'pim-contribution', { fromDate: dateFromDate, toDate: dateToDate });
+  const refresh = useRefreshStatus(token, authError, retryAuth);
+  const filtered = useMemo(() => filterByPageFilters(toProductFacts(brandPerf.data), urlFilters), [brandPerf.data, urlFilters]);
+  const { found } = useMemo(() => computeBrandStats(filtered), [filtered]);
   const selected = partnerBrand?.matched ? found.find((b) => b.matched === partnerBrand.matched) ?? null : null;
 
   const productRows = useMemo(() => {
     if (!selected) return [];
     return filtered
-      .filter((r) => r.Brand === selected.matched && (companyFilter === 'All' || r.Company === companyFilter))
-      .sort((a, b) => b.total_value_YTD - a.total_value_YTD);
+      .filter((r) => (r.Brand ?? '').toUpperCase() === selected.matched.toUpperCase() && (companyFilter === 'All' || r.Company === companyFilter))
+      .sort((a, b) => b.value - a.value);
   }, [filtered, selected, companyFilter]);
 
   const listRows: BrandProductRow[] = useMemo(() => {
-    const maxRev = Math.max(1, ...productRows.map((r) => r.total_value_YTD));
+    const maxRev = Math.max(1, ...productRows.map((r) => r.value));
     return productRows.map((r, i) => ({
-      id: `${r.ProductKey}-${i}`,
-      label: getDisplayName(displayNames, r),
-      revenueYTD: r.total_value_YTD,
-      volumeYTD: r.total_quantity_YTD,
-      barPct: (r.total_value_YTD / maxRev) * 100,
+      id: `${r.id}-${i}`,
+      label: r.ProductName,
+      revenueYTD: r.value,
+      volumeYTD: r.volume ?? 0,
+      barPct: (Math.max(0, r.value) / maxRev) * 100,
       fact: r,
     }));
   }, [productRows]);
@@ -190,7 +177,7 @@ export default function BrandDrillDownPage() {
       title: 'Brand Performance',
       subtitle: `${selected.requested}${companyFilter !== 'All' ? ` · ${companyFilter}` : ''} — ${productRows.length} product${productRows.length === 1 ? '' : 's'}`,
       columns: BRAND_PRODUCT_PDF_COLUMNS,
-      rows: productRows.map((r) => brandFactToPdfRow(r, getDisplayName(displayNames, r))),
+      rows: productRows.map((r) => brandFactToPdfRow(r, r.ProductName)),
       fileName: `brand-performance-${selected.matched.toLowerCase()}`,
     });
   };
@@ -201,14 +188,16 @@ export default function BrandDrillDownPage() {
         <AppHeader
           pageTitle={selected ? `Brand Performance — ${selected.requested}` : 'Brand Performance'}
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           roleLabel={roleLabel}
           onLogout={logout}
           showDateInput={false}
         />
 
+        <ProductDataStatusBar refresh={refresh.data} data={brandPerf.data} />
+
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
-          {brandPerf.loading ? (
+          {brandPerf.loading && !brandPerf.data ? (
             <LoadingSkeleton variant="chart" />
           ) : brandPerf.error ? (
             <ErrorState message={brandPerf.error} onRetry={brandPerf.retry} />
@@ -226,7 +215,7 @@ export default function BrandDrillDownPage() {
                 <PdfButton label="Export as PDF" onClick={handleExportPdf} />
               </div>
               <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 16 }}>
-                {selected.requested} product list, sorted by Revenue YTD · hover a row for full detail
+                {selected.requested} product list for the selected period, sorted by revenue · hover a row for full detail
               </div>
 
               <DrillBreadcrumb active={selected.requested} />
@@ -248,6 +237,7 @@ export default function BrandDrillDownPage() {
           )}
         </main>
 
+        <ProductRefreshFooter refresh={refresh.data} />
         <BottomNavBar active="PIM Contribution" />
       </div>
     </PermissionGuard>
@@ -294,8 +284,8 @@ const BRAND_PRODUCT_PDF_COLUMNS: PdfExportColumn[] = [
   { header: 'Company' },
   { header: 'BCG Class' },
   { header: 'Movement' },
-  { header: 'Revenue YTD', align: 'right' },
-  { header: 'Volume YTD', align: 'right' },
+  { header: 'Revenue (period)', align: 'right' },
+  { header: 'Volume (period)', align: 'right' },
   { header: 'ASP', align: 'right' },
   { header: 'GP%', align: 'right' },
   { header: 'Vol Growth', align: 'right' },
@@ -311,10 +301,10 @@ function brandFactToPdfRow(r: BrandPerformanceFact, displayName: string): string
     r.Company,
     r.bcg_class_YTD ?? '—',
     r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : '—',
-    fmtLYD(r.total_value_YTD),
-    fmtNum(r.total_quantity_YTD),
-    r.avg_unit_price_YTD === null ? '—' : fmtLYD(r.avg_unit_price_YTD),
-    r.perc_gross_profit_YTD === null ? '—' : `${r.perc_gross_profit_YTD.toFixed(1)}%`,
+    fmtLYD(r.value),
+    fmtVolume(r),
+    r.avgUnitPrice === null ? '—' : fmtLYD(r.avgUnitPrice),
+    r.grossProfitPct === null ? '—' : `${r.grossProfitPct.toFixed(1)}%`,
     r.quantity_growth_pct === null ? '—' : fmtPct(r.quantity_growth_pct),
   ];
 }
@@ -386,8 +376,8 @@ function BrandProductList({ rows }: { rows: BrandProductRow[] }) {
         </div>
       ),
     },
-    { key: 'volumeYTD', header: 'Volume YTD', align: 'right', render: (row) => <span>{fmtNum(row.volumeYTD)}</span> },
-    { key: 'revenueYTD', header: 'Revenue YTD', align: 'right', render: (row) => <span style={{ fontWeight: 600 }}>{fmtLYD(row.revenueYTD)}</span> },
+    { key: 'volumeYTD', header: 'Volume (period)', align: 'right', render: (row) => <span>{fmtVolume(row.fact)}</span> },
+    { key: 'revenueYTD', header: 'Revenue (period)', align: 'right', render: (row) => <span style={{ fontWeight: 600 }}>{fmtLYD(row.revenueYTD)}</span> },
   ];
 
   return (
@@ -431,14 +421,14 @@ function BrandRowTooltip({ fact, label }: { fact: BrandPerformanceFact; label: s
     >
       <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
       <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-        {fact.bcg_class_YTD && <Pill color={BCG_COLOR[fact.bcg_class_YTD]} label={fact.bcg_class_YTD} />}
+        {fact.bcg_class_YTD && <Pill color={BCG_COLOR[fact.bcg_class_YTD] ?? 'var(--ps-color-muted-text)'} label={fact.bcg_class_YTD} />}
         {fact.bcg_movement && <Pill color={MOVEMENT_COLOR[fact.bcg_movement]} label={MOVEMENT_LABEL[fact.bcg_movement]} />}
       </div>
       <TooltipRow label="Company" value={fact.Company} />
-      <TooltipRow label="Revenue YTD" value={fmtLYD(fact.total_value_YTD)} />
-      <TooltipRow label="Volume YTD" value={fmtNum(fact.total_quantity_YTD)} />
-      <TooltipRow label="ASP" value={fact.avg_unit_price_YTD === null ? '—' : fmtLYD(fact.avg_unit_price_YTD)} />
-      <TooltipRow label="GP%" value={fact.perc_gross_profit_YTD === null ? '—' : `${fact.perc_gross_profit_YTD.toFixed(1)}%`} />
+      <TooltipRow label="Revenue (period)" value={fmtLYD(fact.value)} />
+      <TooltipRow label="Volume (period)" value={fmtVolume(fact)} />
+      <TooltipRow label="ASP" value={fact.avgUnitPrice === null ? '—' : fmtLYD(fact.avgUnitPrice)} />
+      <TooltipRow label="GP%" value={fact.grossProfitPct === null ? 'no cost' : `${fact.grossProfitPct.toFixed(1)}%`} />
       <TooltipRow
         label="Vol Growth"
         value={fact.quantity_growth_pct === null ? '—' : fmtPct(fact.quantity_growth_pct)}

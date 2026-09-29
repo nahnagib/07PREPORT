@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Iterator
 
 import pandas as pd
 from sqlalchemy import Boolean, DateTime, Float, Text, create_engine, inspect, text
@@ -22,6 +23,9 @@ class StagingSyncResult:
     @property
     def total_changed(self) -> int:
         return sum(self.changed_counts.values())
+
+
+from sales_pipeline.export.database_exporter import SQL_INSERT_METHOD  # noqa: E402
 
 
 class StagingStore:
@@ -83,7 +87,7 @@ class StagingStore:
             if_exists="replace",
             index=False,
             chunksize=self.settings.db_chunksize,
-            method="multi",
+            method=SQL_INSERT_METHOD,
             dtype=self._dtype_map(clean),
         )
         self._ensure_mysql_table_charset(table_name)
@@ -108,7 +112,7 @@ class StagingStore:
             if_exists="replace",
             index=False,
             chunksize=self.settings.db_chunksize,
-            method="multi",
+            method=SQL_INSERT_METHOD,
             dtype=self._dtype_map(clean),
         )
         self._ensure_mysql_table_charset(temp_name)
@@ -150,6 +154,58 @@ class StagingStore:
     def read_table(self, table_name: str) -> pd.DataFrame:
         return pd.read_sql_table(self._database_table_name(table_name) or table_name, self.engine, schema=self.schema)
 
+    @contextmanager
+    def advisory_lock(self, name: str, timeout_seconds: int = 600) -> Iterator[None]:
+        """Server-side named lock so two pipeline processes never rewrite the same staging table at once
+        (concurrent delete-then-insert of one window is what duplicated sale.report rows)."""
+        if self.engine.dialect.name != "mysql":
+            yield
+            return
+        conn = self.engine.connect()
+        try:
+            acquired = conn.execute(text("SELECT GET_LOCK(:n, :t)"), {"n": name, "t": timeout_seconds}).scalar_one()
+            if acquired != 1:
+                raise RuntimeError(f"Could not acquire staging lock '{name}' within {timeout_seconds}s; another pipeline run is writing staging tables.")
+            try:
+                yield
+            finally:
+                conn.execute(text("SELECT RELEASE_LOCK(:n)"), {"n": name})
+        finally:
+            conn.close()
+
+    def replace_rows_for_orders(self, table_name: str, df: pd.DataFrame, order_col: str, key_col: str, order_ids: set[int]) -> int:
+        """Atomically delete every cached row of `order_ids` (and any row whose key is being re-inserted),
+        then insert `df`. One transaction: a crash or a concurrent reader never sees a half-replaced order."""
+        clean = self._clean_for_sql(df)
+        keys = [int(k) for k in pd.to_numeric(clean[key_col], errors="coerce").dropna().unique()] if not clean.empty else []
+        orders = sorted(int(o) for o in order_ids)
+        full_table = self._quoted_table_name(table_name)
+        quote = self.engine.dialect.identifier_preparer.quote
+        deleted = 0
+        with self.engine.begin() as conn:
+            for column, values in ((order_col, orders), (key_col, keys)):
+                for start in range(0, len(values), 1000):
+                    chunk = values[start:start + 1000]
+                    params = {f"v{i}": v for i, v in enumerate(chunk)}
+                    placeholders = ", ".join(f":v{i}" for i in range(len(chunk)))
+                    deleted += conn.execute(text(f"DELETE FROM {full_table} WHERE {quote(column)} IN ({placeholders})"), params).rowcount or 0
+            if not clean.empty:
+                clean.to_sql(
+                    self._database_table_name(table_name) or table_name,
+                    conn,
+                    schema=self.schema,
+                    if_exists="append",
+                    index=False,
+                    chunksize=self.settings.db_chunksize,
+                    method=SQL_INSERT_METHOD,
+                    dtype=self._dtype_map(clean),
+                )
+        self.logger.info("Staging order replace %s orders=%s deleted=%s inserted=%s", table_name, len(orders), deleted, len(clean))
+        return deleted
+
+    def has_columns(self, table_name: str, columns: list[str]) -> bool:
+        return all(self._table_has_column(table_name, column) for column in columns)
+
     def replace_date_window(self, table_name: str, df: pd.DataFrame, date_col: str, cutoff: datetime) -> None:
         """Replace a complete date window without reading/rebuilding the unchanged cache."""
         if not self.has_table(table_name):
@@ -173,7 +229,7 @@ class StagingStore:
                 if_exists="append",
                 index=False,
                 chunksize=self.settings.db_chunksize,
-                method="multi",
+                method=SQL_INSERT_METHOD,
                 dtype=self._dtype_map(clean),
             )
         self.logger.info("Staging date-window replace %s deleted=%s inserted=%s cutoff=%s", table_name, deleted, len(clean), cutoff)
@@ -304,9 +360,12 @@ class StagingStore:
     def _clean_for_sql(df: pd.DataFrame) -> pd.DataFrame:
         return DatabaseExporter._clean_for_sql(df)
 
-    @staticmethod
-    def _dtype_map(df: pd.DataFrame) -> dict[str, TypeEngine[Any]]:
-        return DatabaseExporter._dtype_map(df)
+    def _dtype_map(self, df: pd.DataFrame) -> dict[str, TypeEngine[Any]]:
+        # Dialect-aware like the fact tables. Without it every float column became MySQL FLOAT
+        # (single precision, ~7 significant digits): amounts in the sale.report cache were rounded
+        # (e.g. 302,747,262.83 summed back as 302,747,266.19) and incremental runs rebuilt the sales
+        # facts from those rounded values.
+        return DatabaseExporter._dtype_map(df, self.engine.dialect.name)
 
 
 def odoo_incremental_domain(since: datetime | None) -> list[Any]:

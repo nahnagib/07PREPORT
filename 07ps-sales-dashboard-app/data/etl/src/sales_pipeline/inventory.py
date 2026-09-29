@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from sales_pipeline.legacy_transform import DataFrameUtils, ProductMapper, TextUtils
+from sales_pipeline.product_matching import match_key_series
 from sales_pipeline.odoo.base_repository import OdooRepositoryBase, flatten_many2one_columns
 from sales_pipeline.odoo.client import OdooClient
 
@@ -64,6 +65,8 @@ FACT_INVENTORY_COLUMNS = [
     "DOH",
     "Avg_Daily_Sales",
     "Velocity_Class",
+    "ProductMatchKey",
+    "StockClass",
 ]
 
 QA_INVENTORY_COLUMNS = ["CheckName", "MetricValue", "Status", "Notes"]
@@ -150,6 +153,7 @@ class InventoryModelBuilder:
         companies: pd.DataFrame | None = None,
         include_qa: bool = True,
         product_sales_summary: pd.DataFrame | None = None,
+        stock_locations_config: dict[str, Any] | None = None,
     ) -> InventoryBuildResult:
         """
         product_sales_summary: optional DataFrame with columns [ProductKey, Avg_Daily_Sales].
@@ -182,6 +186,7 @@ class InventoryModelBuilder:
             validate="m:1",
         )
         internal_rows_count = len(inventory)
+        inventory["StockClass"] = self.classify_locations(inventory["WarehouseName"], stock_locations_config or {})
 
         product_lookup = self._product_lookup(product_raw)
         inventory = inventory.merge(
@@ -208,6 +213,28 @@ class InventoryModelBuilder:
             qa_unmapped_products=qa_unmapped,
             products_added_count=products_added_count,
             internal_rows_count=internal_rows_count,
+        )
+
+    STOCK_CLASS_FINISHED_GOODS = "FinishedGoods"
+    STOCK_CLASS_RAW_MATERIALS = "RawMaterials"
+    STOCK_CLASS_IN_TRANSIT = "InTransit"
+
+    @classmethod
+    def classify_locations(cls, warehouse_names: pd.Series, config: dict[str, Any]) -> pd.Series:
+        """Internal location -> FinishedGoods / RawMaterials / InTransit by warehouse name (config lists,
+        compared trimmed and case-insensitive). Anything not listed is finished goods."""
+        def names(key: str) -> set[str]:
+            return {str(v).strip().upper() for v in config.get(key, [])}
+
+        wh = warehouse_names.astype("string").fillna("").str.strip().str.upper()
+        return pd.Series(
+            np.select(
+                [wh.isin(names("raw_materials_warehouses")), wh.isin(names("in_transit_warehouses"))],
+                [cls.STOCK_CLASS_RAW_MATERIALS, cls.STOCK_CLASS_IN_TRANSIT],
+                default=cls.STOCK_CLASS_FINISHED_GOODS,
+            ),
+            index=warehouse_names.index,
+            dtype="string",
         )
 
     @staticmethod
@@ -344,15 +371,19 @@ class InventoryModelBuilder:
                 "ProductJoinKey",
             ],
         )
-        dim["_odoo_key"] = TextUtils.clean_product_key_part(dim["OdooProductNameClean"])
-        out["_odoo_key"] = TextUtils.clean_product_key_part(out["OdooProductNameClean"])
+        # Same rule as sales (product_matching.py): Company + normalized Odoo name, PRODUCTS.xlsx rows only.
+        dim = DataFrameUtils.ensure_columns(dim, ["ProductMatchKey", "ProductSource"])
+        dim = dim[dim["ProductSource"].astype("string").eq("Input Master")].copy()
+        dim["_odoo_key"] = dim["ProductMatchKey"].astype("string").fillna("")
+        out["_odoo_key"] = match_key_series(out["Company"], out["OdooProductName"])
+        out["ProductMatchKey"] = out["_odoo_key"]
 
         mapped = pd.Series(False, index=out.index)
-        bridge_columns = ["ProductKey", "ProductName", "ProductNameClean", "OdooProductName", "OdooProductNameClean", "SKU"]
+        bridge_columns = ["ProductKey", "ProductName", "ProductNameClean", "SKU"]
         out["ProductMappingStatus"] = pd.NA
         out["ProductMappingReason"] = pd.NA
         for key, status, reason in [
-            ("_odoo_key", "MatchedByOdooProductName", "Matched inventory Odoo product to Dim_Product[OdooProductNameClean]"),
+            ("_odoo_key", "MatchedByCompanyAndName", "Matched Company + normalized Odoo name to PRODUCTS.xlsx"),
         ]:
             lookup = (
                 dim.loc[dim[key].astype("string").str.strip().ne(""), bridge_columns + [key]]
@@ -442,6 +473,7 @@ class InventoryModelBuilder:
                 "ProductMappingReason": "No official PRODUCTS.xlsx match for inventory Odoo product name",
                 "ProductSource": "Unmapped Odoo",
                 "IsMappedProduct": False,
+                "ProductMatchKey": additions["ProductMatchKey"],
             }
         )
         return pd.concat([dim, rows], ignore_index=True).drop_duplicates("ProductKey", keep="first").reset_index(drop=True), len(rows)
@@ -512,6 +544,8 @@ class InventoryModelBuilder:
             "AvailableQty",
             "ProductCost",
             "OdooTotalValue",
+            "ProductMatchKey",
+            "StockClass",
         ]:
             out[column] = inventory[column] if column in inventory.columns else pd.NA
         out["InventoryValue"] = pd.to_numeric(out["OdooTotalValue"], errors="coerce")
@@ -530,64 +564,47 @@ class InventoryModelBuilder:
 
     @staticmethod
     def _attach_sales_summary(fact: pd.DataFrame, product_sales_summary: pd.DataFrame | None) -> pd.DataFrame:
-        """Join Avg_Daily_Sales, then calculate DOH from the inventory quantity."""
+        """Join Avg_Daily_Sales (per Company + product) and derive DOH = on-hand / avg daily sales.
+
+        No sales in the look-back window: Avg_Daily_Sales = 0 and DOH is left empty (infinite) --
+        it used to be written as 0, which made unsold stock look like a stock-out risk."""
         fact = fact.copy()
-        if product_sales_summary is None or product_sales_summary.empty:
+        key = "ProductMatchKey"
+        if product_sales_summary is None or product_sales_summary.empty or key not in product_sales_summary.columns:
             fact["Avg_Daily_Sales"] = 0.0
-            fact["DOH"] = 0.0
+            fact["DOH"] = np.nan
             return fact
-
-        summary = product_sales_summary.copy()
-        cols_needed = {"ProductKey", "Avg_Daily_Sales"}
-        for col in cols_needed - set(summary.columns):
-            summary[col] = pd.NA
-        summary = (
-            summary[list(cols_needed)]
-            .dropna(subset=["ProductKey"])
-            .drop_duplicates("ProductKey", keep="first")
-        )
-        summary["Avg_Daily_Sales"] = pd.to_numeric(summary["Avg_Daily_Sales"], errors="coerce")
-
-        merged = fact.merge(summary, on="ProductKey", how="left", validate="m:1")
+        summary = product_sales_summary[[key, "Avg_Daily_Sales"]].dropna(subset=[key]).drop_duplicates(key)
+        merged = fact[[key]].merge(summary, on=key, how="left", validate="m:1")
         merged.index = fact.index
         avg_daily_sales = pd.to_numeric(merged["Avg_Daily_Sales"], errors="coerce").fillna(0.0)
-        on_hand = pd.to_numeric(fact["OnHandQty"], errors="coerce").fillna(0.0)
+        on_hand = pd.to_numeric(fact["OnHandQty"], errors="coerce").fillna(0.0).clip(lower=0.0)
         fact["Avg_Daily_Sales"] = avg_daily_sales
-        fact["DOH"] = on_hand.div(avg_daily_sales).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        fact["DOH"] = on_hand.div(avg_daily_sales.where(avg_daily_sales > 0))
         return fact
 
     @staticmethod
-    def build_product_sales_summary(sales: pd.DataFrame) -> pd.DataFrame:
-        """Calculate average daily product sales from the already-filtered sales history."""
-        if sales is None or sales.empty:
-            return pd.DataFrame(columns=["ProductKey", "Avg_Daily_Sales"])
-        source_columns = set(sales.columns)
-        raw = DataFrameUtils.ensure_columns(
-            sales.copy(),
-            ["ProductKey", "order_date_date", "order_date", "Quantity", "Volume", "quantity"],
-        )
-        quantity_col = next((column for column in ["Quantity", "Volume", "quantity"] if column in source_columns), "quantity")
-        dates = pd.to_datetime(raw["order_date_date"], errors="coerce")
-        dates = dates.fillna(pd.to_datetime(raw["order_date"], errors="coerce")).dt.normalize()
-        work = pd.DataFrame(
-            {
-                "ProductKey": raw["ProductKey"].astype("string").str.strip().replace("", pd.NA),
-                "OrderDate": dates,
-                "Quantity": pd.to_numeric(raw[quantity_col], errors="coerce").fillna(0.0),
-            }
-        ).dropna(subset=["ProductKey", "OrderDate"])
+    def build_product_sales_summary(sales: pd.DataFrame, lookback_days: int = 90, as_of: Any = None) -> pd.DataFrame:
+        """Average daily invoiced quantity per Company + product over the last `lookback_days` days
+        (days elapsed, not days with sales)."""
+        columns = ["ProductMatchKey", "Avg_Daily_Sales"]
+        if sales is None or sales.empty or "ProductMatchKey" not in sales.columns:
+            return pd.DataFrame(columns=columns)
+        today = pd.Timestamp(as_of).normalize() if as_of is not None else pd.Timestamp.today().normalize()
+        start = today - pd.Timedelta(days=lookback_days - 1)
+        dates = pd.to_datetime(sales.get("order_date_date"), errors="coerce").dt.normalize()
+        quantity_col = next((c for c in ["quantity", "Volume", "Quantity"] if c in sales.columns), None)
+        if quantity_col is None:
+            return pd.DataFrame(columns=columns)
+        work = pd.DataFrame({
+            "ProductMatchKey": sales["ProductMatchKey"].astype("string"),
+            "Quantity": pd.to_numeric(sales[quantity_col], errors="coerce").fillna(0.0),
+        })[dates.between(start, today)]
         if work.empty:
-            return pd.DataFrame(columns=["ProductKey", "Avg_Daily_Sales"])
-        days = int((work["OrderDate"].max() - work["OrderDate"].min()).days) + 1
-        if days <= 0:
-            days = 1
-        summary = (
-            work.groupby("ProductKey", dropna=False, as_index=False)["Quantity"]
-            .sum()
-            .rename(columns={"Quantity": "_TotalSalesQty"})
-        )
-        summary["Avg_Daily_Sales"] = pd.to_numeric(summary["_TotalSalesQty"], errors="coerce").fillna(0.0).clip(lower=0.0) / float(days)
-        return summary[["ProductKey", "Avg_Daily_Sales"]]
+            return pd.DataFrame(columns=columns)
+        summary = work.groupby("ProductMatchKey", as_index=False)["Quantity"].sum()
+        summary["Avg_Daily_Sales"] = summary["Quantity"].clip(lower=0.0) / float(lookback_days)
+        return summary[columns]
 
     # DOH thresholds per company for Velocity_Class.
     # High Stock  : DOH > high_threshold
@@ -616,8 +633,10 @@ class InventoryModelBuilder:
         is_tika = company.eq("tika")
         is_majaal = company.eq("majaal")
 
+        on_hand = pd.to_numeric(out.get("OnHandQty"), errors="coerce").fillna(0.0)
         out["Velocity_Class"] = np.select(
             [
+                doh.isna() & on_hand.gt(0),
                 doh.isna(),
                 is_tika & doh.gt(tika_high),
                 is_tika & doh.lt(tika_low),
@@ -627,6 +646,7 @@ class InventoryModelBuilder:
                 is_majaal,
             ],
             [
+                "No Movement",
                 "Unknown",
                 "High Stock",
                 "Low Stock",

@@ -31,6 +31,8 @@ EXPECTED_PRODUCT_COLUMNS = [
     "Brand",
     "SubBrand",
     "Family",
+    "OdooProductID",
+    "OdooProductTemplateID",
     "ProductNameRaw",
     "ProductName",
     "ProductNameClean",
@@ -44,6 +46,8 @@ EXPECTED_PRODUCT_COLUMNS = [
     "ProductMappingReason",
     "ProductSource",
     "IsMappedProduct",
+    "ProductMatchKey",
+    "SheetProductKey",
 ]
 
 
@@ -108,25 +112,16 @@ def test_product_mapping_qa_reports_only_unmapped_odoo_products() -> None:
     assert result["Reason"].tolist() == ["raw"]
 
 
-def test_product_mapper_matches_only_odoo_name_and_keeps_unmapped_sparse() -> None:
+def test_product_mapper_matches_company_and_odoo_name_and_keeps_unmapped_sparse() -> None:
     sales = pd.DataFrame(
         [
-            {"product_name_raw": "Odoo Product One", "product_name_clean": "ODOO PRODUCT ONE"},
-            {"product_name_raw": "Unmapped Odoo Product", "product_name_clean": "UNMAPPED ODOO PRODUCT"},
+            {"product_name_raw": "Odoo Product One", "product_name_clean": "ODOO PRODUCT ONE", "company": "Majaal"},
+            {"product_name_raw": "Unmapped Odoo Product", "product_name_clean": "UNMAPPED ODOO PRODUCT", "company": "Majaal"},
         ]
     )
     product_master = pd.DataFrame(
-        [
-            {
-                "ProductKey": "P1",
-                "ProductName": "Official Product One",
-                "OdooProductName": "Odoo Product One",
-                "SKU": "SKU1",
-                "ProductLevel": "SKU",
-                "Company": "A",
-                "IsActive": 1,
-            }
-        ]
+        [{"ProductKey": "P1", "ProductName": "Official Product One", "OdooProductName": "Odoo Product One",
+          "SKU": "SKU1", "ProductLevel": "SKU", "Company": "Majaal", "IsActive": 1}]
     )
 
     result = ProductMapper.attach(sales, product_master)
@@ -134,66 +129,41 @@ def test_product_mapper_matches_only_odoo_name_and_keeps_unmapped_sparse() -> No
     assert result["ProductKey"].tolist()[0] == "P1"
     assert result["ProductName"].tolist()[0] == "Official Product One"
     assert result["product_name"].tolist()[0] == "Official Product One"
-    assert result["ProductMappingStatus"].tolist()[0] == "MatchedByOdooProductName"
+    assert result["ProductMappingStatus"].tolist()[0] == "MatchedByCompanyAndName"
     assert result["ProductKey"].tolist()[1].startswith("RAW_FROM_ODOO|")
-    assert result["ProductMappingStatus"].tolist()[1] == "RawFromOdoo"
+    assert result["ProductMappingStatus"].tolist()[1] == "Unmapped"
     assert pd.isna(result["SKU"].tolist()[1])
     assert pd.isna(result["ProductLevel"].tolist()[1])
 
 
 def test_product_mapper_does_not_match_official_product_name_fallback() -> None:
     sales = pd.DataFrame(
-        [{"product_name_raw": "Official Product One", "product_name_clean": "OFFICIAL PRODUCT ONE"}]
+        [{"product_name_raw": "Official Product One", "product_name_clean": "OFFICIAL PRODUCT ONE", "company": "Majaal"}]
     )
     product_master = pd.DataFrame(
-        [
-            {
-                "ProductKey": "P1",
-                "ProductName": "Official Product One",
-                "OdooProductName": "Different Odoo Alias",
-                "SKU": "SKU1",
-                "ProductLevel": "SKU",
-                "Company": "A",
-                "IsActive": 1,
-            }
-        ]
+        [{"ProductKey": "P1", "ProductName": "Official Product One", "OdooProductName": "Different Odoo Alias",
+          "SKU": "SKU1", "ProductLevel": "SKU", "Company": "Majaal", "IsActive": 1}]
     )
 
     result = ProductMapper.attach(sales, product_master)
 
-    assert result.loc[0, "ProductMappingStatus"] == "RawFromOdoo"
+    assert result.loc[0, "ProductMappingStatus"] == "Unmapped"
     assert result.loc[0, "ProductKey"].startswith("RAW_FROM_ODOO|")
 
 
 def test_product_mapper_uses_same_unique_keys_as_dimension_for_duplicate_manual_keys() -> None:
     product_master = pd.DataFrame(
         [
-            {
-                "ProductKey": "P1",
-                "ProductName": "Official One",
-                "OdooProductName": "Product One",
-                "Size": "",
-                "SKU": "SKU1",
-                "ProductLevel": "SKU",
-                "Company": "A",
-                "IsActive": 1,
-            },
-            {
-                "ProductKey": "P1",
-                "ProductName": "Official One Alias",
-                "OdooProductName": "Product One Alias",
-                "Size": "",
-                "SKU": "SKU1",
-                "ProductLevel": "SKU",
-                "Company": "A",
-                "IsActive": 1,
-            },
+            {"ProductKey": "P1", "ProductName": "Official One", "OdooProductName": "Product One", "Size": "",
+             "SKU": "SKU1", "ProductLevel": "SKU", "Company": "Majaal", "IsActive": 1},
+            {"ProductKey": "P1", "ProductName": "Official One Alias", "OdooProductName": "Product One Alias", "Size": "",
+             "SKU": "SKU1", "ProductLevel": "SKU", "Company": "Majaal", "IsActive": 1},
         ]
     )
     sales = pd.DataFrame(
         [
-            {"product_name_clean": "Product One", "size": ""},
-            {"product_name_clean": "Product One Alias", "size": ""},
+            {"product_name_clean": "Product One", "size": "", "company": "Majaal"},
+            {"product_name_clean": "Product One Alias", "size": "", "company": "Majaal"},
         ]
     )
 
@@ -202,6 +172,51 @@ def test_product_mapper_uses_same_unique_keys_as_dimension_for_duplicate_manual_
 
     assert dimension["ProductKey"].tolist() == ["P1", "P1|ROW|000002"]
     assert mapped["ProductKey"].tolist() == dimension["ProductKey"].tolist()
+
+
+def test_product_mapper_never_matches_across_companies() -> None:
+    """Tika "Cem Air" must never land on Majaal's "Cemair" (the 2026 CemAir bug)."""
+    product_master = pd.DataFrame(
+        [
+            {"ProductKey": "MJ", "ProductName": "Cemair", "OdooProductName": "Cemair", "Company": "Majaal", "IsActive": 1},
+            {"ProductKey": "TK", "ProductName": "CemAir", "OdooProductName": "Cem Air", "Company": "Tika", "IsActive": 1},
+            {"ProductKey": "SAME-MJ", "ProductName": "Grout", "OdooProductName": "Grout", "Company": "Majaal", "IsActive": 1},
+            {"ProductKey": "SAME-TK", "ProductName": "Grout", "OdooProductName": "Grout", "Company": "Tika", "IsActive": 1},
+        ]
+    )
+    sales = pd.DataFrame(
+        [
+            {"product_name_raw": "Cem Air", "product_name_clean": "CEM AIR", "company": "TIKA"},
+            {"product_name_raw": "Cemair", "product_name_clean": "CEMAIR", "company": "Majaal"},
+            {"product_name_raw": "Cemair", "product_name_clean": "CEMAIR", "company": "TIKA"},   # no Tika "Cemair" row
+            {"product_name_raw": "[GR-1]  Grout", "product_name_clean": "GROUT", "company": "TIKA"},
+            {"product_name_raw": "Grout ", "product_name_clean": "GROUT", "company": "Majaal"},
+        ]
+    )
+
+    result = ProductMapper.attach(sales, product_master)
+
+    assert result["ProductKey"].tolist()[:2] == ["TK", "MJ"]
+    assert result.loc[2, "ProductMappingStatus"] == "Unmapped"
+    assert result["ProductKey"].tolist()[3:] == ["SAME-TK", "SAME-MJ"]
+
+
+def test_product_join_never_multiplies_rows_or_totals() -> None:
+    product_master = pd.DataFrame(
+        [{"ProductKey": "K", "ProductName": f"P{i}", "OdooProductName": f"P{i}", "Company": c, "IsActive": 1}
+         for i in range(5) for c in ("Majaal", "Tika")]
+    )
+    sales = pd.DataFrame(
+        [{"product_name_raw": f"P{i % 7}", "product_name_clean": f"P{i % 7}", "company": ("Majaal", "TIKA")[i % 2],
+          "untaxed_total": float(i), "quantity": float(i % 3)} for i in range(200)]
+    )
+
+    result = ProductMapper.attach(sales, product_master)
+
+    assert len(result) == len(sales)
+    assert result["untaxed_total"].sum() == sales["untaxed_total"].sum()
+    assert result["quantity"].sum() == sales["quantity"].sum()
+    assert result["ProductKey"].notna().all()
 
 
 def test_dim_product_adds_sparse_unmapped_placeholders_for_fact_relationships() -> None:
@@ -493,8 +508,9 @@ def test_product_cost_matching_priority_and_missing_cost_classification() -> Non
 
     attached = ProductCostMatcher.attach(sales, costs)
     assert attached["product_cost"].tolist()[:3] == [6, 4, 3]
+    # ID + company first: standard_price is company-dependent in Odoo.
     assert attached["ProductCostMatchKey"].str.split(":").str[0].tolist()[:3] == [
-        "ID", "SKU_COMPANY", "NAME_COMPANY",
+        "ID_COMPANY", "SKU_COMPANY", "NAME_COMPANY",
     ]
 
     bcg = BCGMatrixBuilder.build(sales, costs, as_of_date="2026-06-10").set_index("ProductKey")

@@ -36,6 +36,12 @@ class SQLExportResult:
         return self.validation[~self.validation["Matches"]].copy()
 
 
+# pandas.to_sql(method="multi") makes SQLAlchemy compile one INSERT with rows x columns bind parameters
+# per chunk (~110k for the sale.report cache): ~53s per 10k rows on MySQL. None = the driver's own
+# batched executemany (SQLAlchemy "insertmanyvalues"): ~1.8s per 10k rows, same rows written.
+SQL_INSERT_METHOD = None
+
+
 class DatabaseExporter:
     RETIRED_FACT_TABLES = {"Fact_Pipeline", "Fact_PipelineFunnel", "Fact_PipelineEvents", "Fact_PipelineActivity"}
     STALE_CLEANUP_TABLES = {"Fact_Lead", "Fact_Opportunity"}
@@ -167,8 +173,12 @@ class DatabaseExporter:
             for table_name, df in tables.items():
                 table_started = time.perf_counter()
                 if table_name == "Fact_SalesLines":
-                    self._delete_insert_window(table_name, df, "order_date", cutoff)
-                    validation_rows.append(self._window_validation_row(table_name, df, "order_date", cutoff))
+                    # Whole-table replace when anything changed: every run re-derives ALL sales lines (product
+                    # mapping, cache corrections to old orders), so a recent-date window left historical rows
+                    # stale -- e.g. duplicates removed from the sale.report cache stayed in the fact forever.
+                    changed = self._write_table_if_changed(table_name, df)
+                    scope = "full_table_replaced" if changed else "full_table_unchanged_skipped"
+                    validation_rows.append(self._full_table_validation_row(table_name, df, load_mode="incremental", validation_scope=scope))
                 elif table_name == "Fact_Orders":
                     self._delete_insert_window(table_name, df, "OrderDateTime", cutoff, dedup_key="order_number")
                     self._delete_older_duplicate_rows_by_key(table_name, "order_number", "OrderDateTime")
@@ -248,6 +258,11 @@ class DatabaseExporter:
         "Fact_Orders": [
             ("ix_fo_orderdatetime", ("OrderDateTime",)),
             ("ix_fo_quotationdate", ("QuotationDate",)),
+        ],
+        "Fact_ProductSalesDaily": [
+            ("ix_fpsd_date", ("OrderDate",)),
+            ("ix_fpsd_company_date", ("CompanyKey", "OrderDate")),
+            ("ix_fpsd_salesperson", ("SalespersonKey",)),
         ],
     }
 
@@ -651,6 +666,7 @@ class DatabaseExporter:
             return 0
 
         temp_table = f"_tmp_keys_{uuid.uuid4().hex[:16]}"
+        self._created_temp_tables.add(temp_table)
         try:
             keys.to_sql(
                 temp_table,
@@ -659,9 +675,11 @@ class DatabaseExporter:
                 if_exists="replace",
                 index=False,
                 chunksize=self.settings.db_chunksize,
-                method="multi",
+                method=SQL_INSERT_METHOD,
                 dtype=self._temp_key_dtype(keys[key]),
             )
+            # to_sql just created this table; the cached table-name list predates it.
+            self._invalidate_table_name_cache()
             temp_name = self._quoted_table_name(temp_table)
             self._ensure_index_on_column(temp_table, key, unique=True)
             key_col = self.engine.dialect.identifier_preparer.quote(key)
@@ -698,7 +716,7 @@ class DatabaseExporter:
             )
             return int(deleted)
         finally:
-            self._drop_table_if_exists(temp_table)
+            self._drop_temp_table(temp_table)
 
     def _ensure_index_on_column(self, table_name: str, column_name: str, unique: bool = False) -> bool:
         if not self._table_exists(table_name):
@@ -921,7 +939,7 @@ class DatabaseExporter:
                 if_exists="replace",
                 index=False,
                 chunksize=self.settings.db_chunksize,
-                method="multi",
+                method=SQL_INSERT_METHOD,
                 dtype=dtype,
             )
             self._ensure_mysql_table_charset(table_name)
@@ -939,7 +957,7 @@ class DatabaseExporter:
             if_exists="append",
             index=False,
             chunksize=self.settings.db_chunksize,
-            method="multi",
+            method=SQL_INSERT_METHOD,
             dtype=dtype,
         )
         self._ensure_mysql_table_charset(table_name)
@@ -985,7 +1003,7 @@ class DatabaseExporter:
                 if_exists="append",
                 index=False,
                 chunksize=self.settings.db_chunksize,
-                method="multi",
+                method=SQL_INSERT_METHOD,
                 dtype=window_dtype,
             )
         self._log_mysql_tracked_column_types(table_name)
@@ -1163,7 +1181,7 @@ class DatabaseExporter:
             if_exists="append",
             index=False,
             chunksize=self.settings.db_chunksize,
-            method="multi",
+            method=SQL_INSERT_METHOD,
             dtype=dtype,
         )
         self.logger.info("Incremental SQL %s: deleted key rows=%s inserted/upserted rows=%s key=%s", table_name, deleted, len(clean), key)
@@ -1267,6 +1285,35 @@ class DatabaseExporter:
         preparer = self.engine.dialect.identifier_preparer
         with self.engine.begin() as conn:
             conn.execute(text(f"DROP TABLE IF EXISTS {preparer.quote(db_table_name)}"))
+
+    @property
+    def _created_temp_tables(self) -> set[str]:
+        # Lazily created: some callers/tests build the exporter without __init__.
+        if "_temp_tables" not in self.__dict__:
+            self.__dict__["_temp_tables"] = set()
+        return self.__dict__["_temp_tables"]
+
+    def _drop_temp_table(self, table_name: str) -> None:
+        """Drop a temp table by its exact name. _drop_table_if_exists resolves names through the cached
+        table list, which never contains a table created after the cache was filled -- so every
+        _tmp_keys_* table used to be left behind (1,012 of them by 2026-09-29)."""
+        preparer = self.engine.dialect.identifier_preparer
+        schema = self._effective_schema()
+        full = f"{preparer.quote_schema(schema)}.{preparer.quote(table_name)}" if schema else preparer.quote(table_name)
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(text(f"DROP TABLE IF EXISTS {full}"))
+            self._created_temp_tables.discard(table_name)
+        except Exception as exc:  # noqa: BLE001 - cleanup must never fail the load; drop_own_temp_tables retries
+            self.logger.warning("Could not drop temp table %s: %s", table_name, exc)
+        self._invalidate_table_name_cache()
+
+    def drop_own_temp_tables(self) -> int:
+        """End-of-run safety net: drop any temp table this exporter created that is still present."""
+        remaining = sorted(self._created_temp_tables)
+        for table_name in remaining:
+            self._drop_temp_table(table_name)
+        return len(remaining)
 
     def _drop_retired_fact_tables(self) -> None:
         for table_name in sorted(self.RETIRED_FACT_TABLES):

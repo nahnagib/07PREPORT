@@ -12,8 +12,7 @@ import { customerGrowthRouter } from './routes/customerGrowth';
 import { pipelineHealthRouter } from './routes/pipelineHealth';
 import { pipelineTrendRouter } from './routes/pipelineTrend';
 import { activityMomentumRouter } from './routes/activityMomentum';
-import { bcgMatrixRouter } from './routes/bcgMatrix';
-import { materialsAnalogyBrandPerformanceRouter } from './routes/materialsAnalogyBrandPerformance';
+import { PRODUCT_DASHBOARD_PAGES, productDashboardRouter } from './routes/productDashboard';
 import { authRouter } from './routes/auth';
 import { adminUsersRouter } from './routes/admin/users';
 import { adminImportRouter } from './routes/admin/import';
@@ -77,8 +76,9 @@ app.use('/customer-growth', customerGrowthRouter);
 app.use('/pipeline-health', pipelineHealthRouter);
 app.use('/pipeline-trend', pipelineTrendRouter);
 app.use('/activity-momentum', activityMomentumRouter);
-app.use('/bcg-matrix', bcgMatrixRouter);
-app.use('/pim-contribution', materialsAnalogyBrandPerformanceRouter);
+for (const [path, pageKey] of Object.entries(PRODUCT_DASHBOARD_PAGES)) {
+  app.use(`/product-dashboard/${path}`, productDashboardRouter(pageKey));
+}
 app.use('/auth', authRouter);
 app.use('/admin/users/import', adminImportRouter);
 app.use('/admin/users', adminUsersRouter);

@@ -163,7 +163,7 @@ def test_products_without_any_mapping_is_rejected(client, folders, monkeypatch):
     row["OdooProductName"] = [None]
     response = put(client, "PRODUCTS.xlsx", xlsx({"Sheet1": row}))
     assert response.status_code == 422
-    assert "0 OdooProductName" in response.get_json()["error"]
+    assert "OdooProductName is blank" in response.get_json()["error"]
 
 
 def test_upload_blocked_while_a_run_is_active(folders):

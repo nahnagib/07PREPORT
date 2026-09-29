@@ -4,13 +4,18 @@ import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
+import { useFilterState } from '../../../../components/FilterProvider';
+import { ProductDataStatusBar, ProductRefreshFooter } from '../../../../components/ProductDataStatus';
 import { useAuth } from '../../../../lib/AuthProvider';
+import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
 import {
   ChartPanel,
   KpiTile,
   Select,
   Button,
   GroupedBarChart,
+  LoadingSkeleton,
+  ErrorState,
   exportRowsAsPdf,
   PerformanceReportTable,
   exportPerformanceTablePdf,
@@ -23,23 +28,30 @@ import {
   useCanExport,
 } from '@07ps/ui';
 import {
-  FACTS,
-  stockBand,
+  toProductFacts,
+  isOverstocked,
   fmtLYD,
   fmtNum,
+  fmtVolume,
   median,
   sum,
   distinctSorted,
   BCG_COLOR,
   COMPANIES,
+  STOCK_BAND_LABEL,
   type CompanyFilter,
+  type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
 
-const BCG_CLASSES = ['Stars', 'Cash Cows', 'Strategic', 'Dogs'] as const;
-type BcgClass = (typeof BCG_CLASSES)[number];
+/** Class buckets for the Overstock / Stock-out charts: the 4 BCG classes, products sold YTD without a
+ * standard cost, and products with no sales this year (e.g. overstock that never sold). */
+const CLASS_BUCKETS = ['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Unclassified (no cost)', 'No sales YTD'] as const;
+type ClassBucket = (typeof CLASS_BUCKETS)[number];
+const bucketOf = (r: ProductFact): ClassBucket => (r.bcg_class_YTD ?? 'No sales YTD') as ClassBucket;
+const bucketColor = (b: ClassBucket) => BCG_COLOR[b] ?? 'var(--ps-color-neutral-text)';
 
-// Mirrors the on-screen PerformanceReportTable's default layout (Trend sparkline omitted -- it has
-// no text form), same shared exportPerformanceTablePdf used by the Promotion pages.
+type BandFilter = 'All' | 'Overstock' | 'Normal' | 'StockOutRisk';
+
 function pctLabel(v: number | null): string {
   return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
 }
@@ -53,22 +65,16 @@ const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
   { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
 ];
 
-// ---------------------------------------------------------------------------
-// Executive Summary -- this page has no prior-period comparison anywhere in its data model (every
-// figure is point-in-time), so each row reuses the exact same status its own KpiTile above already
-// shows (Overstocked=watch, Stock-Out Risk=alert, Fast Movers=success, the rest neutral) rather
-// than inventing a different read for the same number.
-// ---------------------------------------------------------------------------
-
 function toExecutiveSummaryRows(
-  avgDOH: number,
+  avgDOH: number | null,
   overCount: number,
   overValue: number,
   riskCount: number,
   riskValue: number,
   fastCount: number,
-  currentStockQty: number,
+  skusInStock: number,
   inventoryValue: number,
+  inTransitValue: number,
 ): PerformanceReportRow[] {
   const row = (id: string, metric: string, actualLabel: string, status: SemanticStatus, takeaway: string): PerformanceReportRow => ({
     id,
@@ -80,274 +86,212 @@ function toExecutiveSummaryRows(
     status,
     takeaway,
   });
-
   return [
-    row('avgDOH', 'Avg Days of Inventory', `${Math.round(avgDOH)} days`, 'neutral', `Portfolio-wide average is ${Math.round(avgDOH)} days of inventory on hand.`),
-    row(
-      'overstocked',
-      'Overstocked SKUs',
-      String(overCount),
-      'watch',
-      `${overCount} SKUs are overstocked, tying up ${fmtLYD(overValue)}.`,
-    ),
-    row(
-      'stockOutRisk',
-      'Stock-Out Risk SKUs',
-      String(riskCount),
-      'alert',
-      `${riskCount} SKUs are at stock-out risk, representing ${fmtLYD(riskValue)} of at-risk sales.`,
-    ),
-    row('fastMovers', 'Fast Movers (top velocity tercile)', String(fastCount), 'success', `${fastCount} SKUs are in the fastest-moving third of the portfolio.`),
-    row('currentStock', 'Current Stock', `${fmtNum(currentStockQty)} units`, 'neutral', `${fmtNum(currentStockQty)} units currently in stock.`),
-    row('inventoryValue', 'Inventory Value', fmtLYD(inventoryValue), 'neutral', `Current inventory is valued at ${fmtLYD(inventoryValue)}.`),
+    row('avgDOH', 'Avg Days of Inventory', avgDOH === null ? '—' : `${Math.round(avgDOH)} days`, 'neutral', avgDOH === null ? 'No product has both stock and sales in the look-back window.' : `Stock-value-weighted average of ${Math.round(avgDOH)} days on hand.`),
+    row('overstocked', 'Overstocked SKUs', String(overCount), 'watch', `${overCount} SKUs are overstocked or not moving, tying up ${fmtLYD(overValue)} at stock valuation.`),
+    row('stockOutRisk', 'Stock-Out Risk SKUs', String(riskCount), 'alert', `${riskCount} SKUs are at stock-out risk; they sold ${fmtLYD(riskValue)} in the period.`),
+    row('fastMovers', 'Fast Movers (top velocity tercile)', String(fastCount), 'success', `${fastCount} SKUs are in the fastest-moving third of products sold in the period.`),
+    row('inStock', 'SKUs in Stock', String(skusInStock), 'neutral', `${skusInStock} SKUs have finished-goods stock on hand.`),
+    row('inventoryValue', 'Inventory Value', fmtLYD(inventoryValue), 'neutral', `On-hand stock is valued at ${fmtLYD(inventoryValue)}; a further ${fmtLYD(inTransitValue)} is in transit.`),
   ];
 }
 
 /**
- * Materials Analogy module -- see lib/materialsAnalogy/shared.ts's header comment for why this
- * page renders against local synthetic data instead of a use*Overview hook. Shell/chrome
- * (AppHeader, Filters collapsible, ChartPanel, KpiTile, BottomNavBar, real @07ps/ui chart
- * components + design tokens) is identical to every other built report -- see Pipeline
- * Health's page.tsx for the pattern this mirrors.
- *
- * Redesign pass: every bar chart on this page used to plot one bar per product directly, which
- * doesn't scale past a couple dozen SKUs -- Y-axis labels overlapped into an unreadable smear.
- * All 3 charts now default to a small number of aggregate bars (2 for Fast/Slow Movers, up to 4
- * BCG-class bars for Overstock/Stock-Out Risk) and drill into the real product-level bar list on
- * click, same summary-then-drill convention PIM Contribution's donut already uses (see that
- * page's drillCategory state + breadcrumb pattern).
+ * Stock Velocity -- live data (useProductDashboard). Velocity = invoiced quantity in the selected period
+ * / days in the period; stock, days of inventory and the stock band are as of the last ETL run
+ * (finished-goods internal locations, 90-day look-back, company thresholds from the ETL config).
+ * Quantities are never added across units of measure: aggregate bars use LYD or SKU counts, and every
+ * per-product quantity carries its own unit.
  */
 export default function StockVelocityPage() {
-  const { user, logout } = useAuth();
+  const { user, token, error: authError, retryAuth, logout } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
-  const [anchorDate, setAnchorDate] = useState('');
+  const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
+  const overview = useProductDashboard(token, authError, retryAuth, 'stock-velocity', { fromDate: dateFromDate, toDate: dateToDate });
+  const refresh = useRefreshStatus(token, authError, retryAuth);
+  const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
 
   const [company, setCompany] = useState<CompanyFilter>('All');
   const [category, setCategory] = useState<string[]>([]);
-  const [band, setBand] = useState<'All' | 'Overstock' | 'Normal' | 'StockOutRisk'>('All');
+  const [band, setBand] = useState<BandFilter>('All');
 
-  // ---- Drill-down state, one per chart -- null means "showing the aggregate summary". ----
   const [moversDrill, setMoversDrill] = useState<'Fast' | 'Slow' | null>(null);
-  const [overstockDrill, setOverstockDrill] = useState<BcgClass | null>(null);
-  const [riskDrill, setRiskDrill] = useState<BcgClass | null>(null);
+  const [overstockDrill, setOverstockDrill] = useState<ClassBucket | null>(null);
+  const [riskDrill, setRiskDrill] = useState<ClassBucket | null>(null);
 
-  // ---- How many products a drilled-in chart shows before "Show more" -- same 20-then-+20
-  // convention as Product Lifecycle's table (see that page's `limit` state). Reset to the initial
-  // 20 whenever a *different* group is drilled into, so switching from one class to another
-  // doesn't inherit however far "Show more" had been clicked on the previous one. ----
   const DRILL_PAGE_SIZE = 20;
   const [moversLimit, setMoversLimit] = useState(DRILL_PAGE_SIZE);
   const [overstockLimit, setOverstockLimit] = useState(DRILL_PAGE_SIZE);
   const [riskLimit, setRiskLimit] = useState(DRILL_PAGE_SIZE);
-
-  /** Container height for a drilled-in per-product bar chart -- grows with the number of visible
-   * rows instead of squeezing an arbitrary number of products into a fixed height, which is what
-   * left product-name labels with almost no vertical space between rows and overlapping each
-   * other. */
   const drillChartHeight = (rowCount: number) => Math.max(280, rowCount * 34 + 40);
 
-  const withBand = useMemo(() => FACTS.map((r) => ({ ...r, _band: stockBand(r) })), []);
-
   const categoryOptions: SelectOption[] = useMemo(() => {
-    const pool = withBand.filter((r) => company === 'All' || r.Company === company);
+    const pool = facts.filter((r) => company === 'All' || r.Company === company);
     return distinctSorted(pool.map((r) => r.Category)).map((c) => ({ value: c, label: c }));
-  }, [withBand, company]);
+  }, [facts, company]);
 
-  const filtered = useMemo(() => {
-    return withBand.filter(
-      (r) =>
-        (company === 'All' || r.Company === company) &&
-        (category.length === 0 || category.includes(r.Category)) &&
-        (band === 'All' || r._band === band),
-    );
-  }, [withBand, company, category, band]);
+  const bandMatches = (r: ProductFact) =>
+    band === 'All' || (band === 'Overstock' ? isOverstocked(r) : band === 'Normal' ? r.stockBand === 'Normal' : r.stockBand === 'StockOutRisk');
 
-  // ---- KPIs (6 -- Current Stock and Inventory Value added this pass) ----
-  const totalVal = sum(filtered, (r) => r.total_value_YTD) || 1;
-  const avgDOH = sum(filtered, (r) => r.days_of_inventory * r.total_value_YTD) / totalVal;
-  const overRows = filtered.filter((r) => r._band === 'Overstock');
-  const riskRows = filtered.filter((r) => r._band === 'StockOutRisk');
-  const overValue = sum(overRows, (r) => r.current_stock_qty * r.avg_unit_price_YTD);
-  const riskValue = sum(riskRows, (r) => r.total_value_YTD);
-  const velocities = filtered.map((r) => r.avg_daily_sales_qty).sort((a, b) => a - b);
+  const filtered = useMemo(
+    () =>
+      facts.filter(
+        (r) => (company === 'All' || r.Company === company) && (category.length === 0 || (r.Category !== null && category.includes(r.Category))) && bandMatches(r),
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [facts, company, category, band],
+  );
+
+  // ---- KPIs ----
+  const withDoh = filtered.filter((r) => r.daysOfInventory !== null && r.stockValue > 0);
+  const dohWeight = sum(withDoh, (r) => r.stockValue);
+  const avgDOH = dohWeight > 0 ? sum(withDoh, (r) => (r.daysOfInventory as number) * r.stockValue) / dohWeight : null;
+  const overRows = filtered.filter(isOverstocked);
+  const riskRows = filtered.filter((r) => r.stockBand === 'StockOutRisk');
+  const overValue = sum(overRows, (r) => r.stockValue);
+  const riskValue = sum(riskRows, (r) => r.value);
+  const moving = filtered.filter((r) => r.velocity !== null && r.velocity > 0);
+  const velocities = moving.map((r) => r.velocity as number).sort((a, b) => a - b);
   const terc = velocities.length ? velocities[Math.floor((velocities.length * 2) / 3)] : 0;
-  const fastCount = filtered.filter((r) => r.avg_daily_sales_qty >= terc).length;
-  const currentStockQty = sum(filtered, (r) => r.current_stock_qty);
-  const inventoryValue = sum(filtered, (r) => r.current_stock_qty * r.avg_unit_price_YTD);
+  const fastCount = moving.filter((r) => (r.velocity as number) >= terc).length;
+  const skusInStock = filtered.filter((r) => r.stockQty > 0).length;
+  const inventoryValue = sum(filtered, (r) => r.stockValue);
+  const inTransitValue = sum(filtered, (r) => r.inTransitValue);
 
-  // ---- Fast vs Slow Movers ----
-  // Median velocity split, not the KPI card's top-tercile definition -- that stat is deliberately
-  // "top third by velocity" and stays self-contained; this chart needs every product sorted into
-  // exactly 2 non-overlapping groups, which a median split does cleanly (a tercile split leaves a
-  // middle third unaccounted for). The two numbers reading differently is expected, not a bug --
-  // labeled explicitly below so it doesn't read as one.
-  //
-  // Summary bars plot each group's AVERAGE avg_daily_sales_qty (units/day), not SKU count -- this
-  // is the Stock Velocity page, so the bar should say "how fast do these actually move", not "how
-  // many of them are there" (a group with more SKUs isn't necessarily the faster-moving one). The
-  // drilled-in view already plotted avg_daily_sales_qty per product; the summary now uses the same
-  // field, just averaged per group, so switching between the two views doesn't change units.
-  const velocityMedian = median(filtered.map((r) => r.avg_daily_sales_qty));
-  const fastRows = filtered.filter((r) => r.avg_daily_sales_qty >= velocityMedian);
-  const slowRows = filtered.filter((r) => r.avg_daily_sales_qty < velocityMedian);
-  const fastAvgVelocity = fastRows.length ? sum(fastRows, (r) => r.avg_daily_sales_qty) / fastRows.length : 0;
-  const slowAvgVelocity = slowRows.length ? sum(slowRows, (r) => r.avg_daily_sales_qty) / slowRows.length : 0;
+  // ---- Fast vs Slow Movers: median split of velocity over products that sold in the period (the
+  // existing rule). Summary bars show the value each group sold (LYD), not an average of unit
+  // velocities, because units differ between products. ----
+  const velocityMedian = median(moving.map((r) => r.velocity as number));
+  const fastRows = moving.filter((r) => (r.velocity as number) >= velocityMedian);
+  const slowRows = moving.filter((r) => (r.velocity as number) < velocityMedian);
   const moverSummaryPoints: GroupedBarChartPoint[] = [
-    { label: 'Fast Movers', fast: fastAvgVelocity, slow: null },
-    { label: 'Slow Movers', fast: null, slow: slowAvgVelocity },
+    { label: 'Fast Movers', fast: sum(fastRows, (r) => r.value), slow: null, _count: fastRows.length },
+    { label: 'Slow Movers', fast: null, slow: sum(slowRows, (r) => r.value), _count: slowRows.length },
   ];
   const moversDrillRowsAll =
     moversDrill === 'Fast'
-      ? [...fastRows].sort((a, b) => b.avg_daily_sales_qty - a.avg_daily_sales_qty)
+      ? [...fastRows].sort((a, b) => (b.velocity as number) - (a.velocity as number))
       : moversDrill === 'Slow'
-        ? [...slowRows].sort((a, b) => a.avg_daily_sales_qty - b.avg_daily_sales_qty)
+        ? [...slowRows].sort((a, b) => (a.velocity as number) - (b.velocity as number))
         : [];
   const moversDrillRows = moversDrillRowsAll.slice(0, moversLimit);
   const moversDrillPoints: GroupedBarChartPoint[] = moversDrillRows.map((r) => ({
     label: r.ProductName,
-    velocity: r.avg_daily_sales_qty,
-    _valueYTD: r.total_value_YTD,
-    _volumeYTD: r.total_quantity_YTD,
-    _class: r.bcg_class_YTD,
+    velocity: r.velocity as number,
+    _unit: r.uom ?? '',
+    _value: r.value,
+    _volume: fmtVolume(r),
+    _class: bucketOf(r),
   }));
 
-  // ---- Overstock: aggregate by BCG class (all 4, not just Strategic/Dogs -- a class with real
-  // overstock shouldn't be invisible just because it wasn't one of the two originally called out),
-  // sized by units currently in stock (current_stock_qty), not value tied up -- overstock is
-  // fundamentally a "too many units sitting here" problem, and this is the Stock Velocity page, so
-  // the volume dimension is what the chart leads with. `avg_unit_price_YTD` (and therefore the
-  // dollar figure) is still available in the tooltip/PDF export, just not the sort/bar metric
-  // anymore. Drill into a class shows its actual overstocked products, sorted by units descending
-  // so the bar lengths stay visually consistent with the sort order. ----
-  const overstockByClass = BCG_CLASSES.map((cls) => {
-    const rows = overRows.filter((r) => r.bcg_class_YTD === cls);
-    return { cls, rows, unitsInStock: sum(rows, (r) => r.current_stock_qty), count: rows.length };
+  // ---- Overstock by class: LYD tied up at stock valuation ----
+  const overstockByClass = CLASS_BUCKETS.map((cls) => {
+    const rows = overRows.filter((r) => bucketOf(r) === cls);
+    return { cls, rows, tiedUp: sum(rows, (r) => r.stockValue), count: rows.length };
   });
   const overstockSummaryPoints: GroupedBarChartPoint[] = overstockByClass
     .filter((c) => c.count > 0)
-    .map((c) => ({ label: c.cls, unitsInStock: c.unitsInStock, _count: c.count }));
+    .map((c) => ({ label: c.cls, tiedUp: c.tiedUp, _count: c.count }));
   const overstockDrillRowsAll = overstockDrill
-    ? [...(overstockByClass.find((c) => c.cls === overstockDrill)?.rows ?? [])].sort((a, b) => b.current_stock_qty - a.current_stock_qty)
+    ? [...(overstockByClass.find((c) => c.cls === overstockDrill)?.rows ?? [])].sort((a, b) => b.stockValue - a.stockValue)
     : [];
   const overstockDrillRows = overstockDrillRowsAll.slice(0, overstockLimit);
   const overstockDrillPoints: GroupedBarChartPoint[] = overstockDrillRows.map((r) => ({
     label: r.ProductName,
-    unitsInStock: r.current_stock_qty,
-    _valueYTD: r.total_value_YTD,
-    _volumeYTD: r.total_quantity_YTD,
-    _class: r.bcg_class_YTD,
+    tiedUp: r.stockValue,
+    _value: r.value,
+    _volume: fmtVolume(r),
+    _doh: r.daysOfInventory,
+    _class: bucketOf(r),
   }));
 
-  // ---- Stock-out risk: same class-aggregate-then-drill pattern. Volume at risk (total_quantity_YTD)
-  // now drives both the candidate filter (above-median VOLUME, not value) and the bar/sort metric,
-  // for the same reason as Overstock above -- this page's primary lens is volume. "Urgency" keeps
-  // its original shape (something / (DOH + 1), i.e. weighted by how little runway is left) but the
-  // numerator switches from dollars to units, so sort order and displayed bar length stay
-  // consistent with each other. ----
-  const medianVol = median(filtered.map((r) => r.total_quantity_YTD));
-  const riskCandidatesAll = riskRows.filter((r) => r.total_quantity_YTD > medianVol);
-  const riskByClass = BCG_CLASSES.map((cls) => {
-    const rows = riskCandidatesAll.filter((r) => r.bcg_class_YTD === cls);
-    return { cls, rows, volumeAtRisk: sum(rows, (r) => r.total_quantity_YTD), count: rows.length };
+  // ---- Stock-out risk: above-median period value, below-threshold days of inventory; urgency =
+  // value / (DOH + 1) ----
+  const medianValue = median(filtered.map((r) => r.value));
+  const riskCandidatesAll = riskRows.filter((r) => r.value > medianValue);
+  const riskByClass = CLASS_BUCKETS.map((cls) => {
+    const rows = riskCandidatesAll.filter((r) => bucketOf(r) === cls);
+    return { cls, rows, valueAtRisk: sum(rows, (r) => r.value), count: rows.length };
   });
   const riskSummaryPoints: GroupedBarChartPoint[] = riskByClass
     .filter((c) => c.count > 0)
-    .map((c) => ({ label: c.cls, volumeAtRisk: c.volumeAtRisk, _count: c.count }));
+    .map((c) => ({ label: c.cls, valueAtRisk: c.valueAtRisk, _count: c.count }));
+  const urgency = (r: ProductFact) => r.value / ((r.daysOfInventory ?? 0) + 1);
   const riskDrillRowsAll = riskDrill
-    ? (riskByClass.find((c) => c.cls === riskDrill)?.rows ?? [])
-        .map((r) => ({ ...r, _urgency: r.total_quantity_YTD / (r.days_of_inventory + 1) }))
-        .sort((a, b) => b._urgency - a._urgency)
+    ? [...(riskByClass.find((c) => c.cls === riskDrill)?.rows ?? [])].sort((a, b) => urgency(b) - urgency(a))
     : [];
   const riskDrillRows = riskDrillRowsAll.slice(0, riskLimit);
   const riskDrillPoints: GroupedBarChartPoint[] = riskDrillRows.map((r) => ({
     label: r.ProductName,
-    volumeAtRisk: r.total_quantity_YTD,
-    _valueYTD: r.total_value_YTD,
-    _volumeYTD: r.total_quantity_YTD,
-    _class: r.bcg_class_YTD,
+    valueAtRisk: r.value,
+    _value: r.value,
+    _volume: fmtVolume(r),
+    _doh: r.daysOfInventory,
+    _class: bucketOf(r),
   }));
 
+  const dohLabel = (r: ProductFact) => (r.daysOfInventory === null ? (r.stockQty > 0 ? 'no sales' : '—') : `${r.daysOfInventory.toFixed(0)}d`);
+
   const handleExportOverstockPdf = () => {
-    const rows = overstockDrill
-      ? overstockDrillRowsAll
-      : [...overRows].sort((a, b) => b.current_stock_qty - a.current_stock_qty);
+    const rows = overstockDrill ? overstockDrillRowsAll : [...overRows].sort((a, b) => b.stockValue - a.stockValue);
     exportRowsAsPdf({
       title: 'Overstock Products',
       subtitle: `${company} · ${overstockDrill ?? 'All Classes'}`,
-      columns: [
-        { header: 'Product' },
-        { header: 'BCG Class' },
-        { header: 'DOH', align: 'right' },
-        { header: 'Units in Stock', align: 'right' },
-      ],
-      rows: rows.map((r) => [r.ProductName, r.bcg_class_YTD, `${r.days_of_inventory.toFixed(0)}d`, fmtNum(r.current_stock_qty)]),
+      columns: [{ header: 'Product' }, { header: 'Company' }, { header: 'Class' }, { header: 'Band' }, { header: 'DOH', align: 'right' }, { header: 'Stock', align: 'right' }, { header: 'LYD tied up', align: 'right' }],
+      rows: rows.map((r) => [r.ProductName, r.Company, bucketOf(r), STOCK_BAND_LABEL[r.stockBand], dohLabel(r), `${fmtNum(r.stockQty)}${r.uom ? ` ${r.uom}` : ''}`, fmtLYD(r.stockValue)]),
       fileName: 'stock-velocity-overstock',
     });
   };
 
   const handleExportRiskPdf = () => {
-    const rows = riskDrill
-      ? riskDrillRowsAll
-      : riskCandidatesAll
-          .map((r) => ({ ...r, _urgency: r.total_quantity_YTD / (r.days_of_inventory + 1) }))
-          .sort((a, b) => b._urgency - a._urgency);
+    const rows = riskDrill ? riskDrillRowsAll : [...riskCandidatesAll].sort((a, b) => urgency(b) - urgency(a));
     exportRowsAsPdf({
       title: 'Stock-Out Risk',
       subtitle: `${company} · ${riskDrill ?? 'All Classes'}`,
-      columns: [{ header: 'Product' }, { header: 'BCG Class' }, { header: 'DOH', align: 'right' }, { header: 'Volume YTD', align: 'right' }],
-      rows: rows.map((r) => [r.ProductName, r.bcg_class_YTD, `${r.days_of_inventory.toFixed(0)}d`, fmtNum(r.total_quantity_YTD)]),
+      columns: [{ header: 'Product' }, { header: 'Company' }, { header: 'Class' }, { header: 'DOH', align: 'right' }, { header: 'Volume', align: 'right' }, { header: 'Value', align: 'right' }],
+      rows: rows.map((r) => [r.ProductName, r.Company, bucketOf(r), dohLabel(r), fmtVolume(r), fmtLYD(r.value)]),
       fileName: 'stock-velocity-risk',
     });
   };
 
-  // ---- Shared tooltip for every drilled-in product-level bar: the velocity/tied/at-risk metric
-  // the bar itself represents, plus Value YTD / Volume YTD / Class every drill-down needs. ----
-  const productDrillTooltip = (metricKey: string, metricLabel: string, metricFormatter: (v: number) => string) =>
-    (point: GroupedBarChartPoint) => {
-      const cls = point._class as BcgClass;
+  const productDrillTooltip = (metricKey: string, metricLabel: string, metricFormatter: (point: GroupedBarChartPoint) => string) =>
+    function ProductDrillTooltip(point: GroupedBarChartPoint) {
+      const cls = point._class as ClassBucket;
       return (
         <div
           style={{
             borderRadius: 10, border: '1px solid var(--ps-color-border)', fontSize: 12,
-            background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', padding: '10px 12px', minWidth: 170,
+            background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', padding: '10px 12px', minWidth: 190,
           }}
         >
           <div style={{ fontWeight: 700, marginBottom: 6 }}>{point.label}</div>
           <div style={{ marginBottom: 6 }}>
-            <Pill color={BCG_COLOR[cls]} label={cls} />
+            <Pill color={bucketColor(cls)} label={cls} />
           </div>
-          <TooltipRow label={metricLabel} value={metricFormatter(point[metricKey] as number)} />
-          <TooltipRow label="Value YTD" value={fmtLYD(point._valueYTD as number)} />
-          <TooltipRow label="Volume YTD" value={fmtNum(point._volumeYTD as number)} />
+          <TooltipRow label={metricLabel} value={metricFormatter(point)} />
+          <TooltipRow label="Value (period)" value={fmtLYD(point._value as number)} />
+          <TooltipRow label="Volume (period)" value={String(point._volume)} />
+          {metricKey !== 'velocity' ? <TooltipRow label="Days of inventory" value={point._doh === null || point._doh === undefined ? '—' : `${Number(point._doh).toFixed(0)}d`} /> : null}
         </div>
       );
     };
 
-  const performanceRows = toExecutiveSummaryRows(avgDOH, overRows.length, overValue, riskRows.length, riskValue, fastCount, currentStockQty, inventoryValue);
+  const performanceRows = toExecutiveSummaryRows(avgDOH, overRows.length, overValue, riskRows.length, riskValue, fastCount, skusInStock, inventoryValue, inTransitValue);
   async function handleExportPerformanceTablePdf() {
     try {
-      await exportPerformanceTablePdf({
-        title: 'Performance Details',
-        rows: performanceRows,
-        columns: PERFORMANCE_PDF_COLUMNS,
-        fileName: 'stock-velocity-performance-details',
-      });
+      await exportPerformanceTablePdf({ title: 'Performance Details', rows: performanceRows, columns: PERFORMANCE_PDF_COLUMNS, fileName: 'stock-velocity-performance-details' });
     } catch (err) {
       console.error('PDF export failed:', err);
     }
   }
 
+  const thresholds = overview.data?.thresholds.days_of_inventory;
+  const lookback = overview.data?.lookbackDays ?? 90;
+
   return (
     <PermissionGuard pageKey="stock_velocity">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
-        <AppHeader
-          pageTitle="Product Dashboard"
-          anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
-          roleLabel={roleLabel}
-          onLogout={logout}
-          showDateInput={false}
-        />
+        <AppHeader pageTitle="Product Dashboard" anchorDate={anchorDate} onAnchorDateChange={onAnchorDateChange} roleLabel={roleLabel} onLogout={logout} showDateInput={false} />
 
         <FilterBar
           onReset={() => {
@@ -356,7 +300,10 @@ export default function StockVelocityPage() {
             setBand('All');
           }}
           isPristine={company === 'All' && category.length === 0 && band === 'All'}
-          showDateRange={false}
+          showDateRange
+          dateFromDate={dateFromDate}
+          dateToDate={dateToDate}
+          onDateRangeChange={onDateRangeChange}
           showCompanyDimension={false}
           showTransactionDimensions={false}
           showLastOrderInfo={false}
@@ -383,150 +330,154 @@ export default function StockVelocityPage() {
           }
         />
 
+        <ProductDataStatusBar refresh={refresh.data} data={overview.data} />
+
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
-            <KpiTile label="Avg Days of Inventory" value={`${Math.round(avgDOH)} days`} status="neutral" />
-            <KpiTile label="Overstocked SKUs" value={String(overRows.length)} variance={fmtLYD(overValue) + ' tied up'} status="watch" />
-            <KpiTile label="Stock-Out Risk SKUs" value={String(riskRows.length)} variance={fmtLYD(riskValue) + ' at risk'} status="alert" />
-            <KpiTile label="Fast Movers (top velocity tercile)" value={String(fastCount)} status="success" />
-            <KpiTile label="Current Stock" value={`${fmtNum(currentStockQty)} units`} status="neutral" />
-            <KpiTile label="Inventory Value" value={fmtLYD(inventoryValue)} status="neutral" />
-          </div>
+          {overview.loading && !overview.data ? (
+            <LoadingSkeleton variant="chart" />
+          ) : overview.error ? (
+            <ErrorState message={overview.error} onRetry={overview.retry} />
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
+                <KpiTile label="Avg Days of Inventory" value={avgDOH === null ? '—' : `${Math.round(avgDOH)} days`} variance={`${lookback}-day sales look-back`} status="neutral" />
+                <KpiTile label="Overstocked SKUs" value={String(overRows.length)} variance={fmtLYD(overValue) + ' tied up'} status="watch" />
+                <KpiTile label="Stock-Out Risk SKUs" value={String(riskRows.length)} variance={fmtLYD(riskValue) + ' sold in period'} status="alert" />
+                <KpiTile label="Fast Movers (top velocity tercile)" value={String(fastCount)} variance={`of ${moving.length} SKUs sold in period`} status="success" />
+                <KpiTile label="SKUs in Stock" value={String(skusInStock)} variance="finished-goods locations" status="neutral" />
+                <KpiTile label="Inventory Value" value={fmtLYD(inventoryValue)} variance={`+ ${fmtLYD(inTransitValue)} in transit`} status="neutral" />
+              </div>
 
-          {/* Fast vs Slow Movers now stands alone at full width -- this used to share an
-              11fr/9fr row with the "Days of Inventory -- by Company & BCG Class" panel, removed
-              entirely (not hidden) per the redesign request. Giving this panel the freed width
-              rather than leaving a grid column empty is what "close the gap cleanly" means here. */}
-          <ChartPanel
-            title="Fast vs Slow Movers"
-            infoText={moversDrill ? `${moversDrill} movers — individual products, click Back to return to the summary` : 'Split at the median daily sales velocity — click a bar to see the products behind it'}
-            style={{ minHeight: 480 }}
-          >
-            <DrillBreadcrumb active={moversDrill} rootLabel="Fast vs Slow" onReset={() => setMoversDrill(null)} />
-            {moversDrill ? (
-              <>
-                <GroupedBarChart
-                  showTitle={false}
-                  points={moversDrillPoints}
-                  bars={[{ key: 'velocity', name: `${moversDrill} movers`, color: moversDrill === 'Fast' ? 'var(--ps-color-success)' : 'var(--ps-color-alert)' }]}
-                  valueFormatter={(v) => `${v.toFixed(1)}/day`}
-                  tooltipContent={productDrillTooltip('velocity', 'Velocity', (v) => `${v.toFixed(1)}/day`)}
-                  height={drillChartHeight(moversDrillPoints.length)}
-                  yAxisWidth={150}
-                />
-                <ShowMoreFooter shown={moversDrillPoints.length} total={moversDrillRowsAll.length} onShowMore={() => setMoversLimit((l) => l + DRILL_PAGE_SIZE)} />
-              </>
-            ) : (
-              <GroupedBarChart
-                showTitle={false}
-                points={moverSummaryPoints}
-                bars={[
-                  { key: 'fast', name: 'Fast movers', color: 'var(--ps-color-success)' },
-                  { key: 'slow', name: 'Slow movers', color: 'var(--ps-color-alert)' },
-                ]}
-                valueFormatter={(v) => `${v.toFixed(1)} units/day`}
-                onCategoryClick={(label) => {
-                  setMoversDrill(label === 'Fast Movers' ? 'Fast' : 'Slow');
-                  setMoversLimit(DRILL_PAGE_SIZE);
-                }}
-                height={400}
-              />
-            )}
-          </ChartPanel>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
-            <ChartPanel
-              title="Overstock Products"
-              infoText={overstockDrill ? `${overstockDrill} — units in stock, highest first` : 'By BCG class — units currently in stock for excess-stock products, click a class to drill in'}
-              headerActions={<PdfButton label="Export as PDF" onClick={handleExportOverstockPdf} />}
-            >
-              <DrillBreadcrumb active={overstockDrill} rootLabel="All Classes" onReset={() => setOverstockDrill(null)} />
-              {overstockDrill ? (
-                <>
+              <ChartPanel
+                title="Fast vs Slow Movers"
+                infoText={
+                  moversDrill
+                    ? `${moversDrill} movers — velocity = volume in the period ÷ ${overview.data?.period.days ?? '—'} days, in each product's own unit`
+                    : 'Products that sold in the period, split at the median daily velocity. Bars = value sold (LYD); click a bar to see the products'
+                }
+                style={{ minHeight: 480 }}
+              >
+                <DrillBreadcrumb active={moversDrill} rootLabel="Fast vs Slow" onReset={() => setMoversDrill(null)} />
+                {moversDrill ? (
+                  <>
+                    <GroupedBarChart
+                      showTitle={false}
+                      points={moversDrillPoints}
+                      bars={[{ key: 'velocity', name: `${moversDrill} movers`, color: moversDrill === 'Fast' ? 'var(--ps-color-success)' : 'var(--ps-color-alert)' }]}
+                      valueFormatter={(v) => `${v.toFixed(1)}/day`}
+                      tooltipContent={productDrillTooltip('velocity', 'Velocity', (p) => `${(p.velocity as number).toFixed(2)} ${p._unit || 'units'}/day`)}
+                      height={drillChartHeight(moversDrillPoints.length)}
+                      yAxisWidth={150}
+                    />
+                    <ShowMoreFooter shown={moversDrillPoints.length} total={moversDrillRowsAll.length} onShowMore={() => setMoversLimit((l) => l + DRILL_PAGE_SIZE)} />
+                  </>
+                ) : (
                   <GroupedBarChart
                     showTitle={false}
-                    points={overstockDrillPoints}
-                    bars={[{ key: 'unitsInStock', name: 'Units in stock', color: BCG_COLOR[overstockDrill] }]}
-                    valueFormatter={(v) => `${fmtNum(v)} units`}
-                    tooltipContent={productDrillTooltip('unitsInStock', 'Units in Stock', (v) => `${fmtNum(v)} units`)}
-                    height={drillChartHeight(overstockDrillPoints.length)}
-                    yAxisWidth={150}
+                    points={moverSummaryPoints}
+                    bars={[
+                      { key: 'fast', name: 'Fast movers', color: 'var(--ps-color-success)' },
+                      { key: 'slow', name: 'Slow movers', color: 'var(--ps-color-alert)' },
+                    ]}
+                    valueFormatter={(v) => fmtLYD(v)}
+                    onCategoryClick={(label) => {
+                      setMoversDrill(label === 'Fast Movers' ? 'Fast' : 'Slow');
+                      setMoversLimit(DRILL_PAGE_SIZE);
+                    }}
+                    height={400}
                   />
-                  <ShowMoreFooter shown={overstockDrillPoints.length} total={overstockDrillRowsAll.length} onShowMore={() => setOverstockLimit((l) => l + DRILL_PAGE_SIZE)} />
-                </>
-              ) : (
-                <GroupedBarChart
-                  showTitle={false}
-                  points={overstockSummaryPoints}
-                  bars={[{ key: 'unitsInStock', name: 'Units in stock', color: 'var(--ps-color-accent)' }]}
-                  colorForPoint={(p) => BCG_COLOR[p.label as BcgClass]}
-                  valueFormatter={(v) => `${fmtNum(v)} units`}
-                  onCategoryClick={(label) => {
-                    setOverstockDrill(label as BcgClass);
-                    setOverstockLimit(DRILL_PAGE_SIZE);
-                  }}
-                />
-              )}
-            </ChartPanel>
+                )}
+              </ChartPanel>
 
-            <ChartPanel
-              title="Stock-Out Risk"
-              infoText={riskDrill ? `${riskDrill} — sorted by urgency, highest first` : 'By BCG class — above-median volume, below-threshold stock, click a class to drill in'}
-              headerActions={<PdfButton label="Export as PDF" onClick={handleExportRiskPdf} />}
-            >
-              <DrillBreadcrumb active={riskDrill} rootLabel="All Classes" onReset={() => setRiskDrill(null)} />
-              {riskDrill ? (
-                <>
-                  <GroupedBarChart
-                    showTitle={false}
-                    points={riskDrillPoints}
-                    bars={[{ key: 'volumeAtRisk', name: 'Volume at risk', color: 'var(--ps-color-alert)' }]}
-                    valueFormatter={(v) => `${fmtNum(v)} units`}
-                    tooltipContent={productDrillTooltip('volumeAtRisk', 'Volume at Risk', (v) => `${fmtNum(v)} units`)}
-                    height={drillChartHeight(riskDrillPoints.length)}
-                    yAxisWidth={150}
-                  />
-                  <ShowMoreFooter shown={riskDrillPoints.length} total={riskDrillRowsAll.length} onShowMore={() => setRiskLimit((l) => l + DRILL_PAGE_SIZE)} />
-                </>
-              ) : (
-                <GroupedBarChart
-                  showTitle={false}
-                  points={riskSummaryPoints}
-                  bars={[{ key: 'volumeAtRisk', name: 'Volume at risk', color: 'var(--ps-color-alert)' }]}
-                  colorForPoint={(p) => BCG_COLOR[p.label as BcgClass]}
-                  valueFormatter={(v) => `${fmtNum(v)} units`}
-                  onCategoryClick={(label) => {
-                    setRiskDrill(label as BcgClass);
-                    setRiskLimit(DRILL_PAGE_SIZE);
-                  }}
-                />
-              )}
-            </ChartPanel>
-          </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
+                <ChartPanel
+                  title="Overstock Products"
+                  infoText={overstockDrill ? `${overstockDrill} — LYD tied up at stock valuation, highest first` : 'By BCG class — LYD tied up in overstocked or non-moving stock, click a class to drill in'}
+                  headerActions={<PdfButton label="Export as PDF" onClick={handleExportOverstockPdf} />}
+                >
+                  <DrillBreadcrumb active={overstockDrill} rootLabel="All Classes" onReset={() => setOverstockDrill(null)} />
+                  {overstockDrill ? (
+                    <>
+                      <GroupedBarChart
+                        showTitle={false}
+                        points={overstockDrillPoints}
+                        bars={[{ key: 'tiedUp', name: 'LYD tied up', color: bucketColor(overstockDrill) }]}
+                        valueFormatter={(v) => fmtLYD(v)}
+                        tooltipContent={productDrillTooltip('tiedUp', 'LYD tied up', (p) => fmtLYD(p.tiedUp as number))}
+                        height={drillChartHeight(overstockDrillPoints.length)}
+                        yAxisWidth={150}
+                      />
+                      <ShowMoreFooter shown={overstockDrillPoints.length} total={overstockDrillRowsAll.length} onShowMore={() => setOverstockLimit((l) => l + DRILL_PAGE_SIZE)} />
+                    </>
+                  ) : (
+                    <GroupedBarChart
+                      showTitle={false}
+                      points={overstockSummaryPoints}
+                      bars={[{ key: 'tiedUp', name: 'LYD tied up', color: 'var(--ps-color-accent)' }]}
+                      colorForPoint={(p) => bucketColor(p.label as ClassBucket)}
+                      valueFormatter={(v) => fmtLYD(v)}
+                      onCategoryClick={(label) => {
+                        setOverstockDrill(label as ClassBucket);
+                        setOverstockLimit(DRILL_PAGE_SIZE);
+                      }}
+                    />
+                  )}
+                </ChartPanel>
 
-          <p style={{ textAlign: 'center', fontSize: 11, color: 'var(--ps-color-muted-text)', margin: 0 }}>
-            Tika thresholds: Overstock &gt; 60 days · Stock-Out Risk &lt; 30 days &nbsp;|&nbsp; Majaal thresholds: Overstock &gt; 180 days · Stock-Out Risk &lt; 60 days
-          </p>
+                <ChartPanel
+                  title="Stock-Out Risk"
+                  infoText={riskDrill ? `${riskDrill} — sorted by urgency, highest first` : 'By BCG class — above-median sellers below the stock-out threshold, click a class to drill in'}
+                  headerActions={<PdfButton label="Export as PDF" onClick={handleExportRiskPdf} />}
+                >
+                  <DrillBreadcrumb active={riskDrill} rootLabel="All Classes" onReset={() => setRiskDrill(null)} />
+                  {riskDrill ? (
+                    <>
+                      <GroupedBarChart
+                        showTitle={false}
+                        points={riskDrillPoints}
+                        bars={[{ key: 'valueAtRisk', name: 'Value sold (period)', color: 'var(--ps-color-alert)' }]}
+                        valueFormatter={(v) => fmtLYD(v)}
+                        tooltipContent={productDrillTooltip('valueAtRisk', 'Value at risk', (p) => fmtLYD(p.valueAtRisk as number))}
+                        height={drillChartHeight(riskDrillPoints.length)}
+                        yAxisWidth={150}
+                      />
+                      <ShowMoreFooter shown={riskDrillPoints.length} total={riskDrillRowsAll.length} onShowMore={() => setRiskLimit((l) => l + DRILL_PAGE_SIZE)} />
+                    </>
+                  ) : (
+                    <GroupedBarChart
+                      showTitle={false}
+                      points={riskSummaryPoints}
+                      bars={[{ key: 'valueAtRisk', name: 'Value sold (period)', color: 'var(--ps-color-alert)' }]}
+                      colorForPoint={(p) => bucketColor(p.label as ClassBucket)}
+                      valueFormatter={(v) => fmtLYD(v)}
+                      onCategoryClick={(label) => {
+                        setRiskDrill(label as ClassBucket);
+                        setRiskLimit(DRILL_PAGE_SIZE);
+                      }}
+                    />
+                  )}
+                </ChartPanel>
+              </div>
 
-          <PerformanceReportTable
-            title="Performance Details"
-            rows={performanceRows}
-            showStatus
-            showTakeaway
-            onExportPdf={handleExportPerformanceTablePdf}
-          />
+              <p style={{ textAlign: 'center', fontSize: 11, color: 'var(--ps-color-muted-text)', margin: 0 }}>
+                Days of inventory = finished-goods stock ÷ average daily sales over the last {lookback} days. Tika: Overstock &gt; {thresholds?.overstock_days?.Tika ?? 60} days · Stock-Out Risk &lt;{' '}
+                {thresholds?.stockout_risk_days?.Tika ?? 30} days | Majaal: Overstock &gt; {thresholds?.overstock_days?.Majaal ?? 180} days · Stock-Out Risk &lt; {thresholds?.stockout_risk_days?.Majaal ?? 60} days. Stock with no
+                sales in {lookback} days counts as Overstocked (no movement). In-transit and raw-materials stock are not on hand.
+              </p>
+
+              <PerformanceReportTable title="Performance Details" rows={performanceRows} showStatus showTakeaway onExportPdf={handleExportPerformanceTablePdf} />
+            </>
+          )}
         </main>
 
+        <ProductRefreshFooter refresh={refresh.data} />
         <BottomNavBar active="Stock Velocity" />
       </div>
     </PermissionGuard>
   );
 }
 
-/** "Show more"/"Showing X of Y" footer for a drilled-in product chart -- same convention Product
- * Lifecycle's table uses for its own long list (see that page's `limit` state + button), reused
- * here instead of always cramming every product from a large BCG-class group into one chart. Renders
- * nothing once every row behind the current drill is already visible. */
+/** "Show more"/"Showing X of Y" footer for a drilled-in product chart. */
 function ShowMoreFooter({ shown, total, onShowMore }: { shown: number; total: number; onShowMore: () => void }) {
   if (shown >= total) return null;
   return (
@@ -541,10 +492,7 @@ function ShowMoreFooter({ shown, total, onShowMore }: { shown: number; total: nu
   );
 }
 
-/** Breadcrumb back to the aggregate summary -- same "plain text when at root, clickable link +
- * chevron + current label when drilled" convention PIM Contribution's donut drill-down already
- * uses (see that page's Category → Range breadcrumb). Shared here across all 3 drill-down charts
- * on this page rather than copied 3 times inline. */
+/** Breadcrumb back to the aggregate summary. */
 function DrillBreadcrumb({ active, rootLabel, onReset }: { active: string | null; rootLabel: string; onReset: () => void }) {
   return (
     <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -567,9 +515,6 @@ function DrillBreadcrumb({ active, rootLabel, onReset }: { active: string | null
   );
 }
 
-/** Colored pill -- same treatment used for BCG Class on the BCG Matrix page's KPI cards/bubble
- * tooltip, duplicated locally per this module's established per-page-helper convention (see
- * PdfButton/PillField below, and bcg-matrix/page.tsx's own copy). */
 function Pill({ color, label }: { color: string; label: string }) {
   return (
     <span
@@ -584,8 +529,6 @@ function Pill({ color, label }: { color: string; label: string }) {
   );
 }
 
-/** Label/value row for a drilled-in product bar's tooltip -- same right-aligned value convention
- * used elsewhere in this module's tooltips. */
 function TooltipRow({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, lineHeight: 1.7 }}>
@@ -595,11 +538,7 @@ function TooltipRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Same bordered-pill "Export as PDF" convention every other report page's ChartPanel
- * headerActions uses (see pipeline-health/page.tsx's PdfButton) -- duplicated locally per that
- * same established per-page convention, not centralized in @07ps/ui. */
 function PdfButton({ label, onClick }: { label: string; onClick: () => void }) {
-  // Hidden without Export permission on this page (the backend refuses the export anyway).
   const canExport = useCanExport();
   if (!canExport) return null;
   return (
@@ -607,18 +546,9 @@ function PdfButton({ label, onClick }: { label: string; onClick: () => void }) {
       type="button"
       onClick={onClick}
       style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        fontSize: 11,
-        fontWeight: 600,
-        color: 'var(--ps-color-muted-text)',
-        background: 'var(--ps-color-muted-bg)',
-        border: '1px solid var(--ps-color-border)',
-        borderRadius: 6,
-        padding: '4px 10px',
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
+        display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600,
+        color: 'var(--ps-color-muted-text)', background: 'var(--ps-color-muted-bg)',
+        border: '1px solid var(--ps-color-border)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', whiteSpace: 'nowrap',
       }}
     >
       {label}
@@ -626,9 +556,6 @@ function PdfButton({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
-/** Same FilterBar.extraFields pill-field wrapper duplicated across every Materials Analogy page
- * (see bcg-matrix/page.tsx) -- matches FilterBar's own field-label/height conventions so a
- * page-specific pill group sits flush with the built-in Select fields in the same row. */
 function PillField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>

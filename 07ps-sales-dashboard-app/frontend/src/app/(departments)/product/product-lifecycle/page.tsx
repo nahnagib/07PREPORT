@@ -4,7 +4,10 @@ import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
+import { useFilterState } from '../../../../components/FilterProvider';
+import { ProductDataStatusBar, ProductRefreshFooter } from '../../../../components/ProductDataStatus';
 import { useAuth } from '../../../../lib/AuthProvider';
+import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
 import {
   Card,
   ChartPanel,
@@ -15,6 +18,8 @@ import {
   TextInput,
   ComboChart,
   DataTable,
+  LoadingSkeleton,
+  ErrorState,
   exportRowsAsPdf,
   PerformanceReportTable,
   exportPerformanceTablePdf,
@@ -25,28 +30,34 @@ import {
   type PerformanceTablePdfColumn,
 } from '@07ps/ui';
 import {
-  FACTS,
+  toProductFacts,
   fmtLYD,
   fmtPct,
+  fmtDate,
+  fmtVolume,
   sum,
   distinctSorted,
   SEGMENT_COLOR,
+  LIFECYCLE_SEGMENTS,
   COMPANIES,
   type CompanyFilter,
-  type MaterialsAnalogyFact,
+  type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
 
-const SEGMENTS = ['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Mature', 'Discontinued'] as const;
-type SortKey = 'total_value_YTD' | 'months_since_first_sale' | 'months_since_last_supply' | 'value_growth_pct';
+const SEGMENTS = LIFECYCLE_SEGMENTS;
+type SortKey = 'value' | 'firstSaleSort' | 'daysSinceLastSaleSort' | 'growthSort';
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: 'total_value_YTD', label: 'Value YTD' },
-  { value: 'months_since_first_sale', label: 'Months Since First Sale' },
-  { value: 'months_since_last_supply', label: 'Months Since Supply' },
-  { value: 'value_growth_pct', label: 'vs LYTD' },
+  { value: 'value', label: 'Value (period)' },
+  { value: 'firstSaleSort', label: 'First Sale Date' },
+  { value: 'daysSinceLastSaleSort', label: 'Days Since Last Sale' },
+  { value: 'growthSort', label: 'vs same period LY' },
 ];
 
-interface TableRow extends MaterialsAnalogyFact, Record<string, unknown> {
-  id: string;
+interface TableRow extends ProductFact, Record<string, unknown> {
+  growth: number | null;
+  firstSaleSort: number;
+  daysSinceLastSaleSort: number;
+  growthSort: number;
 }
 
 // Mirrors the on-screen PerformanceReportTable's default layout (Trend sparkline omitted -- it has
@@ -94,14 +105,14 @@ function toExecutiveSummaryRows(
     },
     {
       id: 'discontinued',
-      metric: 'Discontinued / No Supply',
+      metric: 'Discontinued',
       actualLabel: String(discCount),
       actualFullValue: fmtLYD(discValueAtRiskLytd),
       targetLabel: '—',
       variancePct: null,
       varianceLyPct: null,
       status: 'alert',
-      takeaway: `${discCount} SKUs are discontinued or have no supply, representing ${fmtLYD(discValueAtRiskLytd)} of LYTD value at risk.`,
+      takeaway: `${discCount} SKUs are discontinued (inactive in PRODUCTS.xlsx or no sale in 365 days); they sold ${fmtLYD(discValueAtRiskLytd)} in the same period last year.`,
     },
     {
       id: 'freshness',
@@ -111,7 +122,7 @@ function toExecutiveSummaryRows(
       variancePct: null,
       varianceLyPct: null,
       status: 'neutral',
-      takeaway: `${freshPct.toFixed(1)}% of the portfolio (${newCount} SKUs) is newly classified this year.`,
+      takeaway: `${freshPct.toFixed(1)}% of the portfolio (${newCount} SKUs) had its first sale in the last 180 days.`,
     },
   ];
 
@@ -120,13 +131,13 @@ function toExecutiveSummaryRows(
     const varianceLy = o.valueLY > 0 ? (o.value - o.valueLY) / o.valueLY : null;
     rows.push({
       id: `segment-${label}`,
-      metric: `${label} Segment Value (YTD)`,
+      metric: `${label} Segment Value (period)`,
       actualLabel: fmtLYD(o.value),
       targetLabel: '—',
       variancePct: null,
       varianceLyPct: varianceLy,
       status: varianceLy == null ? 'neutral' : varianceLy < 0 ? 'alert' : 'success',
-      takeaway: `${label} segment is ${fmtLYD(o.value)} YTD across ${o.n} SKUs${varianceLy != null ? ` (${fmtPct(varianceLy * 100)} vs last year)` : ''}.`,
+      takeaway: `${label} segment is ${fmtLYD(o.value)} in the period across ${o.n} SKUs${varianceLy != null ? ` (${fmtPct(varianceLy * 100)} vs same period last year)` : ''}.`,
     });
   }
 
@@ -134,47 +145,50 @@ function toExecutiveSummaryRows(
 }
 
 export default function ProductLifecyclePage() {
-  const { user, logout } = useAuth();
+  const { user, token, error: authError, retryAuth, logout } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
-  const [anchorDate, setAnchorDate] = useState('');
+  const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
+  const overview = useProductDashboard(token, authError, retryAuth, 'product-lifecycle', { fromDate: dateFromDate, toDate: dateToDate });
+  const refresh = useRefreshStatus(token, authError, retryAuth);
+  const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
 
   const [company, setCompany] = useState<CompanyFilter>('All');
   const [category, setCategory] = useState<string[]>([]);
   const [segment, setSegment] = useState<'All' | (typeof SEGMENTS)[number]>('All');
   const [search, setSearch] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('total_value_YTD');
+  const [sortKey, setSortKey] = useState<SortKey>('value');
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [limit, setLimit] = useState(20);
 
   const categoryOptions: SelectOption[] = useMemo(() => {
-    const pool = FACTS.filter((r) => company === 'All' || r.Company === company);
+    const pool = facts.filter((r) => company === 'All' || r.Company === company);
     return distinctSorted(pool.map((r) => r.Category)).map((c) => ({ value: c, label: c }));
-  }, [company]);
+  }, [facts, company]);
 
   const filtered = useMemo(
     () =>
-      FACTS.filter(
+      facts.filter(
         (r) =>
           (company === 'All' || r.Company === company) &&
-          (category.length === 0 || category.includes(r.Category)) &&
-          (segment === 'All' || r.lifecycle_segment === segment),
+          (category.length === 0 || (r.Category !== null && category.includes(r.Category))) &&
+          (segment === 'All' || r.lifecycle === segment),
       ),
-    [company, category, segment],
+    [facts, company, category, segment],
   );
-  // ---- KPIs ----
-  const matureRows = filtered.filter((r) => r.lifecycle_segment === 'Mature');
-  const discRows = filtered.filter((r) => r.lifecycle_segment === 'Discontinued');
-  const newRows = filtered.filter((r) => r.bcg_movement === 'New');
+  // ---- KPIs (segments come precomputed from the ETL: config/product_dashboard.json "lifecycle") ----
+  const matureRows = filtered.filter((r) => r.lifecycle === 'Mature');
+  const discRows = filtered.filter((r) => r.lifecycle === 'Discontinued');
+  const newRows = filtered.filter((r) => r.lifecycle === 'New');
   const freshPct = filtered.length ? (newRows.length / filtered.length) * 100 : 0;
 
   // ---- Pareto ----
   const bySeg = new Map<string, { value: number; valueLY: number; n: number }>();
   SEGMENTS.forEach((s) => bySeg.set(s, { value: 0, valueLY: 0, n: 0 }));
   filtered.forEach((r) => {
-    const o = bySeg.get(r.lifecycle_segment);
+    const o = bySeg.get(r.lifecycle);
     if (!o) return;
-    o.value += r.total_value_YTD;
-    o.valueLY += r.total_value_LYTD;
+    o.value += r.value;
+    o.valueLY += r.valuePrior;
     o.n += 1;
   });
   const segEntries = [...bySeg.entries()].filter(([, o]) => o.n > 0).sort((a, b) => b[1].value - a[1].value);
@@ -187,9 +201,22 @@ export default function ProductLifecyclePage() {
 
   // ---- Table ----
   const searched = search ? filtered.filter((r) => r.ProductName.toLowerCase().includes(search.toLowerCase())) : filtered;
-  const sorted: TableRow[] = [...searched]
-    .sort((a, b) => sortDir * ((a[sortKey] as number) - (b[sortKey] as number)))
-    .map((r) => ({ ...r, id: r.ProductKey }));
+  const sorted: TableRow[] = searched
+    .map((r) => {
+      const growth = r.valuePrior > 0 ? ((r.value - r.valuePrior) / r.valuePrior) * 100 : null;
+      return {
+        ...r,
+        growth,
+        firstSaleSort: r.firstSaleDate ? Date.parse(r.firstSaleDate) : Number.NEGATIVE_INFINITY,
+        daysSinceLastSaleSort: r.daysSinceLastSale ?? Number.POSITIVE_INFINITY,
+        growthSort: growth ?? Number.NEGATIVE_INFINITY,
+      };
+    })
+    .sort((a, b) => {
+      const x = a[sortKey] as number;
+      const y = b[sortKey] as number;
+      return sortDir * (x > y ? 1 : x < y ? -1 : 0);
+    });
   const visibleRows = sorted.slice(0, limit);
 
   const columns: Column<TableRow>[] = [
@@ -197,34 +224,29 @@ export default function ProductLifecyclePage() {
     { key: 'Company', header: 'Company' },
     { key: 'Category', header: 'Category' },
     {
-      key: 'bcg_class_YTD',
-      header: 'BCG Class',
-      render: (row) => <span style={{ color: SEGMENT_COLOR[row.bcg_class_YTD], fontWeight: 700 }}>{row.bcg_class_YTD}</span>,
-    },
-    {
-      key: 'lifecycle_segment',
+      key: 'lifecycle',
       header: 'Lifecycle',
       render: (row) =>
-        row.is_discontinued ? (
+        row.lifecycle === 'Discontinued' ? (
           <SemanticBadge status="alert" />
-        ) : row.is_mature ? (
-          <span style={{ color: 'var(--ps-color-last-year)', fontWeight: 600 }}>Mature</span>
         ) : (
-          <span style={{ color: 'var(--ps-color-muted-text)' }}>Active</span>
+          <span style={{ color: SEGMENT_COLOR[row.lifecycle], fontWeight: 700 }}>{row.lifecycle}</span>
         ),
     },
-    { key: 'months_since_first_sale', header: 'Mo. Since First Sale', align: 'right' },
-    { key: 'months_since_last_supply', header: 'Mo. Since Supply', align: 'right' },
-    { key: 'total_value_YTD', header: 'Value YTD', align: 'right', render: (row) => fmtLYD(row.total_value_YTD) },
+    { key: 'firstSaleDate', header: 'First Sale', align: 'right', render: (row) => fmtDate(row.firstSaleDate) },
+    { key: 'daysSinceLastSale', header: 'Days Since Last Sale', align: 'right', render: (row) => (row.daysSinceLastSale === null ? 'never sold' : String(row.daysSinceLastSale)) },
+    { key: 'value', header: 'Value (period)', align: 'right', render: (row) => fmtLYD(row.value) },
+    { key: 'volume', header: 'Volume (period)', align: 'right', render: (row) => fmtVolume(row) },
     {
-      key: 'value_growth_pct',
-      header: 'vs LYTD',
+      key: 'growth',
+      header: 'vs same period LY',
       align: 'right',
-      render: (row) => (
-        <span style={{ color: row.value_growth_pct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)', fontWeight: 700 }}>
-          {fmtPct(row.value_growth_pct)}
-        </span>
-      ),
+      render: (row) =>
+        row.growth === null ? (
+          <span style={{ color: 'var(--ps-color-muted-text)' }}>—</span>
+        ) : (
+          <span style={{ color: row.growth >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)', fontWeight: 700 }}>{fmtPct(row.growth)}</span>
+        ),
     },
   ];
 
@@ -235,23 +257,25 @@ export default function ProductLifecyclePage() {
       columns: [
         { header: 'Product' },
         { header: 'Company' },
-        { header: 'BCG Class' },
         { header: 'Lifecycle' },
-        { header: 'Value YTD', align: 'right' },
-        { header: 'vs LYTD', align: 'right' },
+        { header: 'First Sale' },
+        { header: 'Days Since Last Sale', align: 'right' },
+        { header: 'Value (period)', align: 'right' },
+        { header: 'vs same period LY', align: 'right' },
       ],
       rows: sorted.map((r) => [
         r.ProductName,
         r.Company,
-        r.bcg_class_YTD,
-        r.is_discontinued ? 'Discontinued' : r.is_mature ? 'Mature' : 'Active',
-        fmtLYD(r.total_value_YTD),
-        fmtPct(r.value_growth_pct),
+        r.lifecycle,
+        fmtDate(r.firstSaleDate),
+        r.daysSinceLastSale === null ? 'never sold' : String(r.daysSinceLastSale),
+        fmtLYD(r.value),
+        fmtPct(r.growth),
       ]),
       fileName: 'product-lifecycle-detail',
     });
 
-  const performanceRows = toExecutiveSummaryRows(matureRows.length, filtered.length, discRows.length, sum(discRows, (r) => r.total_value_LYTD), freshPct, newRows.length, segEntries);
+  const performanceRows = toExecutiveSummaryRows(matureRows.length, filtered.length, discRows.length, sum(discRows, (r) => r.valuePrior), freshPct, newRows.length, segEntries);
   async function handleExportPerformanceTablePdf() {
     try {
       await exportPerformanceTablePdf({
@@ -271,7 +295,7 @@ export default function ProductLifecyclePage() {
         <AppHeader
           pageTitle="Product Dashboard"
           anchorDate={anchorDate}
-          onAnchorDateChange={setAnchorDate}
+          onAnchorDateChange={onAnchorDateChange}
           roleLabel={roleLabel}
           onLogout={logout}
           showDateInput={false}
@@ -284,7 +308,10 @@ export default function ProductLifecyclePage() {
             setSegment('All');
           }}
           isPristine={company === 'All' && category.length === 0 && segment === 'All'}
-          showDateRange={false}
+          showDateRange
+          dateFromDate={dateFromDate}
+          dateToDate={dateToDate}
+          onDateRangeChange={onDateRangeChange}
           showCompanyDimension={false}
           showTransactionDimensions={false}
           showLastOrderInfo={false}
@@ -311,7 +338,15 @@ export default function ProductLifecyclePage() {
           }
         />
 
+        <ProductDataStatusBar refresh={refresh.data} data={overview.data} />
+
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
+          {overview.loading && !overview.data ? (
+            <LoadingSkeleton variant="chart" />
+          ) : overview.error ? (
+            <ErrorState message={overview.error} onRetry={overview.retry} />
+          ) : (
+          <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
             <KpiTile
               label="Mature SKUs"
@@ -320,25 +355,25 @@ export default function ProductLifecyclePage() {
               status="neutral"
             />
             <KpiTile
-              label="Discontinued / No Supply"
+              label="Discontinued"
               value={String(discRows.length)}
-              variance={fmtLYD(sum(discRows, (r) => r.total_value_LYTD)) + ' LYTD value at risk'}
+              variance={fmtLYD(sum(discRows, (r) => r.valuePrior)) + ' sold same period last year'}
               status="alert"
             />
-            <KpiTile label="Portfolio Freshness" value={`${freshPct.toFixed(1)}%`} variance={`${newRows.length} SKUs classified New`} status="neutral" />
+            <KpiTile label="Portfolio Freshness" value={`${freshPct.toFixed(1)}%`} variance={`${newRows.length} SKUs first sold in the last 180 days`} status="neutral" />
           </div>
 
           <ChartPanel
             title="Segment Value — Pareto"
-            infoText="Bars = Value YTD by lifecycle segment (sorted desc) · line = Value LYTD · gold line = cumulative %"
+            infoText="Bars = value in the selected period by lifecycle segment (sorted desc) · line = same period last year · gold line = cumulative %. New = first sale in 180 days; Growing/Declining = last 90 days vs previous 90 days beyond ±20%; Discontinued = inactive in PRODUCTS.xlsx or no sale in 365 days"
             style={{ minHeight: 420 }}
           >
             <ComboChart
               showTitle={false}
               points={paretoPoints}
-              bars={[{ key: 'value', name: 'Value YTD', color: 'var(--ps-color-accent)' }]}
+              bars={[{ key: 'value', name: 'Value (period)', color: 'var(--ps-color-accent)' }]}
               lines={[
-                { key: 'valueLY', name: 'Value LYTD', color: 'var(--ps-color-last-year)', yAxisId: 'left' },
+                { key: 'valueLY', name: 'Same period LY', color: 'var(--ps-color-last-year)', yAxisId: 'left' },
                 { key: 'cumPct', name: 'Cumulative %', color: 'var(--ps-color-gold)', yAxisId: 'right' },
               ]}
               rightAxisFormatter={(v) => `${v.toFixed(0)}%`}
@@ -361,7 +396,7 @@ export default function ProductLifecyclePage() {
                     label=""
                     options={SORT_OPTIONS}
                     value={[sortKey]}
-                    onChange={(v) => setSortKey((v[0] as SortKey) ?? 'total_value_YTD')}
+                    onChange={(v) => setSortKey((v[0] as SortKey) ?? 'value')}
                     placeholder="Sort by"
                   />
                 </div>
@@ -412,8 +447,11 @@ export default function ProductLifecyclePage() {
             showTakeaway
             onExportPdf={handleExportPerformanceTablePdf}
           />
+          </>
+          )}
         </main>
 
+        <ProductRefreshFooter refresh={refresh.data} />
         <BottomNavBar active="Product Lifecycle" />
       </div>
     </PermissionGuard>

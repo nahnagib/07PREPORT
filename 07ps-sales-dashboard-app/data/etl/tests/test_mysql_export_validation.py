@@ -476,7 +476,9 @@ def test_ensure_table_columns_alters_mysql_decimal_and_bool_columns(monkeypatch)
     ]
 
 
-def test_incremental_window_validation_compares_affected_window_not_total_table(monkeypatch):
+def test_incremental_fact_sales_lines_replaces_whole_table_so_stale_history_is_removed(monkeypatch):
+    """Fact_SalesLines is rebuilt from the whole sale.report cache every run; the export must replace the
+    table, otherwise a corrected historical line (e.g. a de-duplicated cache row) stays in SQL forever."""
     exporter = sqlite_exporter()
     monkeypatch.setattr(exporter, "_ensure_run_audit_table", lambda: None)
     monkeypatch.setattr(exporter, "_ensure_load_metadata_table", lambda: None)
@@ -484,23 +486,24 @@ def test_incremental_window_validation_compares_affected_window_not_total_table(
     pd.DataFrame(
         [
             {"order_number": "SO100", "order_date": "2026-05-01", "Value": 10.0},
+            {"order_number": "SO100", "order_date": "2026-05-01", "Value": 10.0},  # stale duplicate
         ]
     ).to_sql("Fact_SalesLines", exporter.engine, if_exists="replace", index=False)
-    changed_window = pd.DataFrame(
+    rebuilt = pd.DataFrame(
         [
+            {"order_number": "SO100", "order_date": "2026-05-01", "Value": 10.0},
             {"order_number": "SO200", "order_date": "2026-05-18", "Value": 20.0},
         ]
     )
 
-    result = exporter.export_incremental({"Fact_SalesLines": changed_window}, pd.Timestamp("2026-05-17"))
+    result = exporter.export_incremental({"Fact_SalesLines": rebuilt}, pd.Timestamp("2026-05-17"))
     row = result.validation.iloc[0]
 
     assert bool(row["Matches"])
-    assert row["LoadMode"] == "incremental"
-    assert row["ValidationScope"] == "date_window:order_date"
-    assert row["ExpectedRows"] == 1
-    assert row["SQLRows"] == 1
+    assert row["ValidationScope"] == "full_table_replaced"
     assert result.table_counts["Fact_SalesLines"] == 2
+    total = pd.read_sql("SELECT SUM(Value) AS v FROM Fact_SalesLines", exporter.engine)["v"].iloc[0]
+    assert total == 30.0
 
 
 def test_incremental_fact_orders_removes_older_duplicate_rows_after_overlap_moves_past_key(monkeypatch):

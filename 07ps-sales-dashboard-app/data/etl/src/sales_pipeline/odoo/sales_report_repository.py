@@ -10,6 +10,8 @@ from sales_pipeline.odoo.client import OdooClient
 
 
 SALE_REPORT_FIELDS = [
+    "id",
+    "order_reference",
     "date",
     "name",
     "partner_id",
@@ -20,11 +22,17 @@ SALE_REPORT_FIELDS = [
     "price_subtotal",
     "price_total",
     "qty_invoiced",
+    "product_uom_qty",
+    "qty_delivered",
+    "product_uom",
     "state",
     "invoice_status",
 ]
 
 OLD_EXPORT_COLUMN_MAP = {
+    # sale.report.id is the sale.order.line id in Odoo 17: the unique key of every cached row.
+    "id": "SaleReportLineID",
+    "order_reference": "OdooOrderRef",
     "date": "Order Date",
     "name": "Related Order",
     "partner_id": "Customer",
@@ -35,9 +43,17 @@ OLD_EXPORT_COLUMN_MAP = {
     "price_subtotal": "Untaxed Total",
     "price_total": "Total",
     "qty_invoiced": "Qty Invoiced",
+    "product_uom_qty": "Qty Ordered",
+    "qty_delivered": "Qty Delivered",
+    "product_uom": "UoM",
     "state": "Status",
     "invoice_status": "Invoice Status",
 }
+
+
+# many2one ids kept next to their display names (the ETL historically dropped them).
+EXTRA_ID_FIELDS = {"product_id": "OdooProductID", "partner_id": "OdooPartnerID", "product_uom": "UoMID", "company_id": "OdooCompanyID"}
+EXTRA_ID_COLUMNS = list(EXTRA_ID_FIELDS.values())
 
 
 def flatten_many2one(value: Any) -> Any:
@@ -86,7 +102,7 @@ class SalesReportRepository:
         total = self.client.search_count("sale.report", domain)
         self.logger.info("sale.report rows available: %s", f"{total:,}")
         if total == 0:
-            return pd.DataFrame(columns=list(OLD_EXPORT_COLUMN_MAP.values()))
+            return pd.DataFrame(columns=[c for c in OLD_EXPORT_COLUMN_MAP.values() if c != "OdooOrderRef"] + EXTRA_ID_COLUMNS + ["OdooOrderID"])
 
         pages = math.ceil(total / self.batch_size)
         rows: list[dict[str, Any]] = []
@@ -96,20 +112,23 @@ class SalesReportRepository:
             chunk = self.client.search_read("sale.report", domain, SALE_REPORT_FIELDS, offset=offset, limit=self.batch_size, order="id")
             rows.extend(self._normalize_records(chunk))
 
-        df = pd.DataFrame(rows, columns=SALE_REPORT_FIELDS + ["OdooProductID"]).rename(columns=OLD_EXPORT_COLUMN_MAP)
+        df = pd.DataFrame(rows, columns=SALE_REPORT_FIELDS + EXTRA_ID_COLUMNS).rename(columns=OLD_EXPORT_COLUMN_MAP)
         df["Order Date"] = safe_datetime_to_local(df["Order Date"], self.timezone, self.assume_utc_for_naive)
+        df["OdooOrderID"] = pd.to_numeric(df["OdooOrderRef"].astype("string").str.extract(r"^sale\.order,(\d+)$", expand=False), errors="coerce").astype("Int64")
+        df = df.drop(columns=["OdooOrderRef"])
         return df
 
     @staticmethod
     def _normalize_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        many2one = {field for field in SALE_REPORT_FIELDS if field.endswith("_id")}
+        many2one = {field for field in SALE_REPORT_FIELDS if field.endswith("_id")} | {"product_uom"}
         normalized: list[dict[str, Any]] = []
         for rec in records:
             row = {}
             for field in SALE_REPORT_FIELDS:
                 value = rec.get(field, "")
                 row[field] = flatten_many2one(value) if field in many2one else ("" if value is None or value is False else value)
-            product = rec.get("product_id")
-            row["OdooProductID"] = product[0] if isinstance(product, (list, tuple)) and product else pd.NA
+            for field, column in EXTRA_ID_FIELDS.items():
+                value = rec.get(field)
+                row[column] = value[0] if isinstance(value, (list, tuple)) and value else pd.NA
             normalized.append(row)
         return normalized
