@@ -222,8 +222,6 @@ The changes are corrections, not regressions. Explanations follow the table.
 - Run 4 verified the cache against Odoo **without a reload**: "sale.report cache verified … totals by company match".
 - It picked up 11 new or changed `sale.report` lines.
 - The reconciliation re-run after run 4 passed again. The output is below.
-- There is also a unit-level test: new sale lines change `Fact_ProductSalesDaily` and the product snapshot
-  (`test_product_pages.py`).
 
 ---
 
