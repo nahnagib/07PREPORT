@@ -5,6 +5,7 @@ import { AdminLayout } from '../../../components/AdminLayout';
 import { PermissionGuard } from '../../../components/AuthGuard';
 import { useAuth } from '../../../lib/AuthProvider';
 import { adminApi, ApiError, LoginHistoryRow } from '../../../lib/api';
+import { formatDateTime } from '../../../lib/format';
 
 const EVENT_TYPES = [
   'LOGIN_SUCCESS',
@@ -60,7 +61,7 @@ function LoginHistoryBody() {
   }, [load]);
 
   const columns: Column<LoginHistoryRow>[] = [
-    { key: 'created_at', header: 'When', render: (r) => new Date(r.created_at).toLocaleString() },
+    { key: 'created_at', header: 'When', render: (r) => formatDateTime(r.created_at) },
     { key: 'display_name', header: 'User', render: (r) => r.display_name ?? r.email_attempted },
     { key: 'event_type', header: 'Event' },
     { key: 'ip_address', header: 'IP', render: (r) => r.ip_address ?? '—' },

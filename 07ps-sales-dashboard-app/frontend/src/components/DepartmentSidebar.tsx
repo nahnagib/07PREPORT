@@ -6,8 +6,6 @@ import { Home, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { DEPARTMENTS } from '../lib/departments';
 import { ADMIN_NAV_ITEM, adminNavHref, departmentIsBuilt, departmentReports } from '../lib/navItems';
 import { useAuth } from '../lib/AuthProvider';
-import { useLanguage } from '../lib/i18n/LanguageProvider';
-import type { MessageKey } from '../lib/i18n/messages';
 
 /**
  * Permanent left sidebar shown on every department route (mounted once by
@@ -24,7 +22,6 @@ import type { MessageKey } from '../lib/i18n/messages';
 export function DepartmentSidebar() {
   const pathname = usePathname();
   const { canView, isAdmin } = useAuth();
-  const { t } = useLanguage();
   const [expanded, setExpanded] = useState(true);
   const adminHref = adminNavHref(canView, isAdmin);
   const showAdmin = adminHref !== null;
@@ -54,7 +51,7 @@ export function DepartmentSidebar() {
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: '16px 12px', gap: 4, overflowY: 'auto' }}>
-        <SidebarItem href="/" label={t('shell.home')} icon={Home} active={isHomeActive} expanded={expanded} />
+        <SidebarItem href="/" label="Home" icon={Home} active={isHomeActive} expanded={expanded} />
 
         <div
           aria-hidden
@@ -69,7 +66,7 @@ export function DepartmentSidebar() {
             <SidebarItem
               key={dept.key}
               href={dept.href}
-              label={t(`dept.${dept.key}.pTerm` as MessageKey)}
+              label={dept.pTerm}
               icon={dept.icon}
               active={active}
               expanded={expanded}
@@ -84,7 +81,7 @@ export function DepartmentSidebar() {
           <div style={{ paddingTop: 12 }}>
             <SidebarItem
               href={adminHref ?? ADMIN_NAV_ITEM.href}
-              label={t('shell.admin')}
+              label={ADMIN_NAV_ITEM.label}
               icon={ADMIN_NAV_ITEM.icon}
               active={pathname.startsWith('/admin')}
               expanded={expanded}
@@ -95,8 +92,8 @@ export function DepartmentSidebar() {
 
       <button
         onClick={() => setExpanded((e) => !e)}
-        aria-label={expanded ? t('shell.collapse') : t('shell.expand')}
-        title={expanded ? t('shell.collapse') : t('shell.expand')}
+        aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -111,7 +108,7 @@ export function DepartmentSidebar() {
         }}
         className="ps-sidebar-toggle"
       >
-        {expanded ? <ChevronsLeft size={18} className="ps-rtl-flip" /> : <ChevronsRight size={18} className="ps-rtl-flip" />}
+        {expanded ? <ChevronsLeft size={18} /> : <ChevronsRight size={18} />}
       </button>
     </nav>
   );

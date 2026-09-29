@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Card, ErrorState } from '@07ps/ui';
+import { Button, Card, DateField, ErrorState } from '@07ps/ui';
 import { NoAccess } from '../NoAccess';
 import { KaizenShell, KAIZEN_BASE } from './KaizenShell';
 import { CloseCardDialog } from './CloseCardDialog';
@@ -169,8 +169,17 @@ function FormBody({ cardNo }: { cardNo?: number }) {
   const area = (field: Field) => (
     <textarea className="ps-kaizen-input" dir="auto" value={values[field] as string} aria-invalid={Boolean(errors[field])} onChange={(e) => set(field, e.target.value as never)} />
   );
-  const date = (field: Field, extra: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
-    <input className="ps-kaizen-input" type="date" value={values[field] as string} aria-invalid={Boolean(errors[field])} onChange={(e) => set(field, e.target.value as never)} {...extra} />
+  // "01 Jan 2026" whatever the browser's locale; optional dates can be cleared.
+  const date = (field: Field, extra: { min?: string; disabled?: boolean } = {}) => (
+    <DateField
+      className="ps-kaizen-input"
+      value={values[field] as string}
+      aria-invalid={Boolean(errors[field])}
+      onChange={(v) => set(field, v as never)}
+      clearable={field !== 'cardDate'}
+      style={errors[field] ? { borderColor: 'var(--ps-color-alert)' } : undefined}
+      {...extra}
+    />
   );
   // Active values only -- plus the card's current value if it has since been deactivated.
   const select = (field: 'departmentId' | 'cardTypeId' | 'priorityId', list: KaizenListKey) => {

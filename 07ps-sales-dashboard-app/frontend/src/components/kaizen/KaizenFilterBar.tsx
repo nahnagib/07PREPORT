@@ -1,6 +1,7 @@
 'use client';
 import React from 'react';
 import { RotateCcw } from 'lucide-react';
+import { DateField } from '@07ps/ui';
 import { kt as t, type KaizenTextKey } from '../../lib/kaizen/text';
 import type { KaizenFilters, KaizenListKey } from '../../lib/kaizen/api';
 import type { useKaizenOptions } from './useKaizenOptions';
@@ -8,20 +9,25 @@ import type { useKaizenOptions } from './useKaizenOptions';
 type Options = ReturnType<typeof useKaizenOptions>;
 
 /**
- * Filters for the Kaizen pages. The dashboard shows date range + Department; the card lists add
- * Type, Priority, Status, search and "overdue only". Native controls on purpose: they mirror in
- * RTL and give phones their own pickers. Single-value selects map onto the API's id lists.
+ * Filters for the Kaizen pages. The dashboard shows the date range only; the card lists add
+ * Department, Type, Priority, Status, search and "overdue only". Dates show as "01 Jan 2026" and
+ * open the browser's calendar. Single-value selects map onto the API's id lists. "Reset filters"
+ * returns to `defaults` (the page's default date range), not to an empty filter.
  */
 export function KaizenFilterBar({
   filters,
   onChange,
   options,
   full = false,
+  showDepartment = true,
+  defaults = {},
 }: {
   filters: KaizenFilters;
   onChange: (next: KaizenFilters) => void;
   options: Options;
   full?: boolean;
+  showDepartment?: boolean;
+  defaults?: KaizenFilters;
 }) {
   const set = (patch: Partial<KaizenFilters>) => onChange({ ...filters, ...patch });
 
@@ -56,13 +62,13 @@ export function KaizenFilterBar({
       <div className="ps-kaizen-filters">
         <label className="ps-kaizen-field">
           <span>{t('kaizen.filter.from')}</span>
-          <input className="ps-kaizen-input" type="date" value={filters.dateFrom ?? ''} max={filters.dateTo || undefined} onChange={(e) => set({ dateFrom: e.target.value || undefined })} />
+          <DateField className="ps-kaizen-input" aria-label={t('kaizen.filter.from')} placeholder={t('kaizen.filter.anyDate')} clearable value={filters.dateFrom ?? ''} max={filters.dateTo || undefined} onChange={(v) => set({ dateFrom: v || undefined })} />
         </label>
         <label className="ps-kaizen-field">
           <span>{t('kaizen.filter.to')}</span>
-          <input className="ps-kaizen-input" type="date" value={filters.dateTo ?? ''} min={filters.dateFrom || undefined} onChange={(e) => set({ dateTo: e.target.value || undefined })} />
+          <DateField className="ps-kaizen-input" aria-label={t('kaizen.filter.to')} placeholder={t('kaizen.filter.anyDate')} clearable value={filters.dateTo ?? ''} min={filters.dateFrom || undefined} onChange={(v) => set({ dateTo: v || undefined })} />
         </label>
-        {listSelect('department', 'departmentIds', 'kaizen.f.department', 'kaizen.filter.allDepartments')}
+        {showDepartment && listSelect('department', 'departmentIds', 'kaizen.f.department', 'kaizen.filter.allDepartments')}
         {full && listSelect('card_type', 'typeIds', 'kaizen.f.type', 'kaizen.filter.all')}
         {full && listSelect('card_priority', 'priorityIds', 'kaizen.f.priority', 'kaizen.filter.all')}
         {full && (
@@ -96,7 +102,7 @@ export function KaizenFilterBar({
         )}
         <button
           type="button"
-          onClick={() => onChange({})}
+          onClick={() => onChange({ ...defaults })}
           style={{
             display: 'inline-flex',
             alignItems: 'center',

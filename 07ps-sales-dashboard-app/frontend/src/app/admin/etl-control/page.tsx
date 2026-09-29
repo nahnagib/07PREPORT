@@ -1,7 +1,7 @@
 'use client';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { APP_TIMEZONE } from '../../../lib/format';
-import { Button, Card, ConfirmDialog, DataTable, EmptyState, ErrorState, LoadingSkeleton, type Column } from '@07ps/ui';
+import { APP_TIMEZONE, formatDateTime as formatDateTimeShared, formatDate, DISPLAY_LOCALE } from '../../../lib/format';
+import { Button, Card, ConfirmDialog, DataTable, EmptyState, ErrorState, LoadingSkeleton, DateField as SharedDateField, type Column } from '@07ps/ui';
 import { AdminLayout } from '../../../components/AdminLayout';
 import { AdminOnlyGuard } from '../../../components/AuthGuard';
 import { useFilterState } from '../../../components/FilterProvider';
@@ -113,11 +113,11 @@ function formatElapsed(ms: number | null): string {
  * timezone. See frontend/src/lib/format.ts's formatTimestamp for the same rule applied elsewhere. */
 function formatDateTime(value: string | null): string {
   if (!value) return '—';
-  return new Date(value).toLocaleString(undefined, { timeZone: APP_TIMEZONE });
+  return formatDateTimeShared(value, APP_TIMEZONE, { withSeconds: true });
 }
 
 function formatCount(value: number | null): string {
-  return value === null || value === undefined ? '—' : value.toLocaleString();
+  return value === null || value === undefined ? '—' : value.toLocaleString(DISPLAY_LOCALE);
 }
 
 const MODE_LABEL: Record<EtlMode, string> = {
@@ -858,11 +858,12 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
       <label style={{ display: 'block', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--ps-color-muted-text)', marginBottom: 4 }}>
         {label}
       </label>
-      <input
-        type="date"
+      <SharedDateField
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid var(--ps-color-border)', background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', fontSize: 14 }}
+        onChange={onChange}
+        aria-label={label}
+        clearable
+        style={{ padding: '7px 10px', minWidth: 150, borderRadius: 8, border: '1px solid var(--ps-color-border)', background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', fontSize: 14 }}
       />
     </div>
   );
@@ -944,7 +945,7 @@ function PreflightCard({ preflight, onRecheck }: { preflight: EtlPreflightRespon
                   </td>
                   <td style={{ padding: '4px 0', color: 'var(--ps-color-muted-text)' }}>
                     {f.status === 'ok'
-                      ? `${formatBytes(f.size_bytes)} · modified ${f.modified ? new Date(f.modified).toLocaleDateString(undefined, { timeZone: APP_TIMEZONE }) : '—'}`
+                      ? `${formatBytes(f.size_bytes)} · modified ${f.modified ? formatDate(f.modified, APP_TIMEZONE) : '—'}`
                       : f.detail}
                   </td>
                 </tr>

@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '../lib/AuthProvider';
 import { ADMIN_NAV_ITEM, NAV_ITEMS, adminNavHref, departmentReports } from '../lib/navItems';
-import { useLanguage } from '../lib/i18n/LanguageProvider';
 import { DEPARTMENTS } from '../lib/departments';
 import { ScrollableNav } from './ScrollableNav';
 
@@ -30,7 +29,6 @@ import { ScrollableNav } from './ScrollableNav';
  */
 export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
   const { canView, isAdmin } = useAuth();
-  const { t } = useLanguage();
   const pathname = usePathname();
   const currentDepartment = DEPARTMENTS.find((d) => pathname === d.href || pathname?.startsWith(`${d.href}/`));
   const items = currentDepartment
@@ -57,8 +55,7 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
       }}
     >
       <ScrollableNav label="pages" activeKey={active}>
-      {items.map((item) => {
-        const { label, icon: Icon, href } = item;
+      {items.map(({ label, icon: Icon, href }) => {
         const isActive = label === active;
         const content = (
           <div
@@ -100,7 +97,7 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
       })}
 
       {showAdmin && (
-        <Link href={adminHref ?? ADMIN_NAV_ITEM.href} aria-label={t('shell.admin')} aria-current={active === 'Admin' ? 'page' : undefined} style={{ textDecoration: 'none' }}>
+        <Link href={adminHref ?? ADMIN_NAV_ITEM.href} aria-label={ADMIN_NAV_ITEM.label} aria-current={active === 'Admin' ? 'page' : undefined} style={{ textDecoration: 'none' }}>
           <div
             style={{
               display: 'flex',
@@ -113,7 +110,7 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
             }}
           >
             <ADMIN_NAV_ITEM.icon size={18} />
-            <span style={{ fontSize: 10.5, fontWeight: active === 'Admin' ? 700 : 600 }}>{t('shell.admin')}</span>
+            <span style={{ fontSize: 10.5, fontWeight: active === 'Admin' ? 700 : 600 }}>Admin</span>
           </div>
         </Link>
       )}

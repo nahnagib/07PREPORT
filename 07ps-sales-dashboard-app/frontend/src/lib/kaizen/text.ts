@@ -1,5 +1,7 @@
+import { formatNumber as formatAppNumber } from '../format';
+
 /**
- * Kaizen module text -- English only (the module deliberately ignores the app's language switch).
+ * Kaizen module text (the app is English-only).
  * `kaizen.*` = UI strings; `err.*` = messages for backend validation codes
  * (backend/src/services/kaizenService.ts's KaizenValidationError).
  */
@@ -42,6 +44,7 @@ export const KAIZEN_TEXT = {
   'kaizen.overdueHint': 'Open and past its Expected Date',
   'kaizen.inactive': 'inactive',
   'kaizen.filter.from': 'From',
+  'kaizen.filter.anyDate': 'Any date',
   'kaizen.filter.to': 'To',
   'kaizen.filter.allDepartments': 'All departments',
   'kaizen.filter.all': 'All',
@@ -82,6 +85,7 @@ export const KAIZEN_TEXT = {
   'kaizen.kpi.topSubmitter': 'Top submitter',
   'kaizen.kpi.topCause': 'Top cause',
   'kaizen.kpi.details': 'See the details',
+  'kaizen.unit.card': 'card',
   'kaizen.unit.cards': 'cards',
   'kaizen.unit.days': 'days',
   'kaizen.kpi.avgHint': 'Average of (Closer Date − Date) over Closed cards',
@@ -168,7 +172,7 @@ export function errorText(code: string | null | undefined): string | null {
   return code && key in KAIZEN_TEXT ? KAIZEN_TEXT[key as KaizenTextKey] : null;
 }
 
-/** Numbers with thousands separators and at most `digits` decimals. */
+/** Numbers with thousands separators and at most `digits` decimals (the app-wide en-GB format). */
 export function formatNumber(value: number, digits = 0): string {
-  return value.toLocaleString('en-US', { maximumFractionDigits: digits });
+  return formatAppNumber(value, { maximumFractionDigits: digits });
 }

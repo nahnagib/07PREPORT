@@ -27,7 +27,7 @@ import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useInvoicesEngineOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { InvoiceStats, InvoicesEngineKpis, InvoicesEngineScope, InvoiceYearClassBreakdown } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, formatVariance, formatVolume } from '../../../../lib/format';
+import { formatCurrency, formatTimestamp, formatVariance, formatVolume, DISPLAY_LOCALE } from '../../../../lib/format';
 
 // Value-tier labels (renamed from the bare A/B/C/D codes the ETL/warehouse still store -- see
 // backend/src/measures/invoicesEngine.ts's normalizeInvoiceClass). Thresholds are unchanged from
@@ -85,12 +85,12 @@ function formatInvoiceValue(value: number | null | undefined): string {
   const abs = Math.abs(value);
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
   if (abs >= 1_000) return `${(value / 1_000).toFixed(2)}K`;
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 2 });
 }
 
 function formatLines(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-  return value.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return value.toLocaleString(DISPLAY_LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 function formatVolumeOrDash(value: number | null): string {
@@ -110,7 +110,7 @@ function formatThousands(value: number): string {
 }
 
 function formatPlainNumber(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 1 });
 }
 
 // ---------------------------------------------------------------------------
@@ -512,10 +512,10 @@ export default function InvoicesEnginePage() {
   const volumeTableRows = toMetricPanelTableRows(kpis, (s) => s.avgVolumePerInvoice, formatVolumeOrDash);
 
   const totalInvoicesTableRows: TotalInvoicesTableRow[] = [
-    { id: 'ytd', period: 'YTD', count: kpis?.ytd.invoiceCount != null ? kpis.ytd.invoiceCount.toLocaleString() : '—' },
-    { id: 'lytd', period: 'LYTD', count: kpis?.lytd.invoiceCount != null ? kpis.lytd.invoiceCount.toLocaleString() : '—' },
-    { id: 'mtd', period: 'MTD', count: kpis?.mtd.invoiceCount != null ? kpis.mtd.invoiceCount.toLocaleString() : '—' },
-    { id: 'lmtd', period: 'LMTD', count: kpis?.lmtd.invoiceCount != null ? kpis.lmtd.invoiceCount.toLocaleString() : '—' },
+    { id: 'ytd', period: 'YTD', count: kpis?.ytd.invoiceCount != null ? kpis.ytd.invoiceCount.toLocaleString(DISPLAY_LOCALE) : '—' },
+    { id: 'lytd', period: 'LYTD', count: kpis?.lytd.invoiceCount != null ? kpis.lytd.invoiceCount.toLocaleString(DISPLAY_LOCALE) : '—' },
+    { id: 'mtd', period: 'MTD', count: kpis?.mtd.invoiceCount != null ? kpis.mtd.invoiceCount.toLocaleString(DISPLAY_LOCALE) : '—' },
+    { id: 'lmtd', period: 'LMTD', count: kpis?.lmtd.invoiceCount != null ? kpis.lmtd.invoiceCount.toLocaleString(DISPLAY_LOCALE) : '—' },
   ];
 
   const salesTrendTableRows: SalesTrendTableRow[] = salesTrendPoints.map((p) => ({
@@ -682,7 +682,7 @@ export default function InvoicesEnginePage() {
                       rightAxisFormatter={formatThousands}
                       tooltipFormatters={{
                         invoiceSalesValue: (v) => formatCurrency(v),
-                        invoiceCount: (v) => v.toLocaleString(),
+                        invoiceCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                       }}
                       onCategoryClick={handleSalesTrendCategoryClick}
                       onAreaClick={handleSalesTrendAreaClick}
@@ -977,7 +977,7 @@ function TotalInvoicesCard({
       }}
     >
       <div style={{ fontSize: 34, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
-        {value != null ? value.toLocaleString() : '—'}
+        {value != null ? value.toLocaleString(DISPLAY_LOCALE) : '—'}
       </div>
       <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>{label}</div>
     </Card>

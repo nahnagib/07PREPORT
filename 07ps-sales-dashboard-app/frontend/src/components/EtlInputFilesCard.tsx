@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button, Card, ConfirmDialog, LoadingSkeleton } from '@07ps/ui';
-import { APP_TIMEZONE } from '../lib/format';
+import { APP_TIMEZONE, DISPLAY_LOCALE, formatDateTime as formatDisplayDateTime } from '../lib/format';
 import { useAuth } from '../lib/AuthProvider';
 import { adminApi, ApiError, EtlInputFileReplaced, EtlInputFileSlot, EtlInputFilesResponse } from '../lib/api';
 
@@ -17,7 +17,7 @@ function formatBytes(n: number | null): string {
 
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, { timeZone: APP_TIMEZONE, dateStyle: 'medium', timeStyle: 'short' });
+  return formatDisplayDateTime(iso, APP_TIMEZONE);
 }
 
 type Outcome =
@@ -142,7 +142,7 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
         <div role="status" style={{ padding: 10, marginBottom: 10, borderRadius: 8, border: '1px solid var(--ps-color-success)', fontSize: 13 }}>
           <strong>{outcome.result.name} replaced.</strong>{' '}
           {Object.entries(outcome.result.validation.counts)
-            .map(([k, v]) => `${v.toLocaleString()} ${k.replace(/_/g, ' ')}`)
+            .map(([k, v]) => `${v.toLocaleString(DISPLAY_LOCALE)} ${k.replace(/_/g, ' ')}`)
             .join(', ')}{' '}
           read. {outcome.result.backup ? <>Previous version backed up to <code>{outcome.result.backup.path}</code>. </> : null}
           It will be used by {whenApplied(outcome.result.name)}.

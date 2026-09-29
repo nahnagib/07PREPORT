@@ -11,7 +11,8 @@ import { useKaizenOptions } from '../../../../../components/kaizen/useKaizenOpti
 import { useUrlFilters } from '../../../../../components/kaizen/useUrlFilters';
 import { useAuth } from '../../../../../lib/AuthProvider';
 import { formatNumber, kt as t } from '../../../../../lib/kaizen/text';
-import { kaizenApi, type KaizenCard } from '../../../../../lib/kaizen/api';
+import { formatDate } from '../../../../../lib/format';
+import { defaultDateRange, kaizenApi, type KaizenCard } from '../../../../../lib/kaizen/api';
 
 /**
  * Kaizen card details -- the page the board's QR code opens (/Dashboard/process/kaizen-board/cards).
@@ -32,7 +33,7 @@ export default function KaizenCardDetailsPage() {
 function CardsBody() {
   const { token, canEdit } = useAuth();
   const options = useKaizenOptions();
-  const { filters, setFilters, openNo, setOpenNo } = useUrlFilters();
+  const { filters, setFilters, openNo, setOpenNo } = useUrlFilters(defaultDateRange);
   const [rows, setRows] = useState<KaizenCard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,7 +65,7 @@ function CardsBody() {
 
   return (
     <>
-      <KaizenFilterBar filters={filters} onChange={setFilters} options={options} full />
+      <KaizenFilterBar filters={filters} onChange={setFilters} options={options} full defaults={defaultDateRange()} />
       <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
         {t('kaizen.list.count', { n: formatNumber(rows.length) })} · {t('kaizen.list.newestFirst')} · {t('kaizen.list.tapHint')}
       </div>
@@ -102,7 +103,7 @@ function CardsBody() {
                 </div>
                 <div dir="auto" style={{ fontSize: 15, fontWeight: 700, overflowWrap: 'anywhere', textAlign: 'start' }}>{c.card_name}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: 12.5, color: 'var(--ps-color-muted-text)' }}>
-                  <span>{c.card_date}</span>
+                  <span>{formatDate(c.card_date)}</span>
                   <ValueTag id={c.department_id} options={options} />
                   <ValueTag id={c.priority_id} options={options} />
                 </div>

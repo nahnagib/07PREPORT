@@ -142,6 +142,16 @@ html, body {
 /* Directional icons (e.g. the header Back arrow) mirror in RTL. */
 [dir='rtl'] .ps-rtl-flip { transform: scaleX(-1); }
 
+/* Arabic data (customer, product, sales-team names...) inside an English UI: each cell, list item,
+   option, text field and chart tooltip/legend entry takes its reading direction from its own
+   content -- the CSS form of dir="auto" -- so Arabic and mixed text ("GERMA - GLUE لاصق") read in
+   the right order without every page's tables having to set it. Alignment is unchanged. */
+td, th, li, option, textarea,
+input:not([type]), input[type='text'], input[type='search'],
+.recharts-tooltip-label, .recharts-tooltip-item, .recharts-legend-item-text {
+  unicode-bidi: plaintext;
+}
+
 /* ScrollableNav (BottomNavBar): hidden scrollbar, tabs never shrink or wrap, centred while they
    fit and start-aligned ("safe") once they overflow so the first tab is never clipped. */
 .ps-hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }

@@ -2,6 +2,7 @@
 import React from 'react';
 import { Card } from '@07ps/ui';
 import { kt as t, type KaizenTextKey } from '../../lib/kaizen/text';
+import { formatDate } from '../../lib/format';
 import type { KaizenCard } from '../../lib/kaizen/api';
 import type { useKaizenOptions } from './useKaizenOptions';
 
@@ -97,7 +98,7 @@ export function CardDetail({ card, options }: { card: KaizenCard; options: Optio
       {row('kaizen.f.status', <StatusPill status={card.status} overdue={card.is_overdue} />)}
       {row('kaizen.f.cardName', <strong>{card.card_name}</strong>, true)}
       {row('kaizen.f.creator', card.creator_name)}
-      {row('kaizen.f.date', card.card_date)}
+      {row('kaizen.f.date', formatDate(card.card_date))}
       {row('kaizen.f.department', <ValueTag id={card.department_id} options={options} />)}
       {row('kaizen.f.type', <ValueTag id={card.card_type_id} options={options} />)}
       {row('kaizen.f.priority', <ValueTag id={card.priority_id} options={options} />)}
@@ -106,8 +107,8 @@ export function CardDetail({ card, options }: { card: KaizenCard; options: Optio
       {row('kaizen.f.rootCause', card.root_cause, true)}
       {row('kaizen.f.impact', card.impact, true)}
       {row('kaizen.f.solution', card.proposed_solution, true)}
-      {row('kaizen.f.expectedDate', card.expected_date)}
-      {row('kaizen.f.closerDate', card.closer_date)}
+      {row('kaizen.f.expectedDate', card.expected_date && formatDate(card.expected_date))}
+      {row('kaizen.f.closerDate', card.closer_date && formatDate(card.closer_date))}
     </div>
   );
 }

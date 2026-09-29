@@ -60,9 +60,9 @@ describe('golden: Media Campaign Performance', () => {
   it('timeline: Feb 1 -> Mar 15 2026 is 42 days', () => {
     const v = visualHtml(html, 'campaigns.timeline');
     // the bar's accessible description (and hover tooltip) carry the dates and duration
-    expect(v).toContain('aria-label="Ramadan Lighting Campaign. Completed. 01/02/2026 – 15/03/2026. Brand Brand A. Duration 42 days.');
-    expect(flat(v)).toContain('01/02/2026');
-    expect(flat(v)).toContain('15/03/2026');
+    expect(v).toContain('aria-label="Ramadan Lighting Campaign. Completed. 01 Feb 2026 – 15 Mar 2026. Brand Brand A. Duration 42 days.');
+    expect(flat(v)).toContain('01 Feb 2026');
+    expect(flat(v)).toContain('15 Mar 2026');
   });
   it('45 street-light units / LYD 30,000 appear in the coverage donut and the cost chart', () => {
     const cov = visualHtml(html, 'campaigns.coverage');
@@ -130,7 +130,7 @@ describe('golden: Trade Marketing & Retail', () => {
     expect(flat(by)).toMatch(/Aug 0 0 0 0 0 1 0 0 1/); // month row: 8 types (only type 6 = 1) then total
     const tl = visualHtml(html, 'trade.eventsTimeline');
     expect(flat(tl)).toContain('Product Launch Night - Brand A');
-    expect(flat(tl)).toContain('10/08/2026');
+    expect(flat(tl)).toContain('10 Aug 2026');
     expect(tl).toContain('data-testid="gantt-bar"'); // planned 10/08 = completed 10/08 -> a one-day bar, not overdue
     expect(tl).not.toContain('gantt-overdue');
   });

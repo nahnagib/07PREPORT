@@ -22,6 +22,7 @@ import { chunkRows, PDF_MAX_ROWS } from '../pdfPagination';
 import { assemblePaginatedPdf } from '../pdfPageAssembly';
 import { appendPdfMetaBlock } from '../pdfExportContext';
 import { authorizeExport, useCanExport } from '../exportPermission';
+import { formatDate, formatTime, DISPLAY_LOCALE } from '../locale';
 
 export interface DataGridColumn<T> {
   key: keyof T;
@@ -146,7 +147,7 @@ export function DataGrid<T extends Record<string, unknown>>({
     if (value === null || value === undefined || value === '') return '';
     const num = Number(value);
     if (Number.isNaN(num)) return String(value);
-    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return num.toLocaleString(DISPLAY_LOCALE, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
   /** Builds one <tr> for `row`, same badge / rawValue / render / number-formatting precedence as
@@ -268,7 +269,7 @@ export function DataGrid<T extends Record<string, unknown>>({
     if (!tableRef.current || exportRows.length === 0) return;
     if (exportRows.length > PDF_MAX_ROWS) {
       setPdfNotice(
-        `PDF export is limited to ${PDF_MAX_ROWS.toLocaleString()} rows, and ${exportRows.length.toLocaleString()} currently match. ` +
+        `PDF export is limited to ${PDF_MAX_ROWS.toLocaleString(DISPLAY_LOCALE)} rows, and ${exportRows.length.toLocaleString(DISPLAY_LOCALE)} currently match. ` +
           'Narrow the results with the search box, column filters or the page filters, or use Export CSV for the full list.',
       );
       return;
@@ -318,7 +319,7 @@ export function DataGrid<T extends Record<string, unknown>>({
           footer.style.color = '#718096';
           footer.style.borderTop = '1px solid #e2e8f0';
           footer.style.paddingTop = '10px';
-          footer.textContent = `Exported on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()} | Total rows: ${exportRows.length}`;
+          footer.textContent = `Exported on ${formatDate(new Date())} at ${formatTime(new Date())} | Total rows: ${exportRows.length}`;
           container.appendChild(footer);
         }
 
@@ -405,6 +406,7 @@ export function DataGrid<T extends Record<string, unknown>>({
             }}
           />
           <input
+            dir="auto"
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             placeholder="Search all columns..."
@@ -561,6 +563,7 @@ export function DataGrid<T extends Record<string, unknown>>({
 
                       {/* Per-column filter input. */}
                       <input
+                        dir="auto"
                         value={(header.column.getFilterValue() as string) ?? ''}
                         onChange={(e) => header.column.setFilterValue(e.target.value)}
                         onClick={(e) => e.stopPropagation()}
@@ -605,6 +608,7 @@ export function DataGrid<T extends Record<string, unknown>>({
                   return (
                     <td
                       key={cell.id}
+                      dir="auto"
                       style={{
                         position: isPinned ? 'sticky' : undefined,
                         left: isPinned === 'left' ? cell.column.getStart('left') : undefined,

@@ -223,3 +223,10 @@ export function todayIso(): string {
     day: '2-digit',
   }).format(new Date());
 }
+
+/** The Kaizen Board's default period: 1 January of the current year to today (business timezone),
+ * both inclusive. Call it at page load -- never at build time -- so it rolls over on 1 January. */
+export function defaultDateRange(): { dateFrom: string; dateTo: string } {
+  const today = todayIso();
+  return { dateFrom: `${today.slice(0, 4)}-01-01`, dateTo: today };
+}

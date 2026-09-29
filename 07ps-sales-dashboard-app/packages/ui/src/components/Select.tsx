@@ -146,6 +146,7 @@ export function Select({
           }}
         >
           <span
+            dir="auto"
             style={{
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -203,6 +204,7 @@ export function Select({
                 <Search size={14} style={{ color: 'var(--ps-color-muted-text)', flexShrink: 0 }} />
                 <input
                   autoFocus
+                  dir="auto"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search..."
@@ -267,7 +269,7 @@ export function Select({
                   onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--ps-color-muted-bg)')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 >
-                  <span>{opt.label}</span>
+                  <span dir="auto">{opt.label}</span>
                   {selected && <span aria-hidden>✓</span>}
                 </div>
               );

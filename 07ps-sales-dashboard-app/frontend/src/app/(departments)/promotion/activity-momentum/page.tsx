@@ -28,7 +28,7 @@ import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useActivityMomentumOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { ActivityOpportunityRow, LostReasonSlice, NewOpportunitiesMonthPoint, OpportunityActivityCounts, ActivityRates } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, formatVariance } from '../../../../lib/format';
+import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
 
 const CATEGORY_PALETTE = [
   'var(--ps-color-accent)',
@@ -43,7 +43,7 @@ const CATEGORY_PALETTE = [
 type ActivityFilterKey = 'active' | 'lost' | 'won' | 'inactive' | 'withoutNextStep' | 'ytd';
 
 function formatCountOrDash(v: number | null | undefined): string {
-  return v != null ? v.toLocaleString() : '—';
+  return v != null ? v.toLocaleString(DISPLAY_LOCALE) : '—';
 }
 
 // ---------------------------------------------------------------------------
@@ -530,7 +530,7 @@ export default function ActivityMomentumPage() {
                       showTitle={false}
                       points={newOpportunitiesPoints}
                       actualLabel="YTD"
-                      valueFormatter={(v) => v.toLocaleString()}
+                      valueFormatter={(v) => v.toLocaleString(DISPLAY_LOCALE)}
                     />
                   )}
                 </ChartPanel>

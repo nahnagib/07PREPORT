@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { deltaTone, fmtCompact, fmtDate, fmtDelta, fmtInt, fmtKpiValue, fmtLyd, fmtMinutes, fmtPct, fmtRatio, fmtSignedPct, fmtTimestampDate, minutesLong, monthName, monthYear, setFormatLocale } from '../format';
 
-beforeAll(() => setFormatLocale('en-US'));
+beforeAll(() => setFormatLocale('en-GB'));
 
 describe('formatters (the API returns raw numbers; formatting happens here)', () => {
   it('LYD amounts', () => {
@@ -27,11 +27,11 @@ describe('formatters (the API returns raw numbers; formatting happens here)', ()
     expect(minutesLong(0.8)).toBe('0 min 48 s');
     expect(minutesLong(1)).toBe('1 min 0 s');
   });
-  it('dates are DD/MM/YYYY without timezone shifts', () => {
-    expect(fmtDate('2026-08-10')).toBe('10/08/2026');
-    expect(fmtDate('2026-01-01')).toBe('01/01/2026');
-    expect(fmtDate('2026-12-31T23:59:59.000Z')).toBe('31/12/2026');
-    expect(fmtTimestampDate('2026-09-20T09:00:00.000Z')).toBe('20/09/2026');
+  it('dates are "10 Aug 2026" (en-GB) without timezone shifts', () => {
+    expect(fmtDate('2026-08-10')).toBe('10 Aug 2026');
+    expect(fmtDate('2026-01-01')).toBe('01 Jan 2026');
+    expect(fmtDate('2026-12-31T23:59:59.000Z')).toBe('31 Dec 2026');
+    expect(fmtTimestampDate('2026-09-20T09:00:00.000Z')).toBe('20 Sep 2026');
   });
   it('month names', () => {
     expect(monthName(8)).toBe('Aug');

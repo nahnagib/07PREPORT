@@ -28,7 +28,7 @@ import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useRevenueTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { RevenueTrendMonthPoint, RevenueTrendPerformanceRow, RevenueTrendVarianceCard } from '../../../../lib/api';
-import { formatAsp, formatCurrency, formatTimestamp, formatVariance, formatVolume, toSemanticStatus } from '../../../../lib/format';
+import { formatAsp, formatCurrency, formatTimestamp, formatVariance, formatVolume, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
 
 /** Y-axis tick formatter: currency/volume in millions with an "M" suffix (e.g. "5M", "0.3M"),
  * one decimal place unless it rounds to a whole number. */
@@ -40,7 +40,7 @@ function formatMillions(value: number): string {
 /** ASP y-axis: plain, unprefixed number -- full LYD/2-decimal precision is reserved for the
  * hover tooltip (formatAsp), per the chart spec. */
 function formatPlainNumber(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 function formatAspOrDash(value: number | null): string {

@@ -24,7 +24,7 @@ import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { usePipelineTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { AgingBuckets, AgingDistribution, MonthComparisonPoint, QuotationRates } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, formatVariance } from '../../../../lib/format';
+import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
 
 function formatMillions(value: number): string {
   const fixed = (value / 1_000_000).toFixed(1);
@@ -32,11 +32,11 @@ function formatMillions(value: number): string {
 }
 
 function formatPlainNumber(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 function formatCountOrDash(v: number | undefined): string {
-  return v != null ? v.toLocaleString() : '—';
+  return v != null ? v.toLocaleString(DISPLAY_LOCALE) : '—';
 }
 
 function formatRatio(v: number | null | undefined): string {
@@ -86,7 +86,7 @@ const MONTH_CHART_LINES = [
 // ---------------------------------------------------------------------------
 
 function formatCountOrDashPdf(v: number | undefined): string {
-  return v != null ? v.toLocaleString() : '—';
+  return v != null ? v.toLocaleString(DISPLAY_LOCALE) : '—';
 }
 
 interface RateTableRow extends Record<string, unknown> {
@@ -566,7 +566,7 @@ function MonthComboPanel({
           leftAxisFormatter={formatPlainNumber}
           rightAxisFormatter={formatMillions}
           tooltipFormatters={{
-            countYtd: (v) => v.toLocaleString(),
+            countYtd: (v) => v.toLocaleString(DISPLAY_LOCALE),
             valueYtd: (v) => formatCurrency(v),
           }}
           height={220}

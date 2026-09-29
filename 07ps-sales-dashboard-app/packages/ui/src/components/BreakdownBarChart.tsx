@@ -59,6 +59,8 @@ export function BreakdownBarChart({ rows }: { rows: BarChartRow[] }) {
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                 }}
+                dir="auto"
+                title={r.label}
               >
                 {r.label}
               </span>

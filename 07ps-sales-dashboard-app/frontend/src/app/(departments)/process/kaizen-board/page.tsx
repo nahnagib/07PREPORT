@@ -11,12 +11,13 @@ import { KaizenKpi, STATUS_COLOR } from '../../../../components/kaizen/KaizenBit
 import { useKaizenOptions } from '../../../../components/kaizen/useKaizenOptions';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { formatNumber, kt as t } from '../../../../lib/kaizen/text';
-import { filtersToQuery, kaizenApi, type KaizenDashboard, type KaizenFilters } from '../../../../lib/kaizen/api';
+import { defaultDateRange, filtersToQuery, kaizenApi, type KaizenDashboard, type KaizenFilters } from '../../../../lib/kaizen/api';
 import { responsiblePoints, type ResponsiblePoint } from '../../../../lib/kaizen/responsibleChart';
 
 /**
  * Kaizen Board (Process department) -- built live from kaizen_cards. KPI tiles in the left column,
- * charts beside them; the date range + Department filters drive everything. Every tile and chart
+ * charts beside them; the date range (default: 1 January this year -> today) drives everything.
+ * No Department filter here: the department chart itself is the way into one department's cards. Every tile and chart
  * segment opens the matching cards: the entry list for users with Kaizen Cards access, the
  * read-only details list for everyone else. English-only, like the rest of the Kaizen module.
  */
@@ -43,19 +44,18 @@ function KaizenBoardBody() {
   const router = useRouter();
   const listHref = useKaizenListHref();
   const options = useKaizenOptions();
-  const [filters, setFilters] = useState<KaizenFilters>({});
+  // Defaults are computed in the browser at page load (not at build time), so they roll over on 1 January.
+  const [filters, setFilters] = useState<KaizenFilters | null>(null);
+  useEffect(() => setFilters(defaultDateRange()), []);
   const [data, setData] = useState<KaizenDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [qr, setQr] = useState<{ url: string; dataUrl: string } | null>(null);
   const narrow = useIsNarrow();
 
-  const dashFilters = useMemo(
-    () => ({ dateFrom: filters.dateFrom, dateTo: filters.dateTo, departmentIds: filters.departmentIds }),
-    [filters.dateFrom, filters.dateTo, filters.departmentIds],
-  );
+  const dashFilters = useMemo(() => ({ dateFrom: filters?.dateFrom, dateTo: filters?.dateTo }), [filters?.dateFrom, filters?.dateTo]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !filters) return;
     let cancelled = false;
     setError(null);
     kaizenApi
@@ -65,6 +65,7 @@ function KaizenBoardBody() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, dashFilters]);
 
   useEffect(() => {
@@ -75,17 +76,16 @@ function KaizenBoardBody() {
   const drill = (extra: KaizenFilters) => router.push(`${listHref}?${filtersToQuery({ ...dashFilters, ...extra })}`);
 
   if (error) return <ErrorState message={error} />;
-  if (!data || options.loading) return <p style={{ color: 'var(--ps-color-muted-text)' }}>{t('kaizen.loading')}</p>;
+  if (!data || !filters || options.loading) return <p style={{ color: 'var(--ps-color-muted-text)' }}>{t('kaizen.loading')}</p>;
 
   const cardsUnit = t('kaizen.unit.cards');
-  const count = (n: number) => `${formatNumber(n)} ${cardsUnit}`;
+  const count = (n: number) => `${formatNumber(n)} ${n === 1 ? t('kaizen.unit.card') : cardsUnit}`;
 
   // Bars: every department value (active, or inactive but still counted), in the list's order.
   const deptCounts = new Map(data.byDepartment.map((d) => [d.value_id, d.count]));
   const deptRows = options
     .listValues('department')
     .filter((d) => d.is_active || deptCounts.has(d.value_id))
-    .filter((d) => !filters.departmentIds?.length || filters.departmentIds.includes(d.value_id))
     .map((d) => ({ id: d.value_id, label: d.label, value: deptCounts.get(d.value_id) ?? 0, color: d.color }));
 
   const segments = (rows: { value_id: number; count: number }[]) =>
@@ -114,7 +114,7 @@ function KaizenBoardBody() {
 
   return (
     <>
-      <KaizenFilterBar filters={filters} onChange={setFilters} options={options} />
+      <KaizenFilterBar filters={filters} onChange={setFilters} options={options} showDepartment={false} defaults={defaultDateRange()} />
 
       <div className="ps-kaizen-board">
         <section className="ps-kaizen-kpis" aria-label={t('kaizen.board')}>
@@ -182,7 +182,20 @@ function KaizenBoardBody() {
                         <YAxis allowDecimals={false} width={32} tick={{ fontSize: 12, fill: 'var(--ps-color-muted-text)' }} />
                       </>
                     )}
-                    <Tooltip cursor={{ fill: 'var(--ps-color-muted-bg)' }} formatter={(v: number) => [count(v), t('kaizen.cardsWord')]} contentStyle={TOOLTIP_STYLE} />
+                    <Tooltip
+                      cursor={{ fill: 'var(--ps-color-muted-bg)' }}
+                      // Own content: theme text colours (the default tints the text with the bar colour,
+                      // unreadable on the dark card) and "1 card" / "3 cards" instead of "Cards : 1 cards".
+                      content={({ active, payload }) => {
+                        const row = active ? (payload?.[0]?.payload as { label: string; value: number } | undefined) : undefined;
+                        return row ? (
+                          <div style={{ ...TOOLTIP_STYLE, padding: '6px 10px', boxShadow: 'var(--ps-card-shadow)' }}>
+                            <div dir="auto" style={{ fontWeight: 700 }}>{row.label}</div>
+                            <div>{count(row.value)}</div>
+                          </div>
+                        ) : null;
+                      }}
+                    />
                     <Bar
                       dataKey="value"
                       radius={narrow ? [0, 6, 6, 0] : [6, 6, 0, 0]}

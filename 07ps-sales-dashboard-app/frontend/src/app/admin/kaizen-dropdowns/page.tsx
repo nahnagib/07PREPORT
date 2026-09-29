@@ -20,9 +20,7 @@ export default function KaizenDropdownsPage() {
   return (
     <AdminOnlyGuard>
       <AdminLayout title={t('kaizen.dropdownsTitle')}>
-        <div dir="ltr" lang="en">
-          <DropdownsBody />
-        </div>
+        <DropdownsBody />
       </AdminLayout>
     </AdminOnlyGuard>
   );

@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { ResponsiveContainer, FunnelChart as RechartsFunnelChart, Funnel, Cell, LabelList, Tooltip } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
 import { useCanExport } from '../exportPermission';
+import { DISPLAY_LOCALE } from '../locale';
 
 export interface FunnelStage {
   id: string;
@@ -36,7 +37,7 @@ export interface FunnelChartProps {
 }
 
 function defaultFormatter(v: number): string {
-  return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return v.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 /**

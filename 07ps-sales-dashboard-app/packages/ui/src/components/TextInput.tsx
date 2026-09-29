@@ -29,6 +29,7 @@ export function TextInput({ label, error, helperText, id, style, ...rest }: Text
       )}
       <input
         id={inputId}
+        dir="auto"
         style={{
           width: '100%',
           padding: '8px 10px',

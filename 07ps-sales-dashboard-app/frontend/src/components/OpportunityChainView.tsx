@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { Card, DataTable, EmptyState, type Column } from '@07ps/ui';
 import type { ChainDocument, ChainStage, OpportunityChainRow, OpportunityChains } from '../lib/api';
-import { formatCurrency } from '../lib/format';
+import { formatCurrency, DISPLAY_LOCALE } from '../lib/format';
 
 /**
  * Full Pipeline chain view: every B2B, current-year opportunity followed through
@@ -166,13 +166,13 @@ export function OpportunityChainView({ chains }: { chains?: OpportunityChains })
             <Card key={tile.label} style={{ borderTop: `3px solid ${STAGE_COLORS[i]}` }}>
               <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>{tile.label}</div>
               <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
-                {tile.total.opportunities.toLocaleString()}
+                {tile.total.opportunities.toLocaleString(DISPLAY_LOCALE)}
               </div>
               <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
                 {i === 0 ? 'opportunities' : 'opportunities reached'} · {formatCurrency(tile.total.value)}
               </div>
               <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
-                {i > 0 && `${tile.total.documents.toLocaleString()} documents`}
+                {i > 0 && `${tile.total.documents.toLocaleString(DISPLAY_LOCALE)} documents`}
                 {dropPct != null && ` · ${dropPct.toFixed(1)}% of ${totalTiles[i - 1].label.toLowerCase()}`}
               </div>
             </Card>

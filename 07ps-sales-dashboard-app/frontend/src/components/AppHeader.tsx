@@ -2,12 +2,11 @@
 import React from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Bell, User, LogOut, Sun, Moon, Languages } from 'lucide-react';
+import { ArrowLeft, Bell, User, LogOut, Sun, Moon } from 'lucide-react';
 import { DateInput } from '@07ps/ui';
 import { useBusinessUnit } from './BusinessUnitProvider';
 import { useTheme } from './ThemeProvider';
 import { BASE_PATH } from '../lib/basePath';
-import { useLanguage } from '../lib/i18n/LanguageProvider';
 
 /**
  * Logo asset note: the source BMH files ("BenMussa Black.png" / "BenMussa White.png") are named
@@ -89,7 +88,6 @@ export function AppHeader({
 }: AppHeaderProps) {
   const { businessUnit } = useBusinessUnit();
   const { theme, toggle } = useTheme();
-  const { t, toggle: toggleLanguage } = useLanguage();
   const secondary = buLogo[businessUnit];
   const router = useRouter();
 
@@ -162,8 +160,8 @@ export function AppHeader({
         {showBack && (
           <button
             onClick={() => router.back()}
-            aria-label={t('shell.back')}
-            title={t('shell.back')}
+            aria-label="Back"
+            title="Back"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -181,36 +179,10 @@ export function AppHeader({
           </button>
         )}
 
-        {/* Platform-level EN/AR switch (lib/i18n/LanguageProvider.tsx); shows the language it switches TO. */}
-        <button
-          onClick={toggleLanguage}
-          aria-label={t('shell.languageAria')}
-          title={t('shell.languageAria')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 5,
-            border: '1px solid var(--ps-color-border)',
-            borderRadius: 6,
-            height: 30,
-            padding: '0 8px',
-            background: 'transparent',
-            color: 'var(--ps-color-text)',
-            cursor: 'pointer',
-            fontSize: 12.5,
-            fontWeight: 700,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <Languages size={15} />
-          <span className="hidden sm:inline">{t('shell.language')}</span>
-        </button>
-
         <button
           onClick={toggle}
-          aria-label={theme === 'light' ? t('shell.darkMode') : t('shell.lightMode')}
-          title={theme === 'light' ? t('shell.darkMode') : t('shell.lightMode')}
+          aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -271,7 +243,7 @@ export function AppHeader({
 
         {/* Profile chip -- real signed-in user (AuthProvider), not a dev stand-in. */}
         <div
-          title={roleLabel ?? t('shell.signedIn')}
+          title={roleLabel ? `Signed in as: ${roleLabel}` : 'Signed in'}
           style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}
         >
           <div
@@ -292,15 +264,15 @@ export function AppHeader({
             {initials || <User size={15} />}
           </div>
           <span className="hidden lg:inline" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ps-color-text)' }}>
-            {roleLabel ?? t('shell.signedIn')}
+            {roleLabel ?? 'Signed in'}
           </span>
         </div>
 
         {onLogout && (
           <button
             onClick={onLogout}
-            aria-label={t('shell.logout')}
-            title={t('shell.logout')}
+            aria-label="Log out"
+            title="Log out"
             style={{
               display: 'flex',
               alignItems: 'center',

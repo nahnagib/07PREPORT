@@ -47,8 +47,7 @@ export function KaizenShell({ titleKey, titleVars, actions, children }: {
         onLogout={logout}
         showDateInput={false}
       />
-      {/* The Kaizen module is English-only: always left-to-right, whatever the app's language switch says. */}
-      <main dir="ltr" lang="en" style={{ flex: 1, padding: 'var(--ps-space-3, 16px)', display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+      <main style={{ flex: 1, padding: 'var(--ps-space-3, 16px)', display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
         {(visible.length > 1 || actions) && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
             <nav className="ps-kaizen-subnav" aria-label={t('kaizen.board')}>

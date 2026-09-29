@@ -1,6 +1,7 @@
 'use client';
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { Calendar } from 'lucide-react';
+import { DateField } from './DateField';
 
 export interface DateInputProps {
   label: string;
@@ -8,6 +9,7 @@ export interface DateInputProps {
   onChange: (value: string) => void;
   helperText?: string;
   disabled?: boolean;
+  required?: boolean;
   /** ISO (yyyy-mm-dd) bounds passed straight through to the native input's min/max -- e.g. a "To
    * Date" field gets min={fromDate} and a "From Date" field gets max={toDate}, so the browser's
    * own date-picker popup greys out and refuses invalid selections instead of relying only on the
@@ -28,9 +30,8 @@ export interface DateInputProps {
  * popup (opened by the native input) is retained, since replacing that specific piece would be
  * the "swap to a different charting/picker approach entirely" case worth flagging before doing.
  */
-export function DateInput({ label, value, onChange, helperText, disabled, min, max }: DateInputProps) {
+export function DateInput({ label, value, onChange, helperText, disabled, required, min, max }: DateInputProps) {
   const [focused, setFocused] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div style={{ opacity: disabled ? 0.5 : 1, marginBottom: 16 }}>
@@ -47,7 +48,6 @@ export function DateInput({ label, value, onChange, helperText, disabled, min, m
         {label}
       </label>
       <div
-        onClick={() => inputRef.current?.showPicker?.()}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -63,28 +63,18 @@ export function DateInput({ label, value, onChange, helperText, disabled, min, m
         }}
       >
         <Calendar size={16} style={{ color: 'var(--ps-color-muted-text)', flexShrink: 0, display: 'flex' }} />
-        <input
-          ref={inputRef}
-          type="date"
-          className="ps-date-input"
+        {/* Always shows the app's en-GB date ("28 Sep 2026"), whatever the browser's locale. */}
+        <DateField
           value={value}
+          onChange={onChange}
           min={min}
           max={max}
           disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
+          required={required}
+          aria-label={label}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          style={{
-            border: 'none',
-            outline: 'none',
-            background: 'transparent',
-            color: 'var(--ps-color-text)',
-            fontSize: 14,
-            width: '100%',
-            height: '100%',
-            fontVariantNumeric: 'tabular-nums',
-            colorScheme: 'light dark',
-          }}
+          style={{ flex: 1, height: '100%', color: 'var(--ps-color-text)', fontSize: 14, colorScheme: 'light dark' }}
         />
       </div>
       {helperText && (

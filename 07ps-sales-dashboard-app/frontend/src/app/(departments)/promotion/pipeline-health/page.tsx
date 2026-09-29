@@ -43,7 +43,7 @@ import type {
   PipelineHealthOverview,
   StageBenchmarkRow,
 } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
+import { formatCurrency, formatTimestamp, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
 
 // Fixed: --ps-color-watch previously reused here shares the exact same hex as --ps-color-gold
 // (#b8860b), so Quotations and Deliveries rendered as indistinguishable brownish-gold trapezoids/
@@ -66,7 +66,7 @@ function formatMillions(value: number): string {
 }
 
 function formatPlainNumber(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 function formatPct(v: number | null): string {
@@ -753,7 +753,7 @@ export default function PipelineHealthPage() {
                     leftAxisFormatter={formatPlainNumber}
                     rightAxisFormatter={formatMillions}
                     tooltipFormatters={{
-                      expectedCount: (v) => v.toLocaleString(),
+                      expectedCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                       expectedValue: (v) => formatCurrency(v),
                     }}
                     onCategoryClick={(label) => openDetails({ type: 'month', value: label })}
@@ -833,7 +833,7 @@ export default function PipelineHealthPage() {
                     points={probabilityPoints}
                     bars={[{ key: 'count', name: 'Opportunities', color: 'var(--ps-color-accent)' }]}
                     valueFormatter={formatPlainNumber}
-                    tooltipFormatters={{ count: (v) => v.toLocaleString() }}
+                    tooltipFormatters={{ count: (v) => v.toLocaleString(DISPLAY_LOCALE) }}
                     onCategoryClick={(label) => openDetails({ type: 'bucket', value: label })}
                   />
                 )}

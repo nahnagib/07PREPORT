@@ -1,6 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { Button } from '@07ps/ui';
+import { Button, DateField } from '@07ps/ui';
 import { useAuth } from '../../lib/AuthProvider';
 import { errorText, kt as t } from '../../lib/kaizen/text';
 import { ApiError } from '../../lib/api';
@@ -49,7 +49,16 @@ export function CloseCardDialog({ card, onCancel, onClosed }: { card: KaizenCard
         </p>
         <label className="ps-kaizen-field">
           <span>{t('kaizen.f.closerDate')}</span>
-          <input className="ps-kaizen-input" type="date" required value={date} min={card.card_date} onChange={(e) => setDate(e.target.value)} aria-invalid={Boolean(error)} autoFocus />
+          <DateField
+            className="ps-kaizen-input"
+            required
+            value={date}
+            min={card.card_date}
+            onChange={setDate}
+            aria-label={t('kaizen.f.closerDate')}
+            aria-invalid={Boolean(error)}
+            style={error ? { borderColor: 'var(--ps-color-alert)' } : undefined}
+          />
         </label>
         {error && <p role="alert" style={{ margin: 0, fontSize: 13, color: 'var(--ps-color-alert)' }}>{error}</p>}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>

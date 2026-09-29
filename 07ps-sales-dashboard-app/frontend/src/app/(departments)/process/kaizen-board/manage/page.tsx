@@ -13,6 +13,7 @@ import { useKaizenOptions } from '../../../../../components/kaizen/useKaizenOpti
 import { useUrlFilters } from '../../../../../components/kaizen/useUrlFilters';
 import { useAuth } from '../../../../../lib/AuthProvider';
 import { formatNumber, kt as t, type KaizenTextKey } from '../../../../../lib/kaizen/text';
+import { formatDate } from '../../../../../lib/format';
 import { ApiError } from '../../../../../lib/api';
 import { kaizenApi, type KaizenCard } from '../../../../../lib/kaizen/api';
 
@@ -191,7 +192,7 @@ function ManageBody() {
                 {sorted.map((c) => (
                   <tr key={c.card_no} className={c.is_overdue ? 'ps-kaizen-overdue' : undefined}>
                     <td style={{ fontWeight: 700 }}>#{c.card_no}</td>
-                    <td>{c.card_date}</td>
+                    <td>{formatDate(c.card_date)}</td>
                     <td className="ps-kaizen-wrap">
                       <button type="button" dir="auto" onClick={() => setOpenNo(c.card_no)} style={{ all: 'unset', cursor: 'pointer', fontWeight: 600, color: 'var(--ps-color-accent)' }}>
                         {c.card_name}
@@ -202,8 +203,8 @@ function ManageBody() {
                     <td><ValueTag id={c.priority_id} options={options} /></td>
                     <td dir="auto">{c.responsible_party ?? <span style={{ color: 'var(--ps-color-muted-text)' }}>{t('kaizen.notAssigned')}</span>}</td>
                     <td><StatusPill status={c.status} overdue={c.is_overdue} /></td>
-                    <td style={c.is_overdue ? { color: 'var(--ps-color-alert)', fontWeight: 700 } : undefined}>{c.expected_date ?? '—'}</td>
-                    <td>{c.closer_date ?? '—'}</td>
+                    <td style={c.is_overdue ? { color: 'var(--ps-color-alert)', fontWeight: 700 } : undefined}>{formatDate(c.expected_date)}</td>
+                    <td>{formatDate(c.closer_date)}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <Button variant="secondary" style={small} onClick={() => setOpenNo(c.card_no)}>{t('kaizen.view')}</Button>

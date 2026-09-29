@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button, Card, DataTable, type Column } from '@07ps/ui';
 import type { Issue, Preview, TableId } from '../../lib/marcomApi';
+import { formatDate } from '../../lib/format';
 
 export interface UploadPreviewProps {
   preview: Preview;
@@ -67,7 +68,7 @@ export function UploadPreview(p: UploadPreviewProps) {
 
       {preview.duplicateOf && (
         <div role="status" style={{ padding: 12, borderRadius: 8, border: '1px solid var(--ps-color-watch)', fontSize: 13 }}>
-          ! This exact file was already imported on {new Date(preview.duplicateOf.uploadedAt).toLocaleDateString()}
+          ! This exact file was already imported on {formatDate(preview.duplicateOf.uploadedAt)}
           {preview.duplicateOf.uploadedBy ? ` by ${preview.duplicateOf.uploadedBy}` : ''}. Importing it again changes nothing.
         </div>
       )}

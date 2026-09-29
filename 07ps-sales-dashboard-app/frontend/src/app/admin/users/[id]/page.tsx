@@ -17,6 +17,7 @@ import {
   SalespersonOption,
   UserPermissionOverrides,
 } from '../../../../lib/api';
+import { formatDateTime } from '../../../../lib/format';
 
 const ACTION_LABEL: Record<PermissionAction, string> = { view: 'View', create: 'Create', edit: 'Edit', delete: 'Delete', export: 'Export' };
 const ACTIONS: PermissionAction[] = ['view', 'create', 'edit', 'delete', 'export'];
@@ -182,7 +183,7 @@ function UserDetailBody() {
   }
 
   const historyColumns: Column<LoginHistoryRow>[] = [
-    { key: 'created_at', header: 'When', render: (r) => new Date(r.created_at).toLocaleString() },
+    { key: 'created_at', header: 'When', render: (r) => formatDateTime(r.created_at) },
     { key: 'event_type', header: 'Event' },
     { key: 'ip_address', header: 'IP', render: (r) => r.ip_address ?? '—' },
   ];
@@ -211,10 +212,10 @@ function UserDetailBody() {
             <p style={{ margin: 0, fontSize: 13, color: 'var(--ps-color-muted-text)' }}>{user.email}</p>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
               Status: {user.status} · Must change password: {user.must_change_password ? 'Yes' : 'No'} · Last login:{' '}
-              {user.last_login_at ? new Date(user.last_login_at).toLocaleString() : 'Never'}
+              {user.last_login_at ? formatDateTime(user.last_login_at) : 'Never'}
             </p>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
-              Created: {new Date(user.created_at).toLocaleString()} · Updated: {new Date(user.updated_at).toLocaleString()}
+              Created: {formatDateTime(user.created_at)} · Updated: {formatDateTime(user.updated_at)}
             </p>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 260, maxWidth: 360 }}>

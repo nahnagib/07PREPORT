@@ -38,7 +38,7 @@ import type {
   CustomerStatusCounts,
   CustomerStatusLabel,
 } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, formatVariance } from '../../../../lib/format';
+import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
 
 const CATEGORY_LETTERS = new Set(['A', 'B', 'C', 'D']);
 
@@ -99,14 +99,14 @@ function toExecutiveSummaryRows(data?: CustomerGrowthOverview | null): Performan
       return {
         id: `${id}${period === 'ytd' ? 'Ytd' : 'Mtd'}`,
         metric: `${name} (${period.toUpperCase()})`,
-        actualLabel: actual.toLocaleString(),
+        actualLabel: actual.toLocaleString(DISPLAY_LOCALE),
         targetLabel: '—',
         variancePct: null,
         varianceLyPct: delta,
-        lytdLabel: last.toLocaleString(),
-        lytdFullValue: `${lastName}: ${last.toLocaleString()}`,
+        lytdLabel: last.toLocaleString(DISPLAY_LOCALE),
+        lytdFullValue: `${lastName}: ${last.toLocaleString(DISPLAY_LOCALE)}`,
         status: delta == null ? 'neutral' : delta < 0 ? 'alert' : 'success',
-        takeaway: `${actual.toLocaleString()} ${noun} ${period === 'ytd' ? 'YTD' : 'this month'}${
+        takeaway: `${actual.toLocaleString(DISPLAY_LOCALE)} ${noun} ${period === 'ytd' ? 'YTD' : 'this month'}${
           deltaLabel ? ` (${deltaLabel} vs ${period === 'ytd' ? 'last year' : 'last month'})` : ''
         }.`,
       };
@@ -115,7 +115,7 @@ function toExecutiveSummaryRows(data?: CustomerGrowthOverview | null): Performan
   const statusRow = (id: string, name: string, value: number, takeaway: string): PerformanceReportRow => ({
     id,
     metric: name,
-    actualLabel: value.toLocaleString(),
+    actualLabel: value.toLocaleString(DISPLAY_LOCALE),
     targetLabel: '—',
     variancePct: null,
     varianceLyPct: null,
@@ -138,10 +138,10 @@ function toExecutiveSummaryRows(data?: CustomerGrowthOverview | null): Performan
   return [
     ...countRows('newCustomers', 'New Customers', kpis.newCustomers, 'new customers'),
     ...countRows('totalCustomers', 'Total Customers', kpis.totalCustomers, 'total customers'),
-    statusRow('activeRetained', 'Active Retained Customers', status.activeRetained, `${status.activeRetained.toLocaleString()} customers are currently active and retained.`),
-    statusRow('nonActive', 'Non-Active Customers', status.nonActive, `${status.nonActive.toLocaleString()} customers purchased last year but not this year.`),
-    statusRow('reactivated', 'Reactivated Customers', status.reactivated, `${status.reactivated.toLocaleString()} customers have returned after a period without purchases.`),
-    statusRow('blocked', 'Blocked Customers', status.blocked, `${status.blocked.toLocaleString()} customers are flagged as blocked in the operational system.`),
+    statusRow('activeRetained', 'Active Retained Customers', status.activeRetained, `${status.activeRetained.toLocaleString(DISPLAY_LOCALE)} customers are currently active and retained.`),
+    statusRow('nonActive', 'Non-Active Customers', status.nonActive, `${status.nonActive.toLocaleString(DISPLAY_LOCALE)} customers purchased last year but not this year.`),
+    statusRow('reactivated', 'Reactivated Customers', status.reactivated, `${status.reactivated.toLocaleString(DISPLAY_LOCALE)} customers have returned after a period without purchases.`),
+    statusRow('blocked', 'Blocked Customers', status.blocked, `${status.blocked.toLocaleString(DISPLAY_LOCALE)} customers are flagged as blocked in the operational system.`),
     rateRow('customerAcquisition', 'Customer Acquisition', rates.customerAcquisitionPct, true),
     rateRow('customerGrowth', 'Customer Growth', rates.customerGrowthPct, true),
     rateRow('retentionRate', 'Retention Rate', rates.retentionRatePct, false),
@@ -165,11 +165,11 @@ const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
 ];
 
 function formatPlainNumber(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 function formatCountOrDash(value: number | undefined): string {
-  return value != null ? value.toLocaleString() : '—';
+  return value != null ? value.toLocaleString(DISPLAY_LOCALE) : '—';
 }
 
 // ---------------------------------------------------------------------------
@@ -651,7 +651,7 @@ export default function CustomerGrowthPage() {
                       rightAxisFormatter={formatPlainNumber}
                       tooltipFormatters={{
                         totalSalesValue: (v) => formatCurrency(v),
-                        customerCount: (v) => v.toLocaleString(),
+                        customerCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                       }}
                       onCategoryClick={handleTrendCategoryClick}
                       onAreaClick={handleTrendAreaClick}

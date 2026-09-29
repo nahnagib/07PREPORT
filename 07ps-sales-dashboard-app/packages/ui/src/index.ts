@@ -1,4 +1,5 @@
 export * from './tokens';
+export * from './locale';
 export * from './components';
 export * from './theme';
 export * from './pdfExport';

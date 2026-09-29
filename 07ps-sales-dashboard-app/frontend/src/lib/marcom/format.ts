@@ -1,15 +1,15 @@
 import type { Kpi, Status, Unit } from './types';
-import { APP_TIMEZONE } from '../format';
+import { APP_TIMEZONE, DISPLAY_LOCALE, formatDate } from '../format';
 import { t } from './text';
 
 /**
  * Display formatting for the MARCOM pages (the API returns raw numbers only):
  *   LYD amounts "LYD 1,234", percentages with one decimal, ratios "1 : 5.6", minutes "3.5 min"
- *   (tooltip "3 min 30 s"), dates DD/MM/YYYY. Null / non-finite input always renders "n/a" --
+ *   (tooltip "3 min 30 s"), dates "28 Sep 2026" (the app-wide en-GB format, lib/format.ts). Null / non-finite input always renders "n/a" --
  *   never "NaN", "Infinity" or "undefined".
  */
-let LOCALE: string | undefined; // undefined = the browser's locale, like lib/format.ts
-export function setFormatLocale(locale: string | undefined): void { LOCALE = locale; }
+let LOCALE: string = DISPLAY_LOCALE; // app-wide en-GB; tests may pin another locale
+export function setFormatLocale(locale: string | undefined): void { LOCALE = locale ?? DISPLAY_LOCALE; }
 
 const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const NA = () => t('generic.na');
@@ -63,19 +63,22 @@ export function minutesLong(v: number | null | undefined): string {
 /** 'YYYY-MM-DD' -> 'DD/MM/YYYY' (string surgery: no timezone shifts). */
 export function fmtDate(iso: string | null | undefined): string {
   const m = iso ? /^(\d{4})-(\d{2})-(\d{2})/.exec(iso) : null;
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : NA();
+  // The calendar date as written (no timezone shift), in the app-wide "10 Aug 2026" format.
+  return m ? formatDate(`${m[1]}-${m[2]}-${m[3]}`, undefined, NA()) : NA();
 }
 
-/** Any ISO timestamp -> DD/MM/YYYY in the business timezone (upload dates). */
+/** Any ISO timestamp -> "28 Sep 2026" in the business timezone (upload dates). */
 export function fmtTimestampDate(iso: string | null | undefined): string {
   if (!iso) return NA();
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return NA();
-  return new Intl.DateTimeFormat('en-GB', { timeZone: APP_TIMEZONE, day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
+  return formatDate(iso, APP_TIMEZONE, NA());
 }
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export function monthName(month: number, style: 'long' | 'short' = 'short'): string {
   if (!Number.isInteger(month) || month < 1 || month > 12) return NA();
+  // Short names are fixed three letters: en-GB Intl data can render September as "Sept".
+  if (style === 'short') return SHORT_MONTHS[month - 1];
   return new Intl.DateTimeFormat(LOCALE, { month: style, timeZone: 'UTC' }).format(new Date(Date.UTC(2000, month - 1, 1)));
 }
 
