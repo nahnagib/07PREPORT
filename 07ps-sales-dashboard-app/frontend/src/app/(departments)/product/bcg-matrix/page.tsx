@@ -219,8 +219,20 @@ export default function BcgMatrixPage() {
   // already-classified products come back (Fact_SalesLines product-set membership), they never
   // reclassify a product's quadrant against the filtered subset's own volume, and the date range
   // never redefines what "YTD"/"LYTD" means -- every number stays real calendar YTD vs LYTD.
+  const filterOptionsCompanies = filterOptions.businessUnits.data;
+  const selectedCompanyNames = useMemo(() => {
+    const businessUnits = filterOptionsCompanies ?? [];
+    const keys = new Set((effectiveFilters.companyKeys ?? []).map(String));
+    return new Set(
+      businessUnits.filter((u) => keys.has(String(u.company_key))).map((u) => String(u.company_name)),
+    );
+  }, [filterOptionsCompanies, effectiveFilters.companyKeys]);
+  // One company selected = that company's view; none or both = BMH view, where a product both companies
+  // sell is one combined row classified on the combined figures (applied by the API).
+  const companyView = selectedCompanyNames.size === 1 ? [...selectedCompanyNames][0] : undefined;
   const bcgScope = useMemo(
     () => ({
+      company: companyView,
       segmentKeys: effectiveFilters.segmentKeys,
       channelKeys: effectiveFilters.channelKeys,
       salesTeamKeys: effectiveFilters.salesTeamKeys,
@@ -228,7 +240,7 @@ export default function BcgMatrixPage() {
       fromDate: dateFromDate,
       toDate: dateToDate,
     }),
-    [effectiveFilters, dateFromDate, dateToDate],
+    [companyView, effectiveFilters, dateFromDate, dateToDate],
   );
   const overview = useProductDashboard(token, authError, retryAuth, 'bcg-matrix', bcgScope);
   const refresh = useRefreshStatus(token, authError, retryAuth);
@@ -249,25 +261,10 @@ export default function BcgMatrixPage() {
   // position (immediately after To Date, before Customer Group -- that's just where FilterBar's
   // own JSX already renders showCompanyDimension, no custom placement needed). fact_bcgmatrix's
   // `Company` column is a name string ('Majaal'/'Tika'), not the numeric key, so the selected
-  // keys are translated via businessUnits before filtering `facts`/`discontinued` client-side --
-  // this stays a page-local display filter, same as before, not sent through to the backend scope
-  // query (BcgProductScope) alongside the other 4 transaction dimensions.
-  const selectedCompanyNames = useMemo(() => {
-    const businessUnits = filterOptions.businessUnits.data ?? [];
-    const keys = new Set((effectiveFilters.companyKeys ?? []).map(String));
-    return new Set(
-      businessUnits.filter((u) => keys.has(String(u.company_key))).map((u) => String(u.company_name)),
-    );
-  }, [filterOptions.businessUnits.data, effectiveFilters.companyKeys]);
-
-  const filtered = useMemo(
-    () => facts.filter((r) => selectedCompanyNames.size === 0 || selectedCompanyNames.has(r.Company)),
-    [facts, selectedCompanyNames],
-  );
-  const filteredDiscontinued = useMemo(
-    () => discontinued.filter((r) => selectedCompanyNames.size === 0 || selectedCompanyNames.has(r.Company)),
-    [discontinued, selectedCompanyNames],
-  );
+  // keys are translated via businessUnits (selectedCompanyNames, above) and sent as the API's company
+  // view; the rows that come back are already that company's (or the BMH view's).
+  const filtered = facts;
+  const filteredDiscontinued = discontinued;
 
   // ---- KPI row + Section 1 matrix cells: one entry per BCG class, count + Revenue YTD + delta vs
   // LYTD + the cell's own top-10-by-revenue bubble points. A single computation feeds both the KPI
@@ -362,7 +359,7 @@ export default function BcgMatrixPage() {
   // export internally -- no separate search/sort/limit state or custom exportRowsAsPdf call needed
   // here, so there's exactly one way to change what's displayed, not two that could drift out of
   // sync. ----
-  const filteredNoCost = noCostRows.filter((r) => selectedCompanyNames.size === 0 || selectedCompanyNames.has(r.Company));
+  const filteredNoCost = noCostRows;
   const tableRows: TableRow[] = [...filtered, ...filteredNoCost, ...filteredDiscontinued].map((r, i) => ({
     ...r,
     id: `${r.id}-${i}`,

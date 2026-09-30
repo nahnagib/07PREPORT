@@ -11,7 +11,14 @@ import numpy as np
 import pandas as pd
 from pandas import ExcelFile
 
-from sales_pipeline.product_matching import KNOWN_COMPANIES, match_key_series, normalize_match_company, normalize_match_name
+from sales_pipeline.product_matching import (
+    KNOWN_COMPANIES,
+    group_key,
+    loose_name_key,
+    match_key_series,
+    normalize_match_company,
+    normalize_match_name,
+)
 
 PathLike = Union[str, Path]
 DataFrame = pd.DataFrame
@@ -855,7 +862,44 @@ class ProductMasterLoader:
             "blank_product_name": int(df["ProductNameWasBlank"].sum()) if "ProductNameWasBlank" in df else blank("ProductName"),
             "blank_sku": blank("SKU"),
             "inactive_rows": int((df["IsActive"] == 0).sum()),
+            "warnings": ProductMasterLoader.warnings(df),
         }
+
+    ATTRIBUTE_COLUMNS = ("Category", "Brand", "SubBrand", "Family")
+
+    @classmethod
+    def warnings(cls, df: DataFrame) -> list[str]:
+        """Non-blocking checks for the BMH view, which groups products by ProductName across companies:
+          * rows sharing a ProductName with different Category / Brand / SubBrand / Family;
+          * a probable same product under different ProductNames in the two companies (equal once spaces,
+            punctuation and a [CODE] prefix are removed), which the BMH view would NOT combine.
+        The file is never rejected for these."""
+        if df.empty:
+            return []
+        out: list[str] = []
+        names = df["ProductName"].astype("string").fillna("")
+        gkeys = names.map(group_key)
+        where = lambda g: ", ".join(f"row {r['SourceRow']} {r['Company']}" for _, r in g.iterrows())  # noqa: E731
+        for key, group in df[gkeys.ne("")].groupby(gkeys[gkeys.ne("")], sort=True):
+            if len(group) < 2:
+                continue
+            for col in cls.ATTRIBUTE_COLUMNS:
+                values = group[col].astype("string").fillna("").map(lambda v: " ".join(str(v).split()).casefold())
+                if values.nunique() > 1:
+                    detail = "; ".join(
+                        f"row {r['SourceRow']} {r['Company']} = '{'' if pd.isna(r[col]) else r[col]}'" for _, r in group.iterrows()
+                    )
+                    out.append(f"ProductName '{group['ProductName'].iloc[0]}' has different {col}: {detail}")
+        loose = names.map(loose_name_key)
+        for key, group in df[loose.ne("")].groupby(loose[loose.ne("")], sort=True):
+            if group["Company"].nunique() < 2 or gkeys.loc[group.index].nunique() < 2:
+                continue
+            spellings = " vs ".join(
+                f"{company} '{'' if pd.isna(g['ProductName'].iloc[0]) else g['ProductName'].iloc[0]}' ({where(g)})"
+                for (company, _), g in group.groupby(["Company", gkeys.loc[group.index]], sort=True)
+            )
+            out.append(f"Probably the same product under different ProductNames (not combined in the BMH view): {spellings}")
+        return out
 
     def _clean(self, df: DataFrame) -> DataFrame:
         out = df.copy()

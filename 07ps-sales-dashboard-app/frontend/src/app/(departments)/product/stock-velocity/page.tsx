@@ -107,11 +107,13 @@ export default function StockVelocityPage() {
   const { user, token, error: authError, retryAuth, logout } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
   const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
-  const overview = useProductDashboard(token, authError, retryAuth, 'stock-velocity', { fromDate: dateFromDate, toDate: dateToDate });
   const refresh = useRefreshStatus(token, authError, retryAuth);
-  const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
 
   const [company, setCompany] = useState<CompanyFilter>('All');
+  // Company view vs BMH view comes from the API: with no company, a product both companies sell is one
+  // combined row (value/volume = Majaal + Tika, ratios recomputed); with a company, only its part.
+  const overview = useProductDashboard(token, authError, retryAuth, 'stock-velocity', { fromDate: dateFromDate, toDate: dateToDate, company });
+  const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const [category, setCategory] = useState<string[]>([]);
   const [band, setBand] = useState<BandFilter>('All');
 
@@ -467,6 +469,8 @@ export default function StockVelocityPage() {
                 Days of inventory = finished-goods stock ÷ average daily sales over the last {lookback} days. Tika: Overstock &gt; {thresholds?.overstock_days?.Tika ?? 60} days · Stock-Out Risk &lt;{' '}
                 {thresholds?.stockout_risk_days?.Tika ?? 30} days | Majaal: Overstock &gt; {thresholds?.overstock_days?.Majaal ?? 180} days · Stock-Out Risk &lt; {thresholds?.stockout_risk_days?.Majaal ?? 60} days. Stock with no
                 sales in {lookback} days counts as Overstocked (no movement). In-transit and raw-materials stock are not on hand.
+                With no company selected, a product both companies sell is one row: combined stock ÷ combined daily sales, with the
+                thresholds of the company that sold more of it this year.
               </p>
 
               <PerformanceReportTable title="Performance Details" rows={performanceRows} showStatus showTakeaway onExportPdf={handleExportPerformanceTablePdf} />

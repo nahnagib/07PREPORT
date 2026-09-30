@@ -19,7 +19,7 @@ and Product Lifecycle.
 | 1 | The ETL reads Odoo **Sales Analysis** (`sale.report`) — the same numbers you see in *Sales > Reporting > Sales Analysis*. It is read-only; nothing is ever written to Odoo. |
 | 2 | Every order line is matched to `PRODUCTS.xlsx` on **Company + Odoo product name** (rules in §3). |
 | 3 | Stock on hand is read from Odoo (`stock.quant`), for internal locations only (rules in §5). |
-| 4 | The ETL writes `Fact_ProductSalesDaily`, `Dim_ProductDashboard`, `QA_ProductUnmapped`, `QA_ProductDataQuality` and `ProductDashboard_Meta`. The pages read only these tables. |
+| 4 | The ETL writes `Fact_ProductSalesDaily`, `Dim_ProductDashboard`, `Dim_ProductDashboardGroup` (BMH view), `QA_ProductUnmapped`, `QA_ProductDataQuality` and `ProductDashboard_Meta`. The pages read only these tables. |
 
 ---
 
@@ -42,9 +42,14 @@ The file lives in the ETL input folder (`07PREPORT/Input/PRODUCTS.xlsx`, mounted
    ```
    - The check prints the row count, rows per company, and rows with a blank Category, ProductName or SKU.
    - If anything is wrong, it prints the **Excel row numbers** and exits with an error.
-7. Upload the file.
-   - Use the ETL Control Center (Admin › ETL, "Input files"), which runs the same check and refuses a bad file.
-   - Or copy it into the input folder.
+   - It also prints **warnings**, which never reject the file (see §3, "Same product in both companies"):
+     - rows that share a `ProductName` but have a different Category, Brand, SubBrand or Family;
+     - a product that looks the same in both companies under different `ProductName`s (equal once spaces,
+       punctuation and a `[CODE]` prefix are removed). Those are **not** combined until the names match.
+7. Replace the file **in the input folder on the host** (`07PREPORT/Input`).
+   - The folder is mounted **read-only** into the ETL, so the ETL can never change it.
+   - The ETL Control Center (Admin › ETL, "Input files") runs the same check: it refuses a bad file with the reason,
+     and for a good file it answers that the folder is read-only and nothing was replaced.
 8. The next ETL run re-matches **all** history. To load the table immediately, run the script without `--dry-run`.
    It writes `dim_product_master` in one transaction.
 
@@ -67,8 +72,27 @@ message, and the pages keep showing the last good data.
 - **Never across companies.** For example, Tika's "Cem Air" and Majaal's "Cemair" are different products.
 - The Odoo product id is kept on every sales line (`Fact_SalesLines.OdooProductID`). If an `OdooProductID` column is ever
   added to the sheet, an id match will take priority over the name.
-- A product is grouped at **Company + Odoo product name**, and the page shows the sheet's `ProductName`.
+- In a company view, a product is **Company + Odoo product name**, and the page shows the sheet's `ProductName`.
   - `ProductKey` is only used as a label. It is not unique, so it is never used to group.
+
+### Same product in both companies (BMH view)
+
+- With **no company selected** (BMH view), products are grouped by the sheet's **`ProductName`**, normalized the same
+  way (code prefix, spaces, case), **across companies**. Majaal "Cemair" and Tika "Cem Air" both have ProductName
+  "Cemair", so they are one row. Matching (above) is unchanged: every sale stays with its own company.
+- Select a company and you see only that company's part. Example: BMH value 1,000 = Majaal 300 + Tika 700.
+- Value, volume, stock and stock value are the exact sum of the company rows. Ratios are recomputed from the combined
+  figures, never averaged:
+  - velocity = combined volume ÷ days;
+  - days of inventory = combined stock ÷ combined average daily sales;
+  - margin = combined (value − cost) ÷ combined value;
+  - BCG class and lifecycle are computed on the combined lines.
+- Thresholds (BCG volume, overstock, stock-out risk) are those of the company that sold more of the product this
+  calendar year (by value; if neither sold this year, all-time value). The ETL stores it as `ThresholdCompany`.
+- Volumes are still never added across units of measure.
+- Unmapped products are never grouped.
+- To combine two rows, give them the same `ProductName` in the sheet. The import check warns about likely pairs.
+- A user whose role is limited to one company always gets that company's view.
 - Matching never adds or drops a line. A test and a runtime check both assert that row counts and totals are
   identical before and after the join.
 

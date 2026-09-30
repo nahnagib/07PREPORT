@@ -9,7 +9,16 @@
  *   dim_productdashboard    one row per Company + product (every PRODUCTS.xlsx row, zero sales included,
  *                           plus Unmapped products seen in sales or stock) with today's stock, days of
  *                           inventory, stock band, lifecycle segment and BCG class.
+ *   dim_productdashboardgroup  the BMH view: one row per ProductGroupKey (sheet ProductName, normalized)
+ *                           across companies, with stock / days of inventory / stock band / lifecycle /
+ *                           BCG recomputed by the ETL from the COMBINED lines and stock.
  *   productdashboard_meta   as-of date and the thresholds the ETL used (config/product_dashboard.json).
+ *
+ * Company view (query.company = 'Majaal' | 'Tika'): that company's products and sales only.
+ * BMH view (no company): products grouped by ProductGroupKey, so a product both companies sell
+ * (Majaal "Cemair" + Tika "Cem Air") is one row whose value/volume are the exact sum of the two company
+ * rows. Period metrics are recomputed from the combined sums (velocity = combined volume / days,
+ * margin = combined (value - cost) / combined value) -- never averaged. Unmapped products are not grouped.
  *
  * Metric definitions (docs/product_data_runbook.md):
  *   Value    = SUM(untaxed line amount) in LYD, confirmed orders, order date in Africa/Tripoli.
@@ -48,6 +57,10 @@ export interface ProductDashboardRow {
   sku: string | null;
   isActive: number | null;
   isMapped: boolean;
+  /** Companies in this row: one in the company view; one or more in the BMH view. */
+  companies: string[];
+  /** Per-company split of the period sales (BMH view: one entry per company that has the product). */
+  parts: ProductCompanyPart[];
   // Period (filter-dependent)
   value: number;
   volume: number | null;
@@ -83,7 +96,18 @@ export interface ProductDashboardRow {
   negativeStockRows: number;
 }
 
+export interface ProductCompanyPart {
+  company: string;
+  productMatchKey: string;
+  value: number;
+  lines: number;
+  volumeByUom: UomQty[];
+}
+
+export type ProductDashboardView = 'BMH' | 'Majaal' | 'Tika';
+
 export interface ProductDashboardOverview {
+  view: ProductDashboardView;
   asOfDate: string | null;
   builtAtUtc: string | null;
   period: { from: string; to: string; days: number; priorFrom: string; priorTo: string };
@@ -98,8 +122,14 @@ export interface ProductDashboardOverview {
 export interface ProductDashboardQuery {
   fromDate?: string;
   toDate?: string;
-  filters?: Pick<Filters, 'segmentKeys' | 'channelKeys' | 'salesTeamKeys' | 'salespersonKeys'>;
+  /** 'Majaal' / 'Tika' = company view; anything else (or absent) = BMH view. */
+  company?: string;
+  /** companyKeys only ever comes from the user's role data scope (the page sends a company name). */
+  filters?: Pick<Filters, 'companyKeys' | 'segmentKeys' | 'channelKeys' | 'salesTeamKeys' | 'salespersonKeys'>;
 }
+
+/** A company the caller's role may not see was requested (the route answers 403). */
+export class ProductScopeError extends Error {}
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -147,10 +177,125 @@ function uomList(map: Map<string, number>): UomQty[] {
   return [...map.entries()].map(([uom, qty]) => ({ uom, qty })).sort((a, b) => b.qty - a.qty);
 }
 
+export function resolveView(company?: string): ProductDashboardView {
+  const c = (company ?? '').trim().toUpperCase();
+  if (c === 'MAJAAL') return 'Majaal';
+  if (c === 'TIKA') return 'Tika';
+  return 'BMH';
+}
+
+type Agg = {
+  value: number;
+  lines: number;
+  cost: number;
+  uncosted: number;
+  valuePrior: number;
+  qty: Map<string, number>;
+  qtyPrior: Map<string, number>;
+};
+
+function emptyAgg(): Agg {
+  return { value: 0, lines: 0, cost: 0, uncosted: 0, valuePrior: 0, qty: new Map(), qtyPrior: new Map() };
+}
+
+function addInto(target: Agg, a: Agg): void {
+  target.value += a.value;
+  target.lines += a.lines;
+  target.cost += a.cost;
+  target.uncosted += a.uncosted;
+  target.valuePrior += a.valuePrior;
+  for (const [uom, q] of a.qty) target.qty.set(uom, (target.qty.get(uom) ?? 0) + q);
+  for (const [uom, q] of a.qtyPrior) target.qtyPrior.set(uom, (target.qtyPrior.get(uom) ?? 0) + q);
+}
+
+/** One page row from a snapshot row (dim_productdashboard or dim_productdashboardgroup) and its period sums. */
+function toRow(key: string, p: any, a: Agg | undefined, days: number, companies: string[], parts: ProductCompanyPart[]): ProductDashboardRow {
+  const value = a?.value ?? 0;
+  const lines = a?.lines ?? 0;
+  const volumeByUom = a ? uomList(a.qty) : [];
+  const single = volumeByUom.length <= 1;
+  const volume = single ? (volumeByUom[0]?.qty ?? 0) : null;
+  const priorByUom = a ? uomList(a.qtyPrior) : [];
+  const volumePrior = priorByUom.length <= 1 ? (priorByUom[0]?.qty ?? 0) : null;
+  const costed = a && a.uncosted === 0 && lines > 0;
+  return {
+    productMatchKey: key,
+    productKey: str(p.ProductKey),
+    company: String(p.Company ?? ''),
+    productName: String(p.ProductName ?? p.OdooProductName ?? key),
+    odooProductName: str(p.OdooProductName),
+    category: str(p.Category),
+    brand: str(p.Brand),
+    subBrand: str(p.SubBrand),
+    family: str(p.Family),
+    size: str(p.Size),
+    sku: str(p.SKU),
+    isActive: numOrNull(p.IsActive),
+    isMapped: Boolean(num(p.IsMapped)),
+    companies,
+    parts,
+    value,
+    volume,
+    volumeByUom,
+    uom: single ? (volumeByUom[0]?.uom || str(p.UoM)) : null,
+    lines,
+    velocity: volume === null ? null : volume / days,
+    valuePrior: a?.valuePrior ?? 0,
+    volumePrior,
+    avgUnitPrice: volume ? value / volume : null,
+    grossProfitPct: costed && value !== 0 ? ((value - (a?.cost ?? 0)) / value) * 100 : null,
+    stockQty: num(p.StockQty),
+    stockValue: num(p.StockValue),
+    inTransitQty: num(p.InTransitQty),
+    inTransitValue: num(p.InTransitValue),
+    avgDailySales: num(p.AvgDailySales),
+    daysOfInventory: numOrNull(p.DaysOfInventory),
+    stockBand: String(p.StockBand) as ProductDashboardRow['stockBand'],
+    lifecycleSegment: String(p.LifecycleSegment) as ProductDashboardRow['lifecycleSegment'],
+    firstSaleDate: isoDate(p.FirstSaleDate),
+    lastSaleDate: isoDate(p.LastSaleDate),
+    bcgClassYTD: str(p.BcgClassYTD),
+    bcgClassLYTD: str(p.BcgClassLYTD),
+    bcgMovement: (str(p.BcgMovement) as ProductDashboardRow['bcgMovement']) ?? null,
+    bcgExcludedCategory: Boolean(num(p.BcgExcludedCategory)),
+    valueYTD: num(p.ValueYTD),
+    volumeYTD: num(p.QtyYTD),
+    valueLYTD: num(p.ValueLYTD),
+    volumeLYTD: num(p.QtyLYTD),
+    grossProfitPctYTD: numOrNull(p.GrossProfitPctYTD),
+    grossProfitPctLYTD: numOrNull(p.GrossProfitPctLYTD),
+    negativeStockRows: num(p.NegativeStockRows),
+  };
+}
+
+async function loadGroupRows(pool: Pool): Promise<any[] | null> {
+  try {
+    const [rows] = await pool.query('SELECT * FROM dim_productdashboardgroup');
+    return rows as any[];
+  } catch (err: any) {
+    // Before the first ETL run of this version the table does not exist yet: serve per-company rows.
+    if (err && err.code === 'ER_NO_SUCH_TABLE') return null;
+    throw err;
+  }
+}
+
 export async function computeProductDashboard(pool: Pool, query: ProductDashboardQuery = {}): Promise<ProductDashboardOverview> {
   const period = resolvePeriod(query.fromDate, query.toDate);
+  let requestedView = resolveView(query.company);
+  const companyKeys = query.filters?.companyKeys ?? [];
+  if (companyKeys.length > 0) {
+    // Role limited to some companies: never show another company, and never show a BMH row whose stock /
+    // BCG combine a company the user cannot see -- a single allowed company always gets its company view.
+    const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM fact_productsalesdaily WHERE CompanyKey IN (?)', [companyKeys]);
+    const allowed = (allowedRows as any[]).map((r) => String(r.Company));
+    if (requestedView !== 'BMH' && !allowed.includes(requestedView)) {
+      throw new ProductScopeError(`Company ${requestedView} is outside this role's permitted data scope.`);
+    }
+    if (requestedView === 'BMH' && allowed.length === 1) requestedView = resolveView(allowed[0]);
+  }
   const scope = buildWhereClause(query.filters ?? {}, 'd');
   const scoped = scope.clause !== '1=1';
+  const companyClause = requestedView === 'BMH' ? '' : ' AND d.Company = ?';
 
   const salesSql = `
     SELECT d.ProductMatchKey AS k, COALESCE(d.UoM, '') AS uom,
@@ -163,24 +308,26 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qtyPrior,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? AND d.IsIntercompany = 1 THEN d.Value ELSE 0 END) AS icValue
     FROM fact_productsalesdaily d
-    WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?)) AND ${scope.clause}
+    WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?)) AND ${scope.clause}${companyClause}
     GROUP BY d.ProductMatchKey, COALESCE(d.UoM, '')`;
   const cur = [period.from, period.to];
   const prior = [period.priorFrom, period.priorTo];
-  const salesParams = [...cur, ...cur, ...cur, ...cur, ...cur, ...prior, ...prior, ...cur, ...cur, ...prior, ...scope.params];
+  const salesParams: Array<string | number> = [...cur, ...cur, ...cur, ...cur, ...cur, ...prior, ...prior, ...cur, ...cur, ...prior, ...scope.params];
+  if (requestedView !== 'BMH') salesParams.push(requestedView);
 
-  const [[salesRows], [productRows], [metaRows]] = await Promise.all([
+  const [[salesRows], [productRows], [metaRows], groupRows] = await Promise.all([
     pool.query(salesSql, salesParams),
     pool.query('SELECT * FROM dim_productdashboard'),
     pool.query('SELECT AsOfDate, BuiltAtUtc, LookbackDays, ConfigJson FROM productdashboard_meta LIMIT 1'),
+    requestedView === 'BMH' ? loadGroupRows(pool) : Promise.resolve(null),
   ]);
+  const view = requestedView;
 
-  type Agg = { value: number; lines: number; cost: number; uncosted: number; valuePrior: number; qty: Map<string, number>; qtyPrior: Map<string, number> };
   const byProduct = new Map<string, Agg>();
   let intercompanyValue = 0;
   for (const r of salesRows as any[]) {
     const key = String(r.k);
-    const a = byProduct.get(key) ?? { value: 0, lines: 0, cost: 0, uncosted: 0, valuePrior: 0, qty: new Map(), qtyPrior: new Map() };
+    const a = byProduct.get(key) ?? emptyAgg();
     a.value += num(r.value);
     a.lines += num(r.lineCount);
     a.cost += num(r.costValue);
@@ -193,7 +340,55 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     byProduct.set(key, a);
   }
 
+  const partOf = (p: any, a: Agg | undefined): ProductCompanyPart => ({
+    company: String(p.Company ?? ''),
+    productMatchKey: String(p.ProductMatchKey),
+    value: a?.value ?? 0,
+    lines: a?.lines ?? 0,
+    volumeByUom: a ? uomList(a.qty) : [],
+  });
+
   const products: ProductDashboardRow[] = [];
+  const companyRows = (productRows as any[]).filter((p) => view === 'BMH' || String(p.Company ?? '') === view);
+  if (groupRows === null) {
+    for (const p of companyRows) {
+      const key = String(p.ProductMatchKey);
+      const a = byProduct.get(key);
+      if (scoped && !(a && a.lines > 0)) continue;
+      products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)]));
+    }
+  } else {
+    // BMH view: sum each group's member products (exact, per UoM), then recompute the ratios.
+    const members = new Map<string, any[]>();
+    for (const p of companyRows) {
+      const g = String(p.ProductGroupKey ?? p.ProductMatchKey);
+      const list = members.get(g) ?? [];
+      list.push(p);
+      members.set(g, list);
+    }
+    for (const gp of groupRows) {
+      const g = String(gp.ProductGroupKey);
+      const list = members.get(g) ?? [];
+      const agg = emptyAgg();
+      const parts: ProductCompanyPart[] = [];
+      let found = false;
+      for (const m of list) {
+        const a = byProduct.get(String(m.ProductMatchKey));
+        if (a) {
+          addInto(agg, a);
+          found = true;
+        }
+        parts.push(partOf(m, a));
+      }
+      const a = found ? agg : undefined;
+      if (scoped && !(a && a.lines > 0)) continue;
+      const companies = [...new Set(list.map((m) => String(m.Company ?? '')))].sort();
+      products.push(toRow(g, gp, a, period.days, companies, parts.sort((x, y) => x.company.localeCompare(y.company))));
+    }
+  }
+
+  // Totals straight from the sales rows (not from the product list), so a key missing from
+  // dim_productdashboard can never drop out of the reconciliation; such a key counts as Unmapped.
   const unmappedQty = new Map<string, number>();
   const totalQty = new Map<string, number>();
   let unmappedValue = 0;
@@ -201,70 +396,6 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   let unmappedProducts = 0;
   let totalValue = 0;
   let totalLines = 0;
-
-  for (const p of productRows as any[]) {
-    const key = String(p.ProductMatchKey);
-    const a = byProduct.get(key);
-    if (scoped && !(a && a.lines > 0)) continue;
-    const isMapped = Boolean(num(p.IsMapped));
-    const value = a?.value ?? 0;
-    const lines = a?.lines ?? 0;
-    const volumeByUom = a ? uomList(a.qty) : [];
-    const single = volumeByUom.length <= 1;
-    const volume = single ? (volumeByUom[0]?.qty ?? 0) : null;
-    const priorByUom = a ? uomList(a.qtyPrior) : [];
-    const volumePrior = priorByUom.length <= 1 ? (priorByUom[0]?.qty ?? 0) : null;
-    const costed = a && a.uncosted === 0 && lines > 0;
-    products.push({
-      productMatchKey: key,
-      productKey: str(p.ProductKey),
-      company: String(p.Company ?? ''),
-      productName: String(p.ProductName ?? p.OdooProductName ?? key),
-      odooProductName: str(p.OdooProductName),
-      category: str(p.Category),
-      brand: str(p.Brand),
-      subBrand: str(p.SubBrand),
-      family: str(p.Family),
-      size: str(p.Size),
-      sku: str(p.SKU),
-      isActive: numOrNull(p.IsActive),
-      isMapped,
-      value,
-      volume,
-      volumeByUom,
-      uom: single ? (volumeByUom[0]?.uom || str(p.UoM)) : null,
-      lines,
-      velocity: volume === null ? null : volume / period.days,
-      valuePrior: a?.valuePrior ?? 0,
-      volumePrior,
-      avgUnitPrice: volume ? value / volume : null,
-      grossProfitPct: costed && value !== 0 ? ((value - (a?.cost ?? 0)) / value) * 100 : null,
-      stockQty: num(p.StockQty),
-      stockValue: num(p.StockValue),
-      inTransitQty: num(p.InTransitQty),
-      inTransitValue: num(p.InTransitValue),
-      avgDailySales: num(p.AvgDailySales),
-      daysOfInventory: numOrNull(p.DaysOfInventory),
-      stockBand: String(p.StockBand) as ProductDashboardRow['stockBand'],
-      lifecycleSegment: String(p.LifecycleSegment) as ProductDashboardRow['lifecycleSegment'],
-      firstSaleDate: isoDate(p.FirstSaleDate),
-      lastSaleDate: isoDate(p.LastSaleDate),
-      bcgClassYTD: str(p.BcgClassYTD),
-      bcgClassLYTD: str(p.BcgClassLYTD),
-      bcgMovement: (str(p.BcgMovement) as ProductDashboardRow['bcgMovement']) ?? null,
-      bcgExcludedCategory: Boolean(num(p.BcgExcludedCategory)),
-      valueYTD: num(p.ValueYTD),
-      volumeYTD: num(p.QtyYTD),
-      valueLYTD: num(p.ValueLYTD),
-      volumeLYTD: num(p.QtyLYTD),
-      grossProfitPctYTD: numOrNull(p.GrossProfitPctYTD),
-      grossProfitPctLYTD: numOrNull(p.GrossProfitPctLYTD),
-      negativeStockRows: num(p.NegativeStockRows),
-    });
-  }
-
-  // Totals straight from the sales rows (not from the product list), so a key missing from
-  // dim_productdashboard can never drop out of the reconciliation; such a key counts as Unmapped.
   const mappedKeys = new Set((productRows as any[]).filter((p) => Boolean(num(p.IsMapped))).map((p) => String(p.ProductMatchKey)));
   for (const [key, a] of byProduct) {
     if (a.lines <= 0) continue;
@@ -288,6 +419,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     thresholds = {};
   }
   return {
+    view,
     asOfDate: isoDate(meta.AsOfDate),
     builtAtUtc: meta.BuiltAtUtc ? new Date(meta.BuiltAtUtc).toISOString() : null,
     period,

@@ -271,11 +271,13 @@ export default function PimContributionPage() {
   const roleLabel = user?.role.label ?? user?.fullName;
   const router = useRouter();
   const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
-  const overview = useProductDashboard(token, authError, retryAuth, 'pim-contribution', { fromDate: dateFromDate, toDate: dateToDate });
   const refresh = useRefreshStatus(token, authError, retryAuth);
-  const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
 
   const [company, setCompany] = useState<CompanyFilter>('All');
+  // Company view vs BMH view comes from the API: with no company, a product both companies sell is one
+  // combined row (value/volume = Majaal + Tika, ratios recomputed); with a company, only its part.
+  const overview = useProductDashboard(token, authError, retryAuth, 'pim-contribution', { fromDate: dateFromDate, toDate: dateToDate, company });
+  const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const [category, setCategory] = useState<string[]>([]);
   const [bcgClass, setBcgClass] = useState<'All' | (typeof BCG_CLASSES)[number]>('All');
   const [metric, setMetric] = useState<Metric>('value');

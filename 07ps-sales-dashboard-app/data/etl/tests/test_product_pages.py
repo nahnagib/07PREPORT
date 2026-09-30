@@ -108,8 +108,8 @@ def _dim(*rows: dict) -> pd.DataFrame:
     base = []
     for r in rows:
         base.append({"ProductSource": "Input Master", "ProductKey": r["key"], "SheetProductKey": r["key"],
-                     "ProductMatchKey": match_key(r["company"], r["name"]), "Company": r["company"],
-                     "ProductName": r["name"], "OdooProductName": r["name"], "Category": r.get("category", "Cat"),
+                     "ProductMatchKey": match_key(r["company"], r.get("odoo", r["name"])), "Company": r["company"],
+                     "ProductName": r["name"], "OdooProductName": r.get("odoo", r["name"]), "Category": r.get("category", "Cat"),
                      "Brand": None, "SubBrand": None, "Family": None, "Size": None, "SKU": None, "ProductLevel": "SKU",
                      "IsActive": r.get("active", 1)})
     return pd.DataFrame(base)
@@ -207,3 +207,85 @@ def test_location_classification_from_config() -> None:
     cfg = ProductDashboardConfig.load(CONFIG).section("stock_locations")
     classes = InventoryModelBuilder.classify_locations(pd.Series(["Majaal", "RM Warehouse", " vessel ", "Tobruk"]), cfg)
     assert classes.tolist() == ["FinishedGoods", "RawMaterials", "InTransit", "FinishedGoods"]
+
+
+# ---------------------------------------------------------------- BMH view: same product in both companies
+def _shared_case():
+    # Majaal "Cemair" and Tika "Cem Air" are one product (ProductName "Cemair" in both sheet rows).
+    dim = _dim(
+        {"key": "M", "company": "Majaal", "name": "Cemair"},
+        {"key": "T", "company": "Tika", "name": "Cemair", "odoo": "Cem Air"},
+        {"key": "O", "company": "Majaal", "name": "Other"},
+    )
+    lines = [
+        _line("Majaal", "Cemair", "2026-03-01", 100, 300),
+        _line("Tika", "Cem Air", "2026-09-01", 90, 700),
+        _line("Majaal", "Other", "2026-09-01", 1, 5),
+        _line("Tika", "Mystery", "2026-09-02", 1, 5, mapped=False),
+    ]
+    inv = pd.DataFrame([
+        {"ProductMatchKey": "MAJAAL|CEMAIR", "Company": "Majaal", "OdooProductName": "Cemair", "ProductName": "Cemair", "LocationName": "WH", "OnHandQty": 60, "InventoryValue": 60, "StockClass": "FinishedGoods"},
+        {"ProductMatchKey": "TIKA|CEM AIR", "Company": "Tika", "OdooProductName": "Cem Air", "ProductName": "Cemair", "LocationName": "WH", "OnHandQty": 120, "InventoryValue": 240, "StockClass": "FinishedGoods"},
+    ])
+    # standard cost per unit: Majaal Cemair 1, Tika Cem Air 2, Other 1, Mystery 1
+    return _build(lines, dim, inventory=inv, costs=[1.0, 2.0, 1.0, 1.0])
+
+
+def test_shared_product_bmh_total_equals_sum_of_companies() -> None:
+    out = _shared_case()
+    p = out["Dim_ProductDashboard"].set_index("ProductMatchKey")
+    g = out["Dim_ProductDashboardGroup"].set_index("ProductGroupKey")
+    # matching stays per company
+    assert p.loc["MAJAAL|CEMAIR", "ValueYTD"] == 300 and p.loc["TIKA|CEM AIR", "ValueYTD"] == 700
+    assert p.loc["MAJAAL|CEMAIR", "ProductGroupKey"] == p.loc["TIKA|CEM AIR", "ProductGroupKey"] == "G|CEMAIR"
+    row = g.loc["G|CEMAIR"]
+    assert row["Companies"] == "Majaal + Tika" and row["CompanyCount"] == 2
+    assert row["ValueYTD"] == p.loc["MAJAAL|CEMAIR", "ValueYTD"] + p.loc["TIKA|CEM AIR", "ValueYTD"] == 1000
+    assert row["QtyYTD"] == p.loc["MAJAAL|CEMAIR", "QtyYTD"] + p.loc["TIKA|CEM AIR", "QtyYTD"] == 190
+    assert row["StockQty"] == 180 and row["StockValue"] == 300
+    # a single-company product is its own group, unchanged; Unmapped is never grouped
+    assert g.loc["G|OTHER", "ValueYTD"] == 5 and g.loc["G|OTHER", "Companies"] == "Majaal"
+    assert "TIKA|MYSTERY" in g.index and g.loc["TIKA|MYSTERY", "IsMapped"] == False  # noqa: E712
+
+
+def test_grouping_does_not_change_grand_totals() -> None:
+    out = _shared_case()
+    p, g = out["Dim_ProductDashboard"], out["Dim_ProductDashboardGroup"]
+    for col in ["ValueYTD", "QtyYTD", "ValueLYTD", "QtyLYTD", "StockQty", "StockValue"]:
+        assert g[col].sum() == pytest.approx(p[col].sum()), col
+    assert g["ValueYTD"].sum() == pytest.approx(out["Fact_ProductSalesDaily"]["Value"].sum()) == 1010
+
+
+def test_shared_product_non_additive_metrics_are_recomputed_not_averaged() -> None:
+    out = _shared_case()
+    p = out["Dim_ProductDashboard"].set_index("ProductMatchKey")
+    row = out["Dim_ProductDashboardGroup"].set_index("ProductGroupKey").loc["G|CEMAIR"]
+    # Days of inventory = combined stock / combined daily sales: 180 / (90 sold in the last 90 days / 90) = 180
+    assert row["AvgDailySales"] == pytest.approx(1.0)
+    assert row["DaysOfInventory"] == pytest.approx(180.0)
+    assert pd.isna(p.loc["MAJAAL|CEMAIR", "DaysOfInventory"]) and p.loc["TIKA|CEM AIR", "DaysOfInventory"] == pytest.approx(120.0)
+    # Margin = combined (value - cost) / combined value = (1000 - 100 - 180) / 1000 = 72 % (the average would be 70.48 %)
+    assert row["GrossProfitPctYTD"] == pytest.approx(72.0)
+    assert p.loc["MAJAAL|CEMAIR", "GrossProfitPctYTD"] == pytest.approx(200 / 3)
+    assert p.loc["TIKA|CEM AIR", "GrossProfitPctYTD"] == pytest.approx(520 / 7)
+    # BCG on combined figures with the lead company's (Tika, larger YTD value) thresholds: 190 < 25,000 -> LV; 72 % -> HP
+    assert row["ThresholdCompany"] == "Tika"
+    assert row["BcgClassYTD"] == "Strategic"
+    # Lifecycle on combined lines: 90 sold in the last 90 days, none in the previous 90 -> Growing
+    assert row["LifecycleSegment"] == "Growing"
+    # Tika's overstock threshold (60 days) applies to the combined DOH of 180
+    assert row["StockBand"] == "Overstock"
+
+
+def test_import_warns_on_shared_name_attribute_conflicts_and_near_duplicates(tmp_path: Path) -> None:
+    path = _write(tmp_path, [
+        _row("Majaal", "Cemair", ProductName="Cemair", Category="SURFACES"),
+        _row("Tika", "Cem Air", ProductName="Cemair", Category="Adhesives"),
+        _row("Majaal", "Cross Spacer 5mm", ProductName="Cross Spacer 5mm (500PCS/BAG)"),
+        _row("Tika", "Cross Spacer 5 mm", ProductName="Cross Spacer 5 mm (500PCS/BAG)"),
+    ])
+    df = _loader().load(path)  # warnings never reject the file
+    warnings = ProductMasterLoader.summary(df)["warnings"]
+    assert any("'Cemair' has different Category" in w and "row 2 Majaal" in w and "row 3 Tika" in w for w in warnings)
+    assert any("Probably the same product" in w and "Cross Spacer 5mm" in w and "Cross Spacer 5 mm" in w for w in warnings)
+    assert len(warnings) == 2

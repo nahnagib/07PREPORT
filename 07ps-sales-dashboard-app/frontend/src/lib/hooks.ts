@@ -622,12 +622,17 @@ export function useProductDashboard(
   retryAuth: () => void,
   page: ProductDashboardPage,
   scope: ProductDashboardScope = {},
+  enabled = true,
 ) {
   const dataVersion = useDataVersion();
   const latest = useLatestRequest();
-  const [state, setState] = useState<AsyncState<ProductDashboardOverview>>({ data: null, loading: true, error: null });
+  const [state, setState] = useState<AsyncState<ProductDashboardOverview>>({ data: null, loading: enabled, error: null });
 
   const load = useCallback(() => {
+    if (!enabled) {
+      setState({ data: null, loading: false, error: null });
+      return;
+    }
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
     const isCurrent = latest.begin();
@@ -635,7 +640,7 @@ export function useProductDashboard(
       .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataVersion, token, authError, page, JSON.stringify(scope)]);
+  }, [dataVersion, token, authError, page, JSON.stringify(scope), enabled]);
 
   useEffect(() => {
     load();

@@ -146,18 +146,24 @@ export default function BrandDrillDownPage() {
     [searchParams],
   );
 
-  const brandPerf = useProductDashboard(token, authError, retryAuth, 'pim-contribution', { fromDate: dateFromDate, toDate: dateToDate });
+  // Brand stats + company split: the page's own view (BMH unless a company came in the URL). The product
+  // list under the brand's own company sub-filter is that company's view -- its part of a shared product.
+  const brandPerf = useProductDashboard(token, authError, retryAuth, 'pim-contribution', { fromDate: dateFromDate, toDate: dateToDate, company: urlFilters.company });
+  const subCompany = urlFilters.company === 'All' && companyFilter !== 'All' ? companyFilter : null;
+  const subPerf = useProductDashboard(token, authError, retryAuth, 'pim-contribution', { fromDate: dateFromDate, toDate: dateToDate, company: subCompany ?? undefined }, subCompany !== null);
   const refresh = useRefreshStatus(token, authError, retryAuth);
   const filtered = useMemo(() => filterByPageFilters(toProductFacts(brandPerf.data), urlFilters), [brandPerf.data, urlFilters]);
+  const subFiltered = useMemo(() => filterByPageFilters(toProductFacts(subPerf.data), urlFilters), [subPerf.data, urlFilters]);
   const { found } = useMemo(() => computeBrandStats(filtered), [filtered]);
   const selected = partnerBrand?.matched ? found.find((b) => b.matched === partnerBrand.matched) ?? null : null;
 
   const productRows = useMemo(() => {
     if (!selected) return [];
-    return filtered
-      .filter((r) => (r.Brand ?? '').toUpperCase() === selected.matched.toUpperCase() && (companyFilter === 'All' || r.Company === companyFilter))
+    const source = subCompany ? subFiltered : filtered;
+    return source
+      .filter((r) => (r.Brand ?? '').toUpperCase() === selected.matched.toUpperCase() && (companyFilter === 'All' || r.Companies.includes(companyFilter)))
       .sort((a, b) => b.value - a.value);
-  }, [filtered, selected, companyFilter]);
+  }, [filtered, subFiltered, subCompany, selected, companyFilter]);
 
   const listRows: BrandProductRow[] = useMemo(() => {
     const maxRev = Math.max(1, ...productRows.map((r) => r.value));

@@ -147,11 +147,13 @@ export default function ProductLifecyclePage() {
   const { user, token, error: authError, retryAuth, logout } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
   const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
-  const overview = useProductDashboard(token, authError, retryAuth, 'product-lifecycle', { fromDate: dateFromDate, toDate: dateToDate });
   const refresh = useRefreshStatus(token, authError, retryAuth);
-  const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
 
   const [company, setCompany] = useState<CompanyFilter>('All');
+  // Company view vs BMH view comes from the API: with no company, a product both companies sell is one
+  // combined row (value/volume = Majaal + Tika, ratios recomputed); with a company, only its part.
+  const overview = useProductDashboard(token, authError, retryAuth, 'product-lifecycle', { fromDate: dateFromDate, toDate: dateToDate, company });
+  const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const [category, setCategory] = useState<string[]>([]);
   const [segment, setSegment] = useState<'All' | (typeof SEGMENTS)[number]>('All');
   const [search, setSearch] = useState('');

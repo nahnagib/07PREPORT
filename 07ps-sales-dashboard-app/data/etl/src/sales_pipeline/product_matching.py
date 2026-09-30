@@ -56,6 +56,22 @@ def match_key(company: Any, name: Any) -> str:
     return f"{normalize_match_company(company).upper()}|{normalize_match_name(name)}"
 
 
+def group_key(product_name: Any) -> str:
+    """Cross-company grouping key for the Product pages' BMH view: the sheet's ProductName, normalized
+    like a match name ([code] prefix, spacing, case). Matching itself stays Company + Odoo name."""
+    name = normalize_match_name(product_name)
+    return f"G|{name}" if name else ""
+
+
+_NON_ALNUM = re.compile(r"[\W_]+")
+
+
+def loose_name_key(product_name: Any) -> str:
+    """normalize_match_name without spaces or punctuation: 'Cem Air' and 'CemAir' give the same key.
+    Only used to WARN about names that probably mean the same product; never to group or match."""
+    return _NON_ALNUM.sub("", normalize_match_name(product_name))
+
+
 def match_key_series(company: pd.Series, name: pd.Series) -> pd.Series:
     """Vectorised match_key; normalizes each distinct value once (names repeat thousands of times)."""
     # NA -> "" first: NaN never equals itself, so it can't be a dict key for .map().

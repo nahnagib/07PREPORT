@@ -51,6 +51,10 @@ def print_summary(df: pd.DataFrame, path: Path) -> None:
     print(f"Blank ProductName: {summary['blank_product_name']} (displayed with their Odoo name)")
     print(f"Blank SKU: {summary['blank_sku']}")
     print(f"Inactive (IsActive=0): {summary['inactive_rows']}")
+    warnings = summary["warnings"]
+    print(f"Warnings: {len(warnings)} (the file is not rejected for these)")
+    for line in warnings:
+        print(f"  - {line}")
 
 
 def write_table(df: pd.DataFrame, settings: Settings, source: Path) -> None:

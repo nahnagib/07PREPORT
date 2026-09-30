@@ -1,4 +1,4 @@
-import type { BcgMovement, LifecycleSegment, ProductDashboardOverview, ProductDashboardRow, StockBand, UomQty } from '../api';
+import type { BcgMovement, LifecycleSegment, ProductCompanyPart, ProductDashboardOverview, ProductDashboardRow, StockBand, UomQty } from '../api';
 
 /**
  * Product pages (BCG Matrix / Stock Velocity / PIM Contribution / Product Lifecycle) -- shared types,
@@ -64,6 +64,9 @@ export interface ProductFact {
   firstSaleDate: string | null;
   lastSaleDate: string | null;
   daysSinceLastSale: number | null;
+  /** Companies in the row (BMH view: both for a shared product) and the per-company split of `value`. */
+  Companies: string[];
+  parts: ProductCompanyPart[];
 }
 
 function daysBetween(fromIso: string | null, toIso: string | null): number | null {
@@ -117,6 +120,8 @@ export function toProductFacts(data: ProductDashboardOverview | null | undefined
     firstSaleDate: r.firstSaleDate,
     lastSaleDate: r.lastSaleDate,
     daysSinceLastSale: daysBetween(r.lastSaleDate, data.asOfDate),
+    Companies: r.companies ?? [r.company],
+    parts: r.parts ?? [],
   }));
 }
 
@@ -261,13 +266,15 @@ export interface PimFilters {
   bcgClass: string;
 }
 
-export function filterByPageFilters<T extends { Company: string; Category: string | null; bcg_class_YTD: string | null }>(
+/** The company itself is applied by the API (company view vs BMH view); `company` here only drops rows
+ * of another company if a company-view response is mixed with an old BMH one. */
+export function filterByPageFilters<T extends { Company: string; Companies?: string[]; Category: string | null; bcg_class_YTD: string | null }>(
   rows: T[],
   filters: PimFilters,
 ): T[] {
   return rows.filter(
     (r) =>
-      (filters.company === 'All' || r.Company === filters.company) &&
+      (filters.company === 'All' || (r.Companies ?? [r.Company]).includes(filters.company)) &&
       (filters.category.length === 0 || (r.Category !== null && filters.category.includes(r.Category))) &&
       (filters.bcgClass === 'All' || r.bcg_class_YTD === filters.bcgClass),
   );
@@ -331,8 +338,13 @@ export function computeBrandStats(rows: ProductFact[]): { found: FoundBrandStats
       const revenuePrior = sum(brandRows, (r) => r.valuePrior);
       const costed = brandRows.filter((r) => r.grossProfitPct !== null && r.value > 0);
       const costedValue = sum(costed, (r) => r.value);
+      // Split by company from each row's per-company parts, so a product both companies sell (one BMH row)
+      // still counts toward each company exactly.
       const companyRevenue = new Map<string, number>();
-      brandRows.forEach((r) => companyRevenue.set(r.Company, (companyRevenue.get(r.Company) ?? 0) + r.value));
+      brandRows.forEach((r) => {
+        const parts = r.parts.length ? r.parts : [{ company: r.Company, value: r.value }];
+        parts.forEach((pt) => companyRevenue.set(pt.company, (companyRevenue.get(pt.company) ?? 0) + pt.value));
+      });
       return {
         ...b,
         matched: b.matched,

@@ -8,6 +8,14 @@ Tables (all full-replaced each run):
   Dim_ProductDashboard     one row per Company + product: every PRODUCTS.xlsx row (zero sales included)
                            plus every Unmapped product seen in sales or stock, with today's stock,
                            days of inventory, stock band, lifecycle segment and BCG class.
+                           ProductGroupKey = the product's BMH group (see Dim_ProductDashboardGroup).
+  Dim_ProductDashboardGroup  the BMH view (no company filter): one row per ProductGroupKey = normalized
+                           sheet ProductName across companies, so a product both companies sell (Majaal
+                           "Cemair" + Tika "Cem Air", both named "Cemair" in the sheet) appears once. Stock,
+                           days of inventory, stock band, lifecycle and BCG are recomputed from the combined
+                           lines and stock -- never averaged. Unmapped products are not grouped (key =
+                           their ProductMatchKey). A shared product uses the thresholds of its lead company
+                           (larger YTD value, else larger all-time value) -- column ThresholdCompany.
   QA_ProductUnmapped       Odoo names (sales or stock) with no PRODUCTS.xlsx row -- the list to add to the sheet.
   QA_ProductDataQuality    negative stock, products without cost, products sold in several UoMs.
   ProductDashboard_Meta    as-of date, the rules/thresholds used, and the reconciliation totals.
@@ -26,7 +34,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from sales_pipeline.product_matching import normalize_match_company
+from sales_pipeline.product_matching import group_key, normalize_match_company
 
 UNCLASSIFIED_NO_COST = "Unclassified (no cost)"
 BCG_BY_CODE = {"HV/HP": "Stars", "HV/LP": "Cash Cows", "LV/HP": "Strategic", "LV/LP": "Dogs"}
@@ -110,6 +118,7 @@ class ProductDashboardBuilder:
         self.assert_totals_preserved(lines, daily)
         stock = self._stock(fact_inventory)
         products = self._products(lines, dim_product, stock)
+        groups = self._groups(lines, products, stock)
         master_keys = set(dim_product.loc[dim_product["ProductSource"].astype("string").eq("Input Master"), "ProductMatchKey"].astype(str))
         unmapped = self._unmapped(lines, stock, master_keys)
         quality = self._data_quality(products, fact_inventory, lines)
@@ -117,6 +126,7 @@ class ProductDashboardBuilder:
         return {
             "Fact_ProductSalesDaily": daily,
             "Dim_ProductDashboard": products,
+            "Dim_ProductDashboardGroup": groups,
             "QA_ProductUnmapped": unmapped,
             "QA_ProductDataQuality": quality,
             "ProductDashboard_Meta": meta,
@@ -212,7 +222,6 @@ class ProductDashboardBuilder:
         return lines.loc[mask].groupby("ProductMatchKey")[column].sum()
 
     def _products(self, lines: pd.DataFrame, dim_product: pd.DataFrame, stock: pd.DataFrame) -> pd.DataFrame:
-        today = self.as_of
         master = dim_product[dim_product["ProductSource"].astype("string").eq("Input Master")].copy()
         master["IsMapped"] = True
         master_keys = set(master["ProductMatchKey"].astype(str))
@@ -237,7 +246,17 @@ class ProductDashboardBuilder:
             extra["ProductKey"] = pd.NA
             base = pd.concat([base, extra[["ProductMatchKey", "Company", "OdooProductName", "ProductName", "IsMapped", "IsActive", "ProductKey"]]], ignore_index=True)
         base = base.drop_duplicates("ProductMatchKey").set_index("ProductMatchKey")
+        mapped = base["IsMapped"].fillna(False).astype(bool)
+        gkey = base["ProductName"].map(group_key)
+        base["ProductGroupKey"] = gkey.where(mapped & gkey.ne(""), pd.Series(base.index, index=base.index))
+        base["ThresholdCompany"] = base["Company"]
+        return self._snapshot(base, lines, stock)
 
+    def _snapshot(self, base: pd.DataFrame, lines: pd.DataFrame, stock: pd.DataFrame) -> pd.DataFrame:
+        """Sales history, stock, days of inventory, stock band, lifecycle and BCG for `base` (indexed by
+        the key that `lines` and `stock` carry in their ProductMatchKey column)."""
+        today = self.as_of
+        base.index.name = "ProductMatchKey"
         # Sales history
         g = lines.groupby("ProductMatchKey")
         base["FirstSaleDate"] = g["OrderDate"].min()
@@ -271,10 +290,55 @@ class ProductDashboardBuilder:
             base[c] = pd.to_datetime(base[c], errors="coerce")
         return base
 
+    # ------------------------------------------------------------------ BMH view (grouped across companies)
+    def _groups(self, lines: pd.DataFrame, products: pd.DataFrame, stock: pd.DataFrame) -> pd.DataFrame:
+        key_of = products.set_index("ProductMatchKey")["ProductGroupKey"].astype(str)
+        glines = lines.copy()
+        mk = glines["ProductMatchKey"].astype(str)
+        glines["ProductMatchKey"] = mk.map(key_of).fillna(mk)
+        self.assert_totals_preserved(lines, glines)
+        gstock = stock.copy()
+        if not gstock.empty:
+            sk = gstock["ProductMatchKey"].astype(str)
+            gstock["ProductMatchKey"] = sk.map(key_of).fillna(sk)
+            num = ["StockQty", "StockValue", "InTransitQty", "InTransitValue", "NegativeStockRows", "NegativeStockQty"]
+            gstock = gstock.groupby("ProductMatchKey", as_index=False)[num].sum()
+
+        members = products.copy()
+        members["Company"] = members["Company"].astype("string")
+        # Lead company = larger YTD value, then larger all-time value, then name: its thresholds apply.
+        ytd_start = pd.Timestamp(year=self.as_of.year, month=1, day=1)
+        by_ytd = lines[lines["OrderDate"].between(ytd_start, self.as_of)].groupby("ProductMatchKey")["Value"].sum()
+        by_all = lines.groupby("ProductMatchKey")["Value"].sum()
+        members["_ytd"] = members["ProductMatchKey"].astype(str).map(by_ytd).fillna(0.0)
+        members["_all"] = members["ProductMatchKey"].astype(str).map(by_all).fillna(0.0)
+        members = members.sort_values(["ProductGroupKey", "_ytd", "_all", "Company"], ascending=[True, False, False, True])
+
+        def first_filled(v: pd.Series) -> Any:
+            v = v.dropna()
+            v = v[v.astype(str).str.strip().ne("")]
+            return v.iloc[0] if len(v) else pd.NA
+
+        agg: dict[str, Any] = {
+            "Companies": ("Company", lambda v: " + ".join(sorted(set(v.dropna())))),
+            "CompanyCount": ("Company", lambda v: int(v.dropna().nunique())),
+            "ThresholdCompany": ("Company", "first"),
+            "MemberKeys": ("ProductMatchKey", lambda v: ",".join(sorted(v.astype(str)))),
+            "IsMapped": ("IsMapped", lambda v: bool(v.fillna(False).astype(bool).any())),
+            "IsActive": ("IsActive", lambda v: pd.to_numeric(v, errors="coerce").max()),
+        }
+        for c in self.PRODUCT_ATTRS:
+            if c != "IsActive" and c in members.columns:
+                agg[c] = (c, first_filled)
+        base = members.groupby("ProductGroupKey", sort=True).agg(**agg)
+        base["Company"] = base["Companies"]
+        out = self._snapshot(base, glines, gstock if not gstock.empty else stock.iloc[0:0])
+        return out.rename(columns={"ProductMatchKey": "ProductGroupKey"})
+
     def _stock_band(self, p: pd.DataFrame) -> pd.Series:
         over = self.config.per_company("days_of_inventory", "overstock_days")
         risk = self.config.per_company("days_of_inventory", "stockout_risk_days")
-        company = p["Company"].astype("string")
+        company = p["ThresholdCompany"].astype("string")
         over_t = company.map(over)
         risk_t = company.map(risk)
         doh = p["DaysOfInventory"]
@@ -345,7 +409,7 @@ class ProductDashboardBuilder:
             no_cost = has_sales & g["UncostedQty"].gt(0)
             gp = (g["Value"] - g["CostValue"]).div(g["Value"].where(g["Value"] != 0))
             out[f"GrossProfitPct{label}"] = (gp * 100).where(has_sales & ~no_cost)
-            vclass = np.where(g["Qty"] >= products["Company"].map(vol_t).fillna(np.inf), "HV", "LV")
+            vclass = np.where(g["Qty"] >= products["ThresholdCompany"].map(vol_t).fillna(np.inf), "HV", "LV")
             pclass = np.where(gp >= profit_t, "HP", "LP")
             code = pd.Series(vclass, index=products.index) + "/" + pd.Series(pclass, index=products.index)
             cls = code.map(BCG_BY_CODE)

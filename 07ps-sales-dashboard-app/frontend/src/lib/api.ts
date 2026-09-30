@@ -2151,6 +2151,15 @@ export type StockBand = 'Overstock' | 'Normal' | 'StockOutRisk' | 'NoMovement' |
 export type LifecycleSegment = 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued' | 'Never sold';
 export type BcgMovement = 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost';
 
+/** Per-company split of a row's period sales (BMH view: one entry per company selling the product). */
+export interface ProductCompanyPart {
+  company: string;
+  productMatchKey: string;
+  value: number;
+  lines: number;
+  volumeByUom: UomQty[];
+}
+
 export interface ProductDashboardRow {
   productMatchKey: string;
   productKey: string | null;
@@ -2184,6 +2193,9 @@ export interface ProductDashboardRow {
   daysOfInventory: number | null;
   stockBand: StockBand;
   lifecycleSegment: LifecycleSegment;
+  /** Companies in this row: one in a company view; both for a shared product in the BMH view. */
+  companies: string[];
+  parts: ProductCompanyPart[];
   firstSaleDate: string | null;
   lastSaleDate: string | null;
   bcgClassYTD: string | null;
@@ -2200,6 +2212,8 @@ export interface ProductDashboardRow {
 }
 
 export interface ProductDashboardOverview {
+  /** 'BMH' = no company filter (a product both companies sell is one combined row); else one company. */
+  view: 'BMH' | 'Majaal' | 'Tika';
   asOfDate: string | null;
   builtAtUtc: string | null;
   period: { from: string; to: string; days: number; priorFrom: string; priorTo: string };
@@ -2217,6 +2231,8 @@ export interface ProductDashboardOverview {
 }
 
 export interface ProductDashboardScope {
+  /** 'Majaal' / 'Tika' = that company's view; absent = BMH view. */
+  company?: string;
   segmentKeys?: number[];
   channelKeys?: number[];
   salesTeamKeys?: string[];
@@ -2233,6 +2249,7 @@ function buildProductDashboardQuery(scope: ProductDashboardScope): string {
   }
   if (scope.fromDate) params.set('fromDate', scope.fromDate);
   if (scope.toDate) params.set('toDate', scope.toDate);
+  if (scope.company && scope.company !== 'All') params.set('company', scope.company);
   return params.toString();
 }
 
