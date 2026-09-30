@@ -2,9 +2,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDataVersion } from '../components/FilterProvider';
 import {
-  BcgMatrixOverview,
-  BcgMatrixScopeFilters,
-  BrandPerformanceOverview,
   BreakdownGroupBy,
   CriticalNumberMissingTrend,
   CriticalNumberOverview,
@@ -20,8 +17,10 @@ import {
   TachometerMetricKey,
   TachometerOverview,
   TachometerTrend,
-  fetchBcgMatrixOverview,
-  fetchBrandPerformanceOverview,
+  fetchProductDashboard,
+  type ProductDashboardOverview,
+  type ProductDashboardPage,
+  type ProductDashboardScope,
   fetchBranches,
   fetchBusinessUnits,
   fetchCriticalNumberMissingTrend,
@@ -616,54 +615,27 @@ export function useTachometerTrend(
   return { ...state, retry: makeRetry(token, retryAuth, load) };
 }
 
-/** BCG Matrix overview (backend's /bcg-matrix/overview endpoint). Same authGate/makeRetry
- * template as every other overview hook, but no anchorDate/filters -- fact_bcgmatrix's YTD/LYTD
- * figures are already computed by the ETL, so there's nothing page-side to parameterize. */
-export function useBcgMatrixOverview(
+/** Product pages' data -- same authGate/AsyncState/makeRetry template as every other overview hook. */
+export function useProductDashboard(
   token: string | null,
   authError: string | null,
   retryAuth: () => void,
-  scope: BcgMatrixScopeFilters = {},
+  page: ProductDashboardPage,
+  scope: ProductDashboardScope = {},
 ) {
   const dataVersion = useDataVersion();
   const latest = useLatestRequest();
-  const [state, setState] = useState<AsyncState<BcgMatrixOverview>>({ data: null, loading: true, error: null });
+  const [state, setState] = useState<AsyncState<ProductDashboardOverview>>({ data: null, loading: true, error: null });
 
   const load = useCallback(() => {
     if (authGate(token, authError, setState)) return;
     setState((s) => ({ ...s, loading: true, error: null }));
     const isCurrent = latest.begin();
-    fetchBcgMatrixOverview(token as string, scope)
+    fetchProductDashboard(token as string, page, scope)
       .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataVersion, token, authError, JSON.stringify(scope)]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  return { ...state, retry: makeRetry(token, retryAuth, load) };
-}
-
-/** PIM Contribution Brand Performance overview (backend's /pim-contribution/brand-performance
- * endpoint) -- same authGate/AsyncState/makeRetry template as useBcgMatrixOverview, no
- * scope/filters param (Company/Category/BCG Class filtering stays client-side on this page, same
- * as it was against the mock data this replaces). */
-export function useBrandPerformanceOverview(token: string | null, authError: string | null, retryAuth: () => void) {
-  const dataVersion = useDataVersion();
-  const latest = useLatestRequest();
-  const [state, setState] = useState<AsyncState<BrandPerformanceOverview>>({ data: null, loading: true, error: null });
-
-  const load = useCallback(() => {
-    if (authGate(token, authError, setState)) return;
-    setState((s) => ({ ...s, loading: true, error: null }));
-    const isCurrent = latest.begin();
-    fetchBrandPerformanceOverview(token as string)
-      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
-      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataVersion, token, authError]);
+  }, [dataVersion, token, authError, page, JSON.stringify(scope)]);
 
   useEffect(() => {
     load();

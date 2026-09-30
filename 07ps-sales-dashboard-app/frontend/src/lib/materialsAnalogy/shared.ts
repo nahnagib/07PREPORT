@@ -1,181 +1,133 @@
-import rawFacts from './data.json';
+import type { BcgMovement, LifecycleSegment, ProductDashboardOverview, ProductDashboardRow, StockBand, UomQty } from '../api';
 
 /**
- * Materials Analogy module (Stock Velocity / PIM Contribution / Product Lifecycle) -- shared
- * types, thresholds, formatters, and color mapping for all 3 still-synthetic report pages.
+ * Product pages (BCG Matrix / Stock Velocity / PIM Contribution / Product Lifecycle) -- shared types,
+ * formatters and colors. All four pages read live data from `useProductDashboard` (lib/hooks.ts),
+ * served by backend/src/measures/productDashboard.ts from tables the ETL rebuilds on every run
+ * (data/etl/src/sales_pipeline/product_dashboard.py). There is no local/sample product data any more:
+ * every threshold (BCG volume/profit, days-of-inventory bands, lifecycle rule) is applied by the ETL
+ * from data/etl/config/product_dashboard.json and arrives precomputed.
  *
- * `data.json` is synthetic (generated from the real PRODUCTS.xlsx master data, not a live
- * warehouse query -- see docs/mockups/materials-analogy/ for the generation notes) since no
- * Odoo/warehouse extract for stock velocity, PIM contribution, or product lifecycle exists yet.
- * Every other field-facing report on this page (Pipeline Health, etc.) is wired to a real backend
- * endpoint (see lib/hooks.ts's use*Overview pattern) -- these 3 pages are the one place in the app
- * that render real chart/table components against local static data instead. If/when a real
- * backend measure exists for these, only this file's `FACTS` export needs to change to a
- * use*Overview-style hook -- every page component below already treats it as "the data," not
- * "the mock data."
- *
- * BCG Matrix is the exception: it moved off this file's `FACTS`/`classifyBcg` and now fetches
- * live data via `useBcgMatrixOverview` (lib/hooks.ts) from `backend/src/measures/
- * materialsAnalogyBcg.ts`, which queries the real `fact_bcgmatrix` table -- refreshed by the same
- * scheduled ETL as every other live page (see that file's header for the live-table details).
- * `BCG_VOLUME_THRESHOLD`/`BCG_PROFIT_THRESHOLD_PCT`/`classifyBcg` below stay exported as the
- * documented spec (and are still exercised by this file's own `FACTS` computation for internal
- * consistency), but BCG Matrix's page component no longer calls them -- its classification now
- * arrives precomputed from the live pipeline.
+ * One product = Company + Odoo product name (PRODUCTS.xlsx row). `id` is that key; `ProductKey` from
+ * the sheet is NOT unique and is never used to group.
  */
 
 export type BcgClass = 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs';
+export const BCG_CLASSES: BcgClass[] = ['Stars', 'Cash Cows', 'Strategic', 'Dogs'];
+export const UNCLASSIFIED_NO_COST = 'Unclassified (no cost)';
 
-export interface MaterialsAnalogyFact {
-  ProductKey: string;
+export interface ProductFact {
+  /** Company + normalized Odoo product name -- the product's identity. */
+  id: string;
+  ProductKey: string | null;
   ProductName: string;
-  Company: 'Tika' | 'Majaal' | 'MAJAAL';
-  Category: string;
-  Brand: string;
-  /** Not present in the current synthetic dataset (every row is effectively blank) -- kept as a
-   * real, optional field rather than omitted so PIM Contribution's full hierarchy drill (Company
-   * -> Category -> Brand -> SubBrand -> Family -> Size) is honest about the schema this data would
-   * have once a real SubBrand source exists, not just hardcoded to 5 levels because the 6th
-   * happens to be empty today. See that page's HIERARCHY_LEVELS/normalizeHierarchyValue for how a
-   * uniformly-blank level like this gets auto-skipped rather than shown as a single 100% slice. */
-  SubBrand?: string | null;
-  Family: string;
-  Size: string;
-  SKU: string;
-  IsActive: number;
-  bcg_class_YTD: BcgClass;
-  /** Same classification, computed from LYTD figures -- exposed so `bcg_movement`'s YTD-vs-LYTD
-   * transition is independently checkable, not just an opaque derived label. */
-  bcg_class_LYTD: BcgClass;
-  volume_class_YTD: 'HV' | 'LV';
-  profit_class_YTD: 'HP' | 'LP';
-  /** e.g. "HV-HP" -- the raw pre-mapping code, useful for spot-checking the threshold logic
-   * itself independent of the Stars/Cash Cows/Strategic/Dogs label. */
-  bcg_code_YTD: string;
-  bcg_movement: 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost';
-  lifecycle_segment: 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs' | 'Mature' | 'Discontinued';
-  is_mature: boolean;
-  is_discontinued: boolean;
+  OdooProductName: string | null;
+  Company: 'Majaal' | 'Tika' | string;
+  Category: string | null;
+  Brand: string | null;
+  SubBrand: string | null;
+  Family: string | null;
+  Size: string | null;
+  SKU: string | null;
+  IsActive: number | null;
+  isMapped: boolean;
+  // -- period (follows the date range; default calendar YTD) --
+  value: number;
+  volume: number | null;
+  volumeByUom: UomQty[];
+  uom: string | null;
+  velocity: number | null;
+  valuePrior: number;
+  avgUnitPrice: number | null;
+  grossProfitPct: number | null;
+  // -- BCG (calendar YTD vs LYTD, as of the last ETL run) --
+  bcg_class_YTD: string | null;
+  bcg_class_LYTD: string | null;
+  bcg_movement: BcgMovement | null;
+  bcgExcludedCategory: boolean;
   total_value_YTD: number;
   total_value_LYTD: number;
-  value_growth_pct: number;
   total_quantity_YTD: number;
   total_quantity_LYTD: number;
-  quantity_growth_pct: number;
-  avg_unit_price_YTD: number;
-  avg_unit_price_LYTD: number;
-  perc_gross_profit_YTD: number;
-  perc_gross_profit_LYTD: number;
-  current_stock_qty: number;
-  avg_daily_sales_qty: number;
-  days_of_inventory: number;
-  first_sale_date: string;
-  months_since_first_sale: number;
-  last_supply_date: string;
-  months_since_last_supply: number;
-  last_sale_date: string;
-  months_since_last_sale: number;
+  avg_unit_price_YTD: number | null;
+  perc_gross_profit_YTD: number | null;
+  quantity_growth_pct: number | null;
+  // -- stock & lifecycle (as of the last ETL run) --
+  stockQty: number;
+  stockValue: number;
+  inTransitQty: number;
+  inTransitValue: number;
+  avgDailySales: number;
+  daysOfInventory: number | null;
+  stockBand: StockBand;
+  lifecycle: LifecycleSegment;
+  firstSaleDate: string | null;
+  lastSaleDate: string | null;
+  daysSinceLastSale: number | null;
 }
 
-export function normCompany(c: string): 'Tika' | 'Majaal' {
-  return c === 'MAJAAL' ? 'Majaal' : (c as 'Tika' | 'Majaal');
+function daysBetween(fromIso: string | null, toIso: string | null): number | null {
+  if (!fromIso || !toIso) return null;
+  return Math.round((Date.parse(toIso) - Date.parse(fromIso)) / 86_400_000);
 }
 
-// ---- BCG classification thresholds -- company-specific, applied per row's own Company, never a
-// single global/portfolio-wide cutoff (that was the bug in the first pass: an overall median
-// instead of each company's own threshold). Exact values as specified, not derived/estimated. ----
-export const BCG_VOLUME_THRESHOLD: Record<'Majaal' | 'Tika', number> = { Majaal: 3500, Tika: 25000 };
-export const BCG_PROFIT_THRESHOLD_PCT = 35;
-
-function classifyBcg(qty: number, profitPct: number, company: 'Tika' | 'Majaal') {
-  const volumeClass: 'HV' | 'LV' = qty >= BCG_VOLUME_THRESHOLD[company] ? 'HV' : 'LV';
-  const profitClass: 'HP' | 'LP' = profitPct >= BCG_PROFIT_THRESHOLD_PCT ? 'HP' : 'LP';
-  const bcgClass: BcgClass =
-    volumeClass === 'HV' && profitClass === 'HP'
-      ? 'Stars'
-      : volumeClass === 'HV' && profitClass === 'LP'
-        ? 'Cash Cows'
-        : volumeClass === 'LV' && profitClass === 'HP'
-          ? 'Strategic'
-          : 'Dogs';
-  return { volumeClass, profitClass, bcgClass, code: `${volumeClass}-${profitClass}` };
+export function toProductFacts(data: ProductDashboardOverview | null | undefined): ProductFact[] {
+  if (!data) return [];
+  return data.products.map((r: ProductDashboardRow) => ({
+    id: r.productMatchKey,
+    ProductKey: r.productKey,
+    ProductName: r.productName,
+    OdooProductName: r.odooProductName,
+    Company: r.company,
+    Category: r.category,
+    Brand: r.brand,
+    SubBrand: r.subBrand,
+    Family: r.family,
+    Size: r.size,
+    SKU: r.sku,
+    IsActive: r.isActive,
+    isMapped: r.isMapped,
+    value: r.value,
+    volume: r.volume,
+    volumeByUom: r.volumeByUom,
+    uom: r.uom,
+    velocity: r.velocity,
+    valuePrior: r.valuePrior,
+    avgUnitPrice: r.avgUnitPrice,
+    grossProfitPct: r.grossProfitPct,
+    bcg_class_YTD: r.bcgClassYTD,
+    bcg_class_LYTD: r.bcgClassLYTD,
+    bcg_movement: r.bcgMovement,
+    bcgExcludedCategory: r.bcgExcludedCategory,
+    total_value_YTD: r.valueYTD,
+    total_value_LYTD: r.valueLYTD,
+    total_quantity_YTD: r.volumeYTD,
+    total_quantity_LYTD: r.volumeLYTD,
+    avg_unit_price_YTD: r.volumeYTD ? r.valueYTD / r.volumeYTD : null,
+    perc_gross_profit_YTD: r.grossProfitPctYTD,
+    quantity_growth_pct: r.volumeLYTD > 0 ? ((r.volumeYTD - r.volumeLYTD) / r.volumeLYTD) * 100 : null,
+    stockQty: r.stockQty,
+    stockValue: r.stockValue,
+    inTransitQty: r.inTransitQty,
+    inTransitValue: r.inTransitValue,
+    avgDailySales: r.avgDailySales,
+    daysOfInventory: r.daysOfInventory,
+    stockBand: r.stockBand,
+    lifecycle: r.lifecycleSegment,
+    firstSaleDate: r.firstSaleDate,
+    lastSaleDate: r.lastSaleDate,
+    daysSinceLastSale: daysBetween(r.lastSaleDate, data.asOfDate),
+  }));
 }
 
-/** Ordinal "portfolio quality" score used only to decide Improved vs Declined for `bcg_movement`
- * -- Dogs (neither HV nor HP) is worst, Stars (both) is best, Cash Cows/Strategic (exactly one)
- * are equal-ranked lateral positions, so a class change between those two alone is treated as
- * Stable (a lateral move), not an improvement or decline. */
-function bcgQualityScore(cls: BcgClass): number {
-  return cls === 'Stars' ? 2 : cls === 'Dogs' ? 0 : 1;
+/** Rows that belong in a BCG quadrant: one of the 4 classes, not a packaging/raw-material category. */
+export function isBcgClassified(r: ProductFact): r is ProductFact & { bcg_class_YTD: BcgClass } {
+  return !r.bcgExcludedCategory && BCG_CLASSES.includes(r.bcg_class_YTD as BcgClass);
 }
 
-type RawFact = Omit<MaterialsAnalogyFact, 'bcg_class_LYTD' | 'volume_class_YTD' | 'profit_class_YTD' | 'bcg_code_YTD'>;
-
-export const FACTS: MaterialsAnalogyFact[] = (rawFacts as RawFact[]).map((r) => {
-  const company = normCompany(r.Company);
-  const ytd = classifyBcg(r.total_quantity_YTD, r.perc_gross_profit_YTD, company);
-  const lytd = classifyBcg(r.total_quantity_LYTD, r.perc_gross_profit_LYTD, company);
-
-  let bcg_movement: MaterialsAnalogyFact['bcg_movement'];
-  if (r.is_discontinued) {
-    bcg_movement = 'Lost';
-  } else if (r.months_since_first_sale <= 12) {
-    bcg_movement = 'New';
-  } else if (ytd.bcgClass === lytd.bcgClass) {
-    bcg_movement = 'Stable';
-  } else {
-    const scoreDelta = bcgQualityScore(ytd.bcgClass) - bcgQualityScore(lytd.bcgClass);
-    bcg_movement = scoreDelta > 0 ? 'Improved' : scoreDelta < 0 ? 'Declined' : 'Stable';
-  }
-
-  const lifecycle_segment: MaterialsAnalogyFact['lifecycle_segment'] = r.is_discontinued ? 'Discontinued' : r.is_mature ? 'Mature' : ytd.bcgClass;
-
-  return {
-    ...r,
-    Company: company,
-    bcg_class_YTD: ytd.bcgClass,
-    bcg_class_LYTD: lytd.bcgClass,
-    volume_class_YTD: ytd.volumeClass,
-    profit_class_YTD: ytd.profitClass,
-    bcg_code_YTD: ytd.code,
-    bcg_movement,
-    lifecycle_segment,
-  };
-});
-
-/** Categories that are packaging/input material, not a sellable finished product -- confirmed
- * against the real master data (PRODUCTS.xlsx, Majaal sheet; Tika has neither category), not
- * assumed from UI label text. BCG classification (Stars/Cash Cows/Strategic/Dogs) is a portfolio
- * question about sellable products, so these never belong in a BCG number.
- *
- * Deliberately does NOT filter the base `FACTS` export -- Stock Velocity/PIM Contribution/Product
- * Lifecycle legitimately track these categories' own stock/ASP behavior and were never asked to
- * exclude them. `BCG_FACTS` is the data-layer export the BCG Matrix page (and anything else that
- * does BCG-style classification against this module in the future) should use instead of `FACTS`,
- * so the exclusion can never be forgotten in one chart/table but not another on that page. */
-export const NON_SELLABLE_CATEGORIES = new Set(['Paper Bags', 'Raw Materials']);
-export const BCG_FACTS: MaterialsAnalogyFact[] = FACTS.filter((r) => !NON_SELLABLE_CATEGORIES.has(r.Category));
-
-// ---- Stock band thresholds (company-specific, per row's own Company -- never a single global
-// rule) ----
-export const DOH_THRESHOLDS = {
-  Tika: { overstock: 60, understock: 30 },
-  Majaal: { overstock: 180, understock: 60 },
-} as const;
-
-export type StockBand = 'Overstock' | 'Normal' | 'StockOutRisk';
-
-export function stockBand(r: MaterialsAnalogyFact): StockBand {
-  const t = DOH_THRESHOLDS[r.Company as 'Tika' | 'Majaal'];
-  if (r.days_of_inventory > t.overstock) return 'Overstock';
-  if (r.days_of_inventory < t.understock) return 'StockOutRisk';
-  return 'Normal';
-}
-
-// ---- Formatters (LYD 1.2M / 45K / signed % convention used throughout the report -- the Libyan
-// Dinar's ISO code is LYD, not LBD (that's Lebanese Pound); fixed here and renamed so a future
-// edit can't reintroduce the wrong code by copying the old function name) ----
-export function fmtLYD(v: number): string {
+// ---- Formatters (Libyan Dinar ISO code is LYD) ----
+export function fmtLYD(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
   const sign = v < 0 ? '-' : '';
   const abs = Math.abs(v);
   if (abs >= 1e6) return `${sign}LYD ${(abs / 1e6).toFixed(1)}M`;
@@ -183,16 +135,46 @@ export function fmtLYD(v: number): string {
   return `${sign}LYD ${abs.toFixed(0)}`;
 }
 
-export function fmtNum(v: number): string {
+export function fmtNum(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
   const abs = Math.abs(v);
   if (abs >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
   if (abs >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
   return v.toFixed(0);
 }
 
-export function fmtPct(v: number, digits = 1): string {
+export function fmtPct(v: number | null | undefined, digits = 1): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
   const sign = v >= 0 ? '+' : '';
   return `${sign}${v.toFixed(digits)}%`;
+}
+
+/** Quantities in different units of measure are never added together: "12.3K UNIT · 450 m²". */
+export function sumByUom(rows: { volumeByUom: UomQty[] }[]): UomQty[] {
+  const acc = new Map<string, number>();
+  rows.forEach((r) => r.volumeByUom.forEach(({ uom, qty }) => acc.set(uom, (acc.get(uom) ?? 0) + qty)));
+  return [...acc.entries()].map(([uom, qty]) => ({ uom, qty })).sort((a, b) => b.qty - a.qty);
+}
+
+/** Odoo unit names can be Arabic ("وحدة", "كيس"): each "qty unit" item is wrapped in Unicode bidi
+ * isolates (FSI ... PDI) so a right-to-left unit never reorders the numbers around it. */
+const isolate = (text: string) => `⁨${text}⁩`;
+
+export function fmtUomQty(list: UomQty[], max = 3): string {
+  if (!list.length) return '0';
+  const shown = list.slice(0, max).map(({ uom, qty }) => isolate(`${fmtNum(qty)}${uom ? ` ${uom}` : ''}`));
+  return list.length > max ? `${shown.join(' · ')} · +${list.length - max} more` : shown.join(' · ');
+}
+
+export function fmtVolume(r: Pick<ProductFact, 'volume' | 'volumeByUom' | 'uom'>): string {
+  if (r.volume === null) return fmtUomQty(r.volumeByUom);
+  return isolate(`${fmtNum(r.volume)}${r.uom ? ` ${r.uom}` : ''}`);
+}
+
+export function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 export function median(values: number[]): number {
@@ -207,23 +189,40 @@ export function sum<T>(arr: T[], fn: (r: T) => number): number {
   return arr.reduce((a, r) => a + fn(r), 0);
 }
 
-// ---- Colors -- reused CSS custom properties, same set/precedent as pipeline-health's
-// FUNNEL_COLORS/CATEGORY_PALETTE constants (frontend/src/app/(departments)/promotion/
-// pipeline-health/page.tsx), not new hex codes. Each report page that needs one of these copies
-// the reference, same convention every other report page already follows (there is no shared
-// exported CHART_PALETTE in @07ps/ui to import instead). */
-export const BCG_COLOR: Record<MaterialsAnalogyFact['bcg_class_YTD'], string> = {
+export function distinctSorted(values: (string | null)[]): string[] {
+  return [...new Set(values.filter((v): v is string => !!v))].sort((a, b) => a.localeCompare(b));
+}
+
+// ---- Colors (existing design tokens) ----
+export const BCG_COLOR: Record<string, string> = {
   Stars: 'var(--ps-color-gold)',
   'Cash Cows': 'var(--ps-color-success)',
   Strategic: 'var(--ps-color-accent)',
   Dogs: 'var(--ps-color-alert)',
+  [UNCLASSIFIED_NO_COST]: 'var(--ps-color-neutral-text)',
 };
 
-export const SEGMENT_COLOR: Record<MaterialsAnalogyFact['lifecycle_segment'], string> = {
-  ...BCG_COLOR,
-  Mature: 'var(--ps-color-last-year)',
+export const LIFECYCLE_SEGMENTS: LifecycleSegment[] = ['New', 'Growing', 'Mature', 'Declining', 'Discontinued', 'Never sold'];
+export const SEGMENT_COLOR: Record<LifecycleSegment, string> = {
+  New: 'var(--ps-color-accent)',
+  Growing: 'var(--ps-color-success)',
+  Mature: 'var(--ps-color-gold)',
+  Declining: 'var(--ps-color-watch)',
   Discontinued: 'var(--ps-color-neutral-text)',
+  'Never sold': 'var(--ps-color-muted-text)',
 };
+
+export const STOCK_BAND_LABEL: Record<StockBand, string> = {
+  Overstock: 'Overstock',
+  NoMovement: 'No movement',
+  Normal: 'Normal',
+  StockOutRisk: 'Stock-out risk',
+  NoStockNoSales: 'No stock, no sales',
+};
+/** "Overstocked" = over the company's days-of-inventory threshold OR stock with no sales in the look-back. */
+export function isOverstocked(r: ProductFact): boolean {
+  return r.stockBand === 'Overstock' || r.stockBand === 'NoMovement';
+}
 
 export const CATEGORY_PALETTE = [
   'var(--ps-color-accent)',
@@ -238,24 +237,7 @@ export const CATEGORY_PALETTE = [
 export const COMPANIES = ['All', 'Majaal', 'Tika'] as const;
 export type CompanyFilter = (typeof COMPANIES)[number];
 
-export function distinctSorted(values: string[]): string[] {
-  return [...new Set(values)].sort((a, b) => a.localeCompare(b));
-}
-
-// ---- Display names -- see generate step: scratchpad's clean_product_names.py (rule-based, run
-// once offline; no LLM call at page-render time). Keyed by ProductKey, ships alongside data.json
-// as cleanProductNames.json. Falls back to the raw ProductName for any key the cleaner left
-// untouched or that's missing from the map (defensive -- every current key is present). Takes the
-// narrow {ProductKey, ProductName} shape rather than the full MaterialsAnalogyFact so it also
-// works for the live-data BcgFact rows (backend/src/measures/materialsAnalogyBcg.ts's shape),
-// which don't carry every synthetic-only field this type has. ----
-export function getDisplayName(displayNames: Record<string, string>, r: { ProductKey: string; ProductName: string }): string {
-  return displayNames[r.ProductKey] ?? r.ProductName;
-}
-
-// ---- Movement colors -- bcg_movement (New/Stable/Improved/Declined/Lost), same real-token
-// convention as BCG_COLOR/SEGMENT_COLOR above. ----
-export const MOVEMENT_COLOR: Record<MaterialsAnalogyFact['bcg_movement'], string> = {
+export const MOVEMENT_COLOR: Record<BcgMovement, string> = {
   New: 'var(--ps-color-accent)',
   Stable: 'var(--ps-color-success)',
   Improved: 'var(--ps-color-gold)',
@@ -263,14 +245,8 @@ export const MOVEMENT_COLOR: Record<MaterialsAnalogyFact['bcg_movement'], string
   Lost: 'var(--ps-color-neutral-text)',
 };
 
-/** Presentation-layer rename for BCG Matrix's Portfolio Movement (donut/legend/table/tooltip
- * badges) -- 'Declined' displays as "Drop" and 'Lost' displays as "Discontinued" everywhere that
- * page renders movement text, without touching the underlying `bcg_movement` values themselves
- * (still 'Declined'/'Lost' end to end, matching the live pipeline's own BCGMatrixBuilder output --
- * see legacy_transform.py). Kept separate from MOVEMENT_COLOR (which stays keyed by the raw
- * values and is shared with Product Lifecycle's own bcg_movement usage) so this rename is scoped
- * to BCG Matrix's display layer only, not a data-model change that could affect that other page. */
-export const MOVEMENT_LABEL: Record<MaterialsAnalogyFact['bcg_movement'], string> = {
+/** BCG Matrix display rename: 'Declined' shows as "Drop", 'Lost' as "Discontinued". */
+export const MOVEMENT_LABEL: Record<BcgMovement, string> = {
   New: 'New',
   Stable: 'Stable',
   Improved: 'Improved',
@@ -278,32 +254,17 @@ export const MOVEMENT_LABEL: Record<MaterialsAnalogyFact['bcg_movement'], string
   Lost: 'Discontinued',
 };
 
-// ---- Page-level Company/Category/BCG Class filtering -- shared between PIM Contribution's
-// summary page and its brand drill-down route (a real separate route, not an inline section --
-// see pim-contribution/brand/[brand]/page.tsx's header comment) so both apply the exact same
-// filter semantics to FACTS instead of two independently-maintained copies that could drift. ----
+// ---- Page-level Company / Category / BCG Class filtering (PIM Contribution + its brand drill-down) ----
 export interface PimFilters {
   company: CompanyFilter;
   category: string[];
   bcgClass: string;
 }
 
-/** Narrow structural subset `filterByPageFilters` needs -- `Category`/`bcg_class_YTD` are nullable
- * here (unlike `MaterialsAnalogyFact`'s non-null versions) so the live `BrandPerformanceFact` type
- * satisfies this too; a null value just never matches an active category/BCG-class filter, same as
- * how a real "Unspecified"/unclassified row already behaved against a non-empty filter list before
- * this generalization. */
-export interface PageFilterableRow {
-  Company: string;
-  Category: string | null;
-  bcg_class_YTD: string | null;
-}
-
-/** Company/Category/BCG Class predicate shared by every FACTS-based consumer of this page
- * (`filterFacts` below) and the live Brand Performance data (pim-contribution/page.tsx,
- * pim-contribution/brand/[brand]/page.tsx) -- one implementation instead of two independently
- * maintained copies that could drift. */
-export function filterByPageFilters<T extends PageFilterableRow>(rows: T[], filters: PimFilters): T[] {
+export function filterByPageFilters<T extends { Company: string; Category: string | null; bcg_class_YTD: string | null }>(
+  rows: T[],
+  filters: PimFilters,
+): T[] {
   return rows.filter(
     (r) =>
       (filters.company === 'All' || r.Company === filters.company) &&
@@ -312,29 +273,10 @@ export function filterByPageFilters<T extends PageFilterableRow>(rows: T[], filt
   );
 }
 
-export function filterFacts(rows: MaterialsAnalogyFact[], filters: PimFilters): MaterialsAnalogyFact[] {
-  return filterByPageFilters(rows, filters);
-}
-
-/** Partner brand tracking list (PIM Contribution's Brand Performance section) -- the 8 names as
- * given, matched against the real `Brand` field values actually present in the product master
- * data (36 distinct values in data.json). Confirmed via a case-insensitive scan plus a
- * Levenshtein-distance check against every real Brand value -- none of the 8 names match verbatim,
- * so a literal exact-string match would have wrongly reported all 8 as missing. 5 of 8 have a
- * real, unambiguous match (casing/spelling differences only); the other 3 (VitrA, RAK CERAMICS,
- * Porcelanosa) have no reasonable candidate at all -- their closest real Brand values by edit
- * distance (HIDRA, Germa, ARCANA respectively) are unrelated brands with coincidental letter
- * overlap, not spelling variants. Kept in the list with `matched: null` and rendered as "not
- * currently stocked" rather than silently dropped, since whoever compiled this list has a real
- * reason to expect all 8 to be tracked.
- *
- * Exported from here (not kept page-local) because both the summary page's brand cards and the
- * brand drill-down route need the same 8-name canonical list and matching -- `requested` is the
- * ONLY name that should ever appear in either view; `matched` is purely a data-matching detail,
- * never surfaced as a second name string in the UI. */
+/** Partner brand tracking list (PIM Contribution). `matched` = the Brand value as stored in PRODUCTS.xlsx,
+ * or null when no such brand exists (rendered as "not currently stocked"). */
 export interface PartnerBrand {
   requested: string;
-  /** Real Brand value as stored in the data, or null if no reasonable match exists. */
   matched: string | null;
 }
 
@@ -349,8 +291,6 @@ export const PARTNER_BRANDS: PartnerBrand[] = [
   { requested: 'FILA', matched: 'FILA' },
 ];
 
-/** URL-safe slug for a partner brand's canonical `requested` name, e.g. "Ape Grupo" -> "ape-grupo"
- * -- used for the brand drill-down route (`/product/pim-contribution/brand/[brand]`). */
 export function slugifyBrand(name: string): string {
   return name
     .toLowerCase()
@@ -365,84 +305,49 @@ export function findPartnerBrandBySlug(slug: string): PartnerBrand | undefined {
 
 export interface BrandCompanySplit {
   company: string;
-  revenueYTD: number;
+  revenue: number;
   pct: number;
 }
 
 export interface FoundBrandStats extends PartnerBrand {
   matched: string;
-  revenueYTD: number;
-  revenueLYTD: number;
-  deltaPct: number;
-  volumeYTD: number;
-  asp: number;
-  gp: number;
+  revenue: number;
+  revenuePrior: number;
+  deltaPct: number | null;
+  volumeByUom: UomQty[];
+  gp: number | null;
   skuCount: number;
-  /** Count of this brand's SKUs that already existed as of the prior YTD period -- i.e. every
-   * matched row EXCEPT ones classified `bcg_movement === 'New'` (first sale within the last 12
-   * months, so it wasn't part of the brand's portfolio LYTD). Reuses the movement classification
-   * FACTS already computes above rather than introducing a second, parallel definition of "existed
-   * last year." `skuCount` itself (YTD) is unchanged -- this is purely the LYTD counterpart so a
-   * card can show portfolio breadth change over time. */
-  skuCountLYTD: number;
+  skuSold: number;
   companySplit: BrandCompanySplit[];
 }
 
-/** Narrow structural subset of the fields `computeBrandStats` actually reads -- lets it accept
- * either the synthetic `MaterialsAnalogyFact[]` (data.json/FACTS, still used by Stock Velocity/
- * Product Lifecycle/this page's own hierarchy drill-down) or the live `BrandPerformanceFact[]`
- * (backend/src/measures/materialsAnalogyBrandPerformance.ts, api.ts) without either type needing to
- * extend the other. `perc_gross_profit_YTD` stays non-null here -- the live type's nullable version
- * (no sales activity yet) gets coerced to 0 at the call site (page.tsx/brand/[brand]/page.tsx), not
- * inside this function, since a no-sales row's `total_value_YTD` is already 0 and the weighted-GP
- * formula below multiplies by it either way. */
-export interface BrandStatsRow {
-  Brand: string | null;
-  Company: string;
-  total_value_YTD: number;
-  total_value_LYTD: number;
-  total_quantity_YTD: number;
-  perc_gross_profit_YTD: number;
-  bcg_movement: MaterialsAnalogyFact['bcg_movement'] | null;
-}
-
-/** Computes every found partner brand's stats against an already-filtered row set (respecting
- * whatever Company/Category/BCG Class scope the caller applied via `filterFacts`) -- shared by the
- * summary page's brand cards and the brand drill-down route's own header stats, so both always
- * agree on Revenue YTD/deltaPct/etc. for a given filter scope instead of two independently
- * computed copies. GP% is revenue-weighted (sum(gp * value) / sum(value)), not a plain average of
- * each row's own GP% -- a brand's blended margin should be dominated by its high-revenue SKUs, not
- * diluted by a handful of tiny ones. */
-export function computeBrandStats(rows: BrandStatsRow[]): { found: FoundBrandStats[]; notFound: PartnerBrand[] } {
+/** Brand stats for the selected period (value, prior-year same period, volume per UoM, revenue-weighted
+ * GP%). SKU Count = catalog rows of the brand; SKUs Sold = those with sales in the period. */
+export function computeBrandStats(rows: ProductFact[]): { found: FoundBrandStats[]; notFound: PartnerBrand[] } {
   const found = PARTNER_BRANDS.filter((b): b is PartnerBrand & { matched: string } => b.matched !== null)
     .map((b) => {
-      const brandRows = rows.filter((r) => r.Brand === b.matched);
-      const revenueYTD = sum(brandRows, (r) => r.total_value_YTD);
-      const revenueLYTD = sum(brandRows, (r) => r.total_value_LYTD);
-      const volumeYTD = sum(brandRows, (r) => r.total_quantity_YTD);
+      const brandRows = rows.filter((r) => (r.Brand ?? '').toUpperCase() === b.matched.toUpperCase());
+      const revenue = sum(brandRows, (r) => r.value);
+      const revenuePrior = sum(brandRows, (r) => r.valuePrior);
+      const costed = brandRows.filter((r) => r.grossProfitPct !== null && r.value > 0);
+      const costedValue = sum(costed, (r) => r.value);
       const companyRevenue = new Map<string, number>();
-      brandRows.forEach((r) => {
-        const co = normCompany(r.Company);
-        companyRevenue.set(co, (companyRevenue.get(co) ?? 0) + r.total_value_YTD);
-      });
-      const companySplit: BrandCompanySplit[] = [...companyRevenue.entries()]
-        .sort((a, c) => c[1] - a[1])
-        .map(([co, rev]) => ({ company: co, revenueYTD: rev, pct: revenueYTD > 0 ? (rev / revenueYTD) * 100 : 0 }));
+      brandRows.forEach((r) => companyRevenue.set(r.Company, (companyRevenue.get(r.Company) ?? 0) + r.value));
       return {
         ...b,
         matched: b.matched,
-        revenueYTD,
-        revenueLYTD,
-        deltaPct: revenueLYTD > 0 ? ((revenueYTD - revenueLYTD) / revenueLYTD) * 100 : 0,
-        volumeYTD,
-        asp: volumeYTD > 0 ? revenueYTD / volumeYTD : 0,
-        gp: revenueYTD > 0 ? sum(brandRows, (r) => r.perc_gross_profit_YTD * r.total_value_YTD) / revenueYTD : 0,
+        revenue,
+        revenuePrior,
+        deltaPct: revenuePrior > 0 ? ((revenue - revenuePrior) / revenuePrior) * 100 : null,
+        volumeByUom: sumByUom(brandRows),
+        gp: costedValue > 0 ? sum(costed, (r) => (r.grossProfitPct as number) * r.value) / costedValue : null,
         skuCount: brandRows.length,
-        skuCountLYTD: brandRows.filter((r) => r.bcg_movement !== 'New').length,
-        companySplit,
+        skuSold: brandRows.filter((r) => r.value !== 0 || (r.volume ?? 0) !== 0).length,
+        companySplit: [...companyRevenue.entries()]
+          .sort((a, c) => c[1] - a[1])
+          .map(([company, rev]) => ({ company, revenue: rev, pct: revenue > 0 ? (rev / revenue) * 100 : 0 })),
       };
     })
-    .sort((a, c) => c.revenueYTD - a.revenueYTD);
-  const notFound = PARTNER_BRANDS.filter((b) => b.matched === null);
-  return { found, notFound };
+    .sort((a, c) => c.revenue - a.revenue);
+  return { found, notFound: PARTNER_BRANDS.filter((b) => b.matched === null) };
 }

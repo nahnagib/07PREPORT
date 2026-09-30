@@ -2134,57 +2134,89 @@ export function fetchActivityMomentumOverview(
 }
 
 // ---------------------------------------------------------------------------
-// BCG Matrix (backend/src/routes/bcgMatrix.ts) -- live product-classification snapshot
-// (fact_bcgmatrix, refreshed by the same 3-hour/nightly ETL as every other page). No
-// anchorDate/filters: the YTD/LYTD figures are already computed server-side and don't get
-// recomputed per request.
+// Product pages (BCG Matrix, Stock Velocity, PIM Contribution, Product Lifecycle) --
+// backend/src/routes/productDashboard.ts over the ETL's pre-aggregated product tables
+// (data/etl/src/sales_pipeline/product_dashboard.py). Period metrics follow fromDate/toDate
+// (default calendar YTD); stock / lifecycle / BCG are as of the last ETL run.
 // ---------------------------------------------------------------------------
 
-export interface BcgFact {
-  ProductKey: string;
-  ProductName: string;
-  Company: string;
-  Category: string | null;
-  Brand: string | null;
-  /** Null only on a `discontinuedFacts` row (see BcgMatrixOverview) -- real LYTD sales, zero YTD
-   * activity, nothing to classify into a quadrant this year. */
-  bcg_class_YTD: 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs' | null;
-  bcg_class_LYTD: string | null;
-  volume_class_YTD: string | null;
-  profit_class_YTD: string | null;
-  bcg_code_YTD: string | null;
-  bcg_movement: 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost' | null;
-  total_value_YTD: number;
-  total_value_LYTD: number;
-  total_quantity_YTD: number;
-  total_quantity_LYTD: number;
-  /** Percentage points (35 means 35%), not a raw fraction. Null means "no LYTD baseline to
-   * compare against" (a new product, not 0% growth) -- see
-   * backend/src/measures/materialsAnalogyBcg.ts's header note. Render distinctly, never as 0%. */
-  quantity_growth_pct: number | null;
-  avg_unit_price_YTD: number;
-  avg_unit_price_LYTD: number;
-  /** Percentage points (35 means 35%), not a raw fraction -- see quantity_growth_pct's note. */
-  perc_gross_profit_YTD: number;
-  perc_gross_profit_LYTD: number;
+export type ProductDashboardPage = 'bcg-matrix' | 'stock-velocity' | 'pim-contribution' | 'product-lifecycle';
+
+export interface UomQty {
+  uom: string;
+  qty: number;
 }
 
-export interface BcgMatrixOverview {
-  facts: BcgFact[];
-  /** Real LYTD sales, zero YTD activity (`bcg_movement === 'Lost'` on every row) -- excluded from
-   * `facts` (and therefore from the quadrant KPI cards / matrix cells, which have nothing to
-   * classify these into) but a real, non-hidden part of the Portfolio Movement picture and the
-   * Product Detail table. */
-  discontinuedFacts: BcgFact[];
-  unclassifiedCount: number;
+export type StockBand = 'Overstock' | 'Normal' | 'StockOutRisk' | 'NoMovement' | 'NoStockNoSales';
+export type LifecycleSegment = 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued' | 'Never sold';
+export type BcgMovement = 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost';
+
+export interface ProductDashboardRow {
+  productMatchKey: string;
+  productKey: string | null;
+  company: string;
+  productName: string;
+  odooProductName: string | null;
+  category: string | null;
+  brand: string | null;
+  subBrand: string | null;
+  family: string | null;
+  size: string | null;
+  sku: string | null;
+  isActive: number | null;
+  isMapped: boolean;
+  value: number;
+  /** Null when the product was sold in more than one unit of measure in the period (see volumeByUom). */
+  volume: number | null;
+  volumeByUom: UomQty[];
+  uom: string | null;
+  lines: number;
+  velocity: number | null;
+  valuePrior: number;
+  volumePrior: number | null;
+  avgUnitPrice: number | null;
+  grossProfitPct: number | null;
+  stockQty: number;
+  stockValue: number;
+  inTransitQty: number;
+  inTransitValue: number;
+  avgDailySales: number;
+  daysOfInventory: number | null;
+  stockBand: StockBand;
+  lifecycleSegment: LifecycleSegment;
+  firstSaleDate: string | null;
+  lastSaleDate: string | null;
+  bcgClassYTD: string | null;
+  bcgClassLYTD: string | null;
+  bcgMovement: BcgMovement | null;
+  bcgExcludedCategory: boolean;
+  valueYTD: number;
+  volumeYTD: number;
+  valueLYTD: number;
+  volumeLYTD: number;
+  grossProfitPctYTD: number | null;
+  grossProfitPctLYTD: number | null;
+  negativeStockRows: number;
 }
 
-/** Customer Group/Distribution Channel/Branch/Salesperson + a date range -- narrows WHICH
- * already-classified products come back (Fact_SalesLines product-set membership), never a
- * reclassification against the filtered subset's own volume, and never a recomputed YTD/LYTD
- * window -- see backend/src/measures/materialsAnalogyBcg.ts's BcgProductScope header for why.
- * `companyKeys` is deliberately never sent -- this page keeps its own Tika/Majaal pill toggle. */
-export interface BcgMatrixScopeFilters {
+export interface ProductDashboardOverview {
+  asOfDate: string | null;
+  builtAtUtc: string | null;
+  period: { from: string; to: string; days: number; priorFrom: string; priorTo: string };
+  lookbackDays: number;
+  thresholds: {
+    days_of_inventory?: { lookback_days?: number; overstock_days?: Record<string, number>; stockout_risk_days?: Record<string, number> };
+    bcg?: { volume_threshold?: Record<string, number>; profit_threshold_pct?: number; excluded_categories?: string[] };
+    lifecycle?: { new_first_sale_within_days?: number; trend_window_days?: number; growth_threshold_pct?: number; discontinued_no_sales_days?: number };
+    [key: string]: unknown;
+  };
+  products: ProductDashboardRow[];
+  unmapped: { value: number; lines: number; volumeByUom: UomQty[]; products: number };
+  totals: { value: number; lines: number; volumeByUom: UomQty[] };
+  intercompanyValue: number;
+}
+
+export interface ProductDashboardScope {
   segmentKeys?: number[];
   channelKeys?: number[];
   salesTeamKeys?: string[];
@@ -2193,59 +2225,18 @@ export interface BcgMatrixScopeFilters {
   toDate?: string;
 }
 
-function buildBcgMatrixQuery(scope: BcgMatrixScopeFilters): string {
+function buildProductDashboardQuery(scope: ProductDashboardScope): string {
   const params = new URLSearchParams();
-  (scope.segmentKeys ?? []).forEach((v) => params.append('segmentKeys', String(v)));
-  (scope.channelKeys ?? []).forEach((v) => params.append('channelKeys', String(v)));
-  (scope.salesTeamKeys ?? []).forEach((v) => params.append('salesTeamKeys', v));
-  (scope.salespersonKeys ?? []).forEach((v) => params.append('salespersonKeys', String(v)));
+  for (const key of ['segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys'] as const) {
+    const values = scope[key];
+    if (values && values.length) params.set(key, values.join(','));
+  }
   if (scope.fromDate) params.set('fromDate', scope.fromDate);
   if (scope.toDate) params.set('toDate', scope.toDate);
   return params.toString();
 }
 
-export function fetchBcgMatrixOverview(token: string, scope: BcgMatrixScopeFilters = {}): Promise<BcgMatrixOverview> {
-  const qs = buildBcgMatrixQuery(scope);
-  return request(`/bcg-matrix/overview${qs ? `?${qs}` : ''}`, token);
-}
-
-// ---------------------------------------------------------------------------
-// PIM Contribution Brand Performance (backend/src/routes/materialsAnalogyBrandPerformance.ts) --
-// live per-product catalog + sales stats replacing materialsAnalogy/data.json (a ~32% offline
-// sample confirmed as the root cause of undercounted SKU Count/revenue/volume for every partner
-// brand card on this page). Same shape/field set as BcgFact -- deliberately structurally
-// compatible with MaterialsAnalogyFact so computeBrandStats (materialsAnalogy/shared.ts) needs no
-// logic changes, only a widened input type (see BrandStatsRow there).
-// ---------------------------------------------------------------------------
-
-export interface BrandPerformanceFact {
-  ProductKey: string;
-  ProductName: string;
-  Company: string;
-  Category: string | null;
-  Brand: string | null;
-  bcg_class_YTD: 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs' | null;
-  bcg_movement: 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost' | null;
-  total_value_YTD: number;
-  total_value_LYTD: number;
-  total_quantity_YTD: number;
-  total_quantity_LYTD: number;
-  /** Null for a product with no matching sales activity (no baseline ratio to compute), not 0. */
-  avg_unit_price_YTD: number | null;
-  avg_unit_price_LYTD: number | null;
-  perc_gross_profit_YTD: number | null;
-  perc_gross_profit_LYTD: number | null;
-  quantity_growth_pct: number | null;
-}
-
-export interface BrandPerformanceOverview {
-  facts: BrandPerformanceFact[];
-}
-
-/** No scope/filter params -- like useBcgMatrixOverview's own unscoped default, Company/Category/
- * BCG Class filtering for this page stays a client-side concern (filterFacts). A SALESPERSON-tier
- * or role-restricted caller's RBAC lock is still enforced server-side regardless (see the route's
- * own header) -- there is no client-side equivalent to request or bypass. */
-export function fetchBrandPerformanceOverview(token: string): Promise<BrandPerformanceOverview> {
-  return request('/pim-contribution/brand-performance', token);
+export function fetchProductDashboard(token: string, page: ProductDashboardPage, scope: ProductDashboardScope = {}): Promise<ProductDashboardOverview> {
+  const qs = buildProductDashboardQuery(scope);
+  return request(`/product-dashboard/${page}/overview${qs ? `?${qs}` : ''}`, token);
 }

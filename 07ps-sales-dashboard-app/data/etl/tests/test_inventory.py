@@ -101,6 +101,8 @@ def _inventory_inputs() -> dict[str, pd.DataFrame]:
                 "SKU": "SKU-10",
                 "IsActive": 1,
                 "ProductMappingStatus": "OfficialProductMaster",
+                "ProductSource": "Input Master",
+                "ProductMatchKey": "MAJAAL|OFFICIAL ODOO",
             }
         ]
     )
@@ -175,12 +177,13 @@ def test_inventory_builder_calculates_ads_doh_and_velocity_class() -> None:
     inputs = _inventory_inputs()
     sales = pd.DataFrame(
         [
-            {"ProductKey": "P10", "order_date_date": "2026-01-01", "quantity": 20},
-            {"ProductKey": "P10", "order_date_date": "2026-01-10", "quantity": 10},
-            {"ProductKey": "P20", "order_date_date": "2026-01-10", "quantity": 0},
+            {"ProductMatchKey": "MAJAAL|OFFICIAL ODOO", "order_date_date": "2025-10-01", "quantity": 500},  # outside 90 days
+            {"ProductMatchKey": "MAJAAL|OFFICIAL ODOO", "order_date_date": "2026-01-01", "quantity": 20},
+            {"ProductMatchKey": "MAJAAL|OFFICIAL ODOO", "order_date_date": "2026-01-10", "quantity": 10},
+            {"ProductMatchKey": "NEWCO|INVENTORY ONLY PRODUCT", "order_date_date": "2026-01-10", "quantity": 0},
         ]
     )
-    summary = InventoryModelBuilder.build_product_sales_summary(sales)
+    summary = InventoryModelBuilder.build_product_sales_summary(sales, lookback_days=90, as_of="2026-01-10")
 
     result = InventoryModelBuilder().build(
         stock_quants=inputs["stock_quants"],
@@ -194,12 +197,15 @@ def test_inventory_builder_calculates_ads_doh_and_velocity_class() -> None:
 
     fact = result.fact_inventory
     official = fact[fact["OdooProductID"].eq(10) & fact["OnHandQty"].eq(10)].iloc[0]
-    assert official["Avg_Daily_Sales"] == 3.0
+    # 90-day look-back: (20 + 10) / 90 days; the October sale is outside the window.
+    assert official["Avg_Daily_Sales"] == 30 / 90
     assert official["DOH"] == official["OnHandQty"] / official["Avg_Daily_Sales"]
     assert official["Velocity_Class"] == "Low Stock"
     no_sales = fact[fact["OdooProductID"].eq(20)].iloc[0]
     assert no_sales["Avg_Daily_Sales"] == 0.0
-    assert no_sales["DOH"] == 0.0
+    # Stock with no sales is "No Movement" (infinite DOH), never 0 days / stock-out risk.
+    assert pd.isna(no_sales["DOH"])
+    assert no_sales["Velocity_Class"] == "No Movement"
 
 
 def test_inventory_workbook_sheets_exist_and_existing_sheets_are_preserved(tmp_path: Path) -> None:

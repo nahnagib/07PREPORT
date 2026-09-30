@@ -1,0 +1,56 @@
+{
+  "_comment": "Business rules for the Product pages and the IsIntercompany flag. Edit here, not in code. See docs/product_data_runbook.md.",
+
+  "intercompany_customers": {
+    "_comment": "Group-company customers. IsIntercompany is INFORMATION ONLY: nothing is filtered on it. A sales line is flagged when its Odoo partner id OR its customer name (trimmed, case-insensitive) is listed.",
+    "partner_ids": [9641, 3798, 17259, 9627, 17846, 24813, 25124, 10691, 12496, 9470, 9136, 9469, 9642, 28102, 1, 12330, 9313, 6251, 9526, 11412],
+    "names": [
+      "شركة مجال بنغازي لاستيراد مواد البناء",
+      "اصول المجموعة",
+      "شركة اصول المجموعة",
+      "شركة تيكا لصناعة مواد البناء",
+      "Signature Majaal Benghazi / BMH",
+      "Majaal signature",
+      "معرض مجال ( البيضاء )",
+      "معرض مجال ( درنة )",
+      "معرض تيكا - الهواري",
+      "مصنع تيكا",
+      "جناح ليبيا بيلد مجال",
+      "عينات تيكا",
+      "Structura - ستركتورا",
+      "Majaal",
+      "TIKA",
+      "Namaa Al Bahr",
+      "Athena",
+      "Structura"
+    ],
+    "_not_listed_needs_confirmation": ["شركة النماء القابضة", "شركة النماء المتألق", "مديونية شركة اثينا"]
+  },
+
+  "stock_locations": {
+    "_comment": "Odoo internal locations are grouped by warehouse name. On-hand = finished_goods only. In-transit is shown separately and never counted as on-hand. Raw-materials warehouses are excluded. Any internal warehouse not listed under raw_materials or in_transit counts as finished goods.",
+    "raw_materials_warehouses": ["RM Warehouse"],
+    "in_transit_warehouses": ["Vessel"]
+  },
+
+  "days_of_inventory": {
+    "lookback_days": 90,
+    "_comment": "DOH = finished-goods on-hand / (invoiced quantity sold in the last lookback_days / lookback_days). Stock > 0 with no sales in the look-back = 'No movement' and counts as Overstocked.",
+    "overstock_days": { "Majaal": 180, "Tika": 60 },
+    "stockout_risk_days": { "Majaal": 60, "Tika": 30 }
+  },
+
+  "bcg": {
+    "_comment": "Unchanged from the existing BCGMatrixBuilder. YTD invoiced quantity vs company threshold; GP% = (Value - Qty x standard cost) / Value. Products without a standard cost are 'Unclassified (no cost)'.",
+    "volume_threshold": { "Majaal": 3500, "Tika": 25000 },
+    "profit_threshold_pct": 35,
+    "excluded_categories": ["Paper Bags", "Raw Materials"]
+  },
+
+  "lifecycle": {
+    "new_first_sale_within_days": 180,
+    "trend_window_days": 90,
+    "growth_threshold_pct": 20,
+    "discontinued_no_sales_days": 365
+  }
+}

@@ -67,7 +67,11 @@ from sales_pipeline.reference_cache import ReferenceDataCache
 from sales_pipeline.staging import StagingStore, odoo_incremental_domain
 from sales_pipeline.validation import ModelValidator
 from sales_pipeline.product_name_mapper import ProductMappingError, ProductNameMapper
+from sales_pipeline.product_dashboard import IntercompanyFlagger, ProductDashboardBuilder, ProductDashboardConfig
 
+
+SALE_REPORT_CACHE_TABLE = "raw_sale_report_api"
+SALE_REPORT_CACHE_KEY = "SaleReportLineID"
 
 REQUIRED_OUTPUT_SHEETS = [
     "Fact_SalesLines",
@@ -98,6 +102,11 @@ REQUIRED_OUTPUT_SHEETS = [
     "QA_CRM_UnmappedKeys",
     "QA_CRM_FieldAvailability",
     "QA_Inventory_DataQuality",
+    "Fact_ProductSalesDaily",
+    "Dim_ProductDashboard",
+    "QA_ProductUnmapped",
+    "QA_ProductDataQuality",
+    "ProductDashboard_Meta",
 ]
 
 CRM_OUTPUT_SHEETS = [
@@ -491,7 +500,12 @@ class PowerBISalesPipeline:
                     cutoff_local = self._local_cutoff_from_utc(incremental_since_utc)
                     incremental_sql = load_mode == "incremental"
                     sql_export_started = time.perf_counter()
-                    sql_result = exporter.export_incremental(sheets, cutoff_local) if incremental_sql else exporter.export(sheets)
+                    try:
+                        sql_result = exporter.export_incremental(sheets, cutoff_local) if incremental_sql else exporter.export(sheets)
+                    finally:
+                        leftover = exporter.drop_own_temp_tables()
+                        if leftover:
+                            self.logger.warning("Dropped %s temp table(s) left by this run", leftover)
                     self.logger.info("SQL table load phase completed duration_seconds=%.2f", time.perf_counter() - sql_export_started)
                     exporter.ensure_query_indexes()
                     validation_started = time.perf_counter()
@@ -637,15 +651,11 @@ class PowerBISalesPipeline:
         sales = self._normalize_sales_export(sales_raw)
         self.logger.info("PERF transform normalize_sales_export rows=%s duration_seconds=%.2f", len(sales), time.perf_counter() - _t0)
 
-        # Normalize known Odoo product aliases without using PRODUCTS.xlsx as an approval gate.
-        # Unmapped names pass through unchanged so every Odoo product row remains in the ETL.
+        # Keep Odoo's own product name. The old global OdooProductName -> ProductName rename ran before
+        # company was known, so e.g. Tika "Cem Air" became "Cemair" and then matched Majaal's product.
+        # ProductMapper.attach now matches on Company + normalized Odoo name and sets ProductName.
         if "product_name" in sales.columns:
             sales["_odoo_name_raw"] = sales["product_name"]
-            sales["product_name"] = self.mapper.apply_to_series(sales["product_name"])
-            self.logger.info(
-                "ProductNameMapper applied: %d transaction rows preserved; unmapped Odoo products pass through unchanged",
-                len(sales),
-            )
 
         _t1 = time.perf_counter()
         reference_cache = ReferenceDataCache(self.settings.output_dir / ".pipeline_cache")
@@ -678,6 +688,7 @@ class PowerBISalesPipeline:
         cleaner = SalesCleaner()
         sales = cleaner.clean_order_numbers(sales)
         sales = cleaner.clean_customer(sales)
+        sales = IntercompanyFlagger.from_config(self.settings.product_dashboard_config).flag(sales)
         sales = cleaner.clean_product_names(sales)
         self.logger.info("PERF transform clean_product_names rows=%s duration_seconds=%.2f", len(sales), time.perf_counter() - _t2)
         _t3 = time.perf_counter()
@@ -736,7 +747,11 @@ class PowerBISalesPipeline:
         dim_date = DateDimensionBuilder(self.pipeline_settings.weekly_rest_day_name).build(sales)
         dim_company = CompanyDimensionBuilder().build(sales)
         dim_segment = SegmentDimensionBuilder(self.pipeline_settings).build(dim_salesteam, targets)
-        product_sales_summary = InventoryModelBuilder.build_product_sales_summary(sales)
+        dashboard_config = ProductDashboardConfig.load(self.settings.product_dashboard_config)
+        business_today = pd.Timestamp.now(tz=self.settings.timezone).tz_localize(None).normalize()
+        product_sales_summary = InventoryModelBuilder.build_product_sales_summary(
+            sales, lookback_days=dashboard_config.lookback_days, as_of=business_today
+        )
         self.logger.info("PERF transform build_dimensions duration_seconds=%.2f", time.perf_counter() - _t7)
 
         _t8 = time.perf_counter()
@@ -750,6 +765,7 @@ class PowerBISalesPipeline:
             companies=inventory_companies_raw if inventory_companies_raw is not None else pd.DataFrame(),
             include_qa=include_qa,
             product_sales_summary=product_sales_summary,
+            stock_locations_config=dashboard_config.section("stock_locations"),
         )
         dim_product = inventory_result.dim_product
         dim_company = inventory_result.dim_company
@@ -765,16 +781,19 @@ class PowerBISalesPipeline:
         self.logger.info("PERF transform product_cost_dim duration_seconds=%.2f", time.perf_counter() - _t9)
 
         _t9b = time.perf_counter()
-        active_product_keys = ProductActiveFlagReconciler.active_base_keys(dim_product_cost)
-        product_master = ProductActiveFlagReconciler.reconcile(
-            product_master,
-            active_product_keys,
-            self.legacy_logger,
-            products_path=self.settings.products_path,
-        )
-        dim_product = ProductActiveFlagReconciler.patch_dim_product(
-            dim_product, active_product_keys, ProductDimensionBuilder.PRODUCT_SOURCE_INPUT
-        )
+        if self.settings.products_write_back_isactive:
+            active_product_keys = ProductActiveFlagReconciler.active_base_keys(dim_product_cost)
+            product_master = ProductActiveFlagReconciler.reconcile(
+                product_master,
+                active_product_keys,
+                self.legacy_logger,
+                products_path=self.settings.products_path,
+            )
+            dim_product = ProductActiveFlagReconciler.patch_dim_product(
+                dim_product, active_product_keys, ProductDimensionBuilder.PRODUCT_SOURCE_INPUT
+            )
+        else:
+            self.logger.info("IsActive comes from PRODUCTS.xlsx as maintained (PRODUCTS_WRITE_BACK_ISACTIVE is off)")
         self.logger.info("PERF transform product_active_flag_reconcile duration_seconds=%.2f", time.perf_counter() - _t9b)
 
         _t10 = time.perf_counter()
@@ -819,6 +838,17 @@ class PowerBISalesPipeline:
         self.logger.info("PERF transform fact_sales_lines rows=%s duration_seconds=%.2f", len(fact_sales_lines), time.perf_counter() - _t13)
         _t14 = time.perf_counter()
         fact_bcg = BCGMatrixBuilder.build(fact_sales_lines, dim_product_cost, dim_product=dim_product)
+        line_costs = ProductCostMatcher.attach(fact_sales_lines, dim_product_cost)["product_cost"]
+        product_tables = ProductDashboardBuilder(dashboard_config, business_today).build(
+            fact_sales_lines, dim_product, inventory_result.fact_inventory, line_costs=line_costs
+        )
+        self.logger.info(
+            "Product dashboard tables: products=%s daily_rows=%s unmapped=%s dq=%s",
+            len(product_tables["Dim_ProductDashboard"]),
+            len(product_tables["Fact_ProductSalesDaily"]),
+            len(product_tables["QA_ProductUnmapped"]),
+            len(product_tables["QA_ProductDataQuality"]),
+        )
         bcg_summary = BCGMatrixBuilder.quality_summary(fact_sales_lines, fact_bcg, dim_segment)
         self.logger.info("PERF transform bcg_build rows=%s duration_seconds=%.2f", len(fact_bcg), time.perf_counter() - _t14)
         bcg_checks = {
@@ -856,6 +886,7 @@ class PowerBISalesPipeline:
             "Dim_DistributionChannel": dim_channel,
             "Dim_Segment": dim_segment,
             "Dim_Invoice": dim_invoice,
+            **product_tables,
         }
         if include_qa:
             qa_started = time.perf_counter()
@@ -2485,7 +2516,10 @@ class PowerBISalesPipeline:
 
     def _replace_sale_report_cache(self, sales_raw: pd.DataFrame) -> None:
         store = StagingStore(self.settings)
-        store.replace_table("raw_sale_report_api", sales_raw)
+        with store.advisory_lock("sales_pipeline_sale_report_cache"):
+            store.replace_table(SALE_REPORT_CACHE_TABLE, sales_raw)
+            store.ensure_key_constraint(SALE_REPORT_CACHE_TABLE, SALE_REPORT_CACHE_KEY)
+            store.ensure_index(SALE_REPORT_CACHE_TABLE, "OdooOrderID")
         self.logger.info("Cached raw_sale_report_api rows=%s for future incremental sale.report refreshes", len(sales_raw))
 
     def _sync_incremental_sale_report_cache(
@@ -2501,31 +2535,98 @@ class PowerBISalesPipeline:
             timezone=self.settings.timezone,
             assume_utc_for_naive=self.settings.assume_utc_for_naive,
         )
-        cache_exists = store.has_table("raw_sale_report_api")
-        if not cache_exists or since_utc is None:
-            self.logger.info("sale.report incremental cache missing or cutoff unavailable; fetching full sale.report once to seed cache")
-            sales_raw = repo.fetch_sale_report()
-            store.replace_table("raw_sale_report_api", sales_raw)
-            return sales_raw
+        table = SALE_REPORT_CACHE_TABLE
+        with store.advisory_lock("sales_pipeline_sale_report_cache"):
+            cache_ok = store.has_table(table) and store.has_columns(table, [SALE_REPORT_CACHE_KEY, "OdooOrderID"])
+            if not cache_ok or since_utc is None or self.settings.sale_report_full_reload:
+                reason = "missing/old-format cache" if not cache_ok else "no incremental cutoff" if since_utc is None else "SALE_REPORT_FULL_RELOAD=true"
+                return self._reload_sale_report_cache(store, repo, reason)
 
-        domain: list[Any] = [["date", ">=", pd.Timestamp(since_utc).strftime("%Y-%m-%d %H:%M:%S")]]
+            for attempt in (1, 2):
+                started_utc = pd.Timestamp.now(tz="UTC").tz_localize(None)
+                self._refresh_changed_sale_report_orders(client, store, repo, since_utc, cutoff_utc)
+                combined = store.read_table(table)
+                if cutoff_utc is not None:
+                    self.logger.info("sale.report cache: explicit Odoo cutoff set; skipping whole-cache verification")
+                    return combined
+                mismatches = self._verify_sale_report_cache(client, combined)
+                if not mismatches:
+                    self.logger.info("sale.report cache verified against Odoo (sale/done totals by company match) rows=%s", len(combined))
+                    return combined
+                self.logger.warning("sale.report cache differs from Odoo on attempt %s: %s", attempt, mismatches)
+                # A second pass only needs what changed while the first one ran.
+                since_utc = started_utc - pd.Timedelta(minutes=5)
+            return self._reload_sale_report_cache(store, repo, f"cache still differs from Odoo after incremental refresh: {mismatches}")
+
+    def _reload_sale_report_cache(self, store: StagingStore, repo: SalesReportRepository, reason: str) -> pd.DataFrame:
+        self.logger.info("sale.report cache full reload (%s)", reason)
+        sales_raw = repo.fetch_sale_report()
+        duplicated = sales_raw[SALE_REPORT_CACHE_KEY].duplicated()
+        if duplicated.any():
+            raise RuntimeError(f"sale.report returned {int(duplicated.sum())} duplicate line ids; refusing to cache")
+        store.replace_table(SALE_REPORT_CACHE_TABLE, sales_raw)
+        store.ensure_key_constraint(SALE_REPORT_CACHE_TABLE, SALE_REPORT_CACHE_KEY)
+        store.ensure_index(SALE_REPORT_CACHE_TABLE, "OdooOrderID")
+        return sales_raw
+
+    def _refresh_changed_sale_report_orders(
+        self,
+        client: OdooClient,
+        store: StagingStore,
+        repo: SalesReportRepository,
+        since_utc: pd.Timestamp,
+        cutoff_utc: pd.Timestamp | None,
+    ) -> None:
+        """Re-read every order touched since `since_utc` -- a new line, an edited price, a cancellation
+        of an old order -- not just orders *dated* after it. Dated-window-only refreshes were what left
+        edited/cancelled older orders stale in the cache."""
+        since = pd.Timestamp(since_utc).strftime("%Y-%m-%d %H:%M:%S")
+        changed_orders = {int(r["id"]) for r in client.search_read("sale.order", [["write_date", ">=", since]], ["id"], limit=0)}
+        changed_orders |= {
+            int(r["order_id"][0])
+            for r in client.search_read("sale.order.line", [["write_date", ">=", since]], ["order_id"], limit=0)
+            if r.get("order_id")
+        }
+        window_domain: list[Any] = [["date", ">=", since]]
         if cutoff_utc is not None:
-            domain = ["&", *domain, ["date", "<=", pd.Timestamp(cutoff_utc).strftime("%Y-%m-%d %H:%M:%S")]]
-        changed = repo.fetch_sale_report(domain)
-        cutoff_local = pd.Timestamp(since_utc)
-        if cutoff_local.tzinfo is None:
-            cutoff_local = cutoff_local.tz_localize("UTC").tz_convert(self.settings.timezone).tz_localize(None)
-        else:
-            cutoff_local = cutoff_local.tz_convert(self.settings.timezone).tz_localize(None)
-        store.replace_date_window("raw_sale_report_api", changed, "Order Date", cutoff_local.to_pydatetime())
-        combined = store.read_table("raw_sale_report_api")
-        self.logger.info(
-            "sale.report incremental cache refreshed in SQL: changed_window=%s final=%s cutoff_local=%s",
-            len(changed),
-            len(combined),
-            cutoff_local,
+            window_domain = ["&", *window_domain, ["date", "<=", pd.Timestamp(cutoff_utc).strftime("%Y-%m-%d %H:%M:%S")]]
+        frames = [repo.fetch_sale_report(window_domain)]
+        ordered = sorted(changed_orders)
+        for start in range(0, len(ordered), 500):
+            refs = [f"sale.order,{order_id}" for order_id in ordered[start:start + 500]]
+            frames.append(repo.fetch_sale_report([["order_reference", "in", refs]]))
+        fetched = pd.concat([f for f in frames if not f.empty], ignore_index=True) if any(not f.empty for f in frames) else frames[0]
+        if not fetched.empty:
+            fetched = fetched.drop_duplicates(SALE_REPORT_CACHE_KEY, keep="last")
+        order_ids = changed_orders | set(pd.to_numeric(fetched.get("OdooOrderID"), errors="coerce").dropna().astype(int)) if not fetched.empty else changed_orders
+        store.replace_rows_for_orders(SALE_REPORT_CACHE_TABLE, fetched, "OdooOrderID", SALE_REPORT_CACHE_KEY, order_ids)
+        self.logger.info("sale.report cache: refreshed %s changed/recent orders, %s lines (since %s UTC)", len(order_ids), len(fetched), since)
+
+    def _verify_sale_report_cache(self, client: OdooClient, cache: pd.DataFrame) -> dict[str, Any]:
+        """Compares confirmed (sale/done) line count and untaxed total per company with Odoo's own
+        sale.report aggregates. Returns {} when they agree to the cent."""
+        groups = client.execute_kw(
+            "sale.report", "read_group",
+            [[["state", "in", ["sale", "done"]]], ["price_subtotal:sum"], ["company_id"]],
+            {"lazy": False},
         )
-        return combined
+        odoo = {
+            (g["company_id"][1] if g.get("company_id") else ""): (int(g.get("__count", 0)), round(float(g.get("price_subtotal") or 0), 2))
+            for g in groups
+        }
+        confirmed = cache[cache["Status"].astype("string").isin(["sale", "done"])]
+        local_groups = confirmed.groupby(confirmed["Company"].astype("string").fillna(""))
+        local = {
+            str(company): (int(len(frame)), round(float(pd.to_numeric(frame["Untaxed Total"], errors="coerce").sum()), 2))
+            for company, frame in local_groups
+        }
+        mismatches: dict[str, Any] = {}
+        for company in sorted(set(odoo) | set(local)):
+            o = odoo.get(company, (0, 0.0))
+            c = local.get(company, (0, 0.0))
+            if o[0] != c[0] or abs(o[1] - c[1]) > 0.01:
+                mismatches[company or "(none)"] = {"odoo_lines": o[0], "cache_lines": c[0], "odoo_value": o[1], "cache_value": c[1]}
+        return mismatches
 
     def _sales_raw_from_staged_order_lines(self, lines: pd.DataFrame, orders: pd.DataFrame) -> pd.DataFrame:
         if lines.empty:
