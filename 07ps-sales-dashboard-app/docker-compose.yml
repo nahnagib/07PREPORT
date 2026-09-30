@@ -99,6 +99,9 @@ services:
       APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli}
       ETL_SCHEDULE_TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli} # cron expressions are read in the business zone
       ETL_LOG_DIR: /var/log/07ps/etl
+      # The ETL Control Center's input-file endpoints (GET/PUT /admin/etl/input-files) call etl-api directly;
+      # backend/.env's ETL_API_URL (http://localhost:5001) is the container itself, so it is overridden here.
+      ETL_API_URL: http://etl-api:5001
       # Container-to-container DNS, not the host loopback.
       REDIS_HOST: redis
       DB_HOST: ${DB_HOST_FOR_CONTAINERS:-host.docker.internal}
@@ -111,8 +114,8 @@ services:
     networks:
       default:
         ipv4_address: 172.18.0.101
-      # No etl-api dependency: only etl-worker calls it. The dashboard/API should come up even if the
-      # ETL service is briefly down.
+      # No etl-api dependency: runs go through etl-worker, and the input-file endpoints answer 503 when
+      # etl-api is down. The dashboard/API should come up even if the ETL service is briefly down.
     ports:
       - '127.0.0.1:4000:4000'
     healthcheck:
