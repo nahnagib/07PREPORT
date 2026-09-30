@@ -203,7 +203,7 @@ def test_backup_dir_inside_input_dir_is_refused(client, folders, monkeypatch):
 
 def test_read_only_input_folder_validates_then_refuses_to_write(client, folders):
     """Production mounts the input folder read-only: a bad file is still rejected with its reason, a good
-    one gets a clear 409 and nothing is written."""
+    one is reported as checked (200, replaced=false, clear message) and nothing is written."""
     inputs, backups = folders
     old = xlsx({"Sheet1": OFFDAYS})
     (inputs / "OffDays.xlsx").write_bytes(old)
@@ -213,8 +213,13 @@ def test_read_only_input_folder_validates_then_refuses_to_write(client, folders)
         bad = put(client, "OffDays.xlsx", xlsx({"Sheet1": renamed}))
         assert bad.status_code == 422 and any("Country" in p for p in bad.get_json()["problems"])
         new_rows = {k: v + [v[-1]] for k, v in OFFDAYS.items()}
+        new_rows["Date"][-1] = "26/12/2026"
         good = put(client, "OffDays.xlsx", xlsx({"Sheet1": new_rows}))
-    assert good.status_code == 409
-    assert "read-only" in good.get_json()["error"]
+        listing = client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()
+    assert good.status_code == 200
+    body = good.get_json()
+    assert body["replaced"] is False and body["read_only"] is True and "read-only" in body["message"]
+    assert body["validation"]["counts"] == {"rows": 3}
+    assert listing["read_only"] is True
     assert (inputs / "OffDays.xlsx").read_bytes() == old
     assert not backups.exists()

@@ -301,3 +301,10 @@ def test_product_ratio_columns_are_stored_as_decimal_not_float() -> None:
     for name in ["AvgDailySales", "DaysOfInventory"]:
         dtype = DatabaseExporter._mysql_dtype_for_column(name, pd.Series([12857.142857, 1.077778]))
         assert isinstance(dtype, mysql.DECIMAL), name
+
+
+def test_meta_built_at_has_whole_seconds() -> None:
+    """MySQL DATETIME rounds fractional seconds; a .5s+ value read back one second later and failed the
+    SQL/DataFrame mirror validation of ProductDashboard_Meta in production (run 218)."""
+    built = _shared_case()["ProductDashboard_Meta"]["BuiltAtUtc"].iloc[0]
+    assert built == built.floor("s")

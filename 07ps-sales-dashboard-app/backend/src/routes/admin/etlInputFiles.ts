@@ -76,6 +76,12 @@ adminEtlInputFilesRouter.put('/:name', upload.single('file'), async (req, res, n
 
     const result = await replaceEtlInputFile(name, req.file.buffer);
     const user = req.user!;
+    if (result.replaced === false) {
+      // Read-only input folder: the file was only checked. Nothing changed, so nothing is audited.
+      etlLogger.info('ETL input file checked (read-only input folder, not replaced)', { file: result.name, userId: user.id });
+      res.json({ ...result, auditLogged: false });
+      return;
+    }
     const auditLogged = await writeAuditLog({
       entityType: ETL_INPUT_FILE_ENTITY,
       entityId: result.name,

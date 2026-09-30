@@ -486,7 +486,9 @@ class ProductDashboardBuilder:
     def _meta(self, lines: pd.DataFrame, daily: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame([{
             "AsOfDate": self.as_of,
-            "BuiltAtUtc": pd.Timestamp.now(tz="UTC").tz_localize(None),
+            # Whole seconds: MySQL DATETIME rounds fractional seconds, so .5s+ read back one second later and
+            # failed the SQL/DataFrame mirror validation about every other run.
+            "BuiltAtUtc": pd.Timestamp.now(tz="UTC").tz_localize(None).floor("s"),
             "ConfigFingerprint": self.config.fingerprint,
             "ConfigJson": json.dumps(self.config.raw, ensure_ascii=False),
             "LookbackDays": self.config.lookback_days,

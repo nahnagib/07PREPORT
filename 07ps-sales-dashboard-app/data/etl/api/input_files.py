@@ -382,7 +382,15 @@ def describe_slots() -> dict[str, Any]:
             ],
             "recent_backups": _recent_backups(backups, name),
         })
-    return {"input_dir": str(inputs), "backup_dir": str(backups), "max_bytes": MAX_UPLOAD_BYTES, "files": files}
+    return {
+        "input_dir": str(inputs),
+        "backup_dir": str(backups),
+        "max_bytes": MAX_UPLOAD_BYTES,
+        # Production mounts the input folder read-only: files are updated directly in the folder on the
+        # host, and an upload here only CHECKS a file (see replace_file).
+        "read_only": inputs.is_dir() and not os.access(inputs, os.W_OK),
+        "files": files,
+    }
 
 
 def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -> dict[str, Any]:
@@ -413,13 +421,24 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
             gc.collect()
 
     # Production mounts the input folder read-only (the ETL must never write PRODUCTS.xlsx): the file has
-    # been validated above, so a bad file is still rejected with its reason; a good one is not written.
+    # been validated above, so a bad file is still rejected with its reason. A good one is reported as
+    # checked -- not an error -- and nothing is written.
     if not os.access(inputs, os.W_OK):
-        raise UploadRejected(
-            f"{name} passed validation, but the ETL input folder is read-only on this server, so nothing was replaced. "
-            "Replace the file in the input folder on the host; the next ETL run reads it.",
-            status=409,
-        )
+        current = _file_meta(inputs / name)
+        return {
+            "name": name,
+            "replaced": False,
+            "read_only": True,
+            "message": (
+                f"{name} is valid. The input folder is read-only on this server, so the file was checked but not "
+                "replaced: update it directly in the input folder on the server. The next ETL run reads it."
+            ),
+            "input_dir": str(inputs),
+            "previous": current,
+            "current": current,
+            "backup": None,
+            "validation": summary,
+        }
 
     target = inputs / name
     with _replace_lock:
@@ -465,6 +484,8 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
     current = _file_meta(target)
     return {
         "name": name,
+        "replaced": True,
+        "read_only": False,
         "input_dir": str(inputs),
         "previous": previous,
         "current": current,

@@ -330,6 +330,8 @@ export interface EtlInputFiles {
   input_dir: string;
   backup_dir: string;
   max_bytes: number;
+  /** true = the folder is mounted read-only: an upload only checks the file. */
+  read_only?: boolean;
   files: EtlInputFileSlot[];
 }
 
@@ -342,6 +344,10 @@ export interface EtlFileMeta {
 
 export interface EtlInputFileReplaced {
   name: string;
+  /** false = the file passed validation but the input folder is read-only, so nothing was written. */
+  replaced?: boolean;
+  read_only?: boolean;
+  message?: string;
   input_dir: string;
   previous: EtlFileMeta | null;
   current: EtlFileMeta;

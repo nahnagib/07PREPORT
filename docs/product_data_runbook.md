@@ -48,8 +48,11 @@ The file lives in the ETL input folder (`07PREPORT/Input/PRODUCTS.xlsx`, mounted
        punctuation and a `[CODE]` prefix are removed). Those are **not** combined until the names match.
 7. Replace the file **in the input folder on the host** (`07PREPORT/Input`).
    - The folder is mounted **read-only** into the ETL, so the ETL can never change it.
-   - The ETL Control Center (Admin › ETL, "Input files") runs the same check: it refuses a bad file with the reason,
-     and for a good file it answers that the folder is read-only and nothing was replaced.
+   - This is expected: the input folder stays read-only, and PRODUCTS.xlsx is updated directly in the folder.
+   - The ETL Control Center (Admin › ETL, "Input files") shows a note that the folder is read-only, and its button
+     is **Check file**. It runs the same check:
+     - a bad file is rejected with the reason and the Excel row numbers;
+     - a good file gets "is valid … checked, not replaced": an information message, not an error. Nothing is saved.
 8. The next ETL run re-matches **all** history. To load the table immediately, run the script without `--dry-run`.
    It writes `dim_product_master` in one transaction.
 

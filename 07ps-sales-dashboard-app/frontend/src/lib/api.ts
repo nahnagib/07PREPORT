@@ -1217,11 +1217,17 @@ export interface EtlInputFilesResponse {
   input_dir: string;
   backup_dir: string;
   max_bytes: number;
+  /** true = the ETL input folder is read-only on this server: uploads are checked, never saved. */
+  read_only?: boolean;
   files: EtlInputFileSlot[];
 }
 
 export interface EtlInputFileReplaced {
   name: string;
+  /** false = valid, but the input folder is read-only, so the file was checked and not replaced. */
+  replaced?: boolean;
+  read_only?: boolean;
+  message?: string;
   input_dir: string;
   previous: { path: string; size_bytes: number; modified: string; sha256: string } | null;
   current: { path: string; size_bytes: number; modified: string; sha256: string };
