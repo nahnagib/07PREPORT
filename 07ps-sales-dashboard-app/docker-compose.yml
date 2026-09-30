@@ -4,6 +4,10 @@
 # docs/DEPLOYMENT.md). frontend and backend keep the STATIC container IPs (172.18.0.100 / .101) the proxy
 # config points at, so do not change the `networks:` subnet or those ipv4_address values.
 #
+# Host ports are bound to 127.0.0.1 only (frontend 3000, backend 4000): the reverse proxy reaches the
+# containers on their static IPs, and the browser bundle's default API URL is http://localhost:4000.
+# Never publish them on 0.0.0.0.
+#
 # MySQL is NOT containerized here -- the stack connects to an existing MySQL 8 instance (DB_HOST_FOR_
 # CONTAINERS below; see docs/DEPLOYMENT.md "Database").
 #
@@ -53,10 +57,10 @@ services:
     env_file: ./data/etl/.env
     # `environment` wins over data/etl/.env, so a stale host path or DB host left in that file (a
     # C:/... INPUT_DIR, DB_HOST=localhost) cannot break the run. The manual input workbooks come from a
-    # host folder (ETL_INPUT_HOST_DIR) mounted READ-WRITE at the fixed container path /etl/input: admins
-    # replace them from the ETL Control Center (PUT /etl/input-files, data/etl/api/input_files.py), and
-    # the pipeline itself writes IsActive back into PRODUCTS.xlsx. The file being replaced is first
-    # copied to /etl/input_backups (ETL_INPUT_BACKUP_HOST_DIR), a separate folder from the inputs.
+    # host folder (ETL_INPUT_HOST_DIR) mounted READ-ONLY at the fixed container path /etl/input: the ETL
+    # never writes PRODUCTS.xlsx (or any input) -- the IsActive write-back is off here and cannot work on
+    # a read-only mount. The ETL Control Center still VALIDATES an uploaded file (and rejects a bad one
+    # with the reason), then answers that the folder is read-only: files are replaced on the host.
     environment:
       TZ: ${APP_TIMEZONE:-Africa/Tripoli}
       TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli} # business zone the ETL converts Odoo UTC times to; must equal APP_TIMEZONE
@@ -65,9 +69,10 @@ services:
       ETL_INPUT_DIR: /etl/input
       ETL_INPUT_BACKUP_DIR: /etl/input_backups
       ETL_OUTPUT_DIR: /etl/output
+      PRODUCTS_WRITE_BACK_ISACTIVE: 'false' # never write IsActive back into PRODUCTS.xlsx
     extra_hosts: *host-gateway
     volumes:
-      - ${ETL_INPUT_HOST_DIR:-../Input}:/etl/input
+      - ${ETL_INPUT_HOST_DIR:-../Input}:/etl/input:ro
       # Previous versions of replaced input workbooks (<name>.<UTC timestamp>.xlsx). A named volume by
       # default; set ETL_INPUT_BACKUP_HOST_DIR to a host folder to bind-mount instead.
       - ${ETL_INPUT_BACKUP_HOST_DIR:-etl_input_backups}:/etl/input_backups
@@ -109,7 +114,7 @@ services:
       # No etl-api dependency: only etl-worker calls it. The dashboard/API should come up even if the
       # ETL service is briefly down.
     ports:
-      - '0.0.0.0:4001:4000'
+      - '127.0.0.1:4000:4000'
     healthcheck:
       test: ['CMD', 'node', '-e', "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))"]
       interval: 30s
@@ -143,7 +148,7 @@ services:
       default:
         ipv4_address: 172.18.0.100
     ports:
-      - '0.0.0.0:8080:3000'
+      - '127.0.0.1:3000:3000'
     healthcheck:
       test: ['CMD', 'node', '-e', "require('http').get('http://localhost:3000/', r => process.exit(r.statusCode<500?0:1)).on('error', () => process.exit(1))"]
       interval: 30s

@@ -412,6 +412,15 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
         finally:
             gc.collect()
 
+    # Production mounts the input folder read-only (the ETL must never write PRODUCTS.xlsx): the file has
+    # been validated above, so a bad file is still rejected with its reason; a good one is not written.
+    if not os.access(inputs, os.W_OK):
+        raise UploadRejected(
+            f"{name} passed validation, but the ETL input folder is read-only on this server, so nothing was replaced. "
+            "Replace the file in the input folder on the host; the next ETL run reads it.",
+            status=409,
+        )
+
     target = inputs / name
     with _replace_lock:
         # Re-checked under the lock, right before touching the folder: a run reads these files in
@@ -444,7 +453,7 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(staging, target)
-        except PermissionError as exc:
+        except OSError as exc:  # PermissionError, or EROFS on a read-only mount
             raise UploadRejected(
                 f"Could not replace {name}: the file is locked or the folder is read-only ({exc}). "
                 "Close it if it is open in Excel and check the input folder is mounted read-write.",
