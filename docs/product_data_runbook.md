@@ -113,13 +113,13 @@ message, and the pages keep showing the last good data.
 
 All thresholds are in `lifecycle` in the config. They are applied in this order:
 
-1. **Discontinued**: `IsActive = 0` in the sheet, **or** no sale in the last 365 days. This includes products that never
-   sold.
-2. **New**: first sale in the last 180 days.
-3. **Growing**: invoiced quantity in the last 90 days is more than 20% above the previous 90 days. A product with sales
+1. **Never sold**: no sale in the whole history. This is its own segment; these products are not Discontinued.
+2. **Discontinued**: `IsActive = 0` in the sheet, **or** no sale in the last 365 days.
+3. **New**: first sale in the last 180 days.
+4. **Growing**: invoiced quantity in the last 90 days is more than 20% above the previous 90 days. A product with sales
    now and none in the previous 90 days is also Growing.
-4. **Declining**: more than 20% below the previous 90 days.
-5. **Mature**: within ±20%.
+5. **Declining**: more than 20% below the previous 90 days.
+6. **Mature**: within ±20%.
 
 ---
 

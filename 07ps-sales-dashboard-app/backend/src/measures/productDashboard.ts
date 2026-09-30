@@ -67,7 +67,7 @@ export interface ProductDashboardRow {
   avgDailySales: number;
   daysOfInventory: number | null;
   stockBand: 'Overstock' | 'Normal' | 'StockOutRisk' | 'NoMovement' | 'NoStockNoSales';
-  lifecycleSegment: 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued';
+  lifecycleSegment: 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued' | 'Never sold';
   firstSaleDate: string | null;
   lastSaleDate: string | null;
   bcgClassYTD: string | null;

@@ -177,6 +177,8 @@ def test_lifecycle_rule() -> None:
         {"key": "M", "company": "Majaal", "name": "Mat"},
         {"key": "X", "company": "Majaal", "name": "Inactive", "active": 0},
         {"key": "O", "company": "Majaal", "name": "Old"},
+        {"key": "Z", "company": "Majaal", "name": "Never"},
+        {"key": "Y", "company": "Majaal", "name": "NeverInactive", "active": 0},
     )
     lines = [
         _line("Majaal", "New", "2026-08-01", 10, 10),
@@ -187,8 +189,8 @@ def test_lifecycle_rule() -> None:
         _line("Majaal", "Old", "2025-06-01", 5, 5),
     ]
     p = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductKey")
-    assert p.loc[["N", "G", "D", "M", "X", "O"], "LifecycleSegment"].tolist() == [
-        "New", "Growing", "Declining", "Mature", "Discontinued", "Discontinued"]
+    assert p.loc[["N", "G", "D", "M", "X", "O", "Z", "Y"], "LifecycleSegment"].tolist() == [
+        "New", "Growing", "Declining", "Mature", "Discontinued", "Discontinued", "Never sold", "Never sold"]
 
 
 def test_bcg_zero_cost_is_unclassified_and_logged() -> None:

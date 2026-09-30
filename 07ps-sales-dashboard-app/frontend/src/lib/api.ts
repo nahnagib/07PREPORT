@@ -2148,7 +2148,7 @@ export interface UomQty {
 }
 
 export type StockBand = 'Overstock' | 'Normal' | 'StockOutRisk' | 'NoMovement' | 'NoStockNoSales';
-export type LifecycleSegment = 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued';
+export type LifecycleSegment = 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued' | 'Never sold';
 export type BcgMovement = 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost';
 
 export interface ProductDashboardRow {

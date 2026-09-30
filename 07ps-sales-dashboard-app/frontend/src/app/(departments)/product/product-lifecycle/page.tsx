@@ -111,7 +111,7 @@ function toExecutiveSummaryRows(
       variancePct: null,
       varianceLyPct: null,
       status: 'alert',
-      takeaway: `${discCount} SKUs are discontinued (inactive in PRODUCTS.xlsx or no sale in 365 days); they sold ${fmtLYD(discValueAtRiskLytd)} in the same period last year.`,
+      takeaway: `${discCount} SKUs are discontinued (inactive in PRODUCTS.xlsx or no sale in 365 days; never-sold products are counted separately); they sold ${fmtLYD(discValueAtRiskLytd)} in the same period last year.`,
     },
     {
       id: 'freshness',
@@ -359,7 +359,7 @@ export default function ProductLifecyclePage() {
 
           <ChartPanel
             title="Segment Value — Pareto"
-            infoText="Bars = value in the selected period by lifecycle segment (sorted desc) · line = same period last year · gold line = cumulative %. New = first sale in 180 days; Growing/Declining = last 90 days vs previous 90 days beyond ±20%; Discontinued = inactive in PRODUCTS.xlsx or no sale in 365 days"
+            infoText="Bars = value in the selected period by lifecycle segment (sorted desc) · line = same period last year · gold line = cumulative %. New = first sale in 180 days; Growing/Declining = last 90 days vs previous 90 days beyond ±20%; Discontinued = inactive in PRODUCTS.xlsx or no sale in 365 days; Never sold = no sale in the whole history"
             style={{ minHeight: 420 }}
           >
             <ComboChart

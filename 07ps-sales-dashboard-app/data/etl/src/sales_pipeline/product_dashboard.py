@@ -305,18 +305,21 @@ class ProductDashboardBuilder:
         first = pd.to_datetime(p["FirstSaleDate"], errors="coerce")
         last = pd.to_datetime(p["LastSaleDate"], errors="coerce")
         inactive = pd.to_numeric(p["IsActive"], errors="coerce").eq(0)
-        no_recent = last.isna() | last.lt(today - pd.Timedelta(days=dead_days - 1))
+        # A product with no sale in the whole history is its own segment, never Discontinued.
+        never_sold = first.isna() & last.isna()
+        no_recent = last.lt(today - pd.Timedelta(days=dead_days - 1))
         is_new = first.notna() & first.ge(today - pd.Timedelta(days=new_days - 1))
         change = (last_qty - prev_qty).div(prev_qty.where(prev_qty > 0))
         return pd.Series(np.select(
             [
+                never_sold,
                 inactive | no_recent,
                 is_new,
                 prev_qty.le(0) & last_qty.gt(0),
                 change.gt(growth),
                 change.lt(-growth),
             ],
-            ["Discontinued", "New", "Growing", "Growing", "Declining"],
+            ["Never sold", "Discontinued", "New", "Growing", "Growing", "Declining"],
             default="Mature",
         ), index=p.index)
 

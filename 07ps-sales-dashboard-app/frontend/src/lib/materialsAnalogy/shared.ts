@@ -202,13 +202,14 @@ export const BCG_COLOR: Record<string, string> = {
   [UNCLASSIFIED_NO_COST]: 'var(--ps-color-neutral-text)',
 };
 
-export const LIFECYCLE_SEGMENTS: LifecycleSegment[] = ['New', 'Growing', 'Mature', 'Declining', 'Discontinued'];
+export const LIFECYCLE_SEGMENTS: LifecycleSegment[] = ['New', 'Growing', 'Mature', 'Declining', 'Discontinued', 'Never sold'];
 export const SEGMENT_COLOR: Record<LifecycleSegment, string> = {
   New: 'var(--ps-color-accent)',
   Growing: 'var(--ps-color-success)',
   Mature: 'var(--ps-color-gold)',
   Declining: 'var(--ps-color-watch)',
   Discontinued: 'var(--ps-color-neutral-text)',
+  'Never sold': 'var(--ps-color-muted-text)',
 };
 
 export const STOCK_BAND_LABEL: Record<StockBand, string> = {
