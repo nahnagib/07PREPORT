@@ -342,6 +342,7 @@ export default function CriticalNumberPage() {
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
+          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
@@ -568,24 +569,24 @@ function DailyCriticalNumberCard({
   }
   return (
     <Card style={{ width: '100%', borderInlineStart: '4px solid var(--ps-color-accent)' }}>
-      <div className={isAdmin ? 'ps-cn-hero' : undefined}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ps-color-muted-text)' }}>
-            <Target size={16} />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Critical Number</span>
-          </div>
-          <div
-            style={{
-              fontSize: 40,
-              fontWeight: 700,
-              color: 'var(--ps-color-text)',
-              fontVariantNumeric: 'tabular-nums',
-              lineHeight: 1.1,
-            }}
-            title={value != null ? formatCurrency(value) : undefined}
-          >
-            {value != null ? formatCompactCurrency(value) : '—'}
-          </div>
+      {/* Stacked label / number / description, all centered on the card's axis, so the number sits
+          dead-center of the full-width box whatever the label or (admin-only) description length. */}
+      <div className="ps-cn-hero">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--ps-color-muted-text)' }}>
+          <Target size={16} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Critical Number</span>
+        </div>
+        <div
+          style={{
+            fontSize: 40,
+            fontWeight: 700,
+            color: 'var(--ps-color-text)',
+            fontVariantNumeric: 'tabular-nums',
+            lineHeight: 1.1,
+          }}
+          title={value != null ? formatCurrency(value) : undefined}
+        >
+          {value != null ? formatCompactCurrency(value) : '—'}
         </div>
         {isAdmin && (
           <div className="ps-cn-hero-desc" style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--ps-color-muted-text)' }}>
@@ -659,6 +660,7 @@ function DailyCounterCard({
 
       <DonutChart
         showTitle={false}
+        showExportButton={false}
         segments={achievedVsRemainingSegments(actual, target)}
         valueFormatter={(v) => formatCompactCurrency(v)}
         legendTitle="Today"
@@ -791,6 +793,7 @@ function PeriodCounterCard({
 
       <DonutChart
         showTitle={false}
+        showExportButton={false}
         segments={achievedVsRemainingSegments(actual, periodTarget)}
         valueFormatter={(v) => formatCompactCurrency(v)}
         legendTitle={`${elapsed} / ${total} Working Days`}

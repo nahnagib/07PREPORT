@@ -6,6 +6,7 @@ import {
   type ColumnOrderState,
   type ColumnPinningState,
   type ColumnSizingState,
+  type FilterFn,
   type SortingState,
   flexRender,
   getCoreRowModel,
@@ -42,6 +43,10 @@ export interface DataGridColumn<T> {
   badge?: (row: T) => SemanticStatus | null | undefined;
   /** Initial column width in px - user can resize afterward. */
   width?: number;
+  /** Renders this column's filter as a dropdown of these values (exact match against rawValue /
+   * row[key]) instead of the free-text "Filter..." box -- for columns with a small, known set of
+   * values such as a status or stage. */
+  filterOptions?: { value: string; label: string }[];
 }
 
 export interface DataGridProps<T extends Record<string, unknown>> {
@@ -60,7 +65,23 @@ export interface DataGridProps<T extends Record<string, unknown>> {
   /** Page-local filters (e.g. a page-only Customer slicer) listed in the PDF after the app-wide
    * filters supplied by the shared export context. */
   extraFilterParts?: string[];
+  /** Makes each body row clickable (and keyboard-activatable with Enter/Space). Optional -- omit
+   * for the previous read-only rows. */
+  onRowClick?: (row: T) => void;
 }
+
+/** Case-insensitive "contains" on the cell's raw value -- the free-text column filter. Used for
+ * every column (numeric ones included: TanStack's 'auto' picks inNumberRange for numbers, which
+ * misreads typed text as a [min, max] pair). */
+const containsText: FilterFn<unknown> = (row, columnId, filterValue) => {
+  const needle = String(filterValue ?? '').trim().toLowerCase();
+  if (!needle) return true;
+  return String(row.getValue(columnId) ?? '').toLowerCase().includes(needle);
+};
+
+/** Exact match on the cell's raw value -- the dropdown column filter (see `filterOptions`). */
+const equalsOption: FilterFn<unknown> = (row, columnId, filterValue) =>
+  filterValue == null || filterValue === '' || String(row.getValue(columnId) ?? '') === String(filterValue);
 
 /**
  * Interactive analytical data grid (UI-improvements pass: "the table should feel similar to Power
@@ -92,6 +113,7 @@ export function DataGrid<T extends Record<string, unknown>>({
   maxBodyHeight = 520,
   filtersSummary,
   extraFilterParts,
+  onRowClick,
 }: DataGridProps<T>) {
   const tableRef = useRef<HTMLTableElement>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -112,6 +134,7 @@ export function DataGrid<T extends Record<string, unknown>>({
         accessorFn: (row: T) => (col.rawValue ? col.rawValue(row) : row[col.key]),
         header: col.header,
         size: col.width ?? 130,
+        filterFn: (col.filterOptions ? equalsOption : containsText) as FilterFn<T>,
         cell: (info) => (col.render ? col.render(info.row.original) : String(info.getValue() ?? '')),
       })),
     [columns],
@@ -141,6 +164,7 @@ export function DataGrid<T extends Record<string, unknown>>({
 
   const exportRows = table.getSortedRowModel().rows.map((r) => r.original);
   const alignOf = (id: string) => columns.find((c) => String(c.key) === id)?.align ?? 'left';
+  const filterOptionsOf = (id: string) => columns.find((c) => String(c.key) === id)?.filterOptions;
 
   // Format number with thousand separators and 2 decimal places
   function formatNumberForPdf(value: unknown): string {
@@ -561,24 +585,33 @@ export function DataGrid<T extends Record<string, unknown>>({
                         </button>
                       </div>
 
-                      {/* Per-column filter input. */}
-                      <input
-                        dir="auto"
-                        value={(header.column.getFilterValue() as string) ?? ''}
-                        onChange={(e) => header.column.setFilterValue(e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                        placeholder="Filter..."
-                        style={{
-                          width: '100%',
-                          marginTop: 6,
-                          padding: '3px 6px',
-                          fontSize: 11,
-                          borderRadius: 4,
-                          border: '1px solid var(--ps-color-border)',
-                          background: 'var(--ps-color-surface)',
-                          color: 'var(--ps-color-text)',
-                        }}
-                      />
+                      {/* Per-column filter: a dropdown for columns with a known value set, else free text. */}
+                      {filterOptionsOf(header.column.id) ? (
+                        <select
+                          value={(header.column.getFilterValue() as string) ?? ''}
+                          onChange={(e) => header.column.setFilterValue(e.target.value || undefined)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Filter ${String(header.column.columnDef.header)}`}
+                          style={columnFilterStyle}
+                        >
+                          <option value="">All</option>
+                          {filterOptionsOf(header.column.id)!.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          dir="auto"
+                          value={(header.column.getFilterValue() as string) ?? ''}
+                          onChange={(e) => header.column.setFilterValue(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder="Filter..."
+                          aria-label={`Filter ${String(header.column.columnDef.header)}`}
+                          style={columnFilterStyle}
+                        />
+                      )}
 
                       {/* Resize handle. */}
                       <div
@@ -602,7 +635,21 @@ export function DataGrid<T extends Record<string, unknown>>({
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="ps-datatable-row">
+              <tr
+                key={row.id}
+                className="ps-datatable-row"
+                {...(onRowClick && {
+                  onClick: () => onRowClick(row.original),
+                  onKeyDown: (e: React.KeyboardEvent) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onRowClick(row.original);
+                    }
+                  },
+                  tabIndex: 0,
+                  style: { cursor: 'pointer' },
+                })}
+              >
                 {row.getVisibleCells().map((cell) => {
                   const isPinned = cell.column.getIsPinned();
                   return (
@@ -749,3 +796,14 @@ function downloadBlob(content: string, filename: string, mime: string) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+const columnFilterStyle: React.CSSProperties = {
+  width: '100%',
+  marginTop: 6,
+  padding: '3px 6px',
+  fontSize: 11,
+  borderRadius: 4,
+  border: '1px solid var(--ps-color-border)',
+  background: 'var(--ps-color-surface)',
+  color: 'var(--ps-color-text)',
+};

@@ -6,6 +6,7 @@ import {
   fetchLastSuccessfulRun,
   fetchRefreshStatus,
   getToleranceMinutes,
+  redactRefreshStatusForNonAdmin,
   type LastSuccessfulRun,
 } from '../refreshStatus';
 import { getAppTimezone, tripoliSqlDateTimeToDate, utcSqlDateTimeToDate } from '../../lib/timezone';
@@ -260,5 +261,42 @@ describe('fetchLastSuccessfulRun / fetchRefreshStatus', () => {
     const status = await fetchRefreshStatus(pool);
     expect(status.isStale).toBe(true);
     expect(status.isInverted).toBe(false);
+  });
+});
+
+describe('redactRefreshStatusForNonAdmin', () => {
+  const full = {
+    lastUpdate: utc('2026-09-20T12:42:00'),
+    lastOrderCreated: utc('2026-09-20T12:40:00'),
+    lastRefreshTime: utc('2026-09-20T12:45:00'),
+    isStale: false,
+    isInverted: false,
+    refreshCheck: check(),
+    displayTimezone: TRIPOLI,
+  };
+
+  it('keeps Last Refresh Time and the flags, drops the order timestamps and diagnostics', () => {
+    const r = redactRefreshStatusForNonAdmin(full);
+    expect(r.lastRefreshTime).toEqual(full.lastRefreshTime);
+    expect(r.lastUpdate).toBeNull();
+    expect(r.lastOrderCreated).toBeNull();
+    expect(r.refreshCheck.status).toBe('ok');
+    expect(r.refreshCheck.latestLoadedOrderUtc).toBeNull();
+    expect(r.refreshCheck.watermarkOrderCreatedUtc).toBeNull();
+    expect(r.refreshCheck.differenceMinutes).toBeNull();
+    expect(r.refreshCheck.message).not.toMatch(/order/i);
+    expect(r.refreshCheck.action).toBeNull();
+  });
+
+  it('still reports an inconsistent refresh log, in plain language', () => {
+    const r = redactRefreshStatusForNonAdmin({
+      ...full,
+      isInverted: true,
+      refreshCheck: check({ targetOrderCreatedUtc: utc('2026-09-20T14:00:00') }),
+    });
+    expect(r.isInverted).toBe(true);
+    expect(r.refreshCheck.inconsistent).toBe(true);
+    expect(r.refreshCheck.message).toMatch(/contact an administrator/);
+    expect(r.refreshCheck.message).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 });

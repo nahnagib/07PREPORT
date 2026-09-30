@@ -31,6 +31,9 @@ export interface StackedPercentBarChartProps {
    * bars' direction, not the axis layout, which is the opposite of this prop's naming; kept as
    * 'horizontal'/'vertical' here since that's what callers actually see on screen). */
   orientation?: 'vertical' | 'horizontal';
+  /** Makes every segment clickable: called with the clicked bar's category label and the segment's
+   * `key`. Optional -- omit for the previous read-only chart. */
+  onSegmentClick?: (category: string, segmentKey: string) => void;
 }
 
 /**
@@ -46,6 +49,7 @@ export function StackedPercentBarChart({
   segments,
   height = 280,
   orientation = 'vertical',
+  onSegmentClick,
 }: StackedPercentBarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -150,12 +154,24 @@ export function StackedPercentBarChart({
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             {segments.map((s) => (
-              <Bar key={s.key} dataKey={s.key} name={s.name} stackId="a" fill={s.color} isAnimationActive={false} barSize={64}>
+              <Bar
+                key={s.key}
+                dataKey={s.key}
+                name={s.name}
+                stackId="a"
+                fill={s.color}
+                isAnimationActive={false}
+                barSize={64}
+                cursor={onSegmentClick ? 'pointer' : undefined}
+                onClick={onSegmentClick ? (d: { payload?: { label?: string } }) => d?.payload?.label && onSegmentClick(d.payload.label, s.key) : undefined}
+              >
                 <LabelList
                   dataKey={s.key}
                   position="center"
                   fill="var(--ps-color-on-accent)"
                   fontSize={10}
+                  // Let clicks on the in-bar % label reach the segment (onSegmentClick).
+                  pointerEvents="none"
                   formatter={(v: number) => (v >= 8 ? `${v.toFixed(0)}%` : '')}
                 />
               </Bar>

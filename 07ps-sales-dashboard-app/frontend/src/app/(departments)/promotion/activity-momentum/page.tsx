@@ -1,6 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { ArrowLeft, FileDown, Info } from 'lucide-react';
+import { ArrowLeft, FileDown } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
@@ -46,11 +46,26 @@ function formatCountOrDash(v: number | null | undefined): string {
   return v != null ? v.toLocaleString(DISPLAY_LOCALE) : '—';
 }
 
+/** Plain-language definitions, shown on the page (no "i" icons: this page has no drill-down).
+ * Every opportunity created this year is in exactly one of the five status tiles, so they add up
+ * to #YTD (see backend/src/measures/activityMomentum.ts, "MUTUALLY EXCLUSIVE STATUSES"). */
+const TILE_DEFINITIONS: Record<string, string> = {
+  '#YTD': 'All opportunities created this year. #YTD = #Active + #Won + #Lost + #W/O Activity + #W/O Next Step',
+  '#Active': 'Open opportunities that are still moving (not in either "W/O" group).',
+  '#Won': 'Opportunities won.',
+  '#Lost': 'Opportunities lost.',
+  '#W/O Activity': 'Open B2B opportunities with no quotation, 30 days or more after they were created.',
+  '#W/O Next Step': 'Open B2B opportunities whose last quotation is 30 days old or more.',
+};
+const RATE_DEFINITIONS = {
+  inactive: 'Share of open B2B deals that have stalled for 30 days or more. Inactive Deals Ratio = (#W/O Activity + #W/O Next Step) ÷ open B2B deals',
+  lost: 'Share of this year\'s opportunities that were lost. Lost Deals Ratio = #Lost ÷ #YTD',
+};
+
 // ---------------------------------------------------------------------------
 // PDF summary-table export -- same exportRowsAsPdf mechanism as Revenue Trend, applied to every
 // visual on this page. The Opportunity Activities table explicitly includes #Won/#Lost, and Total
-// Lost Opportunity by Reason is Lost-specific, so Won/Lost data is covered even though the on-screen
-// New Opportunities trend (like elsewhere on this page) excludes Lost by design.
+// Lost Opportunity by Reason is Lost-specific.
 // ---------------------------------------------------------------------------
 
 interface MetricValueRow extends Record<string, unknown> {
@@ -87,22 +102,9 @@ function toRatesTableRows(rates?: ActivityRates): MetricValueRow[] {
 // InsightCards above (see their `status={... > 0.5 ? 'alert' : 'neutral'}`), so this table never
 // disagrees with what those cards already show for the same ratios.
 //
-// Formula audit (per KPI, matching backend/src/measures/activityMomentum.ts exactly):
-//  - #YTD / #Active / #Lost: plain counts, always available (no activity-column gate).
-//  - #W/O Next Step, Inactive Deals Ratio: render "—" only when checkActivityColumnsAvailable()
-//    (activityMomentum.ts:63-88) finds the 6 CRM activity columns (HasNextStep/HasRecentActivity/
-//    IsInactive/...) don't exist yet on the live table (ETL population pass not run yet). Both are
-//    all-time snapshots of current pipeline state (not filtered by this year's creation-date
-//    cohort), and Inactive Deals Ratio's numerator is a single distinct at-risk count (Inactive OR
-//    Without Next Step), not a sum of the two -- see activityMomentum.ts's module header ("Cohort
-//    vs. snapshot scoping" / "Ratio double-counting", fixed 2026-09).
-//  - Lost Deals Ratio = #Lost / (#YTD[displayed, Lost-excluded] + #Lost), i.e. Lost / total YTD
-//    opportunities of every status (activityMomentum.ts:178-182's `totalYtdAll`). This ties out
-//    against the example the ratio was flagged with: #Lost=230, displayed #YTD=389 ->
-//    230 / (389 + 230) = 230 / 619 = 37.16%, exactly matching the "+37.16%" on screen. It is
-//    deliberately NOT Lost/(Won+Lost) or Lost/displayed-#YTD -- see that file's header comment for
-//    why the ratio's own denominator must stay Lost-inclusive even though the tile-level #YTD
-//    excludes Lost.
+// Formulas: see TILE_DEFINITIONS / RATE_DEFINITIONS above (and activityMomentum.ts). #W/O Activity,
+// #W/O Next Step and Inactive Deals Ratio render "—" only if checkActivityColumnsAvailable() finds
+// the quotation-staleness columns missing from Fact_Opportunity.
 // ---------------------------------------------------------------------------
 
 const RATIO_ALERT_THRESHOLD = 0.5;
@@ -133,7 +135,7 @@ function toExecutiveSummaryRows(
       variancePct: null,
       varianceLyPct: null,
       status: 'neutral',
-      takeaway: `${formatCountOrDash(counts.totalYtd)} new opportunities created so far this year.`,
+      takeaway: `${formatCountOrDash(counts.totalYtd)} opportunities created so far this year (all statuses).`,
     },
     {
       id: 'active',
@@ -143,7 +145,7 @@ function toExecutiveSummaryRows(
       variancePct: null,
       varianceLyPct: null,
       status: 'neutral',
-      takeaway: `${formatCountOrDash(counts.active)} opportunities are currently open and active.`,
+      takeaway: `${formatCountOrDash(counts.active)} open opportunities are still moving.`,
     },
     {
       id: 'withoutNextStep',
@@ -155,7 +157,7 @@ function toExecutiveSummaryRows(
       status: 'neutral',
       takeaway:
         counts.withoutNextStep != null
-          ? `${formatCountOrDash(counts.withoutNextStep)} open opportunities have no next step scheduled.`
+          ? `${formatCountOrDash(counts.withoutNextStep)} open B2B opportunities have had no new quotation for 30+ days.`
           : 'Next-step tracking data is not yet available.',
     },
     {
@@ -255,20 +257,15 @@ function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => vo
   );
 }
 
-/** Lost-exclusion policy: the default view (no filter selected -- a general, not lost-specific
- * listing) and the 'ytd' filter (mirrors the #YTD tile, which now excludes Lost too, see
- * activityMomentum.ts's module header) both exclude Lost. 'active'/'won'/'inactive'/
- * 'withoutNextStep' need no extra check: 'active'/'inactive'/'withoutNextStep' already imply
- * IsOpen, which is mutually exclusive with Lost by construction, and 'won' can't overlap Lost
- * either. 'lost' is the lost-specific filter and stays exactly as-is. */
+/** Each flag comes from the backend's single status classification (one status per row), so every
+ * option lists exactly its tile's count; no filter / 'ytd' lists all of #YTD. */
 function matchesActivityFilter(o: ActivityOpportunityRow, key: ActivityFilterKey | null): boolean {
-  if (!key) return !o.isLost;
   if (key === 'active') return o.isActive;
   if (key === 'lost') return o.isLost;
   if (key === 'won') return o.isWon;
   if (key === 'inactive') return o.isInactive === true;
-  if (key === 'withoutNextStep') return o.isOpen && o.isWithoutNextStep === true;
-  return o.isYtd && !o.isLost;
+  if (key === 'withoutNextStep') return o.isWithoutNextStep === true;
+  return o.isYtd;
 }
 
 interface OpportunityTableRow extends Record<string, unknown> {
@@ -382,7 +379,7 @@ export default function ActivityMomentumPage() {
     { value: 'active', label: 'Active' },
     { value: 'lost', label: 'Lost' },
     { value: 'won', label: 'Won' },
-    ...(activityAvailable ? [{ value: 'inactive', label: 'Inactive' }, { value: 'withoutNextStep', label: 'Without Next Step' }] : []),
+    ...(activityAvailable ? [{ value: 'inactive', label: 'W/O Activity' }, { value: 'withoutNextStep', label: 'W/O Next Step' }] : []),
     { value: 'ytd', label: 'YTD' },
   ];
 
@@ -423,6 +420,7 @@ export default function ActivityMomentumPage() {
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
+          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
@@ -456,7 +454,7 @@ export default function ActivityMomentumPage() {
                   <InsightCard
                     label="Inactive Deals Ratio"
                     value={data?.rates.inactiveDealsRatio != null ? formatVariance(data.rates.inactiveDealsRatio) ?? '—' : '—'}
-                    infoText="Measures the share of currently-open opportunities that are stale (inactive) or missing a next step, as of the last data refresh. Formula: distinct count of open opportunities where Inactive OR Without Next Step ÷ Open Opportunities (all-time snapshot, not limited to this year's cohort)."
+                    caption={RATE_DEFINITIONS.inactive}
                     status={data?.rates.inactiveDealsRatio != null && data.rates.inactiveDealsRatio > 0.5 ? 'alert' : 'neutral'}
                     accentBg={data?.rates.inactiveDealsRatio != null && data.rates.inactiveDealsRatio > 0.5}
                     loading={overview.loading}
@@ -464,6 +462,7 @@ export default function ActivityMomentumPage() {
                   <InsightCard
                     label="Lost Deals Ratio"
                     value={data?.rates.lostDealsRatio != null ? formatVariance(data.rates.lostDealsRatio) ?? '—' : '—'}
+                    caption={RATE_DEFINITIONS.lost}
                     status={data?.rates.lostDealsRatio != null && data.rates.lostDealsRatio > 0.5 ? 'alert' : 'neutral'}
                     accentBg={data?.rates.lostDealsRatio != null && data.rates.lostDealsRatio > 0.5}
                     loading={overview.loading}
@@ -639,7 +638,7 @@ function ActivityCountsPanel({
   downloading,
   onDownloadPdf,
 }: {
-  counts?: { totalYtd: number; won: number; withoutActivity: number | null; active: number; lost: number; withoutNextStep: number | null };
+  counts?: OpportunityActivityCounts;
   activityAvailable: boolean;
   loading: boolean;
   error?: string;
@@ -667,18 +666,10 @@ function ActivityCountsPanel({
   const tiles = [
     { label: '#YTD', value: counts?.totalYtd },
     { label: '#Won', value: counts?.won },
-    {
-      label: '#W/O Activity',
-      value: counts?.withoutActivity,
-      infoText: 'Open opportunities with no update in the last 14 days (HasRecentActivity). A different, shorter-window signal than the Rates panel\'s "Inactive" (30+ days) -- not the same count.',
-    },
+    { label: '#W/O Activity', value: counts?.withoutActivity },
     { label: '#Active', value: counts?.active },
     { label: '#Lost', value: counts?.lost },
-    {
-      label: '#W/O Next Step',
-      value: counts?.withoutNextStep,
-      infoText: 'Open opportunities that have an existing quotation but no meaningful follow-up action for an extended period.',
-    },
+    { label: '#W/O Next Step', value: counts?.withoutNextStep },
   ];
 
   return (
@@ -712,17 +703,6 @@ function ActivityCountsPanel({
           ) : (
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Opportunity Activities</span>
           )}
-          <span
-            title={
-              activityAvailable
-                ? 'YTD opportunity counts by activity status.'
-                : 'YTD opportunity counts by activity status. #W/O Activity and #W/O Next Step need a data refresh not yet run -- they show — until then.'
-            }
-            aria-label="Opportunity Activities definitions"
-            style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}
-          >
-            <Info size={13} />
-          </span>
         </div>
         {onDownloadPdf && (
           <ExportPdfButton downloading={!!downloading} disabled={!counts} onClick={onDownloadPdf} />
@@ -730,24 +710,22 @@ function ActivityCountsPanel({
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         {tiles.map((t) => (
-          <div key={t.label} style={{ background: 'var(--ps-color-muted-bg)', borderRadius: 'var(--ps-card-radius-sm, 10px)', padding: '10px 8px', textAlign: 'center' }}>
+          <div
+            key={t.label}
+            title={TILE_DEFINITIONS[t.label]}
+            style={{ background: 'var(--ps-color-muted-bg)', borderRadius: 'var(--ps-card-radius-sm, 10px)', padding: '10px 8px', textAlign: 'center' }}
+          >
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
               {formatCountOrDash(t.value)}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, marginTop: 2 }}>
-              <span style={{ fontSize: 10, color: 'var(--ps-color-muted-text)' }}>{t.label}</span>
-              {'infoText' in t && t.infoText && (
-                <span
-                  title={t.infoText}
-                  aria-label={t.infoText}
-                  style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help' }}
-                >
-                  <Info size={10} />
-                </span>
-              )}
-            </div>
+            <div style={{ fontSize: 10, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{t.label}</div>
           </div>
         ))}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
+        Each opportunity created this year is counted in one group only: #YTD = #Active + #Won + #Lost + #W/O Activity + #W/O Next Step.
+        {!activityAvailable && ' #W/O Activity and #W/O Next Step show — until the data refresh adds them (their opportunities are in #Active meanwhile).'}
+        {counts && counts.unclassified > 0 && ` ${formatCountOrDash(counts.unclassified)} opportunities have no status (not open, won or lost) and are only in #YTD.`}
       </div>
     </Card>
   );

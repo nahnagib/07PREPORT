@@ -3,7 +3,7 @@ import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { requireAnyDashboardView, requirePasswordChangeCleared } from '../middleware/permission';
 import { attachUserContext } from '../middleware/scopeContext';
-import { fetchRefreshStatus } from '../measures/refreshStatus';
+import { fetchRefreshStatus, redactRefreshStatusForNonAdmin } from '../measures/refreshStatus';
 
 /**
  * Refresh metadata for the dashboard footer/sidebar and the "Refresh log looks wrong" banner.
@@ -19,9 +19,12 @@ export const metaRouter = Router();
 // (was Tachometer only, which broke the filters on every other page for a role without Tachometer).
 metaRouter.use(requireAuth, requirePasswordChangeCleared, requireAnyDashboardView, attachUserContext);
 
-metaRouter.get('/refresh-status', async (_req, res, next) => {
+metaRouter.get('/refresh-status', async (req, res, next) => {
   try {
-    const status = await fetchRefreshStatus(pool);
+    // Last Update / Last Order Created are admin-only data-validation timestamps: withheld from
+    // everyone else (the frontend hides them too), who get only Last Refresh Time.
+    const full = await fetchRefreshStatus(pool);
+    const status = req.user?.isAdmin ? full : redactRefreshStatusForNonAdmin(full);
     res.json({
       lastUpdate: status.lastUpdate,
       lastOrderCreated: status.lastOrderCreated,

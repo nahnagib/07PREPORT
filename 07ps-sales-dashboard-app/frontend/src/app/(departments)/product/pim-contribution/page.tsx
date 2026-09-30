@@ -440,8 +440,9 @@ export default function PimContributionPage() {
             <ChartPanel
               title="Product Hierarchy Contribution"
               infoText={
+                // "i" = drill-down available, so none once a single product is reached.
                 isLeaf
-                  ? 'Single product reached -- nothing further to break down'
+                  ? undefined
                   : `Click a slice or legend row to drill into its ${HIERARCHY_LEVELS[levelIndex! + 1]?.label ?? 'Product'} breakdown`
               }
               headerActions={
@@ -478,7 +479,6 @@ export default function PimContributionPage() {
 
             <ChartPanel
               title="Average Selling Price (ASP)"
-              infoText={isLeaf ? 'This product\'s own figures' : `By ${currentLevel?.label} — synced to the drill level above`}
             >
               {isLeaf ? (
                 leafRow ? (

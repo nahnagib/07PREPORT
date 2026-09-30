@@ -1,14 +1,17 @@
 'use client';
-import React, { useMemo, useState } from 'react';
-import { Card, DataTable, EmptyState, type Column } from '@07ps/ui';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
+import { Card, DataGrid, EmptyState, type DataGridColumn } from '@07ps/ui';
 import type { ChainDocument, ChainStage, OpportunityChainRow, OpportunityChains } from '../lib/api';
 import { formatCurrency, DISPLAY_LOCALE } from '../lib/format';
 
 /**
  * Full Pipeline chain view: every B2B, current-year opportunity followed through
  * Opportunity -> Quotation -> Sales Order -> Delivery, with stage totals on top (so the drop-off
- * between stages is visible) and a per-row 4-step progress indicator. Clicking a row expands the
- * linked documents (number, date, value, status) -- an opportunity can have several quotations,
+ * between stages is visible) and a sortable, filterable table with a per-row 4-step progress
+ * indicator. Clicking a row opens a modal with the linked documents (Opportunity ID, quotation / SO
+ * numbers, DL IDs, each with date, value and status) -- an opportunity can have several quotations,
  * orders and deliveries. Data comes from backend/src/measures/pipelineHealth.ts's
  * computeOpportunityChains; nothing here infers a link, it only renders what the backend returns.
  */
@@ -78,17 +81,28 @@ interface ChainTableRow extends Record<string, unknown> {
   name: string;
   customer: string;
   salesperson: string;
+  stage: string;
   created: string;
-  value: string;
+  value: number;
   quotations: number;
   salesOrders: number;
   deliveries: number;
+  /** "2. Quotation" -- numbered so it sorts in chain order and reads cleanly in CSV/Excel exports. */
   progress: string;
+}
+
+const progressLabel = (stage: ChainStage) => `${STAGE_INDEX[stage] + 1}. ${STAGES[STAGE_INDEX[stage]].label}`;
+
+/** Dropdown options for a column's distinct values, in natural (numeric-aware) order. */
+function distinctOptions(rows: ChainTableRow[], key: keyof ChainTableRow) {
+  const values = Array.from(new Set(rows.map((r) => String(r[key]))));
+  values.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return values.map((v) => ({ value: v, label: v }));
 }
 
 function DocList({ title, docs, color }: { title: string; docs: ChainDocument[]; color: string }) {
   return (
-    <div style={{ flex: '1 1 220px', minWidth: 200 }}>
+    <div style={{ flex: '1 1 200px', minWidth: 180 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color, marginBottom: 6 }}>
         {title} ({docs.length})
       </div>
@@ -111,8 +125,91 @@ function DocList({ title, docs, color }: { title: string; docs: ChainDocument[];
   );
 }
 
+/** Chain details for one opportunity, as a modal: closes on the X button, Esc, or a click on the
+ * backdrop. Same overlay styling as @07ps/ui's ChartPanel focus view, portaled to <body> so it sits
+ * above the app sidebar / bottom nav instead of inside the page column's stacking context. */
+function ChainDetailModal({ chain, onClose }: { chain: OpportunityChainRow; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    document.addEventListener('keydown', onKey);
+    closeRef.current?.focus();
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previouslyFocused?.focus?.();
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        background: 'rgba(0, 0, 0, 0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 'var(--ps-space-3, 16px)',
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Opportunity chain detail for ${chain.name}`}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%',
+          maxWidth: 960,
+          maxHeight: '80vh',
+          overflow: 'auto',
+          background: 'var(--ps-color-surface)',
+          border: '1px solid var(--ps-color-border)',
+          borderRadius: 'var(--ps-card-radius, 14px)',
+          boxShadow: 'var(--ps-card-shadow)',
+          padding: 'var(--ps-space-4, 24px)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 'var(--ps-space-3, 16px)' }}>
+          <div style={{ minWidth: 0 }}>
+            <div dir="auto" style={{ fontSize: 16, fontWeight: 700, color: 'var(--ps-color-text)' }}>
+              {chain.name} — {chain.customer ?? 'no customer'}
+            </div>
+            <div dir="auto" style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>
+              {chain.salesperson ?? 'No salesperson'}
+              {chain.stage ? ` · ${chain.stage}` : ''}
+            </div>
+          </div>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ps-color-muted-text)', display: 'flex', flexShrink: 0 }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--ps-space-3, 16px)' }}>
+          <DocList title="Opportunity ID" docs={[chain.opportunity]} color={STAGE_COLORS[0]} />
+          <DocList title="Quotation number" docs={chain.quotations} color={STAGE_COLORS[1]} />
+          <DocList title="SO number" docs={chain.salesOrders} color={STAGE_COLORS[2]} />
+          <DocList title="DL ID" docs={chain.deliveries} color={STAGE_COLORS[3]} />
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function OpportunityChainView({ chains }: { chains?: OpportunityChains }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const closeDetail = useCallback(() => setSelectedId(null), []);
 
   const rows = useMemo<ChainTableRow[]>(
     () =>
@@ -121,29 +218,40 @@ export function OpportunityChainView({ chains }: { chains?: OpportunityChains })
         name: r.name,
         customer: r.customer ?? '—',
         salesperson: r.salesperson ?? '—',
+        stage: r.stage ?? '—',
         created: formatDate(r.createdDate),
-        value: formatCurrency(r.opportunity.value),
+        value: r.opportunity.value,
         quotations: r.quotations.length,
         salesOrders: r.salesOrders.length,
         deliveries: r.deliveries.length,
-        progress: r.reachedStage,
+        progress: progressLabel(r.reachedStage),
       })),
     [chains],
   );
   const byId = useMemo(() => new Map((chains?.rows ?? []).map((r) => [r.opportunityId, r])), [chains]);
   const selected = selectedId ? byId.get(selectedId) : undefined;
 
-  const columns: Column<ChainTableRow>[] = [
-    { key: 'name', header: 'Opportunity' },
-    { key: 'customer', header: 'Customer' },
-    { key: 'salesperson', header: 'Salesperson' },
-    { key: 'created', header: 'Created' },
-    { key: 'value', header: 'Value', align: 'right' },
-    { key: 'progress', header: 'Chain progress', render: (row) => <ProgressSteps row={byId.get(row.id)!} /> },
-    { key: 'quotations', header: '# Quot.', align: 'right' },
-    { key: 'salesOrders', header: '# Orders', align: 'right' },
-    { key: 'deliveries', header: '# Deliv.', align: 'right' },
-  ];
+  const columns = useMemo<DataGridColumn<ChainTableRow>[]>(
+    () => [
+      { key: 'name', header: 'Opportunity', width: 200 },
+      { key: 'customer', header: 'Customer', width: 180 },
+      { key: 'salesperson', header: 'Salesperson', width: 150 },
+      { key: 'stage', header: 'Stage', width: 130, filterOptions: distinctOptions(rows, 'stage') },
+      { key: 'created', header: 'Created', width: 110 },
+      { key: 'value', header: 'Value', align: 'right', width: 130, render: (row) => formatCurrency(row.value) },
+      {
+        key: 'progress',
+        header: 'Chain progress',
+        width: 230,
+        render: (row) => <ProgressSteps row={byId.get(row.id)!} />,
+        filterOptions: STAGES.map((st) => ({ value: progressLabel(st.key), label: st.label })),
+      },
+      { key: 'quotations', header: '# Quot.', align: 'right', width: 90, filterOptions: distinctOptions(rows, 'quotations') },
+      { key: 'salesOrders', header: '# Orders', align: 'right', width: 90, filterOptions: distinctOptions(rows, 'salesOrders') },
+      { key: 'deliveries', header: '# Deliv.', align: 'right', width: 90, filterOptions: distinctOptions(rows, 'deliveries') },
+    ],
+    [rows, byId],
+  );
 
   if (!chains || chains.rows.length === 0) {
     return <EmptyState message="No B2B opportunities created this year for the selected filters." />;
@@ -180,28 +288,20 @@ export function OpportunityChainView({ chains }: { chains?: OpportunityChains })
         })}
       </div>
 
-      <DataTable
+      <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
+        Click a column header to sort (click again to reverse). Click a row to see its linked quotations, sales orders and deliveries.
+      </div>
+
+      <DataGrid
         columns={columns}
         rows={rows}
         getRowId={(row) => row.id}
-        onRowClick={(row) => setSelectedId((cur) => (cur === row.id ? null : row.id))}
+        fileName="opportunity-chain"
+        pageSize={25}
+        onRowClick={(row) => setSelectedId(row.id)}
       />
 
-      {selected ? (
-        <Card aria-label={`Opportunity chain detail for ${selected.name}`}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 12 }}>
-            {selected.name} — {selected.customer ?? 'no customer'}
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--ps-space-3, 16px)' }}>
-            <DocList title="Opportunity" docs={[selected.opportunity]} color={STAGE_COLORS[0]} />
-            <DocList title="Quotations" docs={selected.quotations} color={STAGE_COLORS[1]} />
-            <DocList title="Sales Orders" docs={selected.salesOrders} color={STAGE_COLORS[2]} />
-            <DocList title="Deliveries" docs={selected.deliveries} color={STAGE_COLORS[3]} />
-          </div>
-        </Card>
-      ) : (
-        <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>Click a row to see its linked quotations, sales orders and deliveries.</div>
-      )}
+      {selected && <ChainDetailModal chain={selected} onClose={closeDetail} />}
     </div>
   );
 }

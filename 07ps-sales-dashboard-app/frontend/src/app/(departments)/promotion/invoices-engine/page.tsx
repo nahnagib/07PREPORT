@@ -566,6 +566,7 @@ export default function InvoicesEnginePage() {
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
+          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
@@ -788,7 +789,7 @@ export default function InvoicesEnginePage() {
 
               <ChartPanel<ClassificationTableRow>
                 title="Invoices Classification"
-                infoText="Invoice value by Invoice Class, year-to-date."
+                infoText="Invoice value by Invoice Class, year-to-date. Click a class to set it as the page's active filter; click it again to clear."
                 style={{ minHeight: 380 }}
                 tableColumns={overview.error ? undefined : classificationTableColumns}
                 tableRows={overview.error ? undefined : classificationTableRows}

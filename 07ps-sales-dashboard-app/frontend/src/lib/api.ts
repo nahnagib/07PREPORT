@@ -2070,11 +2070,49 @@ export function fetchPipelineTrendOverview(
   return request(`/pipeline-trend/overview?${buildQuery(anchorDate, filters)}`, token);
 }
 
+/** Mirrors backend/src/measures/pipelineTrend.ts's aging drill-down types. */
+export type AgingCategory = 'opportunities' | 'quotations';
+export type AgingBucketKey = 'b0to30' | 'b30to60' | 'b60to90' | 'b90plus';
+
+export interface AgingDetailRow {
+  /** Opportunity ID, or the quotation's order number. */
+  id: string;
+  /** Opportunity name, or the quotation's order number. */
+  name: string;
+  customer: string | null;
+  salesperson: string | null;
+  date: string | null;
+  ageDays: number;
+  /** Expected revenue (opportunity) or order value (quotation). */
+  value: number;
+  /** CRM stage (opportunity) or Odoo order state (quotation). */
+  status: string | null;
+}
+
+export interface AgingDetails {
+  anchorDate: string;
+  category: AgingCategory;
+  bucket: AgingBucketKey;
+  rows: AgingDetailRow[];
+}
+
+export function fetchPipelineTrendAgingDetails(
+  token: string,
+  anchorDate: string,
+  filters: TachometerFilters,
+  category: AgingCategory,
+  bucket: AgingBucketKey,
+): Promise<AgingDetails> {
+  return request(`/pipeline-trend/aging-details?${buildQuery(anchorDate, filters)}&category=${category}&bucket=${bucket}`, token);
+}
+
 // ---------------------------------------------------------------------------
 // Activity Momentum (backend/src/routes/activityMomentum.ts) -- same 5-dimension filter shape +
 // anchorDate as most other pages.
 // ---------------------------------------------------------------------------
 
+/** Mutually exclusive: totalYtd = active + won + lost + withoutActivity + withoutNextStep +
+ * unclassified (see backend/src/measures/activityMomentum.ts, "MUTUALLY EXCLUSIVE STATUSES"). */
 export interface OpportunityActivityCounts {
   totalYtd: number;
   won: number;
@@ -2082,6 +2120,8 @@ export interface OpportunityActivityCounts {
   active: number;
   lost: number;
   withoutNextStep: number | null;
+  /** Neither open, won nor lost -- part of #YTD only (0 in the live data). */
+  unclassified: number;
 }
 
 export interface ActivityRates {

@@ -330,7 +330,6 @@ export default function ProductLifecyclePage() {
 
           <ChartPanel
             title="Segment Value — Pareto"
-            infoText="Bars = Value YTD by lifecycle segment (sorted desc) · line = Value LYTD · gold line = cumulative %"
             style={{ minHeight: 420 }}
           >
             <ComboChart

@@ -178,35 +178,138 @@ function toAgingBuckets(row: any): AgingBuckets {
   };
 }
 
-async function fetchOpenOpportunityAging(pool: Pool, anchor: Date, filters: Filters): Promise<AgingBuckets> {
+/** The open-record universe behind each aging bar -- shared by the bucket counts and the
+ * drill-down list (fetchAgingDetails), so a clicked bucket always lists exactly the records it
+ * counted. */
+function openOpportunityScope(anchor: Date, filters: Filters) {
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
-  const anchorStr = toDateOnlyString(anchor);
   const window = ytdWindow(anchor);
+  return {
+    where: `fo.IsOpen = 1 AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}`,
+    params: [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params],
+  };
+}
+
+function openQuotationScope(anchor: Date, filters: Filters) {
+  const { clause, params } = buildWhereClause(filters, 'fs');
+  const window = ytdWindow(anchor);
+  return {
+    where: `fs.IsRealQuotation = 1 AND fs.OrderState IN ('draft', 'sent') AND DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${clause}`,
+    params: [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params],
+  };
+}
+
+async function fetchOpenOpportunityAging(pool: Pool, anchor: Date, filters: Filters): Promise<AgingBuckets> {
+  const anchorStr = toDateOnlyString(anchor);
+  const scope = openOpportunityScope(anchor, filters);
   const sql = `
     SELECT ${agingCaseSql('fo.OpportunityCreatedDate')}
     FROM Fact_Opportunity fo
-    WHERE fo.IsOpen = 1 AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+    WHERE ${scope.where}
   `;
-  const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, ...scope.params]);
   return toAgingBuckets((rows as any[])[0]);
 }
 
 async function fetchOpenQuotationAging(pool: Pool, anchor: Date, filters: Filters): Promise<AgingBuckets> {
-  const { clause, params } = buildWhereClause(filters, 'fs');
   const anchorStr = toDateOnlyString(anchor);
-  const window = ytdWindow(anchor);
+  const scope = openQuotationScope(anchor, filters);
   const sql = `
     SELECT ${agingCaseSql('fs.QuotationDate')}
     FROM Fact_Sales fs
-    WHERE fs.IsRealQuotation = 1 AND fs.OrderState IN ('draft', 'sent') AND DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${clause}
+    WHERE ${scope.where}
   `;
-  const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, ...scope.params]);
   return toAgingBuckets((rows as any[])[0]);
 }
 
 export interface AgingDistribution {
   opportunities: AgingBuckets;
   quotations: AgingBuckets;
+}
+
+// ---------------------------------------------------------------------------
+// Aging drill-down -- the open opportunities / quotations behind one bucket of one bar, with their
+// customer and salesperson names.
+// ---------------------------------------------------------------------------
+
+export const AGING_CATEGORIES = ['opportunities', 'quotations'] as const;
+export type AgingCategory = (typeof AGING_CATEGORIES)[number];
+export const AGING_BUCKET_KEYS = ['b0to30', 'b30to60', 'b60to90', 'b90plus'] as const;
+export type AgingBucketKey = (typeof AGING_BUCKET_KEYS)[number];
+
+/** Same day ranges as agingCaseSql (one `?` = the anchor date). */
+function agingBucketCondition(bucket: AgingBucketKey, dateColumn: string): string {
+  switch (bucket) {
+    case 'b0to30':
+      return `DATEDIFF(?, ${dateColumn}) BETWEEN 0 AND 30`;
+    case 'b30to60':
+      return `DATEDIFF(?, ${dateColumn}) BETWEEN 31 AND 60`;
+    case 'b60to90':
+      return `DATEDIFF(?, ${dateColumn}) BETWEEN 61 AND 90`;
+    case 'b90plus':
+      return `DATEDIFF(?, ${dateColumn}) > 90`;
+  }
+}
+
+export interface AgingDetailRow {
+  /** Opportunity ID, or the quotation's order number. */
+  id: string;
+  /** Opportunity name, or the quotation's order number. */
+  name: string;
+  customer: string | null;
+  salesperson: string | null;
+  /** Opportunity created date / quotation date (YYYY-MM-DD). */
+  date: string | null;
+  ageDays: number;
+  /** Expected revenue (opportunity) or order value (quotation). */
+  value: number;
+  /** CRM stage (opportunity) or Odoo order state (quotation). */
+  status: string | null;
+}
+
+export async function fetchAgingDetails(
+  pool: Pool,
+  anchor: Date,
+  filters: Filters,
+  category: AgingCategory,
+  bucket: AgingBucketKey,
+): Promise<AgingDetailRow[]> {
+  const anchorStr = toDateOnlyString(anchor);
+  const isOpp = category === 'opportunities';
+  const scope = isOpp ? openOpportunityScope(anchor, filters) : openQuotationScope(anchor, filters);
+  const sql = isOpp
+    ? `
+    SELECT fo.OpportunityID AS id, fo.OpportunityName AS name, fo.Customer AS customer,
+           COALESCE(sap.admin_name_override, fo.Salesperson) AS salesperson,
+           DATE_FORMAT(fo.OpportunityCreatedDate, '%Y-%m-%d') AS docDate, DATEDIFF(?, fo.OpportunityCreatedDate) AS ageDays,
+           fo.ExpectedRevenue AS value, fo.Stage AS status
+    FROM Fact_Opportunity fo
+    LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
+    WHERE ${scope.where} AND ${agingBucketCondition(bucket, 'fo.OpportunityCreatedDate')}
+    ORDER BY ageDays DESC, fo.OpportunityID
+  `
+    : `
+    SELECT fs.OrderNumber AS id, fs.OrderNumber AS name, fs.Customer AS customer,
+           COALESCE(sap.admin_name_override, fs.Salesperson) AS salesperson,
+           DATE_FORMAT(fs.QuotationDate, '%Y-%m-%d') AS docDate, DATEDIFF(?, fs.QuotationDate) AS ageDays,
+           fs.OrderValue AS value, fs.OrderState AS status
+    FROM Fact_Sales fs
+    LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
+    WHERE ${scope.where} AND ${agingBucketCondition(bucket, 'fs.QuotationDate')}
+    ORDER BY ageDays DESC, fs.OrderNumber
+  `;
+  const [rows] = await pool.query(sql, [anchorStr, ...scope.params, anchorStr]);
+  return (rows as any[]).map((r) => ({
+    id: String(r.id ?? ''),
+    name: String(r.name ?? ''),
+    customer: r.customer ?? null,
+    salesperson: r.salesperson ?? null,
+    date: r.docDate ?? null,
+    ageDays: Number(r.ageDays ?? 0),
+    value: Number(r.value ?? 0),
+    status: r.status ?? null,
+  }));
 }
 
 export async function computeAgingDistribution(pool: Pool, anchor: Date, filters: Filters): Promise<AgingDistribution> {

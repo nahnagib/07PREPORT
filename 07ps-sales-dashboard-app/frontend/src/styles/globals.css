@@ -282,18 +282,16 @@ input:not([type]), input[type='text'], input[type='search'],
    Missing Value / Missing Days view. Logical properties (inline-start/end) so RTL mirrors.
    --------------------------------------------------------------------------- */
 .ps-cn-hero {
-  display: grid;
-  grid-template-columns: minmax(220px, auto) 1fr;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--ps-space-4, 24px);
+  text-align: center;
+  gap: var(--ps-space-2, 8px);
 }
 .ps-cn-hero-desc {
-  border-inline-start: 1px solid var(--ps-color-border);
-  padding-inline-start: var(--ps-space-4, 24px);
-}
-@media (max-width: 767px) {
-  .ps-cn-hero { grid-template-columns: 1fr; gap: var(--ps-space-2, 8px); }
-  .ps-cn-hero-desc { border-inline-start: none; padding-inline-start: 0; border-top: 1px solid var(--ps-color-border); padding-top: var(--ps-space-2, 8px); }
+  max-width: 720px;
+  border-top: 1px solid var(--ps-color-border);
+  padding-top: var(--ps-space-2, 8px);
 }
 
 .ps-cn-expandable { cursor: zoom-in; border-radius: 8px; }

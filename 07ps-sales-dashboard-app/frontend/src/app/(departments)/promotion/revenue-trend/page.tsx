@@ -290,6 +290,7 @@ export default function RevenueTrendPage() {
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
+          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
@@ -313,7 +314,6 @@ export default function RevenueTrendPage() {
           >
             <ChartPanel<TrendTableRow>
               title="MoM Value"
-              infoText="Monthly Actual vs Y-1 vs Target value."
               style={{ minHeight: 360 }}
               tableColumns={overview.error ? undefined : trendTableColumns}
               tableRows={overview.error ? undefined : valueTableRows}
@@ -347,7 +347,6 @@ export default function RevenueTrendPage() {
 
             <ChartPanel<TrendTableRow>
               title="MoM Volume"
-              infoText="Monthly Actual vs Y-1 vs Target volume."
               style={{ minHeight: 360 }}
               tableColumns={overview.error ? undefined : trendTableColumns}
               tableRows={overview.error ? undefined : volumeTableRows}
@@ -381,7 +380,6 @@ export default function RevenueTrendPage() {
 
             <ChartPanel<TrendTableRow>
               title="MoM ASP"
-              infoText="Monthly Average Selling Price: Actual vs Y-1 vs Target."
               style={{ minHeight: 360 }}
               tableColumns={overview.error ? undefined : trendTableColumns}
               tableRows={overview.error ? undefined : aspTableRows}

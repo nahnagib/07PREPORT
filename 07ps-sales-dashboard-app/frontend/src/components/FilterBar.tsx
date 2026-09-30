@@ -4,6 +4,7 @@ import { SlidersHorizontal, ChevronDown, RotateCcw } from 'lucide-react';
 import { Select, DateInput, type SelectOption } from '@07ps/ui';
 import type { DimOption, TachometerFilters } from '../lib/api';
 import { formatTimestamp } from '../lib/format';
+import { useAuth } from '../lib/AuthProvider';
 import { useFilterState, useScopedFilterOptions } from './FilterProvider';
 
 /** Same UTC-based "today" FilterProvider's own default/clamp logic uses, so the To Date picker's
@@ -36,6 +37,9 @@ export interface FilterBarProps {
    * lastUpdate above (date_order, the order/confirmation date). Optional so callers that haven't
    * wired refreshStatus.lastOrderCreated through yet just don't render this field. */
   lastOrderCreated?: string | null;
+  /** Last successful ETL refresh. Non-admin users see only this timestamp in place of Last Order
+   * Date / Last Order Created (those are data-validation figures, shown to admins only). */
+  lastRefreshTime?: string | null;
   dateFromDate?: string;
   dateToDate?: string;
   onDateRangeChange?: (from: string, to: string) => void;
@@ -128,6 +132,7 @@ export function FilterBar({
   isSalesperson = false,
   lastUpdate = null,
   lastOrderCreated,
+  lastRefreshTime = null,
   dateFromDate = anchorDate,
   dateToDate = anchorDate,
   onDateRangeChange,
@@ -144,6 +149,7 @@ export function FilterBar({
   onReset,
   isPristine,
 }: FilterBarProps) {
+  const { isAdmin } = useAuth();
   // Options are cross-filtered by the server (FilterProvider owns the single /filters/options
   // request): every list below only ever holds values that are valid together with the current
   // selection. `loading` is true during any refetch, but the previous options stay on screen, so a
@@ -414,9 +420,9 @@ export function FilterBar({
               whiteSpace: 'nowrap',
             }}
           >
-            Last Order Date: {formatTimestamp(lastUpdate)}
+            {isAdmin ? `Last Order Date: ${formatTimestamp(lastUpdate)}` : `Last Refresh Time: ${formatTimestamp(lastRefreshTime)}`}
           </div>
-          {lastOrderCreated !== undefined ? (
+          {isAdmin && lastOrderCreated !== undefined ? (
             <div
               style={{
                 display: 'flex',

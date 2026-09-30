@@ -32,6 +32,7 @@ import {
   fetchInvoicesEngineOverview,
   fetchActivityMomentumOverview,
   fetchPipelineHealthOverview,
+  fetchPipelineTrendAgingDetails,
   fetchPipelineTrendOverview,
   fetchRefreshStatus,
   fetchRevenueTrendOverview,
@@ -42,6 +43,9 @@ import {
   ActivityMomentumOverview,
   PipelineHealthOverview,
   PipelineTrendOverview,
+  type AgingBucketKey,
+  type AgingCategory,
+  type AgingDetails,
 } from './api';
 
 interface AsyncState<T> {
@@ -521,6 +525,42 @@ export function usePipelineHealthOverview(
 
 /** Pipeline Trend KPI overview (backend's /pipeline-trend/overview endpoint). Same
  * authGate/makeRetry template as every other overview hook; no scope param -- read-only page. */
+/** Pipeline Trend aging drill-down: the records behind one clicked bucket. Idle (no request) while
+ * `selection` is null. */
+export function usePipelineTrendAgingDetails(
+  token: string | null,
+  anchorDate: string,
+  filters: TachometerFilters,
+  selection: { category: AgingCategory; bucket: AgingBucketKey } | null,
+  authError: string | null,
+  retryAuth: () => void,
+) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
+  const [state, setState] = useState<AsyncState<AgingDetails>>({ data: null, loading: false, error: null });
+
+  const load = useCallback(() => {
+    if (!selection) {
+      latest.begin();
+      setState({ data: null, loading: false, error: null });
+      return;
+    }
+    if (authGate(token, authError, setState)) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
+    fetchPipelineTrendAgingDetails(token as string, anchorDate, filters, selection.category, selection.bucket)
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters), selection?.category, selection?.bucket]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
 export function usePipelineTrendOverview(
   token: string | null,
   anchorDate: string,

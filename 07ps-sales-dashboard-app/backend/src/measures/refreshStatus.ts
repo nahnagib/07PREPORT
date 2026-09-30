@@ -314,3 +314,28 @@ export async function fetchRefreshStatus(pool: Pool): Promise<RefreshStatus> {
     displayTimezone: getAppTimezone(),
   };
 }
+
+/**
+ * What a non-admin may see of the refresh status. Last Update (newest order date), Last Order
+ * Created and the refresh check's order-level figures are data-validation detail for admins; a
+ * normal user gets only Last Refresh Time plus the stale / inconsistent flags (so the warning
+ * banners still show), with a plain-language message instead of the admin diagnostics.
+ */
+export function redactRefreshStatusForNonAdmin(status: RefreshStatus): RefreshStatus {
+  const { refreshCheck } = status;
+  return {
+    ...status,
+    lastUpdate: null,
+    lastOrderCreated: null,
+    refreshCheck: {
+      ...refreshCheck,
+      latestLoadedOrderUtc: null,
+      watermarkOrderCreatedUtc: null,
+      differenceMinutes: null,
+      message: refreshCheck.inconsistent
+        ? 'The last data refresh could not be verified, so figures may be out of date. Please contact an administrator.'
+        : 'Data refresh status is normal.',
+      action: null,
+    },
+  };
+}

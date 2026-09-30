@@ -1,6 +1,6 @@
 'use client';
-import React, { useState } from 'react';
-import { FileDown } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { FileDown, X } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
@@ -11,6 +11,8 @@ import {
   Card,
   ChartPanel,
   ComboChart,
+  DataGrid,
+  type DataGridColumn,
   StackedPercentBarChart,
   PerformanceReportTable,
   LoadingSkeleton,
@@ -22,8 +24,16 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { usePipelineTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
-import type { AgingBuckets, AgingDistribution, MonthComparisonPoint, QuotationRates } from '../../../../lib/api';
+import { usePipelineTrendAgingDetails, usePipelineTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
+import type {
+  AgingBucketKey,
+  AgingBuckets,
+  AgingCategory,
+  AgingDetailRow,
+  AgingDistribution,
+  MonthComparisonPoint,
+  QuotationRates,
+} from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
 
 function formatMillions(value: number): string {
@@ -69,6 +79,25 @@ const AGING_SEGMENTS = [
   { key: 'b60to90', name: '60-90 days', color: 'var(--ps-color-alert)' },
   { key: 'b90plus', name: '90+ days', color: 'var(--ps-neutral-charcoal)' },
 ];
+
+/** Aging bar label -> drill-down category (the two bars are built from these labels below). */
+const AGING_CATEGORY_BY_LABEL: Record<string, AgingCategory> = { Opportunities: 'opportunities', Quotations: 'quotations' };
+const AGING_CATEGORY_LABEL: Record<AgingCategory, string> = { opportunities: 'Opportunities', quotations: 'Quotations' };
+
+type AgingSelection = { category: AgingCategory; bucket: AgingBucketKey };
+
+function agingDetailColumns(category: AgingCategory): DataGridColumn<AgingDetailRow & Record<string, unknown>>[] {
+  const isOpp = category === 'opportunities';
+  return [
+    { key: 'name', header: isOpp ? 'Opportunity' : 'Quotation', width: 220 },
+    { key: 'customer', header: 'Customer', width: 200, rawValue: (r) => r.customer ?? '—' },
+    { key: 'salesperson', header: 'Salesperson', width: 160, rawValue: (r) => r.salesperson ?? '—' },
+    { key: 'date', header: isOpp ? 'Created' : 'Quotation Date', width: 120, rawValue: (r) => r.date ?? '—' },
+    { key: 'ageDays', header: 'Age (days)', align: 'right', width: 100 },
+    { key: 'value', header: isOpp ? 'Expected Value' : 'Value', align: 'right', width: 140, render: (r) => formatCurrency(r.value) },
+    { key: 'status', header: isOpp ? 'Stage' : 'Status', width: 130, rawValue: (r) => r.status ?? '—' },
+  ];
+}
 
 const MONTH_CHART_BARS = [
   { key: 'countYtd', name: '#YTD', color: 'var(--ps-color-accent)' },
@@ -289,8 +318,9 @@ function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => vo
 }
 
 /**
- * Pipeline Trend page (Sales, Level 3) -- seventh live Sales page, read-only per spec (no
- * drill-down/click-filter interactions). Same architecture as every other page. All figures come
+ * Pipeline Trend page (Sales, Level 3) -- seventh live Sales page. Its one interaction is the aging
+ * drill-down: clicking a bucket of the Opportunities / Quotations aging bar lists the open records
+ * behind it (names, customer, salesperson). Same architecture as every other page. All figures come
  * from backend/src/measures/pipelineTrend.ts, including an empirically-resolved Win Rate
  * definition (Fact_Sales.IsWonQuotation is always 0 live -- see that file's header comment for
  * what's used instead).
@@ -311,6 +341,20 @@ export default function PipelineTrendPage() {
   const overview = usePipelineTrendOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
+  const [agingSelection, setAgingSelection] = useState<AgingSelection | null>(null);
+  const agingDetails = usePipelineTrendAgingDetails(token, anchorDate, effectiveFilters, agingSelection, authError, retryAuth);
+  const agingDrillRef = useRef<HTMLDivElement>(null);
+
+  // Bring the drill-down into view when a bucket is clicked (it renders below both chart columns).
+  useEffect(() => {
+    if (agingSelection) agingDrillRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [agingSelection]);
+
+  function handleAgingSegmentClick(label: string, segmentKey: string) {
+    const category = AGING_CATEGORY_BY_LABEL[label];
+    if (!category || !AGING_SEGMENTS.some((s) => s.key === segmentKey)) return;
+    setAgingSelection({ category, bucket: segmentKey as AgingBucketKey });
+  }
 
   async function handleDownloadTablePdf<T extends Record<string, unknown>>(key: string, title: string, columns: Column<T>[], rows: T[]) {
     setDownloadingPdf(key);
@@ -369,6 +413,7 @@ export default function PipelineTrendPage() {
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
+          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
@@ -421,7 +466,7 @@ export default function PipelineTrendPage() {
 
               <ChartPanel<AgingTableRow>
                 title="Open Opportunities & Quotations by Aging"
-                infoText="Open Opportunities and open Quotations, each as a 100%-stacked bar by age bucket. A healthy pipeline concentrates in 0-30 days with low 90+."
+                infoText="Open Opportunities and open Quotations, each as a 100%-stacked bar by age bucket. A healthy pipeline concentrates in 0-30 days with low 90+. Click a bucket to list the opportunities or quotations in it, with customer and salesperson."
                 style={{ minHeight: 340, flex: '1 1 auto', height: 'auto' }}
                 tableColumns={overview.error ? undefined : agingTableColumns}
                 tableRows={overview.error ? undefined : agingTableRows}
@@ -447,6 +492,7 @@ export default function PipelineTrendPage() {
                     points={agingPoints}
                     segments={AGING_SEGMENTS}
                     orientation="horizontal"
+                    onSegmentClick={handleAgingSegmentClick}
                   />
                 )}
               </ChartPanel>
@@ -485,6 +531,18 @@ export default function PipelineTrendPage() {
               />
             </div>
 
+            {/* Aging drill-down: full page width, under both chart columns. */}
+            {agingSelection && data && (
+              <div ref={agingDrillRef} style={{ gridColumn: '1 / -1', minWidth: 0, scrollMarginTop: 16 }}>
+                <AgingDrillPanel
+                  selection={agingSelection}
+                  expectedCount={data.aging[agingSelection.category][agingSelection.bucket]}
+                  details={agingDetails}
+                  onClose={() => setAgingSelection(null)}
+                />
+              </div>
+            )}
+
             {/* Spans both grid columns so the table is full page width instead of landing in the
                 left column under the Rates/Aging panels. minWidth 0 lets its own overflowX scroll
                 kick in on narrow screens rather than stretching the grid. */}
@@ -510,6 +568,61 @@ export default function PipelineTrendPage() {
         <BottomNavBar active="Pipeline Trend" />
       </div>
     </PermissionGuard>
+  );
+}
+
+/** The records behind one clicked aging bucket, as a sortable / filterable / exportable table. */
+function AgingDrillPanel({
+  selection,
+  expectedCount,
+  details,
+  onClose,
+}: {
+  selection: AgingSelection;
+  /** The bucket's count from the chart -- the list is built from the same query conditions, so its
+   * length should always match. */
+  expectedCount: number;
+  details: ReturnType<typeof usePipelineTrendAgingDetails>;
+  onClose: () => void;
+}) {
+  const bucketName = AGING_SEGMENTS.find((s) => s.key === selection.bucket)?.name ?? selection.bucket;
+  const categoryName = AGING_CATEGORY_LABEL[selection.category];
+  const rows = (details.data?.rows ?? []) as (AgingDetailRow & Record<string, unknown>)[];
+  return (
+    <ChartPanel
+      title={`Open ${categoryName} — ${bucketName}`}
+      style={{ minHeight: 240 }}
+      headerActions={
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close drill-down"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ps-color-muted-text)', display: 'flex' }}
+        >
+          <X size={18} />
+        </button>
+      }
+    >
+      {details.loading ? (
+        <LoadingSkeleton variant="chart" />
+      ) : details.error ? (
+        <ErrorState message={details.error} onRetry={details.retry} />
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>
+            {rows.length.toLocaleString(DISPLAY_LOCALE)} open {categoryName.toLowerCase()} aged {bucketName}, oldest first.
+            {rows.length !== expectedCount && ` (The chart counted ${expectedCount.toLocaleString(DISPLAY_LOCALE)} -- data may have refreshed since; reload the page.)`}
+          </div>
+          <DataGrid
+            columns={agingDetailColumns(selection.category)}
+            rows={rows}
+            getRowId={(row) => row.id}
+            fileName={`aging-${selection.category}-${selection.bucket}`}
+            pageSize={25}
+          />
+        </>
+      )}
+    </ChartPanel>
   );
 }
 

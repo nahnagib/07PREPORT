@@ -569,6 +569,7 @@ export default function CustomerGrowthPage() {
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
+          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
@@ -711,22 +712,19 @@ export default function CustomerGrowthPage() {
               <div className="ps-invoices-zone">
                 <ChartPanel<ContributionTableRow>
                   title="Customers Contribution"
-                  infoText="Share of total sales value contributed by the Top 10 customers vs. every other customer, year-to-date."
+                  infoText="Share of total sales value contributed by the Top 10 customers vs. every other customer, year-to-date. Click Top 10 or Other to see that group's customers."
                   style={{ minHeight: 380 }}
                   tableColumns={overview.error ? undefined : contributionTableColumns}
                   tableRows={overview.error ? undefined : contributionTableRows}
                   getRowId={(row) => row.id}
                   headerActions={
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <DrillIndicator hint="Click Top 10 or Other to drill into that group's customers" />
-                      {!overview.error && (
-                        <ExportPdfButton
-                          downloading={downloadingPdf === 'contribution'}
-                          disabled={contributionTableRows.length === 0}
-                          onClick={() => handleDownloadTablePdf('contribution', 'Customers Contribution', contributionTableColumns, contributionTableRows)}
-                        />
-                      )}
-                    </div>
+                    !overview.error && (
+                      <ExportPdfButton
+                        downloading={downloadingPdf === 'contribution'}
+                        disabled={contributionTableRows.length === 0}
+                        onClick={() => handleDownloadTablePdf('contribution', 'Customers Contribution', contributionTableColumns, contributionTableRows)}
+                      />
+                    )
                   }
                 >
                   {overview.loading ? (
@@ -1093,9 +1091,12 @@ function CustomerStatusPanel({
           ) : (
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Customer Status</span>
           )}
-          <span title={CUSTOMER_STATUS_INFO} aria-label={CUSTOMER_STATUS_INFO} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
-            <Info size={13} />
-          </span>
+          {/* "i" marks an interactive visual: only when the title opens the customer drill-down. */}
+          {onTitleClick && (
+            <span title={CUSTOMER_STATUS_INFO} aria-label={CUSTOMER_STATUS_INFO} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
+              <Info size={13} />
+            </span>
+          )}
         </div>
         {onDownloadPdf && (
           <ExportPdfButton downloading={!!downloading} disabled={!counts} onClick={onDownloadPdf} />
@@ -1187,38 +1188,5 @@ function DrillToggle({ active, onToggle }: { active: boolean; onToggle: () => vo
       <Layers size={12} />
       Drill-down
     </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Customers Contribution donut's drill-down affordance -- same icon/label/sizing as DrillToggle
-// above, but a static indicator rather than a mode toggle: the donut drills straight into Top 10 /
-// Other on click already, with no separate enable-drill-mode step, so there's no on/off state for
-// a button to control. This just signals the chart is clickable, matching Sales Trend's pattern.
-// ---------------------------------------------------------------------------
-
-function DrillIndicator({ hint }: { hint: string }) {
-  return (
-    <span
-      title={hint}
-      aria-label={hint}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 5,
-        fontSize: 11,
-        fontWeight: 600,
-        padding: '4px 9px',
-        borderRadius: 6,
-        border: '1px solid var(--ps-color-border)',
-        background: 'var(--ps-color-muted-bg)',
-        color: 'var(--ps-color-muted-text)',
-        cursor: 'help',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      <Layers size={12} />
-      Drill-down
-    </span>
   );
 }

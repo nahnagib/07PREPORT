@@ -47,6 +47,9 @@ export interface DonutChartProps {
    * percentages. Opt-in -- defaults to false so every existing caller's ring stays exactly as
    * before. */
   showPercentLabels?: boolean;
+  /** Set false to hide the "Export image" button for this chart (e.g. Critical Number page's
+   * Daily/Monthly/Yearly counters). Defaults to true, so every existing caller is unaffected. */
+  showExportButton?: boolean;
 }
 
 function defaultFormatter(v: number): string {
@@ -97,11 +100,12 @@ export function DonutChart({
   centerLabel,
   centerSubLabel,
   showPercentLabels = false,
+  showExportButton = true,
 }: DonutChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const total = segments.reduce((sum, s) => sum + s.value, 0);
 
-  const canExport = useCanExport();
+  const canExport = useCanExport() && showExportButton;
   const handleExportImage = () => {
     exportSvgAsImage(containerRef.current, (title ?? 'donut-chart').replace(/\s+/g, '-').toLowerCase());
   };
@@ -112,6 +116,7 @@ export function DonutChart({
 
   return (
     <div style={{ width: '100%' }}>
+      {(showTitle || canExport) && (
       <div
         style={{
           display: 'flex',
@@ -140,6 +145,7 @@ export function DonutChart({
         </button>
         )}
       </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--ps-space-2, 8px)' }}>
         <div ref={containerRef} style={{ width: '100%', position: 'relative' }}>
