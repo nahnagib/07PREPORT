@@ -289,3 +289,15 @@ def test_import_warns_on_shared_name_attribute_conflicts_and_near_duplicates(tmp
     assert any("'Cemair' has different Category" in w and "row 2 Majaal" in w and "row 3 Tika" in w for w in warnings)
     assert any("Probably the same product" in w and "Cross Spacer 5mm" in w and "Cross Spacer 5 mm" in w for w in warnings)
     assert len(warnings) == 2
+
+
+def test_product_ratio_columns_are_stored_as_decimal_not_float() -> None:
+    """MySQL FLOAT keeps ~7 significant digits: DaysOfInventory 12857.142857 came back as 12857.1 and failed the
+    SQL/DataFrame mirror validation of Dim_ProductDashboard / Dim_ProductDashboardGroup in production."""
+    from sqlalchemy.dialects import mysql
+
+    from sales_pipeline.export.database_exporter import DatabaseExporter
+
+    for name in ["AvgDailySales", "DaysOfInventory"]:
+        dtype = DatabaseExporter._mysql_dtype_for_column(name, pd.Series([12857.142857, 1.077778]))
+        assert isinstance(dtype, mysql.DECIMAL), name

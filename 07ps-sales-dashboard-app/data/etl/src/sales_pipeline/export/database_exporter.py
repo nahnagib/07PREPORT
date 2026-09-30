@@ -1685,7 +1685,8 @@ class DatabaseExporter:
     @staticmethod
     def _is_decimal_column(column_name: str) -> bool:
         name = column_name.lower()
-        if name in {"doh", "avg_daily_sales"}:
+        # Product pages: MySQL FLOAT keeps ~7 significant digits, which fails the SQL/DataFrame mirror check.
+        if name in {"doh", "avg_daily_sales", "avgdailysales", "daysofinventory"}:
             return True
         if name in {"quotationtosalesorderhours", "quotationagehours"}:
             return True
