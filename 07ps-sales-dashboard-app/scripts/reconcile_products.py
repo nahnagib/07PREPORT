@@ -120,24 +120,26 @@ def odoo_client():
     return _ODOO
 
 
-def odoo_stock(company: str, product_ids: list[int]) -> tuple[float, float]:
-    """Finished-goods on hand (qty, value) in Odoo for one company, same location rules as the pages."""
+def odoo_stock(company: str, product_ids: list[int]) -> tuple[float, float, str]:
+    """Finished-goods on hand (qty, value, latest quant write_date UTC) in Odoo for one company, same
+    location rules as the pages."""
     cid = ODOO_COMPANY_ID[company]
     ctx = {"allowed_company_ids": [cid]}
     quants = odoo_client().execute_kw(
         "stock.quant", "search_read",
         [[["product_id", "in", product_ids], ["company_id", "=", cid], ["location_id.usage", "=", "internal"],
           ["location_id.scrap_location", "=", False]]],
-        {"fields": ["quantity", "value", "warehouse_id", "location_id"], "context": ctx},
+        {"fields": ["quantity", "value", "warehouse_id", "location_id", "write_date"], "context": ctx},
     )
     qty = value = 0.0
+    latest = max((str(q.get("write_date") or "") for q in quants), default="")
     for q in quants:
         wh = (q["warehouse_id"][1] if q.get("warehouse_id") else str(q["location_id"][1]).split("/")[0]).strip().upper()
         if wh in RAW_MATERIALS or wh in IN_TRANSIT or float(q["quantity"] or 0) <= 0:
             continue
         qty += float(q["quantity"] or 0)
         value += float(q["value"] or 0)
-    return qty, value
+    return qty, value, latest
 
 
 def odoo_cost(company: str, product_ids: list[int]) -> set[float]:
@@ -295,7 +297,12 @@ def main() -> int:
 
     # 5. stock and cost vs Odoo for the same 10 products
     if args.odoo:
-        print("\n5) Stock on hand and unit cost vs live Odoo (same 10 products)")
+        # Stock is a snapshot taken when the last successful ETL run started; a quant Odoo changed after that
+        # is reported as "moved since snapshot", not as a mismatch.
+        cur.execute("SELECT MAX(started_at) FROM etl_job_runs WHERE status='success'")
+        snap_local = cur.fetchone()[0]
+        snap_utc = (snap_local - dt.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S") if snap_local else ""
+        print(f"\n5) Stock on hand and unit cost vs live Odoo (same 10 products); stock snapshot = run start {snap_local} (UTC {snap_utc})")
         print(f"{'product':<40} {'qty api':>12} {'qty odoo':>12} {'value api':>14} {'value odoo':>14} {'cost used':>11} {'odoo cost':>11}  ok")
         for key in top + sample:
             a = by_key.get(key)
@@ -304,21 +311,24 @@ def main() -> int:
             company = a["company"]
             cur.execute("SELECT DISTINCT OdooProductID FROM fact_saleslines WHERE ProductMatchKey=%s AND OdooProductID IS NOT NULL", (key,))
             ids = [int(r[0]) for r in cur.fetchall()]
-            o_qty, o_val = odoo_stock(company, ids) if ids else (0.0, 0.0)
+            o_qty, o_val, o_latest = odoo_stock(company, ids) if ids else (0.0, 0.0, "")
             cur.execute("SELECT SUM(CostValue), SUM(CostedQty), SUM(UncostedQty) FROM fact_productsalesdaily WHERE ProductMatchKey=%s AND OrderDate BETWEEN %s AND %s",
                         (key, period["from"], period["to"]))
             cv, cq, uq = cur.fetchone()
             used = round(float(cv) / float(cq), 4) if cq else None
             o_costs = odoo_cost(company, ids) if ids else set()
-            ok = round(a["stockQty"], 3) == round(o_qty, 3) and round(a["stockValue"], 2) == round(o_val, 2)
-            cost_ok = (used is None and o_costs <= {0.0}) or (used is not None and o_costs == {used})
-            ok &= cost_ok
+            # value: half a cent (Odoo quant values carry 3 decimals); cost: the 4 decimals shown
+            stock_ok = round(a["stockQty"], 3) == round(o_qty, 3) and abs(a["stockValue"] - o_val) < 0.005 + 1e-9
+            cost_ok = (used is None and o_costs <= {0.0}) or (used is not None and len(o_costs) == 1 and abs(next(iter(o_costs)) - used) <= 0.0001 + 1e-9)
+            moved = bool(snap_utc) and o_latest > snap_utc
+            ok = cost_ok and (stock_ok or moved)
             name = f"{company}: {a['productName']}"[:40]
             print(f"{name:<40} {a['stockQty']:>12,.3f} {o_qty:>12,.3f} {a['stockValue']:>14,.2f} {o_val:>14,.2f} "
-                  f"{('-' if used is None else f'{used:,.4f}'):>11} {','.join(f'{c:,.4f}' for c in sorted(o_costs)) or '-':>11}  {'OK' if ok else 'MISMATCH'}")
+                  f"{('-' if used is None else f'{used:,.4f}'):>11} {','.join(f'{c:,.4f}' for c in sorted(o_costs)) or '-':>11}  {'OK' if ok and stock_ok else ('moved since snapshot (quant written ' + o_latest + ' UTC)' if ok else 'MISMATCH')}")
             if not ok:
                 failures.append(f"{key}: stock/cost mismatch")
 
+    sys.stdout.reconfigure(encoding="utf-8")
     print("\nRESULT:", "ALL CHECKS PASSED" if not failures else f"{len(failures)} FAILURE(S): " + "; ".join(failures))
     return 0 if not failures else 1
 
