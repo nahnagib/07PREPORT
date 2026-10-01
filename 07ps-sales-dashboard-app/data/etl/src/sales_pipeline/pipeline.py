@@ -274,6 +274,7 @@ class PowerBISalesPipeline:
                     api_key=self.settings.odoo_api_key,
                     timeout_seconds=self.settings.rpc_timeout_seconds,
                     max_retries=self.settings.max_retries,
+                    connect_retry_window_seconds=self.settings.odoo_connect_retry_window_seconds,
                 )
                 client.authenticate()
 

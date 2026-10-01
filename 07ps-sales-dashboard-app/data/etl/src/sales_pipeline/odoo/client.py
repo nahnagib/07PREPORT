@@ -20,6 +20,12 @@ class OdooClient:
     api_key: str
     timeout_seconds: int = 60
     max_retries: int = 5
+    # Run start (authenticate): keep retrying network/DNS failures with exponential backoff for up to this
+    # many seconds, so a short outage (e.g. "Name or service not known" for the Odoo host) does not lose the
+    # run. Odoo's own answers (bad credentials, RPC faults) are never retried. 0 = max_retries attempts only.
+    connect_retry_window_seconds: float = 900.0
+    connect_backoff_initial_seconds: float = 5.0
+    connect_backoff_max_seconds: float = 120.0
 
     def __post_init__(self) -> None:
         self.url = self.url.rstrip("/")
@@ -32,31 +38,51 @@ class OdooClient:
 
     def authenticate(self) -> int:
         last_exc: Exception | None = None
-        for attempt in range(1, self.max_retries + 1):
+        started = time.monotonic()
+        deadline = started + max(0.0, float(self.connect_retry_window_seconds))
+        delay = max(0.0, float(self.connect_backoff_initial_seconds))
+        attempt = 0
+        uid: Any = None
+        connected = False
+        while True:
+            attempt += 1
             try:
                 uid = self._common.authenticate(self.db, self.username, self.api_key, {})
+                connected = True
                 break
             except (OSError, TimeoutError, xmlrpc.client.ProtocolError) as exc:
+                # Network-level only: DNS (socket.gaierror), refused/reset connections, timeouts, HTTP errors.
                 last_exc = exc
+                now = time.monotonic()
+                within_window = now + delay <= deadline
+                within_attempts = attempt < self.max_retries
+                if not (within_window or within_attempts):
+                    break
+                wait_s = delay if within_window else min(30.0, 2.0 * attempt)
                 self._logger.warning(
-                    "Odoo authentication network request failed on attempt %s/%s for %s: %s",
+                    "Odoo authentication network request failed on attempt %s for %s (%s); retrying in %.0fs "
+                    "(retry window %.0fs, %.0fs elapsed)",
                     attempt,
-                    self.max_retries,
                     self.url,
                     exc,
+                    wait_s,
+                    self.connect_retry_window_seconds,
+                    now - started,
                 )
-                if attempt < self.max_retries:
-                    time.sleep(min(30, 2 * attempt))
+                time.sleep(wait_s)
+                delay = min(float(self.connect_backoff_max_seconds), max(delay, 1.0) * 2)
             except xmlrpc.client.Fault as exc:
                 raise OdooApiError(f"Odoo authentication RPC fault: {exc.faultString}") from exc
             except Exception as exc:  # noqa: BLE001
                 raise OdooApiError(f"Odoo authentication request failed: {exc}") from exc
-        else:
+        if not connected:
             raise OdooApiError(
                 "Odoo authentication request failed after "
-                f"{self.max_retries} attempt(s) for {self.url}: {last_exc}. "
+                f"{attempt} attempt(s) over {time.monotonic() - started:.0f}s for {self.url}: {last_exc}. "
                 "Check internet/DNS/VPN/firewall connectivity and ODOO_URL in .env."
             ) from last_exc
+        if attempt > 1:
+            self._logger.info("Odoo authentication succeeded on attempt %s after %.0fs", attempt, time.monotonic() - started)
         if not uid:
             raise OdooApiError("Odoo authentication failed. Check ODOO_DB, ODOO_USER, and ODOO_API_KEY.")
         self.uid = int(uid)

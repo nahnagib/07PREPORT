@@ -44,6 +44,7 @@ def test_odoo_authenticate_reports_dns_connectivity_failure(monkeypatch) -> None
         username="user",
         api_key="key",
         max_retries=2,
+        connect_retry_window_seconds=0,  # attempt limit only (the retry window is covered in test_odoo_client_retry.py)
     )
     client._common = _FlakyCommon(failures=99)
 

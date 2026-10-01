@@ -46,6 +46,7 @@ class Settings:
     incremental_overlap_days: int = 7
     rpc_timeout_seconds: int = 60
     max_retries: int = 5
+    odoo_connect_retry_window_seconds: float = 900.0
     include_uninvoiced_sales_lines: bool = False
     force_sales_full_refresh: bool = False
     # Session time_zone applied to every MySQL connection this pipeline opens (DB_SESSION_TIMEZONE).
@@ -127,6 +128,7 @@ class Settings:
             incremental_overlap_days=max(7, int(os.getenv("INCREMENTAL_OVERLAP_DAYS", "7"))),
             rpc_timeout_seconds=int(os.getenv("ODOO_TIMEOUT_SECONDS", "60")),
             max_retries=int(os.getenv("ODOO_MAX_RETRIES", "5")),
+            odoo_connect_retry_window_seconds=float(os.getenv("ODOO_CONNECT_RETRY_WINDOW_SECONDS", "900")),
             include_uninvoiced_sales_lines=_bool_env("INCLUDE_UNINVOICED_SALES_LINES", False),
             force_sales_full_refresh=_bool_env("FORCE_SALES_FULL_REFRESH", False),
             db_session_timezone=os.getenv("DB_SESSION_TIMEZONE", "+00:00").strip() or "+00:00",
