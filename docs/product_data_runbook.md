@@ -90,8 +90,11 @@ message, and the pages keep showing the last good data.
   - days of inventory = combined stock ÷ combined average daily sales;
   - margin = combined (value − cost) ÷ combined value;
   - BCG class and lifecycle are computed on the combined lines.
-- Thresholds (BCG volume, overstock, stock-out risk) are those of the company that sold more of the product this
-  calendar year (by value; if neither sold this year, all-time value). The ETL stores it as `ThresholdCompany`.
+- **Thresholds for a shared product** (BCG volume, overstock, stock-out risk) are those of the company that sold more
+  of it this calendar year, by value. If neither company sold it this year, the larger all-time value decides.
+  - The ETL stores the chosen company as `ThresholdCompany` in `Dim_ProductDashboardGroup`.
+  - Example: CemAir uses Tika's thresholds.
+  - This rule was approved by the business owner on 2026-09-30.
 - Volumes are still never added across units of measure.
 - Unmapped products are never grouped.
 - To combine two rows, give them the same `ProductName` in the sheet. The import check warns about likely pairs.
@@ -184,5 +187,26 @@ Run the reconciliation script:
 python 07ps-sales-dashboard-app/scripts/reconcile_products.py --api-url http://localhost:4000 --odoo
 ```
 
-It compares 10 products (the top 5 plus 5 random) against the source rows. It checks that all products + Unmapped equal
-the Sales pages' total, and reconciles CemAir per company against live Odoo. It exits non-zero on any mismatch.
+It is read-only against Odoo. It exits non-zero on any mismatch. It checks:
+
+- 10 products (the top 5 plus 5 random), each in its company view, against the source rows;
+- that every BMH row equals the sum of its company parts;
+- that all products + Unmapped equal the Sales pages' total, per company and for BMH;
+- CemAir per company and BMH against live Odoo;
+- with `--odoo`, stock on hand and unit cost per company against live Odoo. Stock that Odoo changed after the ETL's
+  snapshot is reported as "moved since snapshot", not as a mismatch.
+
+It needs an admin API token in `DASHBOARD_TOKEN`. The local test account it used before (`claude.test.admin@bmh.local`)
+was disabled on 2026-09-30.
+
+---
+
+## 9. Open items (recorded 2026-09-30, not fixed)
+
+| Item | Detail |
+|---|---|
+| `Fact_Orders.CustomerKey` drift | `CustomerKey` is a row number after sorting customers by name (`legacy_transform._add_customer_key`). A new customer shifts every later key. Incremental runs rewrite `Fact_Orders` only for the recent window, so older orders keep stale keys (38,655 of 38,902 orders differed in the test warehouse). `Fact_SalesLines` and `Dim_Customer` are fully rewritten each run and agree. No dashboard number reads `Fact_Orders.CustomerKey` today. Fix: stable customer keys (reuse the existing key per CustomerID). |
+| Tests and lint already failing on `main` | 4 ETL tests: `test_input_check.py::test_wrong_case_file_name_gets_a_near_match_hint` (case-insensitive Windows disk) and 3 Excel-workbook tests in `test_product_dimension.py` that expect `QA_UnmappedProducts.xlsx`, which the exporter now deletes on purpose. Lint: 70 backend errors, 8 frontend errors. All of these were already on `main` (`d9957a8`) before the Product pages work. |
+| New customers 2,244 vs 2,245 | In the test warehouse, the YTD new-customer count at anchor 28 Sep went from 2,244 to 2,245 between test runs 3 and 4. The state before run 4 was not kept, so the one customer could not be identified. The Odoo orders changed between those runs all belong to customers with orders before 2026. Today `Dim_Customer.First_Purchase_Date` matches `Fact_SalesLines` exactly. |
+| Test accounts in production | `kaizen.admin`, `kaizen.em`, `kaizen.viewer` and `kaizen.sales` @kaizen-test.local are ACTIVE. They belong to the Kaizen work; decide when that work ships. `claude.test.admin@bmh.local` is disabled (status INACTIVE, sessions revoked), not deleted. |
+| Scheduled runs need the PC awake and online | The production stack runs on this Windows PC. When it sleeps, no ETL runs. On 30 Sep it slept from 18:12 to 09:38, so the 21:00, 00:00, 02:00 (full), 03:00, 06:00 and 09:00 runs did not happen. Runs at 17:00 and 20:00 on 29 Sep and at 15:00 on 30 Sep failed on DNS (`majaal.odoo.com: Name or service not known`). |
