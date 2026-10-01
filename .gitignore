@@ -191,3 +191,10 @@ $RECYCLE.BIN/
 secrets/
 .secrets/
 credentials/
+
+# Database dumps anywhere (backups live in 07ps-sales-dashboard-app/db_backups/). Warehouse schema SQL stays tracked.
+*.sql
+!07ps-sales-dashboard-app/data/warehouse/**/*.sql
+
+# Generated reports and exports. The prompt files already tracked here stay tracked.
+Claude outputs/*
