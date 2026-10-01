@@ -1,3 +1,4 @@
+import { formatDateTime } from './locale';
 /**
  * Single source of truth for the "Filters applied" + "Exported by" metadata block every
  * client-side table PDF in this package carries (exportRowsAsPdf, exportPerformanceTablePdf,
@@ -72,7 +73,7 @@ export function appendPdfMetaBlock(container: HTMLElement, overrides: PdfMetaOve
   }
 
   const exportedBy = document.createElement('p');
-  exportedBy.textContent = `Exported by: ${email ?? 'Unknown user'} on ${new Date().toLocaleString()}`;
+  exportedBy.textContent = `Exported by: ${email ?? 'Unknown user'} on ${formatDateTime(new Date())}`;
   exportedBy.style.fontSize = '11px';
   exportedBy.style.color = '#6b7280';
   exportedBy.style.margin = '0 0 20px 0';

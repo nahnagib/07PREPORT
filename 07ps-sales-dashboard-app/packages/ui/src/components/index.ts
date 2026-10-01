@@ -12,6 +12,7 @@ export * from './GaugeCard';
 export * from './ProgressBar';
 export * from './Select';
 export * from './DateInput';
+export * from './DateField';
 export * from './StatCard';
 export * from './DecorativeWave';
 export * from './DataGrid';

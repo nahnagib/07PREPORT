@@ -42,17 +42,22 @@
  * for `DaysSinceLastQuotation`/`OpportunityAge` -- columns that have been part of this table from
  * the start, not a still-pending addition -- so in practice it now returns true.
  *
- * Lost-exclusion policy (see filters.ts's excludeLostClause): `totalYtd` (the #YTD tile) and
- * fetchNewOpportunitiesByMonth (New Opportunities chart) exclude closed-lost opportunities -- both
- * are general "how much pipeline volume" figures, not lost-specific ones. `won`/`active`/
- * `withoutActivity`/`withoutNextStep` need no change: `IsOpen = 1` already implies not-lost by
- * construction (crm_status_classifier.py: is_open = not is_won and not is_lost). `lost`/
- * lostDealsRatio/lostByReason ARE the lost-specific widgets and stay fully unfiltered, including
- * lostDealsRatio's own denominator (see OpportunityActivityCountsInternal's comment -- it does NOT
- * reuse the now-Lost-excluding `totalYtd`). fetchActivityOpportunities also stays unfiltered: its
- * one shared array backs the Details view's Activity Filter panel, whose "Lost" option needs those
- * rows to exist -- the frontend's default (no filter selected) view is what excludes Lost, via
- * matchesActivityFilter in activity-momentum/page.tsx.
+ * MUTUALLY EXCLUSIVE STATUSES (2026-09-30) -- supersedes the Lost-exclusion policy that used to be
+ * described here for the #YTD tile and the New Opportunities chart. The six Zone A tiles must
+ * reconcile: #YTD = #Active + #Won + #Lost + #W/O Activity + #W/O Next Step. Before this fix they
+ * did not (e.g. 2026-01-01..2026-09-30, no filters: #YTD 459 vs. a tile sum of 793) because
+ *   1. #W/O Activity and #W/O Next Step were subsets of #Active (all three were `IsOpen = 1`), so
+ *      every stale open deal was counted twice;
+ *   2. #YTD excluded Lost while #Lost was still shown as one of its parts;
+ *   3. one opportunity carries both IsWon = 1 and IsLost = 1, so it was in #Won and #Lost.
+ * Every YTD opportunity is now classified exactly once by activityStatusCaseSql() (first match wins:
+ * Lost, Won, W/O Activity, W/O Next Step, Active), #YTD counts all of them (Lost included), and the
+ * Details view's filter flags come from the same CASE, so the table always matches the tiles. A row
+ * that is neither open, won nor lost (none in the live data) is counted in `unclassified` and in
+ * #YTD, so the page can show the gap instead of silently not adding up. #Active therefore now means
+ * "open and moving" (open, not W/O Activity, not W/O Next Step). The New Opportunities chart counts
+ * every created opportunity too (Lost included), so its months sum to #YTD. lostDealsRatio is
+ * unchanged in value: #Lost / all YTD opportunities, which is now simply #Lost / #YTD.
  *
  * YEAR-TO-DATE ONLY (2026-09-21): every figure on this page is now scoped to opportunities CREATED
  * from Jan 1 of the current year through the (clamped, see filters.ts's parsePipelineAnchor)
@@ -95,7 +100,7 @@
  */
 
 import type { Pool } from 'mysql2/promise';
-import { buildCrmWhereClause, excludeLostClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
+import { buildCrmWhereClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -121,6 +126,25 @@ const STALENESS_DAYS = 30;
 const WITHOUT_ACTIVITY_SQL = `fo.SalesSegment = 'B2B' AND fo.HasQuotation = 0 AND fo.OpportunityAge >= ${STALENESS_DAYS}`;
 /** Open B2B opportunities with a real quotation that's gone stale since. */
 const WITHOUT_NEXT_STEP_SQL = `fo.SalesSegment = 'B2B' AND fo.HasQuotation = 1 AND fo.LastQuotationDate IS NOT NULL AND fo.DaysSinceLastQuotation >= ${STALENESS_DAYS}`;
+
+/** One status per opportunity, first match wins -- the single source of truth for the Zone A
+ * tiles and the Details view's filter flags (see "MUTUALLY EXCLUSIVE STATUSES" in the header).
+ * Lost is checked before Won so the one live row flagged both counts as Lost, consistent with the
+ * Lost-by-Reason chart and with excludeLostClause everywhere else. Without the activity columns
+ * the two stale buckets don't exist and those opportunities stay in 'active'. */
+export function activityStatusCaseSql(activityAvailable: boolean): string {
+  const staleBranches = activityAvailable
+    ? `WHEN fo.IsOpen = 1 AND ${WITHOUT_ACTIVITY_SQL} THEN 'withoutActivity'
+      WHEN fo.IsOpen = 1 AND ${WITHOUT_NEXT_STEP_SQL} THEN 'withoutNextStep'`
+    : '';
+  return `CASE
+      WHEN COALESCE(fo.IsLost, 0) = 1 THEN 'lost'
+      WHEN fo.IsWon = 1 THEN 'won'
+      ${staleBranches}
+      WHEN fo.IsOpen = 1 THEN 'active'
+      ELSE 'unclassified'
+    END`;
+}
 
 // ---------------------------------------------------------------------------
 // Activity-column availability check -- cached for 5 minutes so a mid-session ETL refresh is
@@ -158,6 +182,8 @@ export async function checkActivityColumnsAvailable(pool: Pool): Promise<boolean
 // Zone A -- Opportunity Activities, 2x3, all scoped YTD by OpportunityCreatedDate.
 // ---------------------------------------------------------------------------
 
+/** Mutually exclusive: totalYtd = active + won + lost + withoutActivity + withoutNextStep +
+ * unclassified (the last is 0 in the live data; see the module header). */
 export interface OpportunityActivityCounts {
   totalYtd: number;
   won: number;
@@ -165,28 +191,19 @@ export interface OpportunityActivityCounts {
   active: number;
   lost: number;
   withoutNextStep: number | null;
+  /** YTD opportunities that are neither open, won nor lost -- in #YTD, in no other tile. */
+  unclassified: number;
 }
 
-/** Internal-only extension of OpportunityActivityCounts: totalYtdAll (every YTD opportunity
- * regardless of status) is never rendered on the frontend -- it exists purely so
- * computeActivityRates below can keep Lost Deals Ratio's denominator as the true, unfiltered YTD
- * total (its original, correct meaning: Lost ÷ ALL YTD opportunities) even though the *displayed*
- * `totalYtd` field now excludes Lost (see selectParts below). Without this split, excluding Lost
- * from `totalYtd` would silently shrink the ratio's own denominator and inflate it. */
+/** Internal-only extension of OpportunityActivityCounts: totalYtdAll is what computeActivityRates
+ * divides Lost by. Since the 2026-09-30 status fix #YTD itself counts every YTD opportunity, so the
+ * two are always equal; the field is kept so the ratio's denominator is explicit. */
 export interface OpportunityActivityCountsInternal extends OpportunityActivityCounts {
   totalYtdAll: number;
 }
 
-/** `totalYtd` excludes Lost (see filters.ts's excludeLostClause) -- it's a general "how many
- * opportunities are in this YTD cohort" figure, not a lost-specific one, same policy as every
- * other general widget on the Pipeline pages. `won`/`lost`/`active`/`withoutActivity`/
- * `withoutNextStep` are untouched: `lost` is the lost-specific counter itself, and the other three
- * already exclude Lost by construction (IsOpen=1 implies not-lost, see
- * crm_status_classifier.py's is_open = not is_won and not is_lost).
- *
- * `totalYtdAll`/`totalYtd`/`won`/`lost` are a creation-date cohort, scoped by the anchor's YTD
- * window. `active`/`withoutActivity`/`withoutNextStep` are current-state snapshots and are
- * deliberately NOT date-scoped -- see the module header comment ("Cohort vs. snapshot scoping"). */
+/** Zone A tiles: every opportunity created in the anchor's YTD window, each counted in exactly
+ * one status (activityStatusCaseSql), so the tiles add up to #YTD. */
 export async function computeOpportunityActivityCounts(
   pool: Pool,
   anchor: Date,
@@ -195,48 +212,33 @@ export async function computeOpportunityActivityCounts(
 ): Promise<OpportunityActivityCountsInternal> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
-
-  const cohortSql = `
+  const sql = `
     SELECT
-      COUNT(*) AS totalYtdAll,
-      SUM(CASE WHEN ${excludeLostClause('fo')} THEN 1 ELSE 0 END) AS totalYtd,
-      SUM(CASE WHEN fo.IsWon = 1 THEN 1 ELSE 0 END) AS won,
-      SUM(CASE WHEN fo.IsLost = 1 THEN 1 ELSE 0 END) AS lost
-    FROM Fact_Opportunity fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+      COUNT(*) AS totalYtd,
+      SUM(CASE WHEN t.status = 'active' THEN 1 ELSE 0 END) AS active,
+      SUM(CASE WHEN t.status = 'won' THEN 1 ELSE 0 END) AS won,
+      SUM(CASE WHEN t.status = 'lost' THEN 1 ELSE 0 END) AS lost,
+      SUM(CASE WHEN t.status = 'withoutActivity' THEN 1 ELSE 0 END) AS withoutActivity,
+      SUM(CASE WHEN t.status = 'withoutNextStep' THEN 1 ELSE 0 END) AS withoutNextStep,
+      SUM(CASE WHEN t.status = 'unclassified' THEN 1 ELSE 0 END) AS unclassified
+    FROM (
+      SELECT ${activityStatusCaseSql(activityAvailable)} AS status
+      FROM Fact_Opportunity fo
+      WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+    ) t
   `;
-
-  // #Active is deliberately left as plain `IsOpen = 1` regardless of activityAvailable -- it's the
-  // one measure on this page that was already correct before this fix, and nothing above changes
-  // what "active" means for it (there is no live "healthy vs. at-risk" open-opportunity split in
-  // this schema the way the old, never-deployed IsInactive column implied).
-  const snapshotSelectParts = activityAvailable
-    ? [
-        'SUM(CASE WHEN fo.IsOpen = 1 THEN 1 ELSE 0 END) AS active',
-        `SUM(CASE WHEN fo.IsOpen = 1 AND ${WITHOUT_ACTIVITY_SQL} THEN 1 ELSE 0 END) AS withoutActivity`,
-        `SUM(CASE WHEN fo.IsOpen = 1 AND ${WITHOUT_NEXT_STEP_SQL} THEN 1 ELSE 0 END) AS withoutNextStep`,
-      ]
-    : ['SUM(CASE WHEN fo.IsOpen = 1 THEN 1 ELSE 0 END) AS active'];
-  const snapshotSql = `
-    SELECT ${snapshotSelectParts.join(', ')}
-    FROM Fact_Opportunity fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
-  `;
-
-  const [[cohortRows], [snapshotRows]] = await Promise.all([
-    pool.query(cohortSql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]),
-    pool.query(snapshotSql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]),
-  ]);
-  const cohortRow = (cohortRows as any[])[0];
-  const snapshotRow = (snapshotRows as any[])[0];
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const row = (rows as any[])[0] ?? {};
+  const totalYtd = Number(row.totalYtd ?? 0);
   return {
-    totalYtd: Number(cohortRow.totalYtd ?? 0),
-    totalYtdAll: Number(cohortRow.totalYtdAll ?? 0),
-    won: Number(cohortRow.won ?? 0),
-    lost: Number(cohortRow.lost ?? 0),
-    active: Number(snapshotRow.active ?? 0),
-    withoutActivity: activityAvailable ? Number(snapshotRow.withoutActivity ?? 0) : null,
-    withoutNextStep: activityAvailable ? Number(snapshotRow.withoutNextStep ?? 0) : null,
+    totalYtd,
+    totalYtdAll: totalYtd,
+    won: Number(row.won ?? 0),
+    lost: Number(row.lost ?? 0),
+    active: Number(row.active ?? 0),
+    withoutActivity: activityAvailable ? Number(row.withoutActivity ?? 0) : null,
+    withoutNextStep: activityAvailable ? Number(row.withoutNextStep ?? 0) : null,
+    unclassified: Number(row.unclassified ?? 0),
   };
 }
 
@@ -256,15 +258,8 @@ export async function computeActivityRates(
   counts: OpportunityActivityCountsInternal,
   anchor: Date = parsePipelineAnchor(undefined),
 ): Promise<ActivityRates> {
-  // Lost ÷ ALL YTD opportunities (totalYtdAll, not the now-Lost-excluding totalYtd) -- this ratio
-  // IS the lost-specific widget, so its own denominator must keep counting Lost rows, unaffected
-  // by the Lost-exclusion policy applied to totalYtd for display elsewhere. See
-  // OpportunityActivityCountsInternal's comment.
-  //
-  // Tie-out example (audited 2026-09): #Lost=230, displayed #YTD (Lost-excluded)=389 ->
-  // totalYtdAll = 389 + 230 = 619 -> 230 / 619 = 0.37158... -> "+37.16%" via formatVariance. That
-  // is the on-screen figure this formula was flagged against -- it ties out exactly, confirming
-  // this is NOT Lost/(Won+Lost) or Lost/displayed-#YTD, both of which would give a different number.
+  // Lost ÷ ALL YTD opportunities (= #Lost ÷ #YTD since #YTD now counts every status). Tie-out
+  // (audited 2026-09): 230 lost of 619 YTD opportunities -> 37.16%.
   const lostDealsRatio = safeDiv(counts.lost, counts.totalYtdAll);
   if (!activityAvailable) return { inactiveDealsRatio: null, lostDealsRatio };
 
@@ -331,8 +326,8 @@ export interface NewOpportunitiesMonthPoint {
   countYtd: number;
 }
 
-/** Excludes Lost (see filters.ts's excludeLostClause) -- a general creation-volume trend, not a
- * lost-specific one. */
+/** Every opportunity created in the month, Lost included, so the months sum to the #YTD tile (see
+ * "MUTUALLY EXCLUSIVE STATUSES" in the module header). */
 async function fetchNewOpportunitiesByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<NewOpportunitiesMonthPoint[]> {
   const year = anchor.getUTCFullYear();
   const throughMonth = anchor.getUTCMonth() + 1;
@@ -340,7 +335,7 @@ async function fetchNewOpportunitiesByMonth(pool: Pool, anchor: Date, filters: F
   const sql = `
     SELECT YEAR(fo.OpportunityCreatedDate) AS yr, MONTH(fo.OpportunityCreatedDate) AS mo, COUNT(*) AS cnt
     FROM Fact_Opportunity fo
-    WHERE YEAR(fo.OpportunityCreatedDate) = ? AND ${clause} AND ${excludeLostClause('fo')}
+    WHERE YEAR(fo.OpportunityCreatedDate) = ? AND ${clause}
     GROUP BY YEAR(fo.OpportunityCreatedDate), MONTH(fo.OpportunityCreatedDate)
   `;
   const [rows] = await pool.query(sql, [year, ...params]);
@@ -393,15 +388,8 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
     'fo.IsWon AS isWon',
     'fo.IsLost AS isLost',
   ];
-  if (activityAvailable) {
-    // Computed in SQL from the same WITHOUT_ACTIVITY_SQL/WITHOUT_NEXT_STEP_SQL fragments the
-    // aggregate counts/rates above use, so the Details view's Inactive / Without Next Step filters
-    // can never disagree with #W/O Activity / #W/O Next Step / Inactive Deals Ratio.
-    selectParts.push(
-      `(fo.IsOpen = 1 AND ${WITHOUT_ACTIVITY_SQL}) AS isInactive`,
-      `(fo.IsOpen = 1 AND ${WITHOUT_NEXT_STEP_SQL}) AS isWithoutNextStep`,
-    );
-  }
+  // Same status CASE as the Zone A tiles, so every Details filter lists exactly its tile's count.
+  selectParts.push(`${activityStatusCaseSql(activityAvailable)} AS activityStatus`);
   const sql = `SELECT ${selectParts.join(', ')} FROM Fact_Opportunity fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}`;
@@ -413,8 +401,9 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
   return (rows as any[]).map((r) => {
     const createdDate = r.createdDate ? toDateOnlyString(r.createdDate) : null;
     const isOpen = Number(r.isOpen) === 1;
-    const isInactive = activityAvailable ? Number(r.isInactive) === 1 : null;
-    const isWithoutNextStep = activityAvailable ? Number(r.isWithoutNextStep) === 1 : null;
+    const status = String(r.activityStatus);
+    const isInactive = activityAvailable ? status === 'withoutActivity' : null;
+    const isWithoutNextStep = activityAvailable ? status === 'withoutNextStep' : null;
     return {
       opportunityId: String(r.opportunityId),
       name: String(r.name ?? ''),
@@ -425,9 +414,9 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
       stage: r.stage ?? null,
       createdDate,
       isOpen,
-      isWon: Number(r.isWon) === 1,
-      isLost: Number(r.isLost) === 1,
-      isActive: isOpen && !(isInactive ?? false),
+      isWon: status === 'won',
+      isLost: status === 'lost',
+      isActive: status === 'active',
       isInactive,
       isWithoutNextStep,
       isYtd: createdDate != null && createdDate >= ytdStartStr && createdDate <= ytdEndStr,

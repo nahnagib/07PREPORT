@@ -2,6 +2,7 @@ import type { PerformanceReportRow } from './components/PerformanceReportTable';
 import { chunkRows } from './pdfPagination';
 import { assemblePaginatedPdf } from './pdfPageAssembly';
 import { appendPdfMetaBlock } from './pdfExportContext';
+import { formatDateTime } from './locale';
 
 export interface PerformanceTablePdfColumn {
   header: string;
@@ -129,7 +130,7 @@ export async function exportPerformanceTablePdf({
 
     if (pageIndex === pageCount - 1) {
       const timestamp = document.createElement('p');
-      timestamp.textContent = `Generated: ${new Date().toLocaleString()} | Total rows: ${rows.length}`;
+      timestamp.textContent = `Generated: ${formatDateTime(new Date())} | Total rows: ${rows.length}`;
       timestamp.style.fontSize = '10px';
       timestamp.style.color = '#9ca3af';
       timestamp.style.marginTop = '20px';

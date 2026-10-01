@@ -38,7 +38,7 @@ import type {
   CustomerStatusCounts,
   CustomerStatusLabel,
 } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, formatVariance } from '../../../../lib/format';
+import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
 
 const CATEGORY_LETTERS = new Set(['A', 'B', 'C', 'D']);
 
@@ -99,14 +99,14 @@ function toExecutiveSummaryRows(data?: CustomerGrowthOverview | null): Performan
       return {
         id: `${id}${period === 'ytd' ? 'Ytd' : 'Mtd'}`,
         metric: `${name} (${period.toUpperCase()})`,
-        actualLabel: actual.toLocaleString(),
+        actualLabel: actual.toLocaleString(DISPLAY_LOCALE),
         targetLabel: '—',
         variancePct: null,
         varianceLyPct: delta,
-        lytdLabel: last.toLocaleString(),
-        lytdFullValue: `${lastName}: ${last.toLocaleString()}`,
+        lytdLabel: last.toLocaleString(DISPLAY_LOCALE),
+        lytdFullValue: `${lastName}: ${last.toLocaleString(DISPLAY_LOCALE)}`,
         status: delta == null ? 'neutral' : delta < 0 ? 'alert' : 'success',
-        takeaway: `${actual.toLocaleString()} ${noun} ${period === 'ytd' ? 'YTD' : 'this month'}${
+        takeaway: `${actual.toLocaleString(DISPLAY_LOCALE)} ${noun} ${period === 'ytd' ? 'YTD' : 'this month'}${
           deltaLabel ? ` (${deltaLabel} vs ${period === 'ytd' ? 'last year' : 'last month'})` : ''
         }.`,
       };
@@ -115,7 +115,7 @@ function toExecutiveSummaryRows(data?: CustomerGrowthOverview | null): Performan
   const statusRow = (id: string, name: string, value: number, takeaway: string): PerformanceReportRow => ({
     id,
     metric: name,
-    actualLabel: value.toLocaleString(),
+    actualLabel: value.toLocaleString(DISPLAY_LOCALE),
     targetLabel: '—',
     variancePct: null,
     varianceLyPct: null,
@@ -138,10 +138,10 @@ function toExecutiveSummaryRows(data?: CustomerGrowthOverview | null): Performan
   return [
     ...countRows('newCustomers', 'New Customers', kpis.newCustomers, 'new customers'),
     ...countRows('totalCustomers', 'Total Customers', kpis.totalCustomers, 'total customers'),
-    statusRow('activeRetained', 'Active Retained Customers', status.activeRetained, `${status.activeRetained.toLocaleString()} customers are currently active and retained.`),
-    statusRow('nonActive', 'Non-Active Customers', status.nonActive, `${status.nonActive.toLocaleString()} customers purchased last year but not this year.`),
-    statusRow('reactivated', 'Reactivated Customers', status.reactivated, `${status.reactivated.toLocaleString()} customers have returned after a period without purchases.`),
-    statusRow('blocked', 'Blocked Customers', status.blocked, `${status.blocked.toLocaleString()} customers are flagged as blocked in the operational system.`),
+    statusRow('activeRetained', 'Active Retained Customers', status.activeRetained, `${status.activeRetained.toLocaleString(DISPLAY_LOCALE)} customers are currently active and retained.`),
+    statusRow('nonActive', 'Non-Active Customers', status.nonActive, `${status.nonActive.toLocaleString(DISPLAY_LOCALE)} customers purchased last year but not this year.`),
+    statusRow('reactivated', 'Reactivated Customers', status.reactivated, `${status.reactivated.toLocaleString(DISPLAY_LOCALE)} customers have returned after a period without purchases.`),
+    statusRow('blocked', 'Blocked Customers', status.blocked, `${status.blocked.toLocaleString(DISPLAY_LOCALE)} customers are flagged as blocked in the operational system.`),
     rateRow('customerAcquisition', 'Customer Acquisition', rates.customerAcquisitionPct, true),
     rateRow('customerGrowth', 'Customer Growth', rates.customerGrowthPct, true),
     rateRow('retentionRate', 'Retention Rate', rates.retentionRatePct, false),
@@ -165,11 +165,11 @@ const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
 ];
 
 function formatPlainNumber(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 function formatCountOrDash(value: number | undefined): string {
-  return value != null ? value.toLocaleString() : '—';
+  return value != null ? value.toLocaleString(DISPLAY_LOCALE) : '—';
 }
 
 // ---------------------------------------------------------------------------
@@ -569,6 +569,7 @@ export default function CustomerGrowthPage() {
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
+          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
@@ -651,7 +652,7 @@ export default function CustomerGrowthPage() {
                       rightAxisFormatter={formatPlainNumber}
                       tooltipFormatters={{
                         totalSalesValue: (v) => formatCurrency(v),
-                        customerCount: (v) => v.toLocaleString(),
+                        customerCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                       }}
                       onCategoryClick={handleTrendCategoryClick}
                       onAreaClick={handleTrendAreaClick}
@@ -711,22 +712,19 @@ export default function CustomerGrowthPage() {
               <div className="ps-invoices-zone">
                 <ChartPanel<ContributionTableRow>
                   title="Customers Contribution"
-                  infoText="Share of total sales value contributed by the Top 10 customers vs. every other customer, year-to-date."
+                  infoText="Share of total sales value contributed by the Top 10 customers vs. every other customer, year-to-date. Click Top 10 or Other to see that group's customers."
                   style={{ minHeight: 380 }}
                   tableColumns={overview.error ? undefined : contributionTableColumns}
                   tableRows={overview.error ? undefined : contributionTableRows}
                   getRowId={(row) => row.id}
                   headerActions={
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <DrillIndicator hint="Click Top 10 or Other to drill into that group's customers" />
-                      {!overview.error && (
-                        <ExportPdfButton
-                          downloading={downloadingPdf === 'contribution'}
-                          disabled={contributionTableRows.length === 0}
-                          onClick={() => handleDownloadTablePdf('contribution', 'Customers Contribution', contributionTableColumns, contributionTableRows)}
-                        />
-                      )}
-                    </div>
+                    !overview.error && (
+                      <ExportPdfButton
+                        downloading={downloadingPdf === 'contribution'}
+                        disabled={contributionTableRows.length === 0}
+                        onClick={() => handleDownloadTablePdf('contribution', 'Customers Contribution', contributionTableColumns, contributionTableRows)}
+                      />
+                    )
                   }
                 >
                   {overview.loading ? (
@@ -1093,9 +1091,12 @@ function CustomerStatusPanel({
           ) : (
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Customer Status</span>
           )}
-          <span title={CUSTOMER_STATUS_INFO} aria-label={CUSTOMER_STATUS_INFO} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
-            <Info size={13} />
-          </span>
+          {/* "i" marks an interactive visual: only when the title opens the customer drill-down. */}
+          {onTitleClick && (
+            <span title={CUSTOMER_STATUS_INFO} aria-label={CUSTOMER_STATUS_INFO} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
+              <Info size={13} />
+            </span>
+          )}
         </div>
         {onDownloadPdf && (
           <ExportPdfButton downloading={!!downloading} disabled={!counts} onClick={onDownloadPdf} />
@@ -1187,38 +1188,5 @@ function DrillToggle({ active, onToggle }: { active: boolean; onToggle: () => vo
       <Layers size={12} />
       Drill-down
     </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Customers Contribution donut's drill-down affordance -- same icon/label/sizing as DrillToggle
-// above, but a static indicator rather than a mode toggle: the donut drills straight into Top 10 /
-// Other on click already, with no separate enable-drill-mode step, so there's no on/off state for
-// a button to control. This just signals the chart is clickable, matching Sales Trend's pattern.
-// ---------------------------------------------------------------------------
-
-function DrillIndicator({ hint }: { hint: string }) {
-  return (
-    <span
-      title={hint}
-      aria-label={hint}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 5,
-        fontSize: 11,
-        fontWeight: 600,
-        padding: '4px 9px',
-        borderRadius: 6,
-        border: '1px solid var(--ps-color-border)',
-        background: 'var(--ps-color-muted-bg)',
-        color: 'var(--ps-color-muted-text)',
-        cursor: 'help',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      <Layers size={12} />
-      Drill-down
-    </span>
   );
 }

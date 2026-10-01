@@ -1,5 +1,6 @@
 import React, { useId } from 'react';
 import type { SemanticStatus } from './KpiTile';
+import { DISPLAY_LOCALE } from '../locale';
 
 export interface RadialGaugeProps {
   /** Actual value the needle points to (e.g. YTD Value in LYD). */
@@ -70,7 +71,7 @@ function compactAxis(value: number): string {
   const abs = Math.abs(value);
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 const VIEWBOX_WIDTH = 260;
@@ -137,17 +138,17 @@ export function RadialGauge({
     targetAngle === null ? 'middle' : targetAngle > 100 ? 'end' : targetAngle < 80 ? 'start' : 'middle';
   const targetLabelText = targetLabel ?? (hasTarget ? compactAxis(targetToDate as number) : '');
 
-  const displayLabel = valueLabel ?? actual.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const displayLabel = valueLabel ?? actual.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 
   const ariaLabel = label
-    ? `${label}: ${actual.toLocaleString()}${
+    ? `${label}: ${actual.toLocaleString(DISPLAY_LOCALE)}${
         hasTarget
-          ? `, target-to-date ${(targetToDate as number).toLocaleString()}, gauge scale ${compactAxis(
+          ? `, target-to-date ${(targetToDate as number).toLocaleString(DISPLAY_LOCALE)}, gauge scale ${compactAxis(
               advertisedScaleMin as number,
             )} to ${compactAxis(advertisedScaleMax as number)} (50% to 150% of target)`
           : ''
       }`
-    : `${actual.toLocaleString()}`;
+    : `${actual.toLocaleString(DISPLAY_LOCALE)}`;
 
   return (
     <svg

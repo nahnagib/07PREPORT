@@ -32,6 +32,8 @@ import { adminAuditLogRouter } from './routes/admin/auditLog';
 import { marcomUploadRouter, marcomFreshnessRouter } from './routes/marcomUpload';
 import { marcomKpiRouter } from './routes/marcomKpi';
 import { exportsRouter } from './routes/exports';
+import { kaizenRouter } from './routes/kaizen';
+import { adminKaizenDropdownsRouter } from './routes/admin/kaizenDropdowns';
 import { syncPermissionRegistry } from './services/permissionService';
 import { cleanupExpiredStaged } from './marcom/staging';
 import { registerEtlSchedules } from './etl/scheduler/registerSchedules';
@@ -96,11 +98,14 @@ app.use('/admin/etl-runs', adminEtlRunsRouter);
 app.use('/admin/etl/input-files', adminEtlInputFilesRouter);
 app.use('/admin/etl', adminEtlControlRouter);
 app.use('/admin/audit-log', adminAuditLogRouter);
+app.use('/admin/kaizen-dropdowns', adminKaizenDropdownsRouter);
 // MARCOM Contribution (Promotion): Excel upload admin + freshness for the four report pages.
 app.use('/marcom/upload', marcomUploadRouter);
 app.use('/marcom/freshness', marcomFreshnessRouter);
 app.use('/marcom/kpi', marcomKpiRouter);
 app.use('/exports', exportsRouter);
+// Kaizen Board (Process department): cards, dashboard, QR, one-time import.
+app.use('/kaizen', kaizenRouter);
 
 // Section 5.9 - system-tier fallback: no stack traces, no raw DB errors, ever.
 app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {

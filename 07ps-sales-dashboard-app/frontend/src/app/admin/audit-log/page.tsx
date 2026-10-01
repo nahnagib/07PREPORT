@@ -4,7 +4,7 @@ import { Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, type Column }
 import { AdminLayout } from '../../../components/AdminLayout';
 import { AdminOnlyGuard } from '../../../components/AuthGuard';
 import { useAuth } from '../../../lib/AuthProvider';
-import { APP_TIMEZONE } from '../../../lib/format';
+import { APP_TIMEZONE, formatDateTime } from '../../../lib/format';
 import { adminApi, ApiError, AuditLogRow } from '../../../lib/api';
 
 const ETL_INPUT_FILE = 'etl_input_file';
@@ -92,7 +92,7 @@ function AuditLogBody() {
     {
       key: 'changed_at',
       header: 'When',
-      render: (r) => new Date(r.changed_at).toLocaleString(undefined, { timeZone: APP_TIMEZONE, dateStyle: 'medium', timeStyle: 'short' }),
+      render: (r) => formatDateTime(r.changed_at, APP_TIMEZONE),
     },
     { key: 'changed_by_name', header: 'Who', render: (r) => r.changed_by_name ?? r.changed_by_email ?? (r.changed_by ? `User #${r.changed_by}` : '—') },
     { key: 'entity_type', header: 'Type', render: (r) => ENTITY_LABEL[r.entity_type] ?? r.entity_type },

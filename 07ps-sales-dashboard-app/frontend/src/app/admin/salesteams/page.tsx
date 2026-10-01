@@ -5,6 +5,7 @@ import { AdminLayout } from '../../../components/AdminLayout';
 import { PermissionGuard } from '../../../components/AuthGuard';
 import { useAuth } from '../../../lib/AuthProvider';
 import { adminApi, ApiError, DimOption, SalesTeamAdminRow, fetchBusinessUnits, fetchCustomerGroups } from '../../../lib/api';
+import { DISPLAY_LOCALE } from '../../../lib/format';
 
 /** UPDATED (Reports/Dashboards Honor Admin Salesperson Overrides, 2026-09) -- see
  * backend/src/services/salesTeamAdminService.ts's header comment. Only Customer Group
@@ -27,7 +28,7 @@ const OVERLAY_CAVEAT =
 const COMPANY_CAVEAT = 'Organizational label only -- narrows Filter Bar dropdown options, does not affect report totals.';
 
 function fmtCurrency(v: number): string {
-  return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return v.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 const selectStyle: React.CSSProperties = {

@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
 import { useCanExport } from '../exportPermission';
+import { DISPLAY_LOCALE } from '../locale';
 
 export interface DonutSegment {
   id: string;
@@ -46,13 +47,16 @@ export interface DonutChartProps {
    * percentages. Opt-in -- defaults to false so every existing caller's ring stays exactly as
    * before. */
   showPercentLabels?: boolean;
+  /** Set false to hide the "Export image" button for this chart (e.g. Critical Number page's
+   * Daily/Monthly/Yearly counters). Defaults to true, so every existing caller is unaffected. */
+  showExportButton?: boolean;
 }
 
 function defaultFormatter(v: number): string {
   const abs = Math.abs(v);
   if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return v.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 /** Recharts `<Pie label>` renderer: each segment's share of the whole, placed just outside the
@@ -96,11 +100,12 @@ export function DonutChart({
   centerLabel,
   centerSubLabel,
   showPercentLabels = false,
+  showExportButton = true,
 }: DonutChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const total = segments.reduce((sum, s) => sum + s.value, 0);
 
-  const canExport = useCanExport();
+  const canExport = useCanExport() && showExportButton;
   const handleExportImage = () => {
     exportSvgAsImage(containerRef.current, (title ?? 'donut-chart').replace(/\s+/g, '-').toLowerCase());
   };
@@ -111,6 +116,7 @@ export function DonutChart({
 
   return (
     <div style={{ width: '100%' }}>
+      {(showTitle || canExport) && (
       <div
         style={{
           display: 'flex',
@@ -139,6 +145,7 @@ export function DonutChart({
         </button>
         )}
       </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--ps-space-2, 8px)' }}>
         <div ref={containerRef} style={{ width: '100%', position: 'relative' }}>
@@ -195,7 +202,7 @@ export function DonutChart({
                 formatter={(value: number, name: string, entry: any) => {
                   const count = entry?.payload?.count;
                   const pct = `${((value / total) * 100).toFixed(2)}%`;
-                  const countText = typeof count === 'number' ? ` (${count.toLocaleString()} invoice${count === 1 ? '' : 's'})` : '';
+                  const countText = typeof count === 'number' ? ` (${count.toLocaleString(DISPLAY_LOCALE)} invoice${count === 1 ? '' : 's'})` : '';
                   return [`${valueFormatter(value)} -- ${pct}${countText}`, name];
                 }}
                 contentStyle={{
@@ -239,11 +246,11 @@ export function DonutChart({
               const rowContent = (
                 <>
                   <span aria-hidden style={{ width: 9, height: 9, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-                  <span style={{ color: 'var(--ps-color-text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span dir="auto" title={s.label} style={{ color: 'var(--ps-color-text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
                     {s.label}
                   </span>
                   <span style={{ color: 'var(--ps-color-muted-text)', fontWeight: 600, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-                    {valueFormatter(s.value)} ({((s.value / total) * 100).toFixed(2)}%{typeof s.count === 'number' ? `, ${s.count.toLocaleString()}` : ''})
+                    {valueFormatter(s.value)} ({((s.value / total) * 100).toFixed(2)}%{typeof s.count === 'number' ? `, ${s.count.toLocaleString(DISPLAY_LOCALE)}` : ''})
                   </span>
                 </>
               );

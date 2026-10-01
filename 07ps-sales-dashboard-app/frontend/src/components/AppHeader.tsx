@@ -117,13 +117,14 @@ export function AppHeader({
         gap: 'var(--ps-space-3, 16px)',
       }}
     >
-      <div className="flex items-center gap-3" style={{ minWidth: 0, flexShrink: 0 }}>
+      {/* The logo/title group gives way (title ellipsizes) so it never slides under the controls. */}
+      <div className="flex items-center gap-3" style={{ minWidth: 0, flex: '0 1 auto' }}>
         <Image
           src={theme === 'dark' ? bmhMark.dark : bmhMark.light}
           alt="Ben Moussa Holding"
           width={160}
           height={32}
-          style={{ objectFit: 'contain', height: 32, width: 'auto' }}
+          style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 0 }}
           priority
         />
         {secondary && (
@@ -138,14 +139,14 @@ export function AppHeader({
               alt={secondary.alt}
               width={96}
               height={32}
-              style={{ objectFit: 'contain', height: 32, width: 'auto' }}
+              style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 0 }}
             />
           </>
         )}
-        <h1 style={{ fontSize: 20, fontWeight: 700, marginLeft: 12, whiteSpace: 'nowrap' }}>{pageTitle}</h1>
+        <h1 style={{ fontSize: 20, fontWeight: 700, marginInlineStart: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pageTitle}</h1>
       </div>
 
-      <div className="flex items-center gap-3" style={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}>
+      <div className="flex items-center gap-3" style={{ flex: '1 0 auto', justifyContent: 'flex-end' }}>
         {/* Inline date selector - drives MTD/YTD for every KPI on the page (see SidebarFilters'
             equivalent, more-explained control; this is the same value, just reachable from the
             header too). Hidden when a FilterBar below already owns this control (Tachometer

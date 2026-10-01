@@ -14,6 +14,7 @@ import {
 import type { SemanticStatus } from './KpiTile';
 import { exportSvgAsImage } from '../chartExport';
 import { useCanExport } from '../exportPermission';
+import { DISPLAY_LOCALE } from '../locale';
 
 export interface BreakdownChartRow {
   id: string;
@@ -47,7 +48,7 @@ function defaultFormatter(v: number): string {
   const abs = Math.abs(v);
   if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return v.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 /**

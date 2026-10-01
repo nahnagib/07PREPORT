@@ -361,7 +361,6 @@ export default function ProductLifecyclePage() {
 
           <ChartPanel
             title="Segment Value — Pareto"
-            infoText="Bars = value in the selected period by lifecycle segment (sorted desc) · line = same period last year · gold line = cumulative %. New = first sale in 180 days; Growing/Declining = last 90 days vs previous 90 days beyond ±20%; Discontinued = inactive in PRODUCTS.xlsx or no sale in 365 days; Never sold = no sale in the whole history"
             style={{ minHeight: 420 }}
           >
             <ComboChart

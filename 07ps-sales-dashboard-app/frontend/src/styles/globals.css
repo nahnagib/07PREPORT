@@ -142,6 +142,16 @@ html, body {
 /* Directional icons (e.g. the header Back arrow) mirror in RTL. */
 [dir='rtl'] .ps-rtl-flip { transform: scaleX(-1); }
 
+/* Arabic data (customer, product, sales-team names...) inside an English UI: each cell, list item,
+   option, text field and chart tooltip/legend entry takes its reading direction from its own
+   content -- the CSS form of dir="auto" -- so Arabic and mixed text ("GERMA - GLUE لاصق") read in
+   the right order without every page's tables having to set it. Alignment is unchanged. */
+td, th, li, option, textarea,
+input:not([type]), input[type='text'], input[type='search'],
+.recharts-tooltip-label, .recharts-tooltip-item, .recharts-legend-item-text {
+  unicode-bidi: plaintext;
+}
+
 /* ScrollableNav (BottomNavBar): hidden scrollbar, tabs never shrink or wrap, centred while they
    fit and start-aligned ("safe") once they overflow so the first tab is never clipped. */
 .ps-hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
@@ -272,18 +282,16 @@ html, body {
    Missing Value / Missing Days view. Logical properties (inline-start/end) so RTL mirrors.
    --------------------------------------------------------------------------- */
 .ps-cn-hero {
-  display: grid;
-  grid-template-columns: minmax(220px, auto) 1fr;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--ps-space-4, 24px);
+  text-align: center;
+  gap: var(--ps-space-2, 8px);
 }
 .ps-cn-hero-desc {
-  border-inline-start: 1px solid var(--ps-color-border);
-  padding-inline-start: var(--ps-space-4, 24px);
-}
-@media (max-width: 767px) {
-  .ps-cn-hero { grid-template-columns: 1fr; gap: var(--ps-space-2, 8px); }
-  .ps-cn-hero-desc { border-inline-start: none; padding-inline-start: 0; border-top: 1px solid var(--ps-color-border); padding-top: var(--ps-space-2, 8px); }
+  max-width: 720px;
+  border-top: 1px solid var(--ps-color-border);
+  padding-top: var(--ps-space-2, 8px);
 }
 
 .ps-cn-expandable { cursor: zoom-in; border-radius: 8px; }
@@ -547,3 +555,58 @@ html, body {
   white-space: nowrap;
 }
 .ps-role-pill[data-primary='true'] { border-color: var(--ps-color-accent); color: var(--ps-color-accent); }
+
+/* ---------------------------------------------------------------------------
+ * Kaizen Board (Process). English-only, always left-to-right (see KaizenShell).
+ * ------------------------------------------------------------------------- */
+.ps-kaizen-board { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+.ps-kaizen-kpis { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.ps-kaizen-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.ps-kaizen-span-all { grid-column: 1 / -1; }
+.ps-kaizen-filters { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
+.ps-kaizen-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ps-kaizen-field > span { font-size: 12px; color: var(--ps-color-muted-text); letter-spacing: 0.2px; }
+.ps-kaizen-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--ps-color-border);
+  background: var(--ps-color-surface);
+  color: var(--ps-color-text);
+  font: inherit;
+  font-size: 14px;
+  min-height: 36px;
+}
+.ps-kaizen-input[aria-invalid='true'] { border-color: var(--ps-color-alert); }
+textarea.ps-kaizen-input { min-height: 84px; resize: vertical; }
+.ps-kaizen-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; }
+.ps-kaizen-form .ps-kaizen-full { grid-column: 1 / -1; }
+.ps-kaizen-table-wrap { overflow-x: auto; border: 1px solid var(--ps-color-border); border-radius: 8px; }
+.ps-kaizen-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ps-kaizen-table th, .ps-kaizen-table td { padding: 9px 10px; text-align: start; border-bottom: 1px solid var(--ps-color-border); white-space: nowrap; }
+.ps-kaizen-table th { font-size: 12px; color: var(--ps-color-muted-text); background: var(--ps-color-muted-bg); position: sticky; top: 0; }
+.ps-kaizen-table th button { all: unset; cursor: pointer; }
+.ps-kaizen-table td.ps-kaizen-wrap { white-space: normal; min-width: 180px; }
+.ps-kaizen-table tr.ps-kaizen-overdue td { background: var(--ps-color-alert-bg); }
+/* Actions stay in view while the wide table scrolls. */
+.ps-kaizen-table th:last-child, .ps-kaizen-table td:last-child { position: sticky; inset-inline-end: 0; background: var(--ps-card-bg); box-shadow: -1px 0 0 var(--ps-color-border); }
+.ps-kaizen-table th:last-child { background: var(--ps-color-muted-bg); z-index: 1; }
+.ps-kaizen-table tr.ps-kaizen-overdue td:last-child { background: color-mix(in srgb, var(--ps-color-alert) 10%, var(--ps-card-bg)); }
+.ps-kaizen-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ps-kaizen-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+.ps-kaizen-tile { cursor: pointer; transition: border-color 0.15s ease; }
+.ps-kaizen-tile:hover { border-color: var(--ps-color-accent) !important; }
+.ps-kaizen-subnav { display: flex; gap: 6px; flex-wrap: wrap; }
+@media (max-width: 1279px) {
+  .ps-kaizen-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 1023px) {
+  .ps-kaizen-board { grid-template-columns: minmax(0, 1fr); }
+  .ps-kaizen-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ps-kaizen-kpis > .ps-kaizen-qr { grid-column: 1 / -1; }
+}
+@media (max-width: 767px) {
+  .ps-kaizen-charts, .ps-kaizen-form { grid-template-columns: minmax(0, 1fr); }
+  .ps-kaizen-filters > .ps-kaizen-field { flex: 1 1 140px; }
+}

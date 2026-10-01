@@ -18,6 +18,7 @@ import {
   RolesAdminView,
   RoleSummary,
 } from '../../../lib/api';
+import { formatDate as formatDisplayDate } from '../../../lib/format';
 import { CheckState, columnState, hasAction, rowState, toggleCell, toggleColumn, toggleRow } from '../../../lib/rolePermissions';
 
 const ACTION_LABEL: Record<PermissionAction, string> = {
@@ -40,8 +41,7 @@ const DIMENSION_OPTION_FIELDS: Record<string, { key: string; label: string }> = 
 };
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return formatDisplayDate(iso);
 }
 
 export default function AdminRolesPage() {
@@ -464,6 +464,7 @@ function PermissionMatrix({
   const groups = useMemo(
     () => [
       { key: 'dashboard', title: 'Dashboards', entries: registry.filter((e) => e.group === 'dashboard') },
+      { key: 'data_entry', title: 'Data Entry', entries: registry.filter((e) => e.group === 'data_entry') },
       { key: 'admin', title: 'Admin Panel', entries: registry.filter((e) => e.group === 'admin') },
     ],
     [registry],

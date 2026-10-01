@@ -43,7 +43,7 @@ import type {
   PipelineHealthOverview,
   StageBenchmarkRow,
 } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
+import { formatCurrency, formatTimestamp, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
 
 // Fixed: --ps-color-watch previously reused here shares the exact same hex as --ps-color-gold
 // (#b8860b), so Quotations and Deliveries rendered as indistinguishable brownish-gold trapezoids/
@@ -66,7 +66,7 @@ function formatMillions(value: number): string {
 }
 
 function formatPlainNumber(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 function formatPct(v: number | null): string {
@@ -630,6 +630,7 @@ export default function PipelineHealthPage() {
           isSalesperson={isSalesperson}
           lastUpdate={refreshStatus.data?.lastUpdate ?? null}
           lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
+          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
@@ -662,7 +663,6 @@ export default function PipelineHealthPage() {
                   getRowId={(row) => row.id}
                   headerActions={
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <DrillIndicator hint="Click a stage to see its underlying opportunities" />
                       {!overview.error && (
                         <Button variant="secondary" onClick={() => setView('chain')} disabled={overview.loading}>
                           <Layers size={14} />
@@ -753,7 +753,7 @@ export default function PipelineHealthPage() {
                     leftAxisFormatter={formatPlainNumber}
                     rightAxisFormatter={formatMillions}
                     tooltipFormatters={{
-                      expectedCount: (v) => v.toLocaleString(),
+                      expectedCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                       expectedValue: (v) => formatCurrency(v),
                     }}
                     onCategoryClick={(label) => openDetails({ type: 'month', value: label })}
@@ -833,7 +833,7 @@ export default function PipelineHealthPage() {
                     points={probabilityPoints}
                     bars={[{ key: 'count', name: 'Opportunities', color: 'var(--ps-color-accent)' }]}
                     valueFormatter={formatPlainNumber}
-                    tooltipFormatters={{ count: (v) => v.toLocaleString() }}
+                    tooltipFormatters={{ count: (v) => v.toLocaleString(DISPLAY_LOCALE) }}
                     onCategoryClick={(label) => openDetails({ type: 'bucket', value: label })}
                   />
                 )}
@@ -907,7 +907,6 @@ export default function PipelineHealthPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
               <ChartPanel
                 title={`${stageRecordKind ? FUNNEL_STAGE_LABELS[stageRecordKind] : ''} — Full Pipeline`}
-                infoText="Records linked to an Opportunity (B2B, YTD). Use the second button to export the ones with no linked Opportunity instead."
                 style={{ minHeight: 480 }}
                 headerActions={
                   <div style={{ display: 'flex', gap: 8 }}>

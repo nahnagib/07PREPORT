@@ -77,7 +77,7 @@ describe('MarcomPageView (page-level states)', () => {
   it('with data: title, freshness line, filter bar and the page body', () => {
     const html = view();
     expect(flat(html)).toContain('MARCOM Spending');
-    expect(flat(html)).toContain('Data as of August 2026 — uploaded by Demo Admin on 20/09/2026');
+    expect(flat(html)).toContain('Data as of August 2026 — uploaded by Demo Admin on 20 Sep 2026');
     expect(html).toContain('data-testid="marcom-filters"');
     expect(html).toContain('data-testid="body"');
   });
@@ -149,7 +149,7 @@ describe('freshness line', () => {
   });
   it('tolerates a missing uploader name', () => {
     const f = { hasData: true, latestPeriod: { year: 2026, month: 3, label: 'March 2026' }, uploadedBy: null, uploadedAt: '2026-04-02T10:00:00.000Z' };
-    expect(flat(render(<MarcomFreshness freshness={f} />))).toBe('Data as of March 2026 — uploaded by unknown on 02/04/2026');
+    expect(flat(render(<MarcomFreshness freshness={f} />))).toBe('Data as of March 2026 — uploaded by unknown on 02 Apr 2026');
   });
 });
 

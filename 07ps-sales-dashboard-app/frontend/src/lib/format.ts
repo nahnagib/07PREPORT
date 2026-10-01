@@ -1,5 +1,11 @@
 import type { TargetStatus } from './api';
 import type { SemanticStatus } from '@07ps/ui';
+import { formatDateTime, DISPLAY_LOCALE } from '@07ps/ui';
+
+/** The app-wide en-GB display locale and its helpers (defined once in @07ps/ui's locale.ts, shared with
+ * the charts/tables/exports there). Use these instead of toLocaleString() with no locale, which
+ * would follow the viewer's device language. */
+export { DISPLAY_LOCALE, formatNumber, formatDate, formatDateTime, formatTime } from '@07ps/ui';
 
 /** Maps the backend's TargetStatus (from classifyVsTarget) to packages/ui's SemanticStatus.
  * This is a label mapping only -- the classification decision itself always comes from the
@@ -20,21 +26,21 @@ export function toSemanticStatus(status: TargetStatus): SemanticStatus {
 /** Guards against non-finite input (null/undefined/NaN) rather than assuming the caller's own
  * null-check already ran -- every existing caller does check first, but a value that's `undefined`
  * (an API field omitted from the JSON payload) rather than an explicit `null` slips past a
- * `=== null` guard and previously reached `.toLocaleString()` unguarded, producing "Cannot read
+ * `=== null` guard and previously reached `.toLocaleString(DISPLAY_LOCALE)` unguarded, producing "Cannot read
  * properties of undefined (reading 'toLocaleString')" instead of a clean fallback. */
 export function formatCurrency(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-  return `LYD ${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return `LYD ${value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 })}`;
 }
 
 export function formatVolume(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-  return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 1 });
 }
 
 export function formatAsp(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-  return `LYD ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return `LYD ${value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 2 })}`;
 }
 
 export function formatVariance(pct: number | null | undefined): string | undefined {
@@ -54,14 +60,7 @@ export function formatTimestamp(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString(undefined, {
-    timeZone: APP_TIMEZONE,
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatDateTime(d, APP_TIMEZONE);
 }
 
 /**
@@ -77,7 +76,7 @@ function compactNumber(value: number): string {
   const abs = Math.abs(value);
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 export function formatCompactCurrency(value: number): string {

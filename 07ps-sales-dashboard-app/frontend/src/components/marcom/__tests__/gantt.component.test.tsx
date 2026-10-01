@@ -30,7 +30,7 @@ describe('GanttChart', () => {
     expect(html).toContain('data-testid="gantt-bar"');
     expect(html).toContain('tabindex="0"');
     expect(html).toContain('background:#7A5195');
-    expect(html).toMatch(/aria-label="Alpha\. Completed\. 01\/02\/2026 – 15\/03\/2026\. Spend LYD 120,000"/);
+    expect(html).toMatch(/aria-label="Alpha\. Completed\. 01 Feb 2026 – 15 Mar 2026\. Spend LYD 120,000"/);
   });
 
   it('a bar that starts before the period shows a start arrow', () => {
@@ -57,7 +57,7 @@ describe('GanttChart', () => {
     const html = gantt([row({ id: 'Planned event', start: '2026-07-16', end: null, status: 'Planned' })]);
     expect(html).toContain('data-testid="gantt-milestone"');
     expect(html).not.toContain('data-testid="gantt-bar"');
-    expect(html).toMatch(/aria-label="Planned event\. Planned\. Planned 16\/07\/2026, not completed/);
+    expect(html).toMatch(/aria-label="Planned event\. Planned\. Planned 16 Jul 2026, not completed/);
   });
 
   it('overdue items get a text flag (not colour only) and an outline', () => {
@@ -70,7 +70,7 @@ describe('GanttChart', () => {
   it('an item entirely outside the period gets no bar, just its dates', () => {
     const html = gantt([row({ id: 'Next year', start: '2027-03-01', end: '2027-04-01' })]);
     expect(html).not.toContain('data-testid="gantt-bar"');
-    expect(flat(html)).toContain('01/03/2027 – 01/04/2027');
+    expect(flat(html)).toContain('01 Mar 2027 – 01 Apr 2027');
   });
 
   it('long labels are truncated with the full text available on hover', () => {

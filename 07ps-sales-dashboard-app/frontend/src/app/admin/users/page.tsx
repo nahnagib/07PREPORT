@@ -6,6 +6,7 @@ import { AdminLayout } from '../../../components/AdminLayout';
 import { PermissionGuard } from '../../../components/AuthGuard';
 import { useAuth } from '../../../lib/AuthProvider';
 import { adminApi, AdminRole, AdminUser, SalespersonOption, UserStatus, ApiError } from '../../../lib/api';
+import { formatDateTime } from '../../../lib/format';
 
 const STATUS_TO_SEMANTIC: Record<UserStatus, 'success' | 'watch' | 'alert' | 'neutral'> = {
   ACTIVE: 'success',
@@ -141,7 +142,7 @@ function UsersPageBody() {
     {
       key: 'last_login_at',
       header: 'Last Login',
-      render: (r) => (r.last_login_at ? new Date(r.last_login_at).toLocaleString() : 'Never'),
+      render: (r) => (r.last_login_at ? formatDateTime(r.last_login_at) : 'Never'),
     },
     {
       key: 'user_id',

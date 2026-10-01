@@ -29,7 +29,7 @@ export function FilterChip({ label, onRemove }: FilterChipProps) {
         maxWidth: '100%',
       }}
     >
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+      <span dir="auto" title={label} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
       {onRemove && (
         <button
           type="button"

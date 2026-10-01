@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ChartSizeContext } from '../MarcomChartCard';
 import { setFormatLocale } from '../../../lib/marcom/format';
 
-setFormatLocale('en-US');
+setFormatLocale('en-GB');
 
 /** Static render with a fixed chart width (there is no layout engine in these tests). */
 export function render(node: React.ReactElement, width = 900): string {

@@ -15,6 +15,7 @@ import {
   fetchDistributionChannels,
   fetchBranches,
 } from '../../../lib/api';
+import { DISPLAY_LOCALE } from '../../../lib/format';
 
 /** UPDATED (Reports/Dashboards Honor Admin Salesperson Overrides, 2026-09) -- see
  * backend/src/services/salespersonAdminService.ts's header comment for the full mechanism: these
@@ -32,7 +33,7 @@ const OVERLAY_CAVEAT =
 const COMPANY_CAVEAT = 'Organizational label only -- narrows Filter Bar dropdown options, does not affect report totals.';
 
 function fmtCurrency(v: number): string {
-  return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return v.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
 const selectStyle: React.CSSProperties = {

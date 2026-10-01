@@ -1,6 +1,7 @@
 import { chunkRows } from './pdfPagination';
 import { assemblePaginatedPdf } from './pdfPageAssembly';
 import { appendPdfMetaBlock } from './pdfExportContext';
+import { formatDate, formatTime } from './locale';
 
 export interface PdfExportColumn {
   header: string;
@@ -121,7 +122,7 @@ export async function exportRowsAsPdf({ title, subtitle, columns, rows, fileName
       footer.style.color = '#718096';
       footer.style.borderTop = '1px solid #e2e8f0';
       footer.style.paddingTop = '10px';
-      footer.textContent = `Exported on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()} | Total rows: ${rows.length}`;
+      footer.textContent = `Exported on ${formatDate(new Date())} at ${formatTime(new Date())} | Total rows: ${rows.length}`;
       container.appendChild(footer);
     }
 

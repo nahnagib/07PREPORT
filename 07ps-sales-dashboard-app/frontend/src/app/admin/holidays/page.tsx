@@ -1,6 +1,6 @@
 'use client';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, TextInput, type Column } from '@07ps/ui';
+import { Button, Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, TextInput, DateInput, type Column } from '@07ps/ui';
 import { AdminLayout } from '../../../components/AdminLayout';
 import { PermissionGuard } from '../../../components/AuthGuard';
 import { useAuth } from '../../../lib/AuthProvider';
@@ -215,7 +215,7 @@ function CreatePanel({ onCreated }: { onCreated: () => void }) {
       <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>Add Holiday</h2>
       <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
         <TextInput label="Holiday Name" value={holidayName} onChange={(e) => setHolidayName(e.target.value)} required disabled={submitting} />
-        <TextInput label="Date" type="date" value={holidayDate} onChange={(e) => setHolidayDate(e.target.value)} required disabled={submitting} />
+        <DateInput label="Date" value={holidayDate} onChange={setHolidayDate} required disabled={submitting} />
         <TextInput label="Company (blank = country-wide)" value={company} onChange={(e) => setCompany(e.target.value)} disabled={submitting} />
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingBottom: 8 }}>
           <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} disabled={submitting} />
@@ -269,7 +269,7 @@ function EditPanel({ row, onSaved, onCancel }: { row: HolidayRow; onSaved: () =>
       <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>Edit {row.holiday_name}</h2>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
         <TextInput label="Holiday Name" value={holidayName} onChange={(e) => setHolidayName(e.target.value)} disabled={submitting} required />
-        <TextInput label="Date" type="date" value={holidayDate} onChange={(e) => setHolidayDate(e.target.value)} disabled={submitting} required />
+        <DateInput label="Date" value={holidayDate} onChange={setHolidayDate} disabled={submitting} required />
         <TextInput label="Company (blank = country-wide)" value={company} onChange={(e) => setCompany(e.target.value)} disabled={submitting} />
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, paddingBottom: 8 }}>
           <input type="checkbox" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} disabled={submitting} />

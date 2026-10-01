@@ -1,6 +1,6 @@
 'use client';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Button, Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, TextInput, type Column } from '@07ps/ui';
+import { Button, Card, DataTable, EmptyState, ErrorState, LoadingSkeleton, TextInput, DateInput, type Column } from '@07ps/ui';
 import { AdminLayout } from '../../../components/AdminLayout';
 import { PermissionGuard } from '../../../components/AuthGuard';
 import { useAuth } from '../../../lib/AuthProvider';
@@ -251,7 +251,7 @@ function CreatePanel({
             ))}
           </select>
         </div>
-        <TextInput label="Start Date" type="date" value={closureDate} onChange={(e) => setClosureDate(e.target.value)} required disabled={submitting} />
+        <DateInput label="Start Date" value={closureDate} onChange={setClosureDate} required disabled={submitting} />
         <TextInput label="Duration (days)" type="number" value={durationDays} onChange={(e) => setDurationDays(e.target.value)} disabled={submitting} />
         <TextInput label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} disabled={submitting} />
         <div style={{ display: 'flex', alignItems: 'flex-end' }}>
@@ -317,7 +317,7 @@ function EditPanel({
             ))}
           </select>
         </div>
-        <TextInput label="Start Date" type="date" value={closureDate} onChange={(e) => setClosureDate(e.target.value)} disabled={submitting} required />
+        <DateInput label="Start Date" value={closureDate} onChange={setClosureDate} disabled={submitting} required />
         <TextInput label="Duration (days)" type="number" value={durationDays} onChange={(e) => setDurationDays(e.target.value)} disabled={submitting} />
         <TextInput label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} disabled={submitting} />
       </div>

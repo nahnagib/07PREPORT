@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { Pool } from 'mysql2/promise';
 import {
   computeActivityRates,
+  activityStatusCaseSql,
   computeOpportunityActivityCounts,
   type OpportunityActivityCountsInternal,
 } from '../activityMomentum';
@@ -39,53 +40,50 @@ describe('checkActivityColumnsAvailable', () => {
   });
 });
 
-describe('computeOpportunityActivityCounts -- cohort vs. snapshot scoping', () => {
-  it('sends the current-year creation-date window to both the cohort and the snapshot query', async () => {
+describe('computeOpportunityActivityCounts -- mutually exclusive statuses (2026-09-30 fix)', () => {
+  it('classifies each YTD opportunity once, so the tiles add up to #YTD', async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
+    // Live figures, 2026-01-01..2026-09-30, no filters (see activityMomentum.ts's module header).
     const query = vi.fn(async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
-      if (sql.includes('totalYtdAll')) {
-        return [[{ totalYtdAll: 5, totalYtd: 4, won: 1, lost: 1 }]];
-      }
-      return [[{ active: 2, withoutActivity: 1, withoutNextStep: 1 }]];
+      return [[{ totalYtd: 693, active: 127, won: 233, lost: 234, withoutActivity: 80, withoutNextStep: 19, unclassified: 0 }]];
     });
     const pool = { query } as unknown as Pool;
 
-    const result = await computeOpportunityActivityCounts(pool, dateOnlyUTC(2026, 6, 30), {}, true);
+    const r = await computeOpportunityActivityCounts(pool, dateOnlyUTC(2026, 9, 30), {}, true);
 
-    expect(calls).toHaveLength(2);
-    const cohortCall = calls.find((c) => c.sql.includes('totalYtdAll'));
-    const snapshotCall = calls.find((c) => !c.sql.includes('totalYtdAll'));
-    expect(cohortCall).toBeDefined();
-    expect(snapshotCall).toBeDefined();
-    // Year-to-date only: even the current-state snapshot is limited to opportunities created from
-    // Jan 1 of the anchor's (current) year, so nothing from a previous year is ever counted.
-    expect(snapshotCall!.sql).toContain('DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ?');
-    expect(snapshotCall!.params).toEqual(['2026-01-01', '2026-06-30']);
-    expect(cohortCall!.params).toEqual(['2026-01-01', '2026-06-30']);
-
-    expect(result).toEqual({
-      totalYtdAll: 5,
-      totalYtd: 4,
-      won: 1,
-      lost: 1,
-      active: 2,
-      withoutActivity: 1,
-      withoutNextStep: 1,
-    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toContain('DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ?');
+    expect(calls[0].params).toEqual(['2026-01-01', '2026-09-30']);
+    expect(r.active + r.won + r.lost + r.withoutActivity! + r.withoutNextStep! + r.unclassified).toBe(r.totalYtd);
+    // Lost is part of #YTD now, so Lost Deals Ratio's denominator is simply #YTD.
+    expect(r.totalYtdAll).toBe(r.totalYtd);
   });
 
-  it('falls back to a single #Active snapshot column when activity columns are unavailable', async () => {
+  it('keeps the stale opportunities in #Active when the activity columns are unavailable', async () => {
+    let sentSql = '';
     const query = vi.fn(async (sql: string) => {
-      if (sql.includes('totalYtdAll')) return [[{ totalYtdAll: 3, totalYtd: 3, won: 0, lost: 0 }]];
-      return [[{ active: 3 }]];
+      sentSql = sql;
+      return [[{ totalYtd: 5, active: 3, won: 1, lost: 1, withoutActivity: 0, withoutNextStep: 0, unclassified: 0 }]];
     });
     const pool = { query } as unknown as Pool;
 
-    const result = await computeOpportunityActivityCounts(pool, dateOnlyUTC(2026, 6, 30), {}, false);
-    expect(result.active).toBe(3);
-    expect(result.withoutActivity).toBeNull();
-    expect(result.withoutNextStep).toBeNull();
+    const r = await computeOpportunityActivityCounts(pool, dateOnlyUTC(2026, 6, 30), {}, false);
+    expect(sentSql).not.toContain('HasQuotation');
+    expect(r.active).toBe(3);
+    expect(r.withoutActivity).toBeNull();
+    expect(r.withoutNextStep).toBeNull();
+  });
+});
+
+describe('activityStatusCaseSql -- precedence', () => {
+  it('checks Lost, then Won, then the two stale buckets, then Active', () => {
+    const sql = activityStatusCaseSql(true);
+    const order = ["THEN 'lost'", "THEN 'won'", "THEN 'withoutActivity'", "THEN 'withoutNextStep'", "THEN 'active'", "ELSE 'unclassified'"].map((t) =>
+      sql.indexOf(t),
+    );
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 });
 
@@ -126,6 +124,7 @@ describe('computeActivityRates -- no double-counting in Inactive Deals Ratio', (
       active: 1,
       withoutActivity: 0,
       withoutNextStep: 0,
+      unclassified: 0,
     };
 
     const rates = await computeActivityRates(pool, {}, true, counts);
@@ -145,6 +144,7 @@ describe('computeActivityRates -- no double-counting in Inactive Deals Ratio', (
       active: 0,
       withoutActivity: 0,
       withoutNextStep: 0,
+      unclassified: 0,
     };
     const rates = await computeActivityRates(pool, {}, true, counts);
     expect(rates.lostDealsRatio).toBeCloseTo(230 / 619, 5);
@@ -163,6 +163,7 @@ describe('computeActivityRates -- no double-counting in Inactive Deals Ratio', (
       active: 0,
       withoutActivity: null,
       withoutNextStep: null,
+      unclassified: 0,
     };
     const rates = await computeActivityRates(pool, {}, false, counts);
     expect(rates.inactiveDealsRatio).toBeNull();
@@ -187,7 +188,7 @@ describe('computeActivityRates -- queries the real, live Fact_Opportunity column
     });
     const pool = { query } as unknown as Pool;
     const counts: OpportunityActivityCountsInternal = {
-      totalYtdAll: 1, totalYtd: 1, won: 0, lost: 0, active: 0, withoutActivity: 0, withoutNextStep: 0,
+      totalYtdAll: 1, totalYtd: 1, won: 0, lost: 0, active: 0, withoutActivity: 0, withoutNextStep: 0, unclassified: 0,
     };
 
     await computeActivityRates(pool, {}, true, counts);

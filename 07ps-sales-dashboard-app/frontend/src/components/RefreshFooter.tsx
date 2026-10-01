@@ -1,9 +1,13 @@
 import React from 'react';
+import { useAuth } from '../lib/AuthProvider';
 
 /**
  * Standards Section 2.1.2 / 3.19 / 5.11 - bottom-of-page Last Update / Last Refresh Time pair,
  * present on every page. Backed (in later phases) by the ingestion job's refresh_log table
  * (data/warehouse/migrations/0004_calendar_and_metadata.sql).
+ *
+ * Last Update / Last Order Created are data-validation timestamps: admins only. Everyone else sees
+ * just Last Refresh Time (the API also withholds the other two from non-admins).
  */
 export function RefreshFooter({
   lastUpdate = '—',
@@ -17,6 +21,7 @@ export function RefreshFooter({
   lastOrderCreated?: string;
   lastRefreshTime?: string;
 }) {
+  const { isAdmin } = useAuth();
   return (
     <div
       style={{
@@ -29,8 +34,8 @@ export function RefreshFooter({
         borderTop: '1px solid var(--ps-color-border)',
       }}
     >
-      <span>Last Update: {lastUpdate}</span>
-      {lastOrderCreated ? <span>Last Order Created: {lastOrderCreated}</span> : null}
+      {isAdmin && <span>Last Update: {lastUpdate}</span>}
+      {isAdmin && lastOrderCreated ? <span>Last Order Created: {lastOrderCreated}</span> : null}
       <span>Last Refresh Time: {lastRefreshTime}</span>
     </div>
   );

@@ -409,6 +409,7 @@ export default function TachometerPage() {
         isSalesperson={isSalesperson}
         lastUpdate={refreshStatus.data?.lastUpdate ?? null}
         lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
+        lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
         dateFromDate={dateFromDate}
         dateToDate={dateToDate}
         onDateRangeChange={onDateRangeChange}

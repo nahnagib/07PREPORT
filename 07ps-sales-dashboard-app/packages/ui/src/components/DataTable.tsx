@@ -68,6 +68,7 @@ export function DataTable<T extends Record<string, unknown>>({
               {columns.map((col, i) => (
                 <td
                   key={String(col.key)}
+                  dir="auto"
                   style={{
                     position: i === 0 ? 'sticky' : undefined,
                     left: i === 0 ? 0 : undefined,
