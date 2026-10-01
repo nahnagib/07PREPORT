@@ -36,5 +36,8 @@
   "dependencies": {
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "4.62.2"
   }
 }

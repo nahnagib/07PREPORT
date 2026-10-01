@@ -23,8 +23,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import BigInteger, Column, DateTime, Float, Integer, MetaData, String, Table, Text, text
+from sqlalchemy import BigInteger, Column, DateTime, Float, Integer, MetaData, String, Table, Text, inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +158,13 @@ class EtlRunLog:
         self.run_uid = str(uuid.uuid4())
 
     def ensure_table(self) -> None:
-        _metadata.create_all(self.engine, tables=[etl_run_log], checkfirst=True)
+        try:
+            _metadata.create_all(self.engine, tables=[etl_run_log], checkfirst=True)
+        except (OperationalError, ProgrammingError):
+            # Two runs starting together: both saw no table, the other one created it first
+            # ("table ... already exists"). Anything else is re-raised.
+            if not inspect(self.engine).has_table(TABLE_NAME):
+                raise
 
     def start(self, mode: str, output_mode: str, trigger_source: str, started_at: datetime) -> None:
         """Inserts the ``running`` row and abandons rows left ``running`` by a dead process."""
