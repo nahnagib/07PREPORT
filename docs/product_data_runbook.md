@@ -199,9 +199,31 @@ It is read-only against Odoo. It exits non-zero on any mismatch. It checks:
 It needs an admin API token in `DASHBOARD_TOKEN`. The local test account it used before (`claude.test.admin@bmh.local`)
 was disabled on 2026-09-30.
 
+
 ---
 
-## 9. Open items (recorded 2026-09-30, not fixed)
+## 9. Local test stack
+
+Production runs on this PC (Docker project `07ps-sales-dashboard-app`, ports 3000/4000/5001). A separate **test stack**
+runs next to it, so code can be tried on a copy of the real data first.
+
+| | Test stack |
+|---|---|
+| Start | `test-stack-start.cmd` in the repo root. It copies the production database (a read-only `mysqldump --single-transaction`), loads it into the test database, then builds and starts the stack. `test-stack-start.cmd /keepdata` skips the copy. |
+| Stop | `test-stack-stop.cmd`. The test database is kept. `test-stack-stop.cmd /purge` also deletes it. |
+| Docker project | `07ps-test`, with its own network, volumes and images (`07ps/*:test`). Production's containers and `07ps/*:local` images are never touched. |
+| Addresses | Dashboard http://localhost:3202/Dashboard, backend http://localhost:4201, ETL API http://localhost:4202, MySQL 127.0.0.1:33309. |
+| Database | Its own MySQL container (`test-mysql`). All services use `test-mysql:3306`. The start script refuses to run if any service points at the production database host. |
+| ETL | Schedules are off. Start a run from Admin › ETL Control Center. The input folder is mounted read-only. Odoo is only read. |
+| Sign-in | The same accounts as production, as of the copy. |
+| Defined in | `07ps-sales-dashboard-app/docker-compose.test-stack.yml` |
+
+The copy is written to `07ps-sales-dashboard-app/db_backups/test-stack-copy.sql`. That file holds production data and is
+gitignored; delete it when it is no longer needed.
+
+---
+
+## 10. Open items (recorded 2026-09-30, not fixed)
 
 | Item | Detail |
 |---|---|
