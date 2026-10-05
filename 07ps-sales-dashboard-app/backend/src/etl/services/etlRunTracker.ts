@@ -3,7 +3,8 @@ import { pool } from '../../db/pool';
 import { getAppTimezone, utcSqlDateTimeToDate } from '../../lib/timezone';
 import { etlLogger } from './etlLogger';
 
-export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel';
+/** 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform; new runs use incremental/full/finance. */
+export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel' | 'finance';
 export type EtlLoadMode = 'full' | 'incremental';
 export type EtlOutputMode = 'sql' | 'excel' | 'both';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';
@@ -34,7 +35,7 @@ export interface EtlJobRunRow {
 
 /**
  * Single writer for `etl_job_runs`, the Node-side complement to the vendored pipeline's own
- * pipeline_run_log/pipeline_run_audit (see 0011_etl_control_center.sql's header). The row for a
+ * etl_run_log / etl_task_log (see 0028_etl_platform_meta.sql; pipeline_run_log before). The row for a
  * run is created here at *enqueue* time (not when the worker picks it up) so the concurrency
  * guard (`hasActiveEtlRun`) is correct even for a job that's still waiting because the worker
  * isn't running yet -- there's no gap where a second run could slip through.
@@ -315,43 +316,42 @@ export async function listRunHistory(
   return { rows: (rows as (EtlJobRunRow & RawTimestampFields)[]).map(normalizeEtlJobRunRow), total };
 }
 
-/** The current max `pipeline_run_log.run_id`, captured right before a subprocess starts -- the
- * baseline `correlateLatestPipelineRunLog` uses to tell "this run wrote a new row" apart from
- * "this run never got far enough to write one" (cancelled, or failed before the SQL phase). */
-export async function getMaxPipelineRunLogId(): Promise<number> {
-  const [rows] = await pool.query(`SELECT COALESCE(MAX(run_id), 0) AS maxId FROM pipeline_run_log`);
-  return (rows as { maxId: number }[])[0]?.maxId ?? 0;
+/** The current max `etl_run_log.run_id`, captured right before a run starts -- the baseline
+ * `correlateLatestEtlRun` uses to tell "this run wrote its own row" apart from "this run never got far enough to
+ * write one" (cancelled, or failed before the platform runner started). Replaces the legacy pipeline_run_log. */
+export async function getMaxEtlRunId(): Promise<number> {
+  const [rows] = await pool.query(`SELECT COALESCE(MAX(run_id), 0) AS maxId FROM etl_run_log`);
+  return Number((rows as { maxId: number }[])[0]?.maxId ?? 0);
 }
 
 /**
- * Correlates a just-finished sql/both run with the pipeline's own pipeline_run_log, for the real
- * extract/load/QA counts. `baselineRunLogId` (from `getMaxPipelineRunLogId`, captured before the
- * subprocess started) guards against mis-attributing a stale row from a *previous* run: BullMQ
- * concurrency is 1, so a genuinely new row is always the latest one, but a run that never reached
- * the point of writing its own row (cancelled mid-extraction, or failed before the SQL phase)
- * must not be credited with whatever the latest pre-existing row happens to contain.
+ * Correlates a just-finished run with the ETL platform's own etl_run_log row, for the real extract/load/QA
+ * counts. Only the invoked job's top-level row counts (parent_run_uid IS NULL; dependency jobs such as core_dims
+ * have their own rows with parent_run_uid set). `baselineRunId` guards against crediting a run with a row written
+ * by an earlier one (BullMQ concurrency is 1).
  */
-export async function correlateLatestPipelineRunLog(baselineRunLogId: number): Promise<{
+export async function correlateLatestEtlRun(baselineRunId: number): Promise<{
   pipelineRunLogId: number;
   odooExtractCount: number | null;
   dbLoadedCount: number | null;
   qaIssuesCount: number | null;
 } | null> {
   const [rows] = await pool.query(
-    `SELECT run_id, odoo_extract_count, db_loaded_count, qa_issues_count
-     FROM pipeline_run_log ORDER BY run_id DESC LIMIT 1`,
+    `SELECT run_id, odoo_extract_count, rows_processed, qa_issues_count
+     FROM etl_run_log WHERE run_id > ? AND parent_run_uid IS NULL ORDER BY run_id DESC LIMIT 1`,
+    [baselineRunId],
   );
   const row = (rows as {
     run_id: number;
     odoo_extract_count: number | null;
-    db_loaded_count: number | null;
+    rows_processed: number | null;
     qa_issues_count: number | null;
   }[])[0];
-  if (!row || row.run_id <= baselineRunLogId) return null;
+  if (!row) return null;
   return {
-    pipelineRunLogId: row.run_id,
+    pipelineRunLogId: Number(row.run_id), // stored in etl_job_runs.pipeline_run_log_id: now an etl_run_log.run_id
     odooExtractCount: row.odoo_extract_count,
-    dbLoadedCount: row.db_loaded_count,
+    dbLoadedCount: row.rows_processed,
     qaIssuesCount: row.qa_issues_count,
   };
 }

@@ -6,20 +6,20 @@
  * `data/warehouse/migrations/` design; see measures/customerGrowth.ts's header for the same lesson
  * applied to Dim_Customer):
  *
- *   Fact_Lead        -- one row per CRM lead. Already pre-scoped to genuine CRM leads by the ETL's
+ *   v_sales_leads        -- one row per CRM lead. Already pre-scoped to genuine CRM leads by the ETL's
  *                        own build-time filter (LeadType IN ('lead','systematic') OR
  *                        IsETLCreatedLead) -- "Leads = CRM Leads only" needs no extra WHERE clause.
- *   Fact_Opportunity -- one row per CRM opportunity, similarly pre-scoped to real CRM opportunities
+ *   v_sales_opportunities -- one row per CRM opportunity, similarly pre-scoped to real CRM opportunities
  *                        by the ETL. Carries Stage/Probability/ProbabilityBucket/ExpectedRevenue/
  *                        ExpectedCloseDate/IsWon/IsLost/IsOpen directly.
- *   Fact_Sales       -- one row per Odoo sale.order id (the live name for the quotation-to-order
+ *   v_sales_documents       -- one row per Odoo sale.order id (the live name for the quotation-to-order
  *                        funnel fact -- NOT a revenue fact). SalesDocumentType flips from
  *                        'Quotation' to 'Sales Order' on the SAME row once the order is confirmed
  *                        (a current-state snapshot, not a permanent history), so "Quotations linked
  *                        to an Opportunity" must count every row with IsLinkedToOpportunity=1
  *                        regardless of its current SalesDocumentType -- every Sales Order row
  *                        started life as a quotation.
- *   Fact_Delivery    -- one row per picking/delivery record. OpportunityID is already denormalized
+ *   v_sales_deliveries    -- one row per picking/delivery record. OpportunityID is already denormalized
  *                        directly onto this table from its linked Sales Order (no join needed).
  *
  * YEAR-TO-DATE ONLY (2026-09-21): the whole page is now limited to the current year. Every
@@ -36,10 +36,10 @@
  * funnel only reflects CRM-managed transactions" (CRM/Odoo opportunity tracking in this business is
  * a B2B-only discipline; B2C walk-in sales never go through the CRM pipeline at all). Each stage is
  * scoped by its own natural date field: Leads/Opportunities by their own CreatedDate; Quotations
- * AND Sales Orders both by QuotationDate (the same Fact_Sales row's one fixed origination
+ * AND Sales Orders both by QuotationDate (the same v_sales_documents row's one fixed origination
  * timestamp, since a Sales Order row IS a Quotation row that later got confirmed -- using the same
  * field for both keeps the two stages counting the same YTD cohort of documents, not two different
- * ones); Deliveries by their linked order's OrderDate (Fact_Delivery has no QuotationDate of its
+ * ones); Deliveries by their linked order's OrderDate (v_sales_deliveries has no QuotationDate of its
  * own). Every other visual on this page (Expected Closure Opportunity, Opportunity by Stage,
  * Probabilities Distribution, Opportunity Details) is deliberately NOT B2B/YTD-scoped -- only the
  * funnel and the Stage Benchmark that's derived from it (see computeStageBenchmark). Expected
@@ -66,14 +66,21 @@
  * Closure/Probabilities), leaves the stage drill-down unfiltered (Opportunity by Stage's exception),
  * and the funnelStage drill-down matches by an ID list that's already Lost-excluded at the query
  * level (see fetchOpportunityStageIds). The funnel's Quotations/Sales Orders/Deliveries bars stay
- * unfiltered by Won/Lost -- those are Fact_Sales/Fact_Delivery documents with no IsWon/IsLost
+ * unfiltered by Won/Lost -- those are v_sales_documents/v_sales_deliveries documents with no IsWon/IsLost
  * concept of their own (they already happened regardless of the linked opportunity's current
  * status).
  */
 
 import type { Pool } from 'mysql2/promise';
 import { classifyVsTarget, variancePct, TargetStatus } from './classify';
-import { buildCrmWhereClause, buildWhereClause, excludeLostClause, ytdWindow, type Filters } from './filters';
+import {
+  buildCrmWhereClause,
+  buildWhereClause,
+  excludeCancelledDocumentsClause,
+  excludeLostClause,
+  ytdWindow,
+  type Filters,
+} from './filters';
 import { computeOpportunityDataQuality, type DataQualityOverview } from './dataQuality';
 
 function toDateOnlyString(d: Date): string {
@@ -108,7 +115,7 @@ async function countLeads(pool: Pool, anchor: Date, filters: Filters): Promise<n
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fl');
   const sql = `
-    SELECT COUNT(*) AS cnt FROM Fact_Lead fl
+    SELECT COUNT(*) AS cnt FROM v_sales_leads fl
     WHERE DATE(fl.LeadCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fl')} AND ${clause}
   `;
   return countRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -126,7 +133,7 @@ async function fetchOpportunitiesCountAndValue(pool: Pool, anchor: Date, filters
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
-    SELECT COUNT(*) AS cnt, COALESCE(SUM(fo.ExpectedRevenue), 0) AS val FROM Fact_Opportunity fo
+    SELECT COUNT(*) AS cnt, COALESCE(SUM(fo.ExpectedRevenue), 0) AS val FROM v_sales_opportunities fo
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${excludeLostClause('fo')}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -159,7 +166,7 @@ export interface FunnelSalesRecord {
   salesperson: string | null;
   documentDate: string | null;
   value: number;
-  /** Fact_Sales.OrderDate (confirmation date for a Sales Order). */
+  /** v_sales_documents.OrderDate (confirmation date for a Sales Order). */
   orderDate: string | null;
   /** Raw Odoo sale.order state (draft/sent/sale/done/cancel). */
   orderState: string | null;
@@ -204,7 +211,8 @@ function toFunnelSalesRecord(r: any): FunnelSalesRecord {
 }
 
 /** Quotations -- both still-pending ('Quotation') and already-converted ('Sales Order') rows,
- * since every Sales Order row started as a quotation (see module docstring). Opportunity linkage is
+ * since every Sales Order row started as a quotation (see module docstring); cancelled documents are not pipeline
+ * and are left out (excludeCancelledDocumentsClause). Opportunity linkage is
  * NOT filtered here -- every B2B/YTD row is returned so the caller can derive both the linked count
  * and the unlinked "with no Opportunities" list from one fetch. */
 async function fetchQuotationRecords(pool: Pool, anchor: Date, filters: Filters): Promise<FunnelSalesRecord[]> {
@@ -216,9 +224,9 @@ async function fetchQuotationRecords(pool: Pool, anchor: Date, filters: Filters)
            fs.QuotationDate AS documentDate, fs.OrderValue AS value,
            fs.OrderDate AS orderDate, fs.OrderState AS orderState, fs.SalesDocumentType AS documentType,
            fs.OpportunityID AS opportunityId
-    FROM Fact_Sales fs
+    FROM v_sales_documents fs
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
-    WHERE DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${b2bClause('fs')} AND ${clause}
+    WHERE DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${b2bClause('fs')} AND ${excludeCancelledDocumentsClause('fs')} AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   return (rows as any[]).map(toFunnelSalesRecord);
@@ -233,9 +241,10 @@ async function fetchSalesOrderRecords(pool: Pool, anchor: Date, filters: Filters
            fs.QuotationDate AS documentDate, fs.OrderValue AS value,
            fs.OrderDate AS orderDate, fs.OrderState AS orderState, fs.SalesDocumentType AS documentType,
            fs.OpportunityID AS opportunityId
-    FROM Fact_Sales fs
+    FROM v_sales_documents fs
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
-    WHERE fs.SalesDocumentType = 'Sales Order' AND DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${b2bClause('fs')} AND ${clause}
+    WHERE fs.SalesDocumentType = 'Sales Order' AND DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${b2bClause('fs')}
+      AND ${excludeCancelledDocumentsClause('fs')} AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   return (rows as any[]).map(toFunnelSalesRecord);
@@ -254,7 +263,7 @@ async function fetchDeliveryRecords(pool: Pool, anchor: Date, filters: Filters):
            fd.OrderDate AS orderDate, fd.DeliveryStatus AS deliveryStatus,
            fd.DeliveryReference AS deliveryReference, fd.DeliveryDate AS deliveryDate,
            fd.OpportunityID AS opportunityId
-    FROM Fact_Delivery fd
+    FROM v_sales_deliveries fd
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fd.SalespersonKey
     WHERE fd.OrderDate BETWEEN ? AND ? AND ${b2bClause('fd')} AND ${clause}
   `;
@@ -303,10 +312,10 @@ function sumLinkedValue(rows: { opportunityId: string | null; value: number }[])
   return rows.filter((r) => r.opportunityId != null).reduce((sum, r) => sum + r.value, 0);
 }
 
-/** Fact_Delivery carries no monetary value of its own (quantities only -- confirmed against the
+/** v_sales_deliveries carries no monetary value of its own (quantities only -- confirmed against the
  * live schema), and a single order can have multiple partial delivery rows, so summing a per-row
  * value would double-count. Instead: build an orderNumber -> value map from the Quotations stage
- * records (a superset of every Fact_Sales row, pending or converted, each order's value is stable
+ * records (a superset of every v_sales_documents row, pending or converted, each order's value is stable
  * across its life), then sum each *unique* linked delivery's order value once. */
 function sumDeliveryValue(deliveries: FunnelDeliveryRecord[], quotations: FunnelSalesRecord[]): number {
   const valueByOrderNumber = new Map<string, number>();
@@ -384,7 +393,7 @@ async function fetchLeadOpportunityIds(pool: Pool, anchor: Date, filters: Filter
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fl');
   const sql = `
-    SELECT DISTINCT fl.OpportunityID AS opportunityId FROM Fact_Lead fl
+    SELECT DISTINCT fl.OpportunityID AS opportunityId FROM v_sales_leads fl
     WHERE DATE(fl.LeadCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fl')} AND ${clause} AND fl.OpportunityID IS NOT NULL
   `;
   return fetchIdRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -396,7 +405,7 @@ async function fetchOpportunityStageIds(pool: Pool, anchor: Date, filters: Filte
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
-    SELECT fo.OpportunityID AS opportunityId FROM Fact_Opportunity fo
+    SELECT fo.OpportunityID AS opportunityId FROM v_sales_opportunities fo
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${excludeLostClause('fo')}
   `;
   return fetchIdRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -480,7 +489,7 @@ export async function fetchExpectedClosureByMonth(pool: Pool, anchor: Date, filt
       MONTH(fo.ExpectedCloseDate) AS month,
       COUNT(*) AS expectedCount,
       COALESCE(SUM(fo.ExpectedRevenue), 0) AS expectedValue
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     WHERE fo.ExpectedCloseDate >= ? AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND fo.IsOpen = 1
     GROUP BY YEAR(fo.ExpectedCloseDate), MONTH(fo.ExpectedCloseDate)
     ORDER BY year, month
@@ -530,7 +539,7 @@ export async function fetchOpportunityByStage(pool: Pool, anchor: Date, filters:
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT fo.Stage AS stage, COALESCE(SUM(fo.ExpectedRevenue), 0) AS value
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
     GROUP BY fo.Stage
     ORDER BY value DESC
@@ -557,7 +566,7 @@ export async function fetchProbabilityDistribution(pool: Pool, anchor: Date, fil
   const placeholders = PROBABILITY_BUCKETS.map(() => '?').join(', ');
   const sql = `
     SELECT fo.ProbabilityBucket AS bucket, COUNT(*) AS cnt
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     WHERE fo.ProbabilityBucket IN (${placeholders}) AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${excludeLostClause('fo')}
     GROUP BY fo.ProbabilityBucket
   `;
@@ -615,7 +624,7 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
       MONTH(fo.ExpectedCloseDate) AS closeMonth,
       fo.ProbabilityBucket AS probabilityBucket,
       fo.IsOpen AS isOpen
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
@@ -640,10 +649,10 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
 // Full Pipeline chain -- one row per B2B, current-year opportunity (same population as the funnel's
 // Opportunities bar: created YTD, Lost excluded), with every linked Quotation / Sales Order /
 // Delivery. Links used (all already in the warehouse, nothing inferred):
-//   Opportunity -> Quotation / Sales Order : Fact_Sales.OpportunityID (one Fact_Sales row is the
+//   Opportunity -> Quotation / Sales Order : v_sales_documents.OpportunityID (one v_sales_documents row is the
 //                                            quotation and, once confirmed, the same row is the SO)
-//   Sales Order -> Delivery                : Fact_Delivery.OpportunityID (denormalised from the SO)
-//                                            + Fact_Delivery.OrderNumber
+//   Sales Order -> Delivery                : v_sales_deliveries.OpportunityID (denormalised from the SO)
+//                                            + v_sales_deliveries.OrderNumber
 // Built from the funnel's stage records (already B2B + YTD scoped), so the chain can never disagree
 // with the funnel's drill-downs.
 // ---------------------------------------------------------------------------
@@ -705,7 +714,7 @@ async function fetchChainOpportunities(pool: Pool, anchor: Date, filters: Filter
     SELECT fo.OpportunityID AS opportunityId, fo.OpportunityName AS name, fo.Customer AS customer,
            COALESCE(sap.admin_name_override, fo.Salesperson) AS salesperson, fo.Stage AS stage,
            fo.OpportunityCreatedDate AS createdDate, fo.ExpectedRevenue AS expectedRevenue, fo.IsWon AS isWon
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${excludeLostClause('fo')}
     ORDER BY fo.OpportunityCreatedDate DESC

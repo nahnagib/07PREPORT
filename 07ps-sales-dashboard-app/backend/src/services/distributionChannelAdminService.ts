@@ -4,7 +4,7 @@ import { ValidationError } from '../lib/errors';
 /**
  * Admin-controlled reference data for Distribution Channel -- same overlay pattern as
  * customerGroupAdminService.ts (see that file's header, and
- * data/warehouse/migrations/0018_reference_data_admin.sql), applied to Dim_DistributionChannel
+ * data/warehouse/migrations/0018_reference_data_admin.sql), applied to dim_channel
  * instead of Dim_Segment.
  *
  * Usage check only looks at salesperson_admin_profile.channel_key_override -- sales_team_admin_profile
@@ -92,7 +92,7 @@ async function nameTakenByAnother(name: string, excludeId?: number): Promise<boo
 }
 
 async function etlChannelExists(channelKey: number): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_DistributionChannel WHERE ChannelKey = ? LIMIT 1', [channelKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_channel WHERE ChannelKey = ? LIMIT 1', [channelKey]);
   return (rows as unknown[]).length > 0;
 }
 
@@ -145,7 +145,7 @@ export async function createDistributionChannel(input: CreateDistributionChannel
     if (await etlChannelTakenByAnother(input.etlChannelKey)) {
       throw new ValidationError('That ETL channel is already linked to another distribution channel.');
     }
-    const [rows] = await pool.query('SELECT DistributionChannel FROM Dim_DistributionChannel WHERE ChannelKey = ?', [input.etlChannelKey]);
+    const [rows] = await pool.query('SELECT DistributionChannel FROM dim_channel WHERE ChannelKey = ?', [input.etlChannelKey]);
     etlChannelName = (rows as { DistributionChannel: string }[])[0]?.DistributionChannel ?? null;
   }
 
@@ -196,7 +196,7 @@ export async function updateDistributionChannel(id: number, input: UpdateDistrib
       if (await etlChannelTakenByAnother(input.etlChannelKey, id)) {
         throw new ValidationError('That ETL channel is already linked to another distribution channel.');
       }
-      const [rows] = await pool.query('SELECT DistributionChannel FROM Dim_DistributionChannel WHERE ChannelKey = ?', [input.etlChannelKey]);
+      const [rows] = await pool.query('SELECT DistributionChannel FROM dim_channel WHERE ChannelKey = ?', [input.etlChannelKey]);
       etlChannelKey = input.etlChannelKey;
       etlChannelName = (rows as { DistributionChannel: string }[])[0]?.DistributionChannel ?? null;
     }
@@ -262,6 +262,6 @@ export interface EtlChannelOption {
 }
 
 export async function getEtlChannelOptions(): Promise<EtlChannelOption[]> {
-  const [rows] = await pool.query('SELECT ChannelKey AS channel_key, DistributionChannel AS channel_name FROM Dim_DistributionChannel ORDER BY ChannelKey');
+  const [rows] = await pool.query('SELECT ChannelKey AS channel_key, DistributionChannel AS channel_name FROM dim_channel ORDER BY ChannelKey');
   return rows as EtlChannelOption[];
 }

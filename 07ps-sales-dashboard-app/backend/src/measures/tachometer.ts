@@ -8,16 +8,16 @@
  *
  *   Metric                  | Source table(s)                        | How
  *   ------------------------|-----------------------------------------|---------------------------
- *   YTD/MTD Value           | Fact_SalesLines (value, filtered)                 | SUM over the date window,
- *   YTD/MTD Volume          | Fact_SalesLines (volume, filtered)                | joined to dim_date on
+ *   YTD/MTD Value           | v_sales_lines (value, filtered)                 | SUM over the date window,
+ *   YTD/MTD Volume          | v_sales_lines (volume, filtered)                | joined to dim_date on
  *                           |                                           | date_key, filtered by the
  *                           |                                           | five filter columns
  *   ASP (YTD/MTD)           | derived                                  | Value / Volume (JS, not
  *                           |                                           | SQL -- avoids a
  *                           |                                           | divide-by-zero in SQL)
- *   LYTD/LMTD               | Fact_SalesLines (filtered)                                | same query, prior-year
+ *   LYTD/LMTD               | v_sales_lines (filtered)                                | same query, prior-year
  *                           |                                           | date window
- *   FLY/FLM                 | Fact_SalesLines (filtered)                                | same query, full prior
+ *   FLY/FLM                 | v_sales_lines (filtered)                                | same query, full prior
  *                           |                                           | calendar year/month window
  *   FY/FM Target             | fact_target_plan (target_revenue,        | SUM grouped by
  *                            | target_volume)                           | target_year/target_month
@@ -28,10 +28,10 @@
  *   (grey needle reference)  |                                          | prorateMtdTarget /
  *                            |                                          | prorateYtdTarget
  *
- * Fact_SalesLines (filtered) vs. Fact_SalesLines (filtered)_line for Value/Volume
+ * v_sales_lines (filtered) vs. v_sales_lines (filtered)_line for Value/Volume
  * --------------------------------------------------
- * Value/Volume use Fact_SalesLines (filtered), not Fact_SalesLines (filtered)_line. Fact_SalesLines (filtered) is the order-HEADER revenue fact
- * (one row per confirmed order); Fact_SalesLines (filtered)_line is invoice-LINE grain built for the Invoices
+ * Value/Volume use v_sales_lines (filtered), not v_sales_lines (filtered)_line. v_sales_lines (filtered) is the order-HEADER revenue fact
+ * (one row per confirmed order); v_sales_lines (filtered)_line is invoice-LINE grain built for the Invoices
  * Engine page's per-invoice efficiency metrics -- using it here would double-count orders with
  * multiple lines.
  */
@@ -79,7 +79,7 @@ function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Value/Volume summed from Fact_SalesLines (filtered) for a date window + filter selection. */
+/** Value/Volume summed from v_sales_lines (filtered) for a date window + filter selection. */
 export async function fetchValueVolume(
   pool: Pool,
   window: DateWindow,
@@ -90,7 +90,7 @@ export async function fetchValueVolume(
     SELECT
       COALESCE(SUM(fsl.value), 0)  AS value,
       COALESCE(SUM(fsl.volume), 0) AS volume
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date BETWEEN ? AND ?
       AND ${clause}
@@ -108,19 +108,19 @@ export async function fetchValueVolume(
  * Admin target-override blending (Reports/Dashboards Honor Admin Salesperson Overrides, 2026-09,
  * companion to filters.ts's effectiveSegmentExpr/effectiveChannelExpr/effectiveSalesTeamExpr on the
  * revenue side). `salesperson_admin_profile.target_override_amount` is a single flat annual figure
- * -- Fact_Targets (and everything else in this system) has no granularity finer than a calendar
+ * -- v_sales_targets (and everything else in this system) has no granularity finer than a calendar
  * month, so rather than invent a new day-of-year precision nothing else uses, an override is
  * treated as an even 12-way monthly split and injected as if it were that salesperson's real
- * Fact_Targets data. That lets every existing consumer of fetchTargetForMonths/
+ * v_sales_targets data. That lets every existing consumer of fetchTargetForMonths/
  * fetchTargetForMonthsGrouped below (mtdTargetToDate/ytdTargetToDate's prorateMtdTarget/
  * prorateYtdTarget, fullPeriodTargetForMtd/Ytd, and criticalNumber.ts's FY-target/working-days
  * arithmetic) inherit correct override-aware figures with ZERO changes on their end -- the
  * substitution happens once, here, at the shared source both functions already were.
  *
  * `targetVolume` is NEVER touched by an override -- there is no volume-override column in the
- * schema, so volume-based targets stay 100% real Fact_Targets data, unconditionally, everywhere.
+ * schema, so volume-based targets stay 100% real v_sales_targets data, unconditionally, everywhere.
  *
- * Known, accepted limitation: a salesperson with an override but zero matching Fact_Targets rows
+ * Known, accepted limitation: a salesperson with an override but zero matching v_sales_targets rows
  * (e.g. no ETL target-plan data exists for them at all this year) never appears in the grouped
  * query below and so contributes nothing -- same as this system's pre-override behavior. Revisit
  * only if that turns out to matter in practice; not fixed here since it wasn't part of what was
@@ -139,7 +139,7 @@ async function fetchMonthlyOverrideAmounts(pool: Pool, salespersonKeys: number[]
 
 /** How many real months this fetchTargetForMonths(Grouped) call's opts represents -- an
  * overridden salesperson's flat per-month split is multiplied by this so it composes with the
- * caller's own proration math exactly as a real multi-month Fact_Targets sum would. */
+ * caller's own proration math exactly as a real multi-month v_sales_targets sum would. */
 function monthCountForOpts(opts: { month?: number; monthLt?: number }): number {
   if (opts.month !== undefined) return 1;
   if (opts.monthLt !== undefined) return Math.max(0, opts.monthLt - 1);
@@ -177,7 +177,7 @@ export async function fetchTargetForMonths(
       ftp.SalespersonKey AS salespersonKey,
       COALESCE(SUM(ftp.Target_Revenue), 0) AS target_revenue,
       COALESCE(SUM(ftp.Target_Volume), 0)  AS target_volume
-    FROM Fact_Targets ftp
+    FROM v_sales_targets ftp
     WHERE ${conditions.join(' AND ')} AND ${clause}
     GROUP BY ftp.SalespersonKey
   `;
@@ -423,7 +423,7 @@ const GROUP_CONFIG: Record<GroupBy, GroupConfig> = {
     keyJoin: (alias) => `LEFT JOIN salesperson_admin_profile sap_key ON sap_key.salesperson_key = ${alias}.SalespersonKey`,
     keyExpr: (alias) => `COALESCE(sap_key.sales_team_key_override, ${alias}.SalesTeamKey)`,
     labelJoins: `
-      LEFT JOIN dim_salesteam dst ON gk.group_key = dst.SalesTeamKey
+      LEFT JOIN dim_sales_team dst ON gk.group_key = dst.SalesTeamKey
       LEFT JOIN sales_team_admin_profile stap ON gk.group_key = stap.sales_team_key
     `,
     labelExpr: 'COALESCE(stap.team_name_override, dst.SalesTeam)',
@@ -473,7 +473,7 @@ async function fetchValueVolumeGrouped(
         ${keyExpr} AS group_key,
         COALESCE(SUM(fsl.value), 0)  AS value,
         COALESCE(SUM(fsl.volume), 0) AS volume
-      FROM Fact_SalesLines fsl
+      FROM v_sales_lines fsl
       JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
       ${cfg.keyJoin('fsl')}
       WHERE dd.Date BETWEEN ? AND ?
@@ -538,7 +538,7 @@ async function fetchTargetForMonthsGrouped(
         ${keyExpr} AS group_key,
         COALESCE(SUM(ftp.Target_Revenue), 0) AS target_revenue,
         COALESCE(SUM(ftp.Target_Volume), 0)  AS target_volume
-      FROM Fact_Targets ftp
+      FROM v_sales_targets ftp
       ${cfg.keyJoin('ftp')}
       WHERE ${conditions.join(' AND ')} AND ${clause}
       GROUP BY ftp.SalespersonKey, ${keyExpr}

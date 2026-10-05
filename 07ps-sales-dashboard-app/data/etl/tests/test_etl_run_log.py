@@ -187,6 +187,35 @@ def test_running_rows_do_not_count_as_a_refresh_and_stale_ones_are_abandoned(eng
     assert statuses == ["failed", "running"]
 
 
+def test_ensure_table_tolerates_a_concurrent_create(engine, monkeypatch):
+    # Deterministic version of the race: the table appears between the existence check and the CREATE.
+    from sales_pipeline import etl_run_log as mod
+
+    real_create_all = mod._metadata.create_all
+
+    def racing_create_all(bind, tables=None, checkfirst=True):
+        real_create_all(bind, tables=tables, checkfirst=True)  # "the other run" creates it first
+        real_create_all(bind, tables=tables, checkfirst=False)  # this run's CREATE then fails: already exists
+
+    monkeypatch.setattr(mod._metadata, "create_all", racing_create_all)
+    EtlRunLog(engine, TRIPOLI).ensure_table()  # no error
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM etl_run_log")).scalar_one() == 0
+
+
+def test_ensure_table_still_raises_real_errors(engine, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    from sales_pipeline import etl_run_log as mod
+
+    def broken(bind, tables=None, checkfirst=True):
+        raise OperationalError("CREATE TABLE etl_run_log", {}, Exception("disk I/O error"))
+
+    monkeypatch.setattr(mod._metadata, "create_all", broken)
+    with pytest.raises(OperationalError):
+        EtlRunLog(engine, TRIPOLI).ensure_table()
+
+
 def test_concurrent_runs_each_get_their_own_row_and_last_success_follows_finish_time(engine):
     _seed_orders(engine, [("S001", datetime(2026, 9, 20, 9, 0), datetime(2026, 9, 20, 9, 0))])
     logs = [EtlRunLog(engine, TRIPOLI) for _ in range(4)]

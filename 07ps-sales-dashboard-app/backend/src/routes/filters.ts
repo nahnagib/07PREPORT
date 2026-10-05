@@ -15,8 +15,8 @@ import { getFilterOptions } from '../filters/optionsService';
  *   Business Unit / Company -> Dim_Company
  *   Customer Group          -> Dim_Segment (NOT Dim_Customer -- see filters.ts's module docstring
  *                               in src/measures for the full "why")
- *   Distribution Channel    -> Dim_DistributionChannel
- *   Branch                  -> Dim_SalesTeam
+ *   Distribution Channel    -> dim_channel
+ *   Branch                  -> dim_sales_team
  *   Sales Person            -> Dim_Salesperson
  *
  * No POS endpoint here -- confirmed unused in the real data, and a working-but-empty filter
@@ -124,7 +124,7 @@ const SALESPERSON_COMPANY_MAP_SQL = `
     COALESCE(sap.company_key_override, stap.company_key_override, dc.CompanyKey) AS effective_company_key
   FROM Dim_Salesperson ds
   LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey
-  LEFT JOIN Dim_SalesTeam st ON st.SalesTeamKey = COALESCE(sap.sales_team_key_override, ds.SalesTeamKey)
+  LEFT JOIN dim_sales_team st ON st.SalesTeamKey = COALESCE(sap.sales_team_key_override, ds.SalesTeamKey)
   LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
   LEFT JOIN Dim_Company dc ON dc.Company = st.SalesTeamCompany
 `;
@@ -139,10 +139,10 @@ function cascadeEffectiveChannelExpr(secAlias: string, factAlias: string): strin
   return `COALESCE(
     ${secAlias}.channel_key_override,
     CASE
-      WHEN ${factAlias}.ChannelKey <> 1 THEN ${factAlias}.ChannelKey
+      WHEN ${factAlias}.ChannelKey <> -1 THEN ${factAlias}.ChannelKey
       WHEN ${effSeg} IN (2, 3) THEN 3
       WHEN ${effSeg} IN (1, 4) THEN 2
-      ELSE 1
+      ELSE -1
     END
   )`;
 }
@@ -154,7 +154,7 @@ function cascadeEffectiveChannelExpr(secAlias: string, factAlias: string): strin
  * directly, so an admin's display name/order/active-state edits on
  * /admin/companies//admin/customer-groups//admin/distribution-channels show up here. Only rows
  * with a live etl_*_key are returned -- a purely custom (unlinked) reference-data row has nothing
- * in Fact_SalesLines/Fact_Targets to filter by, so it's a dead-end option here even though it's
+ * in v_sales_lines/v_sales_targets to filter by, so it's a dead-end option here even though it's
  * visible on the admin page itself. The response shape (company_key/company_name etc.) and the
  * role_data_scope enforcement below (scopeRows/allowedValues) are unchanged -- both still key off
  * the live ETL value, exactly what every report measure filters by.
@@ -190,7 +190,7 @@ filtersRouter.get('/customer-groups', async (req, res, next) => {
       const companyClause = inClause('sec.effective_company_key', companyKeys)!;
       [rows] = (await pool.query(
         `SELECT DISTINCT acg.etl_segment_key as segment_key, acg.name as segment_name, acg.display_order
-         FROM Fact_SalesLines fsl
+         FROM v_sales_lines fsl
          JOIN (${SALESPERSON_COMPANY_MAP_SQL}) sec ON sec.salesperson_key = fsl.SalespersonKey
          JOIN admin_customer_group acg ON acg.etl_segment_key = COALESCE(sec.segment_key_override, fsl.SegmentKey)
          WHERE ${companyClause.clause}
@@ -233,7 +233,7 @@ filtersRouter.get('/distribution-channels', async (req, res, next) => {
       clauses.push('adc.is_active = 1', 'adc.etl_channel_key IS NOT NULL');
       [rows] = (await pool.query(
         `SELECT DISTINCT adc.etl_channel_key as channel_key, adc.name as channel_name, adc.display_order
-         FROM Fact_SalesLines fsl
+         FROM v_sales_lines fsl
          JOIN (${SALESPERSON_COMPANY_MAP_SQL}) sec ON sec.salesperson_key = fsl.SalespersonKey
          JOIN admin_distribution_channel adc ON adc.etl_channel_key = ${cascadeEffectiveChannelExpr('sec', 'fsl')}
          WHERE ${clauses.join(' AND ')}
@@ -249,13 +249,13 @@ filtersRouter.get('/distribution-channels', async (req, res, next) => {
 
 /**
  * sales_team_name reads through sales_team_admin_profile.team_name_override (falling back to the
- * raw Dim_SalesTeam name) -- the reclassification design (see filters.ts's effectiveSalesTeamExpr)
+ * raw dim_sales_team name) -- the reclassification design (see filters.ts's effectiveSalesTeamExpr)
  * means a team's admin-set name should show up everywhere the team is offered as a filter, same as
  * business-units/customer-groups/distribution-channels already do above.
  *
  * Two distinct query shapes, not one parameterized query: team membership by Company alone is a
  * fixed attribute (the team's own admin-assigned company, or its raw ETL company) -- no
- * Fact_SalesLines touch needed. Segment/Channel narrowing DOES need Fact_SalesLines, since
+ * v_sales_lines touch needed. Segment/Channel narrowing DOES need v_sales_lines, since
  * segment/channel are per-transaction facts, not team attributes.
  */
 filtersRouter.get('/branches', async (req, res, next) => {
@@ -269,19 +269,19 @@ filtersRouter.get('/branches', async (req, res, next) => {
       [rows] = (await pool.query(
         `SELECT st.SalesTeamKey as sales_team_key, COALESCE(stap.team_name_override, st.SalesTeam) as sales_team_name,
                 st.SalesCity as city, dc.CompanyKey as company_key
-         FROM Dim_SalesTeam st
+         FROM dim_sales_team st
          LEFT JOIN Dim_Company dc ON dc.Company = st.SalesTeamCompany
          LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
          ORDER BY st.SalesTeam`,
       )) as [Record<string, unknown>[], unknown];
     } else if (segmentKeys.length === 0 && channelKeys.length === 0) {
       // Company-only narrowing -- the team's own admin-assigned (or raw ETL) company is enough,
-      // no Fact_SalesLines touch needed.
+      // no v_sales_lines touch needed.
       const companyClause = inClause('COALESCE(stap.company_key_override, dc.CompanyKey)', companyKeys)!;
       [rows] = (await pool.query(
         `SELECT st.SalesTeamKey as sales_team_key, COALESCE(stap.team_name_override, st.SalesTeam) as sales_team_name,
                 st.SalesCity as city, dc.CompanyKey as company_key
-         FROM Dim_SalesTeam st
+         FROM dim_sales_team st
          LEFT JOIN Dim_Company dc ON dc.Company = st.SalesTeamCompany
          LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
          WHERE ${companyClause.clause}
@@ -309,9 +309,9 @@ filtersRouter.get('/branches', async (req, res, next) => {
       [rows] = (await pool.query(
         `SELECT DISTINCT st.SalesTeamKey as sales_team_key, COALESCE(stap.team_name_override, st.SalesTeam) as sales_team_name,
                 st.SalesCity as city, dc.CompanyKey as company_key, st.SalesTeam
-         FROM Fact_SalesLines fsl
+         FROM v_sales_lines fsl
          JOIN (${SALESPERSON_COMPANY_MAP_SQL}) sec ON sec.salesperson_key = fsl.SalespersonKey
-         JOIN Dim_SalesTeam st ON st.SalesTeamKey = COALESCE(sec.sales_team_key_override, fsl.SalesTeamKey)
+         JOIN dim_sales_team st ON st.SalesTeamKey = COALESCE(sec.sales_team_key_override, fsl.SalesTeamKey)
          LEFT JOIN Dim_Company dc ON dc.Company = st.SalesTeamCompany
          LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
          WHERE ${clauses.join(' AND ')}
@@ -388,7 +388,7 @@ filtersRouter.get('/salespersons', async (req, res, next) => {
       }
       [rows] = (await pool.query(
         `SELECT DISTINCT ds.SalespersonKey AS salesperson_key, COALESCE(sec.admin_name_override, ds.salesperson) AS salesperson_name, ds.salesperson
-         FROM Fact_SalesLines fsl
+         FROM v_sales_lines fsl
          JOIN Dim_Salesperson ds ON ds.SalespersonKey = fsl.SalespersonKey
          JOIN (${SALESPERSON_COMPANY_MAP_SQL}) sec ON sec.salesperson_key = fsl.SalespersonKey
          WHERE ${clauses.join(' AND ')}

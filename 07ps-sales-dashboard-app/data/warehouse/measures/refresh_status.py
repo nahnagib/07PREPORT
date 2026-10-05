@@ -5,16 +5,13 @@ Manual definitions:
                         "the latest sales order date included in the page"
     Last Refresh Time - "the time when the page last read and loaded the data"
 
-Both are queryable from the existing audit schema (data/warehouse/migrations/0007_etl_and_audit_
-log.sql), no new tables needed:
+Same definitions as the backend (backend/src/measures/refreshStatus.ts):
 
-    Last Update       -> MAX(fact_order.order_datetime)
-                          (fact_order is the confirmed-order fact; order_datetime is the real
-                          Odoo order timestamp the pipeline loads -- this is "the latest sales
-                          order date included in the page" exactly as the manual defines it)
-    Last Refresh Time -> pipeline_run_log.pipeline_end_time for the most recent row with
-                          status = 'SUCCESS', not simply the most recent row regardless of status
-                          -- a failed run's timestamp is not "when the page last loaded the data"
+    Last Update       -> MAX(v_sales_orders.OrderDateTime): the latest loaded sales order (business-timezone
+                          wall clock), "the latest sales order date included in the page"
+    Last Refresh Time -> etl_run_log.finished_at_utc of the most recent SUCCESSFUL SALES run (UTC). Runs of other
+                          departments (core_dims, finance) do not count; a failed run is not "when the page last
+                          loaded the data". (pipeline_run_log, the legacy log, is retired.)
 """
 
 from __future__ import annotations
@@ -27,12 +24,12 @@ from typing import Optional
 @dataclass(frozen=True)
 class RefreshStatus:
     last_update: Optional[datetime]         # latest loaded sales order datetime
-    last_refresh_time: Optional[datetime]   # most recent successful pipeline run's end time
+    last_refresh_time: Optional[datetime]   # most recent successful sales run's end time (UTC)
 
 
 def fetch_last_update(conn) -> Optional[datetime]:
     with conn.cursor() as cur:
-        cur.execute("SELECT MAX(order_datetime) AS last_update FROM fact_order")
+        cur.execute("SELECT MAX(OrderDateTime) AS last_update FROM v_sales_orders")
         row = cur.fetchone()
     return row["last_update"] if row else None
 
@@ -41,15 +38,16 @@ def fetch_last_refresh_time(conn) -> Optional[datetime]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT pipeline_end_time
-            FROM pipeline_run_log
-            WHERE status = 'SUCCESS'
-            ORDER BY pipeline_end_time DESC
+            SELECT finished_at_utc
+            FROM etl_run_log
+            WHERE status = 'success'
+              AND (department = 'sales' OR (department IS NULL AND mode IN ('full', 'incremental')))
+            ORDER BY finished_at_utc DESC
             LIMIT 1
             """
         )
         row = cur.fetchone()
-    return row["pipeline_end_time"] if row else None
+    return row["finished_at_utc"] if row else None
 
 
 def fetch_refresh_status(conn) -> RefreshStatus:

@@ -45,13 +45,13 @@ export interface Filters {
   salesTeamKeys?: string[]; // Branch
   salespersonKeys?: number[]; // Sales Person
   /** Customer -- only honored by queries that opt in via buildWhereClause's `supportsCustomer`
-   * (Fact_SalesLines-grain sales measures); Fact_Targets and the CRM facts have no CustomerKey. */
+   * (v_sales_lines-grain sales measures); v_sales_targets and the CRM facts have no CustomerKey. */
   customerKeys?: number[];
 }
 
 export const EMPTY_FILTERS: Filters = {};
 
-// Column name each Filters field maps to on Fact_SalesLines / Fact_Orders / Fact_Targets --
+// Column name each Filters field maps to on v_sales_lines / v_sales_orders / v_sales_targets --
 // all these tables use identical column names for these five, so one clause-builder works for all.
 const FILTER_COLUMNS: Record<keyof Filters, string> = {
   companyKeys: 'CompanyKey',
@@ -98,11 +98,11 @@ export function effectiveSalesTeamExpr(tableAlias = ''): string {
 }
 
 /**
- * Distribution Channel inference for ChannelKey=1 ("Unknown") rows -- BI Report Enhancement
+ * Distribution Channel inference for ChannelKey=-1 ("Unknown"; code 1 before the 2026-10 rebuild) rows -- BI Report Enhancement
  * Brief Tasks #3/#4 ("Unknown Sales" allocation), confirmed against the live warehouse rather
  * than assumed:
  *
- *   - ChannelKey=1 covers 19,748 of 67,294 Fact_Sales rows -- 24.3% of all revenue ($122.4M).
+ *   - ChannelKey=1 covers 19,748 of 67,294 v_sales_documents rows -- 24.3% of all revenue ($122.4M).
  *   - CustomerKey is NULL on every one of them, so per-customer purchase history (the most
  *     reliable real-world signal) can't be used.
  *   - SegmentKey (Customer Group) IS populated on 98.9% of them, and cross-tabbing the rows
@@ -115,8 +115,8 @@ export function effectiveSalesTeamExpr(tableAlias = ''): string {
  *       B2B (1)            1.4%     87.1%       11.5%     Projects (2)
  *       Inter Company (4)  0.0%     89.3%       10.7%     Projects (2)
  *
- * Rows where Segment is ALSO Unknown (segment_key=5, ~221 of the 19,748) have no signal at all
- * -- forcing a guess there would be fabricating data, so they're left at ChannelKey=1 rather
+ * Rows where Segment is ALSO Unknown (SegmentKey -1, formerly 5; ~221 of the 19,748) have no signal at all
+ * -- forcing a guess there would be fabricating data, so they're left at ChannelKey=-1 rather
  * than defaulted into any bucket.
  *
  * This is a majority-vote approximation, not a certainty (e.g. ~21% of B2C's Unknown-channel
@@ -136,10 +136,10 @@ export function effectiveChannelExpr(tableAlias = ''): string {
   return `COALESCE(
     (SELECT sap.channel_key_override FROM salesperson_admin_profile sap WHERE sap.salesperson_key = ${prefix}SalespersonKey),
     CASE
-      WHEN ${prefix}ChannelKey <> 1 THEN ${prefix}ChannelKey
+      WHEN ${prefix}ChannelKey <> -1 THEN ${prefix}ChannelKey
       WHEN ${effectiveSegmentExpr(tableAlias)} IN (2, 3) THEN 3
       WHEN ${effectiveSegmentExpr(tableAlias)} IN (1, 4) THEN 2
-      ELSE 1
+      ELSE -1
     END
   )`;
 }
@@ -190,11 +190,11 @@ export function buildWhereClause(
 }
 
 /**
- * Same as buildWhereClause, but omits channelKeys -- Fact_Lead/Fact_Opportunity/Fact_Delivery (the
+ * Same as buildWhereClause, but omits channelKeys -- v_sales_leads/v_sales_opportunities/v_sales_deliveries (the
  * CRM/pipeline facts) have no ChannelKey column at all (CRM records aren't tied to a distribution
  * channel in Odoo, confirmed via SHOW COLUMNS against the live warehouse). Using the regular
  * buildWhereClause against those tables would emit a `ChannelKey IN (...)` clause that fails with
- * an unknown-column error. Fact_Sales (the quotation/order funnel fact) DOES carry ChannelKey, so
+ * an unknown-column error. v_sales_documents (the quotation/order funnel fact) DOES carry ChannelKey, so
  * it keeps using buildWhereClause unchanged -- only the pure Lead/Opportunity/Delivery-grain
  * queries in measures/pipelineHealth.ts, pipelineTrend.ts and activityMomentum.ts use this.
  */
@@ -207,7 +207,7 @@ export function buildCrmWhereClause(
 }
 
 /**
- * Excludes closed-lost opportunities from a Fact_Opportunity-scoped query. Uses the ETL's own
+ * Excludes closed-lost opportunities from a v_sales_opportunities-scoped query. Uses the ETL's own
  * IsLost flag rather than a literal `Stage = 'Lost'` text match -- IsLost is derived from multiple
  * signals (a LostReason being set, OR the record going inactive without being won, OR "lost"
  * appearing in the stage text; see data/etl/src/sales_pipeline/crm/crm_status_classifier.py), so
@@ -225,6 +225,17 @@ export function buildCrmWhereClause(
 export function excludeLostClause(alias: string): string {
   const prefix = alias ? `${alias}.` : '';
   return `COALESCE(${prefix}IsLost, 0) = 0`;
+}
+
+/**
+ * v_sales_documents counterpart of excludeLostClause: a cancelled document (Odoo sale.order state 'cancel') is not
+ * pipeline, so it is left out of the pipeline quotation/sales-order series, values and funnel lists (decision of
+ * 2026-10-04; it deliberately changes the legacy figure -- see docs/regression_report_2026-10-04.md, section 9).
+ * NOT applied to the Quotation Rate KPIs: "lost" IS a cancelled real quotation there, so they need those rows.
+ */
+export function excludeCancelledDocumentsClause(alias: string): string {
+  const prefix = alias ? `${alias}.` : '';
+  return `COALESCE(${prefix}OrderState, '') <> 'cancel'`;
 }
 
 // ---------------------------------------------------------------------------

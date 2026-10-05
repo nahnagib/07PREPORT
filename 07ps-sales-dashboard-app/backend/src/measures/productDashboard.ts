@@ -3,16 +3,16 @@
  * served per page by routes/productDashboard.ts.
  *
  * Source tables, all rebuilt by every ETL run (data/etl/src/sales_pipeline/product_dashboard.py):
- *   fact_productsalesdaily  Company + product (ProductMatchKey) + day + filter keys + UoM. Built from the
- *                           same Fact_SalesLines rows the Sales pages read, so the grand total of all
+ *   v_sales_product_daily  Company + product (ProductMatchKey) + day + filter keys + UoM. Built from the
+ *                           same v_sales_lines rows the Sales pages read, so the grand total of all
  *                           products + Unmapped equals the Sales pages' SUM(Value) for the same period.
- *   dim_productdashboard    one row per Company + product (every PRODUCTS.xlsx row, zero sales included,
+ *   v_sales_product_dashboard    one row per Company + product (every PRODUCTS.xlsx row, zero sales included,
  *                           plus Unmapped products seen in sales or stock) with today's stock, days of
  *                           inventory, stock band, lifecycle segment and BCG class.
- *   dim_productdashboardgroup  the BMH view: one row per ProductGroupKey (sheet ProductName, normalized)
+ *   dim_sales_product_group  the BMH view: one row per ProductGroupKey (sheet ProductName, normalized)
  *                           across companies, with stock / days of inventory / stock band / lifecycle /
  *                           BCG recomputed by the ETL from the COMBINED lines and stock.
- *   productdashboard_meta   as-of date and the thresholds the ETL used (config/product_dashboard.json).
+ *   etl_sales_product_dashboard_meta   as-of date and the thresholds the ETL used (config/product_dashboard.json).
  *
  * Company view (query.company = 'Majaal' | 'Tika'): that company's products and sales only.
  * BMH view (no company): products grouped by ProductGroupKey, so a product both companies sell
@@ -208,7 +208,7 @@ function addInto(target: Agg, a: Agg): void {
   for (const [uom, q] of a.qtyPrior) target.qtyPrior.set(uom, (target.qtyPrior.get(uom) ?? 0) + q);
 }
 
-/** One page row from a snapshot row (dim_productdashboard or dim_productdashboardgroup) and its period sums. */
+/** One page row from a snapshot row (v_sales_product_dashboard or dim_sales_product_group) and its period sums. */
 function toRow(key: string, p: any, a: Agg | undefined, days: number, companies: string[], parts: ProductCompanyPart[]): ProductDashboardRow {
   const value = a?.value ?? 0;
   const lines = a?.lines ?? 0;
@@ -220,7 +220,8 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
   const costed = a && a.uncosted === 0 && lines > 0;
   return {
     productMatchKey: key,
-    productKey: str(p.ProductKey),
+    // the PRODUCTS.xlsx code (ProductMasterKey in the conformed model; '-1' = no catalogue row -> null, as before)
+    productKey: p.ProductMasterKey === '-1' ? null : str(p.ProductMasterKey ?? p.ProductKey),
     company: String(p.Company ?? ''),
     productName: String(p.ProductName ?? p.OdooProductName ?? key),
     odooProductName: str(p.OdooProductName),
@@ -270,7 +271,7 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
 
 async function loadGroupRows(pool: Pool): Promise<any[] | null> {
   try {
-    const [rows] = await pool.query('SELECT * FROM dim_productdashboardgroup');
+    const [rows] = await pool.query('SELECT * FROM dim_sales_product_group');
     return rows as any[];
   } catch (err: any) {
     // Before the first ETL run of this version the table does not exist yet: serve per-company rows.
@@ -286,7 +287,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   if (companyKeys.length > 0) {
     // Role limited to some companies: never show another company, and never show a BMH row whose stock /
     // BCG combine a company the user cannot see -- a single allowed company always gets its company view.
-    const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM fact_productsalesdaily WHERE CompanyKey IN (?)', [companyKeys]);
+    const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM v_sales_product_daily WHERE CompanyKey IN (?)', [companyKeys]);
     const allowed = (allowedRows as any[]).map((r) => String(r.Company));
     if (requestedView !== 'BMH' && !allowed.includes(requestedView)) {
       throw new ProductScopeError(`Company ${requestedView} is outside this role's permitted data scope.`);
@@ -307,7 +308,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS valuePrior,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qtyPrior,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? AND d.IsIntercompany = 1 THEN d.Value ELSE 0 END) AS icValue
-    FROM fact_productsalesdaily d
+    FROM v_sales_product_daily d
     WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?)) AND ${scope.clause}${companyClause}
     GROUP BY d.ProductMatchKey, COALESCE(d.UoM, '')`;
   const cur = [period.from, period.to];
@@ -317,8 +318,8 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
 
   const [[salesRows], [productRows], [metaRows], groupRows] = await Promise.all([
     pool.query(salesSql, salesParams),
-    pool.query('SELECT * FROM dim_productdashboard'),
-    pool.query('SELECT AsOfDate, BuiltAtUtc, LookbackDays, ConfigJson FROM productdashboard_meta LIMIT 1'),
+    pool.query('SELECT * FROM v_sales_product_dashboard'),
+    pool.query('SELECT AsOfDate, BuiltAtUtc, LookbackDays, ConfigJson FROM etl_sales_product_dashboard_meta LIMIT 1'),
     requestedView === 'BMH' ? loadGroupRows(pool) : Promise.resolve(null),
   ]);
   const view = requestedView;
@@ -388,7 +389,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   }
 
   // Totals straight from the sales rows (not from the product list), so a key missing from
-  // dim_productdashboard can never drop out of the reconciliation; such a key counts as Unmapped.
+  // v_sales_product_dashboard can never drop out of the reconciliation; such a key counts as Unmapped.
   const unmappedQty = new Map<string, number>();
   const totalQty = new Map<string, number>();
   let unmappedValue = 0;

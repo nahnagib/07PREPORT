@@ -1,0 +1,23 @@
+"""<Dept>: transform rules and the <dept>_<topic> job on SQLite with a fake Odoo (copy to tests/test_<dept>.py).
+
+Pattern: tests/test_finance_receivables.py -- apply the core migrations + yours with sqlite_schema.apply_migration_sqlite,
+run core_dims with core_fixtures.FakeOdooSource, then your job, then assert keys, fallbacks and DQ results.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+
+import pandas as pd
+
+from departments.DEPT import transform as tf  # rename DEPT
+from test_core_resolve import MAPS
+
+
+def test_keys_come_from_odoo_ids_and_fallbacks_are_reported():
+    records = pd.DataFrame([{"id": 1, "partner_id": 101, "company_id": 1, "user_id": 12, "team_id": 9, "state": "posted", "amount": 10.0},
+                            {"id": 2, "partner_id": 555, "company_id": 1, "user_id": 77, "team_id": None, "state": "draft", "amount": 5.0}])
+    built = tf.build(records, MAPS, _dt.date(2026, 10, 4))
+    assert built.fact["CustomerKey"].tolist()[0] == 100  # contact -> commercial partner
+    assert built.fallbacks["fact_<dept>_<topic>.CustomerKey (partner id)"] == [555]
+    assert built.fact["state"].tolist() == ["posted", "draft"]  # technical values only

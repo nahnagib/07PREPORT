@@ -1,6 +1,7 @@
-"""In-memory ETL job tracker: spawns the real production pipeline
-(data/etl/src/sales_pipeline/main.py, via `python -m sales_pipeline.main`) as a subprocess per run
-and tracks its status/log lines for app.py's routes to poll.
+"""In-memory ETL job tracker: spawns one ETL platform job (`python -m etl_platform.run <job>`, see
+data/etl/src/etl_platform/run.py and docs/ETL.md) as a subprocess per run and tracks its status/log lines for
+app.py's routes to poll. The legacy writer (`python -m sales_pipeline.main`) is no longer started from here: after
+the 2026-10 rebuild its tables no longer exist (they are zz_legacy_* until migration 0035 (manual retire)).
 
 No persistence - state is lost if this Flask process restarts. That's an accepted MVP limitation
 (see data/etl/api/README or the deployment docs): the subprocess is a child of this process, so it
@@ -41,6 +42,8 @@ class Job:
     fast: bool
     extra_args: List[str]
     label: Optional[str]
+    # the platform job (sales_incremental, full_all, finance_receivables, ...); empty = derived from load_mode
+    job_name: str = ""
     status: str = "pending"  # pending -> running -> completed | failed | cancelled
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: Optional[datetime] = None
@@ -72,6 +75,7 @@ class Job:
         lines = self.lines_after(after)
         return {
             "jobId": self.job_id,
+            "job": self.job_name or LOAD_MODE_JOBS.get(self.load_mode, "full_all"),
             "status": self.status,
             "loadMode": self.load_mode,
             "outputMode": self.output_mode,
@@ -91,12 +95,23 @@ def _pump(stream, job: Job, stream_name: str) -> None:
     stream.close()
 
 
-def _run_job(job: Job, python_bin: str) -> None:
-    args = [python_bin, "-m", "sales_pipeline.main", "--output", job.output_mode, "--load-mode", job.load_mode]
-    if job.fast:
-        args.append("--fast")
+LOAD_MODE_JOBS = {"incremental": "sales_incremental", "full": "full_all"}  # callers that send only loadMode
+
+
+def platform_job_name(job: Job) -> str:
+    return job.job_name or LOAD_MODE_JOBS.get(job.load_mode, "full_all")
+
+
+def platform_command(job: Job, python_bin: str) -> List[str]:
+    """The ETL platform CLI for one run. loadMode/outputMode/fast are kept on the Job for the status payload only."""
+    args = [python_bin, "-m", "etl_platform.run", platform_job_name(job), "--trigger-source", job.label or "api"]
     if job.extra_args:
         args.extend(job.extra_args)
+    return args
+
+
+def _run_job(job: Job, python_bin: str) -> None:
+    args = platform_command(job, python_bin)
 
     job.status = "running"
     job.started_at = datetime.now(timezone.utc)
@@ -172,6 +187,7 @@ class JobTracker:
         extra_args: List[str],
         label: Optional[str],
         python_bin: str,
+        job_name: Optional[str] = None,
     ) -> Job:
         with self._lock:
             if self._active_job_locked() is not None:
@@ -179,6 +195,7 @@ class JobTracker:
             job_id = str(uuid.uuid4())
             job = Job(
                 job_id=job_id,
+                job_name=job_name or "",
                 load_mode=load_mode,
                 output_mode=output_mode,
                 fast=fast,

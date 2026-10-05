@@ -2,12 +2,12 @@
  * Pipeline Trend page metric definitions.
  *
  * Read-only diagnostic page (per the page spec) -- no drill-down/click-filter scope needed, just
- * anchorDate + the standard 5 sidebar filters (Fact_Sales-grain queries use buildWhereClause,
- * Fact_Opportunity-grain queries use buildCrmWhereClause -- see filters.ts's header comment on why
+ * anchorDate + the standard 5 sidebar filters (v_sales_documents-grain queries use buildWhereClause,
+ * v_sales_opportunities-grain queries use buildCrmWhereClause -- see filters.ts's header comment on why
  * Opportunity has no ChannelKey column).
  *
  * Quotation Rate KPIs -- "Won ÷ Total Real Quotations" was resolved empirically against the live
- * warehouse this session, not guessed: Fact_Sales.IsWonQuotation is always 0 for every live row
+ * warehouse this session, not guessed: v_sales_documents.IsWonQuotation is always 0 for every live row
  * (confirmed broken/unusable). Verified instead that IsRealQuotation=1 (still-quotation state) and
  * IsRealSalesOrder=1 (already-converted state) are disjoint by construction and their counts sum
  * exactly to the "real quotation universe" -- that's the Win Rate denominator. OrderState (the raw
@@ -18,16 +18,24 @@
  * of the current year through the anchor (clamped by filters.ts's parsePipelineAnchor). The by-month
  * charts have no prior-year series, and the aging buckets only cover this year's open records.
  *
- * Lost-exclusion policy: fetchOpportunitiesByMonth (Fact_Opportunity-scoped) excludes closed-lost
+ * Lost-exclusion policy: fetchOpportunitiesByMonth (v_sales_opportunities-scoped) excludes closed-lost
  * opportunities via filters.ts's excludeLostClause -- it's a general creation-volume trend, not a
- * lost-specific one. Every other query on this page is Fact_Sales-scoped (Quotation Rates,
+ * lost-specific one. Every other query on this page is v_sales_documents-scoped (Quotation Rates,
  * Quotations/Sales Orders by month, aging), which has no Stage/IsLost concept of its own (its
  * "lost" signal is OrderState='cancel', already tracked separately as lostQuotations/its own
  * aging bucket) -- untouched.
  */
 
 import type { Pool } from 'mysql2/promise';
-import { buildCrmWhereClause, buildWhereClause, excludeLostClause, ytdWindow, type DateWindow, type Filters } from './filters';
+import {
+  buildCrmWhereClause,
+  buildWhereClause,
+  excludeCancelledDocumentsClause,
+  excludeLostClause,
+  ytdWindow,
+  type DateWindow,
+  type Filters,
+} from './filters';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -60,7 +68,7 @@ async function countQuotationsWhere(pool: Pool, window: DateWindow, filters: Fil
   const { clause, params } = buildWhereClause(filters, 'fs');
   const sql = `
     SELECT COUNT(*) AS cnt
-    FROM Fact_Sales fs
+    FROM v_sales_documents fs
     WHERE DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${extraClause} AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -101,7 +109,7 @@ async function fetchMonthComparison(
   pool: Pool,
   anchor: Date,
   filters: Filters,
-  table: 'Fact_Opportunity' | 'Fact_Sales',
+  table: 'v_sales_opportunities' | 'v_sales_documents',
   dateColumn: string,
   valueColumn: string,
   extraWhere: string,
@@ -130,21 +138,24 @@ async function fetchMonthComparison(
 }
 
 /** Excludes Lost (see filters.ts's excludeLostClause) -- a general opportunity-creation trend, not
- * a lost-specific one. Fact_Sales-scoped siblings below (Quotations/Sales Orders by month) are
- * untouched: Fact_Sales has no Stage/IsLost concept of its own, and those documents already
+ * a lost-specific one. v_sales_documents-scoped siblings below (Quotations/Sales Orders by month) are
+ * untouched: v_sales_documents has no Stage/IsLost concept of its own, and those documents already
  * happened regardless of the linked opportunity's current status. */
 export function fetchOpportunitiesByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<MonthComparisonPoint[]> {
-  return fetchMonthComparison(pool, anchor, filters, 'Fact_Opportunity', 'OpportunityCreatedDate', 'ExpectedRevenue', excludeLostClause('t'), true);
+  return fetchMonthComparison(pool, anchor, filters, 'v_sales_opportunities', 'OpportunityCreatedDate', 'ExpectedRevenue', excludeLostClause('t'), true);
 }
 
-/** Same "real quotation universe" (IsRealQuotation=1 OR IsRealSalesOrder=1) as computeQuotationRates,
- * cohorted by QuotationDate's month regardless of whether the row has since converted. */
+/** Same "real quotation universe" (IsRealQuotation=1 OR IsRealSalesOrder=1) as computeQuotationRates, minus cancelled
+ * documents (not pipeline: excludeCancelledDocumentsClause), cohorted by QuotationDate's month regardless of whether
+ * the row has since converted. */
 export function fetchQuotationsByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<MonthComparisonPoint[]> {
-  return fetchMonthComparison(pool, anchor, filters, 'Fact_Sales', 'QuotationDate', 'OrderValue', '(t.IsRealQuotation = 1 OR t.IsRealSalesOrder = 1)', false);
+  return fetchMonthComparison(pool, anchor, filters, 'v_sales_documents', 'QuotationDate', 'OrderValue',
+    `(t.IsRealQuotation = 1 OR t.IsRealSalesOrder = 1) AND ${excludeCancelledDocumentsClause('t')}`, false);
 }
 
 export function fetchSalesOrdersByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<MonthComparisonPoint[]> {
-  return fetchMonthComparison(pool, anchor, filters, 'Fact_Sales', 'OrderDate', 'OrderValue', "(t.SalesDocumentType = 'Sales Order' AND t.IsRealSalesOrder = 1)", false);
+  return fetchMonthComparison(pool, anchor, filters, 'v_sales_documents', 'OrderDate', 'OrderValue',
+    `(t.SalesDocumentType = 'Sales Order' AND t.IsRealSalesOrder = 1) AND ${excludeCancelledDocumentsClause('t')}`, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +215,7 @@ async function fetchOpenOpportunityAging(pool: Pool, anchor: Date, filters: Filt
   const scope = openOpportunityScope(anchor, filters);
   const sql = `
     SELECT ${agingCaseSql('fo.OpportunityCreatedDate')}
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     WHERE ${scope.where}
   `;
   const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, ...scope.params]);
@@ -216,7 +227,7 @@ async function fetchOpenQuotationAging(pool: Pool, anchor: Date, filters: Filter
   const scope = openQuotationScope(anchor, filters);
   const sql = `
     SELECT ${agingCaseSql('fs.QuotationDate')}
-    FROM Fact_Sales fs
+    FROM v_sales_documents fs
     WHERE ${scope.where}
   `;
   const [rows] = await pool.query(sql, [anchorStr, anchorStr, anchorStr, anchorStr, ...scope.params]);
@@ -284,7 +295,7 @@ export async function fetchAgingDetails(
            COALESCE(sap.admin_name_override, fo.Salesperson) AS salesperson,
            DATE_FORMAT(fo.OpportunityCreatedDate, '%Y-%m-%d') AS docDate, DATEDIFF(?, fo.OpportunityCreatedDate) AS ageDays,
            fo.ExpectedRevenue AS value, fo.Stage AS status
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE ${scope.where} AND ${agingBucketCondition(bucket, 'fo.OpportunityCreatedDate')}
     ORDER BY ageDays DESC, fo.OpportunityID
@@ -294,7 +305,7 @@ export async function fetchAgingDetails(
            COALESCE(sap.admin_name_override, fs.Salesperson) AS salesperson,
            DATE_FORMAT(fs.QuotationDate, '%Y-%m-%d') AS docDate, DATEDIFF(?, fs.QuotationDate) AS ageDays,
            fs.OrderValue AS value, fs.OrderState AS status
-    FROM Fact_Sales fs
+    FROM v_sales_documents fs
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
     WHERE ${scope.where} AND ${agingBucketCondition(bucket, 'fs.QuotationDate')}
     ORDER BY ageDays DESC, fs.OrderNumber

@@ -8,7 +8,7 @@ import { ValidationError } from '../lib/errors';
  *
  * Read by backend/src/measures/criticalNumber.ts's fetchForcedClosureRows for the Forced Closures
  * YTD card -- edits here are visible on the very next Critical Number page load, no ETL run
- * required. branch_key is an unenforced text reference to Dim_SalesTeam.SalesTeamKey (same
+ * required. branch_key is an unenforced text reference to dim_sales_team.SalesTeamKey (same
  * "no enforced key on the ETL side" situation companyAdminService.ts documents for etl_company_key)
  * -- validated against the live dimension on create/update, but not FK-enforced.
  */
@@ -40,7 +40,7 @@ const BASE_SELECT = `
     c.created_at, cu.email AS created_by_email,
     c.updated_at, uu.email AS updated_by_email
   FROM forced_closures c
-  LEFT JOIN dim_salesteam st ON st.SalesTeamKey = c.branch_key
+  LEFT JOIN dim_sales_team st ON st.SalesTeamKey = c.branch_key
   LEFT JOIN app_user cu ON cu.user_id = c.created_by
   LEFT JOIN app_user uu ON uu.user_id = c.updated_by
 `;
@@ -92,7 +92,7 @@ export async function getClosureById(id: number): Promise<ClosureRow | null> {
 }
 
 async function branchExists(branchKey: string): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM dim_salesteam WHERE SalesTeamKey = ? LIMIT 1', [branchKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_sales_team WHERE SalesTeamKey = ? LIMIT 1', [branchKey]);
   return (rows as unknown[]).length > 0;
 }
 
@@ -102,7 +102,7 @@ export interface BranchOption {
 }
 
 export async function getBranchOptions(): Promise<BranchOption[]> {
-  const [rows] = await pool.query('SELECT SalesTeamKey AS branch_key, SalesTeam AS branch_name FROM dim_salesteam ORDER BY SalesTeam');
+  const [rows] = await pool.query('SELECT SalesTeamKey AS branch_key, SalesTeam AS branch_name FROM dim_sales_team ORDER BY SalesTeam');
   return rows as BranchOption[];
 }
 

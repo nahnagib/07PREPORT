@@ -1,10 +1,10 @@
 /**
  * Invoices Engine page metric definitions.
  *
- * Reads Fact_SalesLines (filtered) at its real invoice-LINE grain (see tachometer.ts's module
- * docstring -- "Fact_SalesLines (filtered)_line is invoice-LINE grain built for the Invoices
+ * Reads v_sales_lines (filtered) at its real invoice-LINE grain (see tachometer.ts's module
+ * docstring -- "v_sales_lines (filtered)_line is invoice-LINE grain built for the Invoices
  * Engine page's per-invoice efficiency metrics"). Every other page on this platform aggregates
- * Fact_SalesLines up to the order/header level; this is the one page that needs the line grain
+ * v_sales_lines up to the order/header level; this is the one page that needs the line grain
  * itself, plus the per-line InvoiceKey/InvoiceValue/Invoice Class columns already computed
  * upstream by the ETL (see data/etl/src/sales_pipeline/legacy_transform.py's
  * SalesLinesFactBuilder -- "Invoice Class" carries a space in the live column name, "fix for Power
@@ -33,7 +33,7 @@ function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Normalizes Fact_SalesLines.`Invoice Class` down to a bare A/B/C/D letter, or 'Unclassified'.
+/** Normalizes v_sales_lines.`Invoice Class` down to a bare A/B/C/D letter, or 'Unclassified'.
  *
  * Confirmed finding vs assumption: the live column does not hold a bare letter -- it already
  * carries the full descriptive string computed upstream by the ETL (e.g. "Class A (>50K)", "Class
@@ -109,10 +109,10 @@ async function fetchInvoiceStats(pool: Pool, window: DateWindow, filters: Filter
   const sql = `
     SELECT
       COUNT(*)                             AS lineCount,
-      COUNT(DISTINCT fsl.InvoiceKey)       AS invoiceCount,
+      COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount,
       COALESCE(SUM(fsl.Value), 0)          AS totalValue,
       COALESCE(SUM(fsl.Volume), 0)         AS totalVolume
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date BETWEEN ? AND ?
       AND ${clause}
@@ -190,8 +190,8 @@ export async function fetchSalesTrendByYear(
     SELECT
       dd.Year                              AS year,
       COALESCE(SUM(fsl.Value), 0)          AS invoiceSalesValue,
-      COUNT(DISTINCT fsl.InvoiceKey)       AS invoiceCount
-    FROM Fact_SalesLines fsl
+      COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date <= ? AND ${clause} AND ${cls.clause}
     GROUP BY dd.Year
@@ -240,8 +240,8 @@ export async function fetchSalesTrendByYearClass(
       dd.Year                              AS year,
       fsl.\`Invoice Class\`                AS invoiceClass,
       COALESCE(SUM(fsl.Value), 0)          AS invoiceSalesValue,
-      COUNT(DISTINCT fsl.InvoiceKey)       AS invoiceCount
-    FROM Fact_SalesLines fsl
+      COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date <= ? AND ${clause} AND ${cls.clause}
     GROUP BY dd.Year, fsl.\`Invoice Class\`
@@ -316,10 +316,10 @@ export async function fetchInvoicesTrendByYear(
     SELECT
       dd.Year                              AS year,
       COUNT(*)                             AS lineCount,
-      COUNT(DISTINCT fsl.InvoiceKey)       AS invoiceCount,
+      COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount,
       COALESCE(SUM(fsl.Value), 0)          AS totalValue,
       COALESCE(SUM(fsl.Volume), 0)         AS totalVolume
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date <= ? AND ${clause} AND ${cls.clause} AND ${yr.clause}
     GROUP BY dd.Year
@@ -374,8 +374,8 @@ export async function fetchInvoiceClassificationYtd(
     SELECT
       fsl.\`Invoice Class\`                AS invoiceClass,
       COALESCE(SUM(fsl.Value), 0)          AS value,
-      COUNT(DISTINCT fsl.InvoiceKey)       AS invoiceCount
-    FROM Fact_SalesLines fsl
+      COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date BETWEEN ? AND ? AND ${clause}
     GROUP BY fsl.\`Invoice Class\`

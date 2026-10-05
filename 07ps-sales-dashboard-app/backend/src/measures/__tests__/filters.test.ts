@@ -9,6 +9,7 @@ import {
   buildWhereClause,
   dateOnlyUTC,
   effectiveChannelExpr,
+  excludeCancelledDocumentsClause,
   effectiveSalesTeamExpr,
   effectiveSegmentExpr,
   flmWindow,
@@ -222,7 +223,7 @@ describe('effectiveChannelExpr', () => {
   });
 
   it('passes through any already-known channel unchanged', () => {
-    expect(effectiveChannelExpr()).toContain('WHEN ChannelKey <> 1 THEN ChannelKey');
+    expect(effectiveChannelExpr()).toContain('WHEN ChannelKey <> -1 THEN ChannelKey');
   });
 
   it('maps B2C/Backoffice (segment 2/3) to Retail (3), and B2B/Inter Company (1/4) to Projects (2), using the EFFECTIVE segment', () => {
@@ -235,8 +236,8 @@ describe('effectiveChannelExpr', () => {
     expect(expr).toContain(`${effectiveSegmentExpr()} IN (1, 4) THEN 2`);
   });
 
-  it('leaves rows with no segment signal at Unknown (1) rather than guessing', () => {
-    expect(effectiveChannelExpr()).toContain('ELSE 1');
+  it('leaves rows with no segment signal at Unknown (-1) rather than guessing', () => {
+    expect(effectiveChannelExpr()).toContain('ELSE -1');
   });
 });
 
@@ -344,5 +345,12 @@ describe('buildWhereClause -- customerKeys', () => {
     expect(clause).toContain('fsl.CompanyKey IN (?)');
     expect(clause).toContain('fsl.CustomerKey IN (?, ?)');
     expect(params).toEqual([1, 7, 8]);
+  });
+});
+
+describe('excludeCancelledDocumentsClause', () => {
+  it('leaves cancelled sale orders out of pipeline series (a missing state counts as not cancelled)', () => {
+    expect(excludeCancelledDocumentsClause('fs')).toBe("COALESCE(fs.OrderState, '') <> 'cancel'");
+    expect(excludeCancelledDocumentsClause('')).toBe("COALESCE(OrderState, '') <> 'cancel'");
   });
 });

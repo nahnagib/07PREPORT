@@ -20,13 +20,13 @@ function makeMockPool(responses: {
     if (sql.includes('salesperson_admin_profile') && sql.includes('target_override_amount IS NOT NULL')) {
       return [responses.overrides ?? []];
     }
-    if (sql.includes('FROM Fact_Targets') && sql.includes('group_key')) {
+    if (sql.includes('FROM v_sales_targets') && sql.includes('group_key')) {
       return [responses.factTargetsGrouped ?? []];
     }
-    if (sql.includes('FROM Fact_Targets')) {
+    if (sql.includes('FROM v_sales_targets')) {
       return [responses.factTargets ?? []];
     }
-    if (sql.includes('FROM Fact_SalesLines')) {
+    if (sql.includes('FROM v_sales_lines')) {
       return [responses.factSalesLinesGrouped ?? []];
     }
     throw new Error(`Unexpected SQL in test mock: ${sql.slice(0, 120)}`);
@@ -90,7 +90,7 @@ describe('fetchTargetForMonths (ungrouped) -- target-override blending', () => {
     expect(result.targetRevenue).toBe(1200); // 1200/12 * 12 == 1200
   });
 
-  it('a salesperson with an override but zero matching Fact_Targets rows contributes nothing (known, accepted limitation)', async () => {
+  it('a salesperson with an override but zero matching v_sales_targets rows contributes nothing (known, accepted limitation)', async () => {
     const pool = makeMockPool({
       factTargets: [{ salespersonKey: 1, target_revenue: 500, target_volume: 5 }],
       overrides: [{ salesperson_key: 999, target_override_amount: 1200 }], // never appears in factTargets

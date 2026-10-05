@@ -14,8 +14,8 @@
  *                     those are frozen at the last ETL run relative to the pipeline's own "today"
  *                     -- not reactive to this page's anchorDate/Year selector -- so they are
  *                     deliberately NOT used here. Every YTD/LYTD-derived figure below is instead
- *                     computed live from Fact_SalesLines, exactly like every other page.
- *   Fact_SalesLines -- CustomerKey (joins to Dim_Customer), DateKey, Value, plus the same
+ *                     computed live from v_sales_lines, exactly like every other page.
+ *   v_sales_lines -- CustomerKey (joins to Dim_Customer), DateKey, Value, plus the same
  *                     CompanyKey/SegmentKey/ChannelKey/SalesTeamKey/SalespersonKey columns
  *                     buildWhereClause already filters on everywhere else.
  *
@@ -73,7 +73,7 @@ function buildCategorySqlClause(category: string | undefined, alias: string): { 
 }
 
 // ---------------------------------------------------------------------------
-// Per-customer activity snapshot -- one pass over Fact_SalesLines, grouped by CustomerKey. Backs
+// Per-customer activity snapshot -- one pass over v_sales_lines, grouped by CustomerKey. Backs
 // every status classification below and the Customers Table's YTD Value column. Computed once per
 // request and reused (see computeCustomerGrowthOverview) rather than re-queried per consumer.
 // ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ export async function fetchCustomerActivitySnapshot(
       MAX(CASE WHEN dd.Date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS hasYtd,
       MAX(CASE WHEN dd.Date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS hasLytd,
       MAX(CASE WHEN dd.Date < ? THEN 1 ELSE 0 END) AS hasBeforeLytd
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE ${clause} AND ${cat.clause}
@@ -204,7 +204,7 @@ export interface CustomerRow {
  * Dim_Customer's static attributes and classified. Backs both the Zone A Customer Status counts
  * (tallyCustomerStatusCounts) and the Details view's Customers Table + Status Slicer -- computed
  * once so the two can never disagree. Honors scope.category (a Customer Category page-filter row
- * whose Fact_SalesLines rows are excluded by fetchCustomerActivitySnapshot simply never appears
+ * whose v_sales_lines rows are excluded by fetchCustomerActivitySnapshot simply never appears
  * here), so both the Zone A counts and the Details table narrow together automatically. */
 export async function fetchCustomerRows(
   pool: Pool,
@@ -272,7 +272,7 @@ async function fetchDistinctCustomerCount(
   const cat = buildCategorySqlClause(scope.category, 'dc');
   const sql = `
     SELECT COUNT(DISTINCT fsl.CustomerKey) AS cnt
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date BETWEEN ? AND ? AND ${clause} AND ${cat.clause}
@@ -293,7 +293,7 @@ async function fetchNewCustomerCount(
   const cat = buildCategorySqlClause(scope.category, 'dc');
   const sql = `
     SELECT COUNT(DISTINCT fsl.CustomerKey) AS cnt
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date BETWEEN ? AND ?
@@ -398,7 +398,7 @@ export async function fetchCustomersTrendByYear(
       dd.Year AS year,
       COALESCE(SUM(fsl.Value), 0) AS totalSalesValue,
       COUNT(DISTINCT fsl.CustomerKey) AS customerCount
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date <= ? AND ${clause} AND ${cat.clause}
@@ -450,7 +450,7 @@ export async function fetchCustomersContribution(
       fsl.CustomerKey AS customerKey,
       COALESCE(dc.customer, CONCAT('Customer ', fsl.CustomerKey)) AS name,
       COALESCE(SUM(fsl.Value), 0) AS value
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     LEFT JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date BETWEEN ? AND ? AND ${clause} AND ${cat.clause}
@@ -513,7 +513,7 @@ async function fetchSalesByCustomerAndClass(pool: Pool, window: DateWindow, filt
       dc.customer AS name,
       dc.CustomerClass_LY AS customerClass,
       COALESCE(SUM(fsl.Value), 0) AS value
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date BETWEEN ? AND ? AND ${clause} AND dc.CustomerClass_LY IS NOT NULL

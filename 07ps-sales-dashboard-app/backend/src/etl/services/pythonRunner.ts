@@ -5,7 +5,17 @@ import { etlLogger } from './etlLogger';
 export type LoadMode = 'full' | 'incremental';
 export type OutputMode = 'sql' | 'excel' | 'both';
 
+/** ETL platform jobs (data/etl/src/etl_platform, `python -m etl_platform.run <job>`) the backend starts. */
+export type PlatformJob = 'sales_incremental' | 'sales_full' | 'full_all' | 'core_dims' | 'finance_receivables';
+
+/** Callers that only say full/incremental: full = core dims + sales (full_all), incremental = sales_incremental. */
+export function platformJobFor(loadMode: LoadMode, job?: PlatformJob | null): PlatformJob {
+  return job ?? (loadMode === 'incremental' ? 'sales_incremental' : 'full_all');
+}
+
 export interface PipelineRunOptions {
+  /** The ETL platform job to run; defaults from loadMode (platformJobFor). */
+  job?: PlatformJob | null;
   loadMode: LoadMode;
   outputMode?: OutputMode;
   /** Skip Excel/QA exports and run only the scoped SQL validations -- what every scheduled
@@ -138,9 +148,11 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
   const client = buildClient(config.etlApi.url, config.etlApi.apiKey);
   const label = options.label ?? options.loadMode;
   const startedAt = Date.now();
+  const job = platformJobFor(options.loadMode, options.job);
 
   etlLogger.info('ETL run starting', {
     label,
+    job,
     loadMode: options.loadMode,
     outputMode: options.outputMode ?? 'sql',
     fast: options.fast ?? false,
@@ -149,6 +161,7 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
   let jobId: string;
   try {
     const response = await client.post<{ jobId: string }>('/etl/run', {
+      job,
       loadMode: options.loadMode,
       outputMode: options.outputMode ?? 'sql',
       fast: options.fast ?? false,

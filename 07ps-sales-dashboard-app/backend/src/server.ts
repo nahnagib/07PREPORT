@@ -13,6 +13,7 @@ import { pipelineHealthRouter } from './routes/pipelineHealth';
 import { pipelineTrendRouter } from './routes/pipelineTrend';
 import { activityMomentumRouter } from './routes/activityMomentum';
 import { PRODUCT_DASHBOARD_PAGES, productDashboardRouter } from './routes/productDashboard';
+import { debtReportRouter } from './routes/debtReport';
 import { authRouter } from './routes/auth';
 import { adminUsersRouter } from './routes/admin/users';
 import { adminImportRouter } from './routes/admin/import';
@@ -78,6 +79,7 @@ app.use('/customer-growth', customerGrowthRouter);
 app.use('/pipeline-health', pipelineHealthRouter);
 app.use('/pipeline-trend', pipelineTrendRouter);
 app.use('/activity-momentum', activityMomentumRouter);
+app.use('/debt-report', debtReportRouter);
 for (const [path, pageKey] of Object.entries(PRODUCT_DASHBOARD_PAGES)) {
   app.use(`/product-dashboard/${path}`, productDashboardRouter(pageKey));
 }

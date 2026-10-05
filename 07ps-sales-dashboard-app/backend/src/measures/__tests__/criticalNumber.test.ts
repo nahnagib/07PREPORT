@@ -38,7 +38,7 @@ function makeMockPool(responses: {
     if (sql.includes('FROM forced_closures')) {
       return [responses.forcedClosures ?? []];
     }
-    if (sql.includes('FROM dim_salesteam')) {
+    if (sql.includes('FROM dim_sales_team')) {
       return [responses.branchNames ?? []];
     }
     throw new Error(`Unexpected SQL in test mock: ${sql.slice(0, 120)}`);
@@ -114,7 +114,7 @@ describe('forced_closures -- multi-day duration expansion', () => {
     const result = await computeForcedClosuresYtd(pool, anchor, {}, new Map());
     expect(result.value).toBe(1);
     expect(result.branches[0].occurrences).toEqual([{ date: '2026-01-05', reason: null }]);
-    // No matching dim_salesteam row -- falls back to the raw branch code (see
+    // No matching dim_sales_team row -- falls back to the raw branch code (see
     // computeForcedClosuresYtd's branchNamesByKey.get(branch) ?? branch).
     expect(result.branches[0].branchName).toBe('TK-BEN-BC-03');
   });
@@ -207,7 +207,7 @@ describe('computeDailyCriticalNumber -- Company/Customer Group percentage scalin
 
 function makeSalesMockPool(dailyValues: Record<number, number>): Pool {
   const query = vi.fn(async (sql: string) => {
-    if (sql.includes('FROM fact_saleslines')) {
+    if (sql.includes('FROM v_sales_lines')) {
       return [Object.entries(dailyValues).map(([dateKey, value]) => ({ dateKey: Number(dateKey), value }))];
     }
     if (sql.includes('FROM official_holidays')) return [[]];

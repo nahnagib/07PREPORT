@@ -79,6 +79,13 @@ function compactNumber(value: number): string {
   return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
+/** Full LYD amount with 3 decimals (the dinar's minor unit, as Odoo shows it): "LYD 1,234.567". For tables and
+ * tooltips where the exact amount matters; cards use formatCompactCurrency. */
+export function formatCurrencyFull(value: number | null | undefined, decimals = 3): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  return `LYD ${value.toLocaleString(DISPLAY_LOCALE, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+}
+
 export function formatCompactCurrency(value: number): string {
   return `LYD ${compactNumber(value)}`;
 }

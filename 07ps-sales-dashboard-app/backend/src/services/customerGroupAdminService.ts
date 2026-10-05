@@ -3,7 +3,7 @@ import { ValidationError } from '../lib/errors';
 
 /**
  * Admin-controlled reference data for Customer Group -- an overlay on the live, ETL-replaced
- * Dim_Segment (same pattern as salesTeamAdminService.ts's overlay on Dim_SalesTeam), stored in
+ * Dim_Segment (same pattern as salesTeamAdminService.ts's overlay on dim_sales_team), stored in
  * admin_customer_group (see data/warehouse/migrations/0018_reference_data_admin.sql for the full
  * rationale). Seeded once from Dim_Segment at migration time and from then on authoritative for
  * this admin page and for GET /filters/customer-groups -- there is deliberately no "if empty,
@@ -18,7 +18,7 @@ import { ValidationError } from '../lib/errors';
  * Dim_Segment.SegmentKey), via measures/filters.ts's effectiveSegmentExpr; this table only supplies
  * the pretty name and is_active/display_order for the admin page and GET /filters/customer-groups.
  * Because of that, GET /filters/customer-groups only ever returns rows with a live
- * etl_segment_key -- a purely custom (unlinked) group has nothing in Fact_SalesLines/Fact_Targets
+ * etl_segment_key -- a purely custom (unlinked) group has nothing in v_sales_lines/v_sales_targets
  * to filter by, so it's visible on this admin page but not offered as a live report filter.
  */
 

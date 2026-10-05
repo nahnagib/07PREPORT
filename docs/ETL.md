@@ -9,6 +9,7 @@
 
 **Contents**
 
+0. [The ETL platform (current)](#0-read-this-first-the-etl-platform-since-the-2026-10-rebuild) ·
 1. [Purpose and overview](#1-purpose-and-overview) · 2. [Components](#2-components-and-where-they-live) · 3. [Data sources](#3-data-sources) ·
 4. [Pipeline steps](#4-pipeline-steps) · 5. [Run modes](#5-run-modes) · 6. [Triggers and scheduling](#6-triggers-and-scheduling) ·
 7. [Configuration reference](#7-configuration-reference) · 8. [Timestamps and timezones](#8-timestamps-and-timezones) ·
@@ -19,7 +20,84 @@
 
 ---
 
+## 0. Read this first: the ETL platform (since the 2026-10 rebuild)
+
+Since the 2026-10 rebuild, every ETL run is a **platform job**. Sections 1–17 below were written for the pre-platform
+pipeline (`python -m sales_pipeline.main`, `Fact_*` / `Dim_*` tables). They stay as reference for the legacy
+transforms, which the sales job still reuses. Wherever they disagree with this section, **this section is right**.
+
+**What runs.** `python -m etl_platform.run <job> [--date YYYY-MM-DD] [--full] [--allow-large-change] [--trigger-source ...]`
+(`data/etl/src/etl_platform/`). `--list` prints every job.
+
+| Job | Department | What it loads | Default schedule (Africa/Tripoli) |
+|---|---|---|---|
+| `core_dims` | core | shared dimensions: company, currency, payment term, customer (commercial partner), salesperson, sales team, channel, segment, product, product master, date, off-days, Odoo selection labels (`dim_odoo_selection_label`, en + ar) | run first by every job when older than `ETL_CORE_DIMS_FRESH_MINUTES` |
+| `sales_incremental` | sales | every `fact_sales_*` / `dim_sales_*` mart, swapped in at once after every orphan check passes | `ETL_SCHEDULE_INCREMENTAL_CRON` (5× a day) |
+| `sales_full` | sales | the same marts, as an explicit full run | — |
+| `full_all` | all | `core_dims` + `sales_full` | `ETL_SCHEDULE_FULL_CRON` (nightly) |
+| `finance_receivables` | finance | daily receivable snapshot (`fact_finance_receivable_snapshot`, `dim_finance_*`); runbook `docs/receivables-etl.md` | `ETL_SCHEDULE_FINANCE_CRON` (06:30) |
+| `platform_selfcheck` | — | diagnostics, never logged as a refresh | — |
+
+**Incremental extraction.** `sales_incremental` still performs a full Odoo extraction of the sales models (about 20
+minutes). Write-date incremental extraction for sales is a planned follow-up (`docs/deployment-plan.md`, "After
+go-live"). The shared Odoo dimensions in `core_dims` are already incremental on `write_date`.
+
+**Orchestration (unchanged chain, new command).**
+
+1. The backend cron or the Control Center enqueues a BullMQ job carrying the platform job name (`job_type` in
+   `etl_job_runs`).
+2. `etl-worker` takes it and calls the Flask `etl-api` with `POST /etl/run {"job": "<name>"}`.
+3. `etl-api` validates the name against the platform registry and spawns the platform CLI.
+4. A caller that sends only the old `loadMode` gets `sales_incremental` (incremental) or `full_all` (full).
+5. The legacy writer `python -m sales_pipeline.main` is **never** started any more: its tables are `zz_legacy_*` until
+   migration 0035 (manual).
+
+The Control Center offers Sales Refresh, Full Refresh and Receivables Snapshot. The "SQL" and "Excel" modes were
+retired: the platform loads the warehouse only.
+
+**Run history and freshness.**
+
+- Every job writes `etl_run_log` (one row per job, with `job_name`, `department` and `parent_run_uid` for dependency
+  runs) and `etl_task_log` (per task: rows, fallbacks, watermarks, details). Data-quality results go to
+  `etl_dq_result`.
+- Freshness is **per department**:
+  - the sales footer ("Last Refresh") reads only `department = 'sales'` runs (`measures/refreshStatus.ts`);
+  - `GET /meta/freshness?department=sales|finance|core` gives any department's last success and newer failure, and
+    for finance the newest snapshot date (`measures/departmentFreshness.ts`).
+- A finance run never moves the sales "Last Refresh".
+
+**Tables and layers.**
+
+| Layer | Tables |
+|---|---|
+| Raw | `raw_odoo_*`, `raw_excel_*` |
+| Core | `dim_*`, `map_*` |
+| Departments | `fact_<dept>_*`, `dim_<dept>_*`, `bridge_<dept>_*` |
+| Serving views | `v_<dept>_*` (what the backend reads) |
+| Run metadata | `etl_*` |
+
+Rename map and migrations 0028–0035: `docs/rename-map.md`. Conventions for a new department, including the
+"Odoo labels" rule: `docs/adding-a-department.md`; skeleton in `data/etl/templates/department/`.
+
+**Data quality.**
+
+- Orphan checks (every fact and map key exists in its dimension) fail the run; for sales and finance the whole load
+  rolls back.
+- Fallbacks to a `-1` member are logged per task with their Odoo ids.
+- Sanity and change checks guard against large unexpected changes; `--allow-large-change` overrides them for one run.
+
+**Safety.**
+
+- Odoo is read-only: the client only allows `search_read`, `search_count`, `search`, `read`, `fields_get` and
+  `read_group`.
+- Runs go only against the production database named in `ODOO_PROD_DB` and hosts in `ODOO_ALLOWED_HOSTS`, unless
+  `ALLOW_NON_PROD=1`.
+- One run at a time (MySQL named lock, plus the backend's enqueue guard).
+
 ## 1. Purpose and overview
+
+> **Legacy description (pre-platform).** The diagram and table names below describe the pipeline before 2026-10. For
+> the current jobs, orchestration and tables see [section 0](#0-read-this-first-the-etl-platform-since-the-2026-10-rebuild).
 
 The ETL builds the star-schema warehouse (`Fact_*`, `Dim_*`, plus `raw_*` staging and `QA_*` tables) in the MySQL
 database `ps_warehouse` from two kinds of input:
@@ -57,6 +135,36 @@ flowchart LR
 ```
 
 ---
+
+## 1A. Conformed keys and org attribution (ETL platform)
+
+See docs/rename-map.md for the key of every dimension. **Org attribution rules (every fact, every department)**
+
+| Attribute on a fact | Rule | Source |
+|---|---|---|
+| **SalesTeamKey** | **As transacted:** the document's Odoo team (`crm.team` id on the order, lead, invoice, ...) mapped to the Excel org code through sheet **`OdooTeams`** of `SalesTeam.xlsx` (`map_odoo_team_sales_team`). `crm.team` is a lookup id only, never matched by name. | order `team_id`, lead `team_id`, invoice `team_id` |
+| | Document has **no** Odoo team, or its `OdooTeams` row says **`SALESPERSON`** (e.g. EXPORT, an Odoo team with no Excel team): what the legacy pipeline did **for that fact** (measured 2026-10-04, `TEAM_FALLBACK_TO_SALESPERSON` in `departments/sales/conform.py`): sales lines and orders → the salesperson's effective team (`dim_salesperson.SalesTeamKey`); documents, deliveries, leads and opportunities → `'-1'` Unknown. A new department chooses per fact (`KeyMaps.teams(..., person_fallback=)`). Finance receivables: the salesperson's team (an invoice with no team, and every payment, nets with its salesperson's invoices); salesperson = `invoice_user_id`, else the customer's salesperson of record (`docs/receivables-etl.md`). | |
+| | Odoo team **not listed** in `OdooTeams` → `'-1'` Unknown, reported as a warning (team ids and value). | |
+| **SegmentKey** | follows the **team** (`dim_sales_team.SegmentKey` of the fact's team) | |
+| **ChannelKey** | follows the **salesperson** (`dim_salesperson.ChannelKey`) | |
+| **SalespersonKey** | the document's user (order `user_id`, lead `user_id`, invoice `invoice_user_id`) through sheet `OdooUsers` (`map_odoo_user_salesperson`) | |
+| **Delivery keys** | from the delivery's **sale order** only; a picking without one (receipts, internal moves) keeps every org key `-1`, as in the legacy pipeline | |
+
+**Salesperson status rule (applies everywhere).** A salesperson with **no team** (blank `TeamKey` in `SalesTeam.xlsx`)
+is **Inactive** -- a former salesperson -- whatever the `Status` column says. Applied by the ETL when building
+`dim_salesperson` (`core/transforms/org.py`, `effective_status`); the Excel file is not edited. `dim_salesperson.status`
+is the effective status. Anyone whose sheet `Status` says Active but who has no team is listed by the data-quality
+warning `warn:salesperson_active_status_without_team` (and a WARNING notification) so the sheet can be cleaned up.
+A salesperson **with** a team but a blank `Status` is not counted as active (legacy rule, unchanged).
+
+The salesperson **dimension** is current-state: `dim_salesperson.SalesTeamKey` / `ChannelKey` are the person's team and
+channel today (they count only while the effective status is Active, so a salesperson without a team has team `'-1'`
+and channel `-1`). Facts take the team from the document (above), so this rule does not move a fact's team; it moves a
+fact's **channel** (which follows the salesperson) to `-1` for people without a team. A **fact's** team is as-transacted (the document's team), so a
+salesperson's history is NOT moved to their current team. (Correction: an earlier impact analysis, F11, called the org
+assignment "type 1"; that holds for the salesperson dimension only, not for the team on facts.)
+Implemented once in `core/resolve.py` (`KeyMaps`) and used by every department, so sales and debt roll up to the same
+teams and people.
 
 ## 2. Components and where they live
 

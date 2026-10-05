@@ -13,6 +13,7 @@ import {
   ApiError,
   EtlJobRun,
   EtlMode,
+  EtlStartMode,
   EtlPreflightResponse,
   EtlRunStatus,
   EtlSchedulerConfigResponse,
@@ -121,10 +122,11 @@ function formatCount(value: number | null): string {
 }
 
 const MODE_LABEL: Record<EtlMode, string> = {
-  incremental: 'Incremental Refresh',
+  incremental: 'Sales Refresh',
   full: 'Full Refresh',
-  sql: 'SQL Mode',
-  excel: 'Excel Mode',
+  finance: 'Receivables Snapshot',
+  sql: 'SQL Mode (before 2026-10)',
+  excel: 'Excel Mode (before 2026-10)',
 };
 
 const TRIGGER_LABEL: Record<string, string> = {
@@ -140,7 +142,7 @@ const TRIGGER_LABEL: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 const MANUAL_MODES: {
-  mode: EtlMode;
+  mode: EtlStartMode;
   label: string;
   description: string;
   confirmMessage: string;
@@ -148,28 +150,22 @@ const MANUAL_MODES: {
 }[] = [
   {
     mode: 'incremental',
-    label: 'Incremental Refresh',
-    description: 'Fast synchronization. Updates only changed records. Recommended for normal operations.',
-    confirmMessage: 'This process may take between 20 and 40 minutes. Do you want to continue?',
+    label: 'Sales Refresh',
+    description: 'Reloads the sales pages (job sales_incremental). Recommended for normal operations.',
+    confirmMessage: 'This process may take about 20-25 minutes. Do you want to continue?',
   },
   {
     mode: 'full',
     label: 'Full Refresh',
-    description: 'Rebuilds the reporting database. Longer execution time. Use only when necessary.',
-    confirmMessage: 'This process rebuilds the entire reporting database and may take 55-60 minutes. Do you want to continue?',
+    description: 'Shared reference data (customers, products, people, teams) and then sales (job full_all).',
+    confirmMessage: 'This process refreshes the reference data and every sales table and may take about 25 minutes. Do you want to continue?',
     variant: 'danger',
   },
   {
-    mode: 'sql',
-    label: 'SQL Mode',
-    description: 'Performs a complete SQL synchronization with full validation.',
-    confirmMessage: 'This process may take 30-60 minutes. Do you want to continue?',
-  },
-  {
-    mode: 'excel',
-    label: 'Excel Mode',
-    description: 'Generates Excel outputs only. Does not update the reporting database.',
-    confirmMessage: 'This generates an Excel export and does not update the reporting database. It may take 20-40 minutes. Do you want to continue?',
+    mode: 'finance',
+    label: 'Receivables Snapshot',
+    description: "Today's open customer receivables for the Debt report (job finance_receivables). A re-run replaces today's snapshot.",
+    confirmMessage: 'This process takes about 3-10 minutes and replaces today\'s receivables snapshot. Do you want to continue?',
   },
 ];
 
@@ -179,7 +175,7 @@ function EtlControlBody() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [schedulerConfig, setSchedulerConfig] = useState<EtlSchedulerConfigResponse | null>(null);
-  const [confirmMode, setConfirmMode] = useState<EtlMode | null>(null);
+  const [confirmMode, setConfirmMode] = useState<EtlStartMode | null>(null);
   const [starting, setStarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -642,12 +638,29 @@ function EtlControlBody() {
                 )}
               </p>
             </div>
+            {schedulerConfig.finance && (
+              <div>
+                <strong>Receivables Snapshot</strong>
+                <p style={{ margin: '4px 0 0', color: 'var(--ps-color-muted-text)' }}>
+                  {schedulerConfig.finance.enabled ? (
+                    <>
+                      Cron: <code>{schedulerConfig.finance.cron}</code>
+                      <br />
+                      Next run: {formatDateTime(schedulerConfig.finance.nextRun)}
+                    </>
+                  ) : (
+                    'Disabled'
+                  )}
+                </p>
+              </div>
+            )}
           </div>
         ) : (
           <LoadingSkeleton variant="kpi" />
         )}
         <p style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', margin: '16px 0 0' }}>
-          Configured via <code>ETL_SCHEDULE_INCREMENTAL_CRON</code> / <code>ETL_SCHEDULE_FULL_CRON</code> in{' '}
+          Configured via <code>ETL_SCHEDULE_INCREMENTAL_CRON</code> / <code>ETL_SCHEDULE_FULL_CRON</code> /{' '}
+          <code>ETL_SCHEDULE_FINANCE_CRON</code> in{' '}
           <code>backend/.env</code>. Change and restart the backend to apply.
         </p>
       </Card>
@@ -759,10 +772,11 @@ function RunHistorySection({ token, refreshKey }: { token: string | null; refres
           }}
           options={[
             { value: '', label: 'All modes' },
-            { value: 'incremental', label: 'Incremental Refresh' },
+            { value: 'incremental', label: 'Sales Refresh' },
             { value: 'full', label: 'Full Refresh' },
-            { value: 'sql', label: 'SQL Mode' },
-            { value: 'excel', label: 'Excel Mode' },
+            { value: 'finance', label: 'Receivables Snapshot' },
+            { value: 'sql', label: 'SQL Mode (before 2026-10)' },
+            { value: 'excel', label: 'Excel Mode (before 2026-10)' },
           ]}
         />
         <DateField label="From" value={fromDate} onChange={(v) => { setFromDate(v); setPage(1); }} />

@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth';
 import { requireAnyDashboardView, requirePasswordChangeCleared } from '../middleware/permission';
 import { attachUserContext } from '../middleware/scopeContext';
 import { fetchRefreshStatus, redactRefreshStatusForNonAdmin } from '../measures/refreshStatus';
+import { ETL_DEPARTMENTS, fetchDepartmentFreshness, isEtlDepartment } from '../measures/departmentFreshness';
 
 /**
  * Refresh metadata for the dashboard footer/sidebar and the "Refresh log looks wrong" banner.
@@ -34,6 +35,21 @@ metaRouter.get('/refresh-status', async (req, res, next) => {
       refreshCheck: status.refreshCheck,
       displayTimezone: status.displayTimezone,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Per-department freshness (etl_run_log.department): GET /meta/freshness?department=finance. Each page shows its own
+ * department's last refresh; a finance run never changes the sales footer (measures/departmentFreshness.ts). */
+metaRouter.get('/freshness', async (req, res, next) => {
+  try {
+    const department = req.query.department ?? 'sales';
+    if (!isEtlDepartment(department)) {
+      res.status(400).json({ error: `department must be one of ${ETL_DEPARTMENTS.join(', ')}` });
+      return;
+    }
+    res.json(await fetchDepartmentFreshness(pool, department));
   } catch (err) {
     next(err);
   }

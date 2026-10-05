@@ -38,6 +38,11 @@ export const DEFAULT_FILTERS: TachometerFilters = {
   segmentKeys: [1, 2],
 };
 
+/** CompanyKey is the Odoo res.company id since the conformed warehouse (docs/rename-map.md): stable by design,
+ * so the header logo can key on it. Tika was 2 under the old row-number keys. */
+export const MAJAAL_COMPANY_KEY = 1;
+export const TIKA_COMPANY_KEY = 3;
+
 interface FilterContextValue {
   filters: TachometerFilters;
   /** `filters`, but forced to the signed-in salesperson's own scope when isSalesperson is true --
@@ -118,8 +123,8 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
   const syncBusinessUnit = useCallback(
     (next: TachometerFilters) => {
       const companyKeys = next.companyKeys ?? [];
-      if (companyKeys.length === 1 && companyKeys[0] === 1) setBusinessUnit('majaal');
-      else if (companyKeys.length === 1 && companyKeys[0] === 2) setBusinessUnit('tika');
+      if (companyKeys.length === 1 && companyKeys[0] === MAJAAL_COMPANY_KEY) setBusinessUnit('majaal');
+      else if (companyKeys.length === 1 && companyKeys[0] === TIKA_COMPANY_KEY) setBusinessUnit('tika');
       else setBusinessUnit('all');
     },
     [setBusinessUnit],

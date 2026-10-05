@@ -625,49 +625,10 @@ def test_product_active_flag_reconciler_writes_back_to_products_xlsx_without_tou
     assert saved_ws["B3"].value == "=UPPER(A3)"
 
 
-def test_workbook_exporter_writes_product_qa_separately_and_removes_old_ambiguous_file(tmp_path: Path) -> None:
-    ambiguous = tmp_path / "QA_AmbiguousProductMapping.xlsx"
-    ambiguous.write_text("old", encoding="utf-8")
-    sheets = {
-        "Dim_Product": pd.DataFrame([{"ProductKey": "P1"}]),
-        "QA_UnmappedProducts": pd.DataFrame([{"product_name_clean": "Missing", "size": ""}]),
-    }
-
-    WorkbookExporter(type("Logger", (), {"ok": lambda self, message: None})()).export(
-        sheets,
-        tmp_path / "SalesModel_OneOutput.xlsx",
-    )
-
-    assert not ambiguous.exists()
-    assert (tmp_path / "QA_UnmappedProducts.xlsx").exists()
-    assert pd.ExcelFile(tmp_path / "SalesModel_OneOutput.xlsx").sheet_names == ["Dim_Product"]
-
-
-def test_workbook_exporter_writes_alternate_when_locked_workbook_save_fails(tmp_path: Path, monkeypatch) -> None:
-    model_path = tmp_path / "SalesModel_OneOutput.xlsx"
-    alternate_path = tmp_path / "SalesModel_OneOutput_unlocked.xlsx"
-    sheets = {
-        "Dim_Product": pd.DataFrame([{"ProductKey": "P1"}]),
-        "QA_UnmappedProducts": pd.DataFrame([{"OdooProductName": "Missing"}]),
-    }
-    original_write = WorkbookExporter._write_workbook_file
-
-    def locked_primary_write(self, path, sheets, existing_sheet_order, preserved_sheets, separate_qa_sheets):
-        if Path(path) == model_path:
-            raise PermissionError("locked")
-        return original_write(self, path, sheets, existing_sheet_order, preserved_sheets, separate_qa_sheets)
-
-    monkeypatch.setattr(WorkbookExporter, "_write_workbook_file", locked_primary_write)
-    monkeypatch.setattr(WorkbookExporter, "_export_to_open_excel", lambda self, sheets, path: (_ for _ in ()).throw(RuntimeError("sharing violation")))
-    monkeypatch.setattr(WorkbookExporter, "_alternate_workbook_path", staticmethod(lambda path: alternate_path))
-
-    logger = type("Logger", (), {"ok": lambda self, message: None, "warn": lambda self, message: None})()
-    result = WorkbookExporter(logger).export(sheets, model_path)
-
-    assert result == alternate_path
-    assert alternate_path.exists()
-    assert pd.ExcelFile(alternate_path).sheet_names == ["Dim_Product"]
-    assert (tmp_path / "QA_UnmappedProducts.xlsx").exists()
+# The legacy QA_UnmappedProducts side-workbook tests (separate QA file, locked-workbook alternate, Excel/SQL
+# validation of that file) were rewritten for the conformed product design in test_core_transforms.py:
+# unmatched products are map_product_master rows with match_status 'Unmatched' (unmatched_report), and every
+# product/company pair is covered by the map (orphan checks in etl_dq_result).
 
 
 def test_bcg_refresh_upsert_preserves_existing_workbook_sheets(tmp_path: Path) -> None:
@@ -705,47 +666,3 @@ def test_workbook_exporter_datetime_serial_preserves_local_clock_time() -> None:
 
 def test_workbook_exporter_datetime_detector_handles_string_dtype() -> None:
     assert WorkbookExporter._is_datetime_series(pd.Series(["B2B", "B2C"], dtype="string")) is False
-
-
-def test_excel_sql_validation_reads_unmapped_products_from_separate_workbook(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    model_path = tmp_path / "SalesModel_OneOutput.xlsx"
-    with pd.ExcelWriter(model_path) as writer:
-        pd.DataFrame(columns=["order_number", "OrderDateTime"]).to_excel(writer, sheet_name="Fact_Orders", index=False)
-        pd.DataFrame(columns=["order_number", "order_date", "order_date_date"]).to_excel(writer, sheet_name="Fact_SalesLines", index=False)
-    pd.DataFrame([{"product_name_clean": "Missing", "size": ""}]).to_excel(
-        tmp_path / "QA_UnmappedProducts.xlsx",
-        index=False,
-    )
-
-    settings = Settings(
-        odoo_url="x",
-        odoo_db="x",
-        odoo_user="x",
-        odoo_api_key="x",
-        input_dir=tmp_path,
-        output_dir=tmp_path,
-        output_file=model_path.name,
-        batch_size=100,
-        timezone="Africa/Tripoli",
-        assume_utc_for_naive=False,
-    )
-    pipeline = PowerBISalesPipeline(settings)
-    exporter = SimpleNamespace(
-        _count_rows=lambda table_name: 1 if table_name == "QA_UnmappedProducts" else 0,
-        _effective_schema=lambda: None,
-    )
-    monkeypatch.setattr(pipeline, "_latest_sql_tuple_for_table", lambda *args, **kwargs: (None, None))
-    monkeypatch.setattr(pipeline, "_latest_sql_sales_line_tuple", lambda *args, **kwargs: (None, None, None))
-
-    pipeline._validate_excel_matches_sql_output(
-        model_path,
-        exporter,
-        {
-            "Fact_Orders": pd.DataFrame(),
-            "Fact_SalesLines": pd.DataFrame(),
-            "QA_UnmappedProducts": pd.DataFrame([{"product_name_clean": "Missing", "size": ""}]),
-        },
-    )

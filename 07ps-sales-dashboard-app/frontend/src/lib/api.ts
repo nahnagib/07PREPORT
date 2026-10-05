@@ -859,7 +859,7 @@ export const adminApi = {
   getEtlSchedulerConfig: (token: string): Promise<EtlSchedulerConfigResponse> =>
     request('/admin/etl/scheduler-config', token),
 
-  startEtlRun: (token: string, mode: EtlMode): Promise<{ ok: boolean; runId: number; jobId: string }> =>
+  startEtlRun: (token: string, mode: EtlStartMode): Promise<{ ok: boolean; runId: number; jobId: string }> =>
     request(`/admin/etl/start/${mode}`, token, { method: 'POST' }),
 
   getEtlPreflight: (token: string): Promise<EtlPreflightResponse> => request('/admin/etl/preflight', token),
@@ -1142,7 +1142,9 @@ export const adminApi = {
 // --- ETL Control Center types ---
 
 export type EtlRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled';
-export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel';
+/** What an admin can start. 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform. */
+export type EtlStartMode = 'incremental' | 'full' | 'finance';
+export type EtlMode = EtlStartMode | 'sql' | 'excel';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';
 
 export interface EtlJobRun {
@@ -1283,9 +1285,10 @@ export interface EtlScheduleInfo {
 export interface EtlSchedulerConfigResponse {
   incremental: EtlScheduleInfo;
   full: EtlScheduleInfo;
+  finance?: EtlScheduleInfo;
 }
 
-/** Mirrors pipeline_run_log (data/etl's own run history table -- see backend/src/routes/admin/etlRuns.ts). */
+/** One etl_run_log row (ETL platform run history), with the legacy pipeline_run_log field names kept as aliases -- see backend/src/routes/admin/etlRuns.ts. */
 export interface EtlRunLogRow {
   [key: string]: unknown;
   run_id: number;
@@ -1301,7 +1304,7 @@ export interface EtlRunLogRow {
   created_at: string;
 }
 
-/** Mirrors pipeline_run_audit (per-table row_counts_json + before/after order cursor). */
+/** Per-run task detail from etl_task_log (rows loaded per task as row_counts_json) -- see backend/src/routes/admin/etlRuns.ts. */
 export interface EtlRunAuditRow {
   [key: string]: unknown;
   run_id: number;
@@ -2305,4 +2308,191 @@ function buildProductDashboardQuery(scope: ProductDashboardScope): string {
 export function fetchProductDashboard(token: string, page: ProductDashboardPage, scope: ProductDashboardScope = {}): Promise<ProductDashboardOverview> {
   const qs = buildProductDashboardQuery(scope);
   return request(`/product-dashboard/${page}/overview${qs ? `?${qs}` : ''}`, token);
+}
+
+// ---- Debt Report (Price / Finance department; backend routes/debtReport.ts) -----------------------------------------
+export type DebtSizeTier = 'large' | 'medium' | 'small';
+export type DebtOverdueStatus = 'all' | 'overdue' | 'not_due';
+
+/** Every Debt Report parameter. Company / salesperson / team / customer go through the server's scoped filters
+ * (role data scope + salesperson lock); the rest are the page's own. */
+export interface DebtReportScope {
+  snapshotDate?: string | null;
+  includeOther?: boolean;
+  includeIntercompany?: boolean;
+  companyKeys?: number[];
+  salespersonKeys?: number[];
+  salesTeamKeys?: string[];
+  customerSearch?: string;
+  overdueStatus?: DebtOverdueStatus;
+  agingBucketKeys?: number[];
+  deliveryStatuses?: string[];
+  paymentTermKeys?: number[];
+  documentTypeKeys?: string[];
+  invoiceTiers?: DebtSizeTier[];
+  customerTiers?: DebtSizeTier[];
+}
+
+export interface DebtOption {
+  value: string;
+  labelEn: string;
+  labelAr: string | null;
+}
+
+export interface DebtComparison {
+  days: number;
+  comparedWith: string | null;
+  availableFrom: string | null;
+}
+
+export interface DebtFreshness {
+  department: string;
+  lastSuccessUtc: string | null;
+  lastSuccessJob: string | null;
+  lastFailureUtc: string | null;
+  lastFailureJob: string | null;
+  dataAsOf: string | null;
+}
+
+export interface DebtMeta {
+  snapshots: { date: string; lineCount: number }[];
+  snapshotDate: string | null;
+  options: {
+    companies: DebtOption[];
+    salespersons: DebtOption[];
+    salesTeams: DebtOption[];
+    agingBuckets: (DebtOption & { isOverdue: boolean })[];
+    deliveryStatuses: DebtOption[];
+    paymentTerms: DebtOption[];
+    documentTypes: DebtOption[];
+    scopes: (DebtOption & { isDefault: boolean; description: string | null })[];
+    sizeTiers: (DebtOption & { min: number | null; max: number | null })[];
+  };
+  odooBaseUrl: string;
+  topCustomers: number;
+  changeWindows: number[];
+  salesWindowDays: number;
+  freshness: DebtFreshness;
+}
+
+export interface DebtGroupPoint {
+  key: string;
+  label: string;
+  detail?: string | null;
+  overdue: number;
+  open: number;
+  pctOfOverdue: number | null;
+}
+
+export interface DebtOverview {
+  snapshotDate: string | null;
+  kpis: {
+    openAmount: number;
+    overdueAmount: number;
+    overduePctOfOpen: number | null;
+    overdueDocuments: number;
+    customersOverdue: number;
+    overdue90Plus: number;
+    customersOverCreditLimit: number;
+    customersWithCreditLimit: number;
+    overdueChange: (DebtComparison & { previousOverdue: number | null; change: number | null })[];
+    lineCount: number;
+  };
+  aging: { agingBucketKey: number; label: string; isOverdue: boolean; amount: number; lineCount: number }[];
+  topCustomers: DebtGroupPoint[];
+  bySalesperson: DebtGroupPoint[];
+  byTeam: DebtGroupPoint[];
+}
+
+export interface DebtTrend {
+  points: { snapshotDate: string; open: number; overdue: number }[];
+  snapshotCount: number;
+}
+
+export interface DebtCustomerRow {
+  companyKey: number;
+  company: string;
+  customerKey: number;
+  customer: string;
+  open: number;
+  overdue: number;
+  overdue90Plus: number;
+  creditLimit: number | null;
+  overCreditLimit: boolean;
+  oldestOverdueDays: number | null;
+  salesLast90d: number;
+  dsoDays: number | null;
+  change7d: number | null;
+  change30d: number | null;
+  customerTier: DebtSizeTier;
+  lineCount: number;
+}
+
+export interface DebtCustomers {
+  snapshotDate: string | null;
+  rows: DebtCustomerRow[];
+  changes: DebtComparison[];
+}
+
+export interface DebtDocumentRow {
+  lineId: number;
+  moveId: number;
+  document: string | null;
+  documentTypeKey: string;
+  documentTypeLabelEn: string | null;
+  documentTypeLabelAr: string | null;
+  journalEn: string | null;
+  journalAr: string | null;
+  receivableScope: string;
+  isIntercompany: boolean;
+  company: string;
+  invoiceDate: string | null;
+  dueDate: string | null;
+  daysPastDue: number;
+  agingBucketKey: number;
+  agingBucket: string;
+  residualCompanyCcy: number;
+  companyCurrency: string | null;
+  residualDocCcy: number | null;
+  docCurrency: string | null;
+  paymentTerm: string | null;
+  salesperson: string | null;
+  salespersonSource: string;
+  salesTeam: string | null;
+  deliveryStatus: string | null;
+  deliveryStatusLabelEn: string | null;
+  deliveryStatusLabelAr: string | null;
+  paymentStateLabelEn: string | null;
+  paymentStateLabelAr: string | null;
+  invoiceTier: DebtSizeTier;
+  odooUrl: string;
+}
+
+export interface DebtDocuments {
+  snapshotDate: string | null;
+  rows: DebtDocumentRow[];
+}
+
+/** Query string of a Debt Report request. Lists go as repeated keys (the server's scoped filters read arrays). */
+export function buildDebtReportQuery(scope: DebtReportScope, extra: Record<string, string | number> = {}): string {
+  const params = new URLSearchParams();
+  const list = (key: keyof DebtReportScope) => {
+    const values = scope[key];
+    if (Array.isArray(values)) for (const v of values) params.append(key, String(v));
+  };
+  if (scope.snapshotDate) params.set('snapshotDate', scope.snapshotDate);
+  if (scope.includeOther) params.set('includeOther', 'true');
+  if (scope.includeIntercompany) params.set('includeIntercompany', 'true');
+  if (scope.customerSearch?.trim()) params.set('customerSearch', scope.customerSearch.trim());
+  if (scope.overdueStatus && scope.overdueStatus !== 'all') params.set('overdueStatus', scope.overdueStatus);
+  for (const key of ['companyKeys', 'salespersonKeys', 'salesTeamKeys', 'agingBucketKeys', 'deliveryStatuses', 'paymentTermKeys', 'documentTypeKeys', 'invoiceTiers', 'customerTiers'] as const) list(key);
+  for (const [k, v] of Object.entries(extra)) params.set(k, String(v));
+  return params.toString();
+}
+
+export type DebtReportEndpoint = 'meta' | 'overview' | 'trend' | 'customers' | 'documents';
+
+export function fetchDebtReport<T>(token: string, endpoint: DebtReportEndpoint, scope: DebtReportScope, extra: Record<string, string | number> = {}, signal?: AbortSignal): Promise<T> {
+  const qs = buildDebtReportQuery(scope, extra);
+  return request<T>(`/debt-report/${endpoint}${qs ? `?${qs}` : ''}`, token, { signal });
 }

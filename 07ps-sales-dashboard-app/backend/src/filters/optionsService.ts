@@ -6,7 +6,7 @@ import { Combo, DIMENSIONS, Dimension, Selection, computeCascade } from './casca
  * Backs GET /filters/options: loads (and caches) the distinct dimension combinations in the sales
  * data for a date window, then lets cascade.ts cross-filter them.
  *
- * Company / customer / salesperson come straight from Fact_SalesLines. Customer Group, Distribution
+ * Company / customer / salesperson come straight from v_sales_lines. Customer Group, Distribution
  * Channel and Branch are resolved through salesperson_admin_profile with EXACTLY the expressions
  * measures/filters.ts uses to filter every report (effectiveSegmentExpr / effectiveChannelExpr /
  * effectiveSalesTeamExpr, restated here as a JOIN instead of a correlated subquery -- same COALESCE
@@ -90,16 +90,16 @@ async function loadCombos(window: DateWindow): Promise<Combo[]> {
         COALESCE(
           sap.channel_key_override,
           CASE
-            WHEN fsl.ChannelKey <> 1 THEN fsl.ChannelKey
+            WHEN fsl.ChannelKey <> -1 THEN fsl.ChannelKey
             WHEN COALESCE(sap.segment_key_override, fsl.SegmentKey) IN (2, 3) THEN 3
             WHEN COALESCE(sap.segment_key_override, fsl.SegmentKey) IN (1, 4) THEN 2
-            ELSE 1
+            ELSE -1
           END
         ) AS ch,
         COALESCE(sap.sales_team_key_override, fsl.SalesTeamKey) AS tm,
         fsl.SalespersonKey AS sp,
         fsl.CustomerKey AS cu
-     FROM Fact_SalesLines fsl
+     FROM v_sales_lines fsl
      JOIN Dim_Date dd ON dd.DateKey = fsl.DateKey
      LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fsl.SalespersonKey
      WHERE 1 = 1${dateClause}`,
@@ -141,7 +141,7 @@ async function loadNames(): Promise<NameMaps> {
     q(`SELECT etl_segment_key AS k, name FROM admin_customer_group WHERE is_active = 1 AND etl_segment_key IS NOT NULL ORDER BY display_order, name`),
     q(`SELECT etl_channel_key AS k, name FROM admin_distribution_channel WHERE is_active = 1 AND etl_channel_key IS NOT NULL ORDER BY display_order, name`),
     q(`SELECT st.SalesTeamKey AS k, COALESCE(stap.team_name_override, st.SalesTeam) AS name, st.SalesCity AS city
-       FROM Dim_SalesTeam st LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey ORDER BY st.SalesTeam`),
+       FROM dim_sales_team st LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey ORDER BY st.SalesTeam`),
     q(`SELECT ds.SalespersonKey AS k, COALESCE(sap.admin_name_override, ds.salesperson) AS name
        FROM Dim_Salesperson ds LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey ORDER BY ds.salesperson`),
     q(`SELECT CustomerKey AS k, customer AS name FROM Dim_Customer ORDER BY customer`),

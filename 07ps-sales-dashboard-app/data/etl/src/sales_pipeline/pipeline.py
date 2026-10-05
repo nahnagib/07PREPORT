@@ -127,6 +127,19 @@ OutputMode = Literal["excel", "sql", "both"]
 LoadMode = Literal["full", "incremental"]
 
 
+@dataclass
+class SalesBuild:
+    """What build_sheets() returns: the legacy-keyed sheets and the raw Odoo frames needed to conform keys."""
+
+    sheets: dict[str, pd.DataFrame]
+    sales_raw: pd.DataFrame
+    sale_orders_raw: pd.DataFrame
+    leads_raw: pd.DataFrame
+    stock_pickings_raw: pd.DataFrame
+    odoo_extract_count: int
+    qa_issues_count: int
+
+
 @dataclass(frozen=True)
 class PipelineRunResult:
     output_mode: OutputMode
@@ -637,6 +650,101 @@ class PowerBISalesPipeline:
                     self.logger.error("Could not write failed run to pipeline_run_log: %s", run_log_exc)
             self._log_runtime(run_context)
             raise
+
+    def build_sheets(self, *, include_qa: bool = False, strict: bool = False) -> "SalesBuild":
+        """The business transforms of a FULL run, with no side effects: extracts from Odoo (read-only), applies
+        the unchanged legacy cleaning/enrichment/fact logic, runs the model validations, and returns the sheets
+        plus the raw Odoo frames. It writes nothing -- no etl_run_log, staging, sale.report cache, workbook or
+        SQL. The ETL platform (departments/sales) conforms the keys and loads the marts.
+
+        Same steps, in the same order, as run(load_mode="full"); kept separate so the legacy run() is untouched
+        until it is retired."""
+        run_context = PipelineRunContext(scheduled_refresh_time=None)
+        odoo_extract_count = 0
+        with run_context.step("validate_config_and_inputs"):
+            self._validate_inputs()
+            self.settings.validate(require_database=False)
+            _ = self.mapper
+        with run_context.step("odoo_authenticate"):
+            client = OdooClient(
+                url=self.settings.odoo_url, db=self.settings.odoo_db, username=self.settings.odoo_user,
+                api_key=self.settings.odoo_api_key, timeout_seconds=self.settings.rpc_timeout_seconds,
+                max_retries=self.settings.max_retries, connect_retry_window_seconds=self.settings.odoo_connect_retry_window_seconds,
+            )
+            client.authenticate()
+        uid, bs = client.uid, self.settings.batch_size
+        with run_context.step("extract_product_cost_and_inventory"):
+            product_cost_repo = ProductCostRepository(self._make_odoo_client(uid), bs)
+            inv = [InventoryRepository(self._make_odoo_client(uid), bs) for _ in range(3)]
+            fetched = self._parallel_odoo_fetch({
+                "product.product": product_cost_repo.fetch_product_costs,
+                "stock.quant": inv[0].fetch_stock_quants,
+                "stock.location": inv[1].fetch_locations,
+                "res.company": inv[2].fetch_companies,
+            }, uid=uid, max_workers=4)
+            odoo_extract_count += sum(len(df) for df in fetched.values())
+        with run_context.step("extract_sale_report"):
+            sales_raw = SalesReportRepository(client=client, batch_size=bs, timezone=self.settings.timezone,
+                                              assume_utc_for_naive=self.settings.assume_utc_for_naive).fetch_sale_report()
+            odoo_extract_count += len(sales_raw)
+        with run_context.step("extract_crm_models"):
+            repos = {
+                "crm.lead": (CrmRepository(self._make_odoo_client(uid), bs), "fetch_leads"),
+                "crm.stage": (CrmRepository(self._make_odoo_client(uid), bs), "fetch_stages"),
+                "crm.lost.reason": (CrmRepository(self._make_odoo_client(uid), bs), "fetch_lost_reasons"),
+                "sale.order": (SaleOrderRepository(self._make_odoo_client(uid), bs), "fetch_orders"),
+                "stock.picking": (StockPickingRepository(self._make_odoo_client(uid), bs), "fetch_pickings"),
+                "stock.move": (StockMoveRepository(self._make_odoo_client(uid), bs), "fetch_moves"),
+            }
+            crm = self._parallel_odoo_fetch({k: getattr(r, m) for k, (r, m) in repos.items()}, uid=uid)
+            odoo_extract_count += sum(len(df) for df in crm.values())
+            field_availability = pd.concat([r.field_availability for r, _ in repos.values()] + [product_cost_repo.field_availability],
+                                           ignore_index=True)
+        with run_context.step("transform_sales_model"):
+            sheets = self.transform(
+                sales_raw, include_qa=include_qa, use_reference_cache=False,
+                product_cost_raw=fetched["product.product"], stock_quants_raw=fetched["stock.quant"],
+                stock_locations_raw=fetched["stock.location"], inventory_companies_raw=fetched["res.company"],
+                sale_orders_raw=crm["sale.order"],
+            )
+        with run_context.step("transform_crm_model"):
+            crm_sheets, crm_summary = self.transform_crm(
+                leads_raw=crm["crm.lead"], stages_raw=crm["crm.stage"], lost_reasons_raw=crm["crm.lost.reason"],
+                sale_orders_raw=crm["sale.order"], stock_pickings_raw=crm["stock.picking"], stock_moves_raw=crm["stock.move"],
+                field_availability=field_availability, fact_orders=sheets["Fact_Orders"], dim_customer=sheets["Dim_Customer"],
+                dim_salesteam=sheets["Dim_SalesTeam"], dim_salesperson=sheets["Dim_Salesperson"], dim_company=sheets["Dim_Company"],
+                dim_channel=sheets["Dim_DistributionChannel"], dim_segment=sheets["Dim_Segment"], dim_invoice=sheets["Dim_Invoice"],
+                include_qa=include_qa,
+            )
+            sheets.update(crm_sheets)
+            sheets["Fact_Orders"] = self._align_fact_orders_with_fact_sales(sheets["Fact_Orders"], sheets.get("Fact_Sales", pd.DataFrame()))
+            sheets["Fact_Orders"] = self._ensure_fact_orders_order_key(sheets["Fact_Orders"])
+            refresh_date = pd.Timestamp.now(tz=self.settings.timezone).date()
+            sheets["Dim_Date"] = self._extend_dim_date_for_sales_and_delivery(sheets, refresh_date=refresh_date)
+            self._validate_model_key_integrity(sheets, refresh_date=refresh_date)
+            issues = ModelValidator.validate(sheets, strict=strict)
+            for issue in issues:
+                (self.logger.error if issue.severity == "ERROR" else self.logger.warning)(
+                    "Model validation %s: table=%s check=%s details=%s", issue.severity, issue.table, issue.check, issue.details)
+            ModelValidator.raise_for_errors(issues)
+            self._validate_output_sheets(sheets, include_qa=include_qa)
+        run_context.finish("SUCCESS")
+        return SalesBuild(sheets=sheets, sales_raw=sales_raw, sale_orders_raw=crm["sale.order"], leads_raw=crm["crm.lead"],
+                          stock_pickings_raw=crm["stock.picking"], odoo_extract_count=odoo_extract_count,
+                          qa_issues_count=crm_summary.qa_issues_count)
+
+    def rebuild_product_tables(self, fact_sales_lines: pd.DataFrame, sheets: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+        """Re-runs the unchanged product-page and BCG builders on (conformed) sales lines, with the same inputs
+        transform() gives them, so their keys come from the lines they aggregate."""
+        dashboard_config = ProductDashboardConfig.load(self.settings.product_dashboard_config)
+        business_today = pd.Timestamp.now(tz=self.settings.timezone).tz_localize(None).normalize()
+        dim_product, dim_product_cost = sheets["Dim_Product"], sheets["Dim_ProductCost"]
+        line_costs = ProductCostMatcher.attach(fact_sales_lines, dim_product_cost)["product_cost"]
+        tables = ProductDashboardBuilder(dashboard_config, business_today).build(
+            fact_sales_lines, dim_product, sheets["Fact_Inventory"], line_costs=line_costs
+        )
+        tables["Fact_BCGMatrix"] = BCGMatrixBuilder.build(fact_sales_lines, dim_product_cost, dim_product=dim_product)
+        return tables
 
     def transform(
         self,

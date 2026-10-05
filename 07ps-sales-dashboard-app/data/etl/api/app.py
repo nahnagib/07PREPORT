@@ -1,10 +1,12 @@
-"""Flask API wrapping the REAL production ETL pipeline (data/etl/src/sales_pipeline/main.py) for
+"""Flask API wrapping the ETL platform (data/etl/src/etl_platform, `python -m etl_platform.run <job>`) for
 the split cPanel deployment. Node's backend/src/etl/services/pythonRunner.ts calls this over HTTP
 instead of spawning the subprocess itself directly - everything above pythonRunner.ts
 (runPipelineJob.ts, BullMQ, admin/etlControl.ts, the frontend etl-runs page) is unchanged.
 
 Endpoints:
-  POST /etl/run                    - start a run, 202 {jobId} (409 if one is already active)
+  POST /etl/run                    - start a run, 202 {jobId} (409 if one is already active). Body: {"job": "<platform
+                                      job>"} (validated against the platform registry); without "job", the legacy
+                                      {"loadMode"} maps to sales_incremental (incremental) or full_all (full)
   GET  /etl/jobs/<job_id>          - poll status + new log lines (?after=<count> for incremental
                                       fetch, matching how pythonRunner.ts's polling loop tracks
                                       how many lines it has already consumed)
@@ -47,7 +49,7 @@ from config.input_check import (
     inspect_input_dir,
 )
 from input_files import MAX_UPLOAD_BYTES, UploadRejected, describe_slots, replace_file
-from job_tracker import tracker
+from job_tracker import LOAD_MODE_JOBS, tracker  # LOAD_MODE_JOBS: callers that still send only loadMode
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -59,6 +61,13 @@ logging.basicConfig(
 logger = logging.getLogger("etl_api")
 
 VALID_LOAD_MODES = {"full", "incremental"}
+
+
+def platform_jobs() -> set[str]:
+    """Every job name the ETL platform registers (etl_platform.registry). Imported lazily: it loads every department."""
+    from etl_platform.registry import load_definitions
+
+    return set(load_definitions().jobs)
 VALID_OUTPUT_MODES = {"sql", "excel", "both"}
 
 
@@ -168,7 +177,8 @@ def etl_input_file_replace(name: str):
 @require_api_key
 def etl_run():
     payload = request.get_json(silent=True) or {}
-    load_mode = payload.get("loadMode")
+    load_mode = payload.get("loadMode") or "full"
+    job_name = payload.get("job") or LOAD_MODE_JOBS.get(load_mode)
     output_mode = payload.get("outputMode", "sql")
     fast = bool(payload.get("fast", False))
     extra_args = payload.get("extraArgs") or []
@@ -178,11 +188,16 @@ def etl_run():
         return jsonify({"error": f"loadMode must be one of {sorted(VALID_LOAD_MODES)}"}), 400
     if output_mode not in VALID_OUTPUT_MODES:
         return jsonify({"error": f"outputMode must be one of {sorted(VALID_OUTPUT_MODES)}"}), 400
+    if output_mode != "sql":
+        return jsonify({"error": "The ETL platform loads the warehouse only (outputMode 'sql'); Excel exports were retired"}), 400
+    known = platform_jobs()
+    if job_name not in known:
+        return jsonify({"error": f"job must be one of {sorted(known)}"}), 400
     if not isinstance(extra_args, list) or not all(isinstance(a, str) for a in extra_args):
         return jsonify({"error": "extraArgs must be a list of strings"}), 400
 
     try:
-        job = tracker.start(load_mode, output_mode, fast, extra_args, label, app.config["PYTHON_BIN"])
+        job = tracker.start(load_mode, output_mode, fast, extra_args, label, app.config["PYTHON_BIN"], job_name=job_name)
     except RuntimeError:
         active = tracker.active_job()
         return jsonify({
@@ -191,8 +206,8 @@ def etl_run():
         }), 409
 
     logger.info(
-        "Started ETL job %s (loadMode=%s outputMode=%s fast=%s label=%s)",
-        job.job_id, load_mode, output_mode, fast, label,
+        "Started ETL job %s (platform job=%s loadMode=%s label=%s)",
+        job.job_id, job_name, load_mode, label,
     )
     return jsonify({"jobId": job.job_id, "status": job.status}), 202
 

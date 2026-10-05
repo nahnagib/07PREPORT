@@ -224,7 +224,7 @@ describe('fetchLastSuccessfulRun / fetchRefreshStatus', () => {
     expect(status.displayTimezone).toBe(TRIPOLI);
   });
 
-  it('treats a Fact_Orders without QuotationDate (Fact_Sales was empty) as "unknown", not as an error', async () => {
+  it('treats a v_sales_orders without QuotationDate (v_sales_documents was empty) as "unknown", not as an error', async () => {
     const pool = poolFor((sql) => {
       if (sql.includes('FROM etl_run_log')) {
         return [{ run_uid: 'a', finished_at_utc: '2026-09-20 12:45:00', watermark_order_date_utc: '2026-09-20 12:42:00', watermark_order_created_utc: null, business_timezone: TRIPOLI, legacy_backfill: 0 }];

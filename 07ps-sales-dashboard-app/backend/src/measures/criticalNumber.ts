@@ -12,9 +12,9 @@
  *   Metric                    | Source table(s)                        | How
  *   ---------------------------|------------------------------------------|---------------------------
  *   Daily Critical Number      | DAILY_CRITICAL_NUMBER constant (560,000)  | fixed business figure, no
- *                               |                                            | relation to Fact_Targets --
+ *                               |                                            | relation to v_sales_targets --
  *                               |                                            | see that constant's docstring
- *   Daily/Monthly/Yearly       | Fact_SalesLines (value)                    | actual value for the day /
+ *   Daily/Monthly/Yearly       | v_sales_lines (value)                    | actual value for the day /
  *   Counter actuals            |                                            | MTD / YTD window
  *   Working Days / Weekly Rest | Dim_Date.IsWeeklyRestDay + calendar        | see computeWorkingDays below
  *   Official Holidays /        | official_holidays / forced_closures        | admin-owned tables (Admin
@@ -47,6 +47,8 @@
  */
 
 import type { Pool } from 'mysql2/promise';
+import { DateTime } from 'luxon';
+import { getAppTimezone, utcSqlDateTimeToDate } from '../lib/timezone';
 import { classifyVsTarget, variancePct, TargetStatus } from './classify';
 import { fetchValueVolume } from './tachometer';
 import {
@@ -193,19 +195,33 @@ async function fetchOffDayRows(pool: Pool, type: OffDayType, window: DateWindow)
 }
 
 /**
- * Most recent calendar date the ETL has actually loaded (Dim_Date is built incrementally as data
- * lands -- see this file's header note -- so its MAX(Date) is a direct signal of "how far the
- * pipeline has caught up", independent of any Company/Branch filter scope). Used by the
- * /critical-number/overview route to detect "today hasn't loaded yet" and fall back to the last
- * available day instead of showing today's (empty) figures. Returns null only for a completely
- * empty warehouse (no Dim_Date rows at all).
+ * Most recent calendar date the ETL has actually loaded: the business-timezone date of the latest
+ * SUCCESSFUL sales run in etl_run_log (the date the legacy pipeline used to extend Dim_Date to), falling
+ * back to the latest order date when no sales run is logged yet. Independent of any Company/Branch scope.
+ * Used by the /critical-number/overview route to detect "today hasn't loaded yet" and fall back to the
+ * last available day instead of showing today's (empty) figures. Returns null only for an empty warehouse.
+ *
+ * Not MAX(dim_date.Date): the conformed dim_date covers the calendar to the end of next year (due dates), so
+ * its maximum says nothing about data freshness.
  */
 export async function fetchLastAvailableDate(pool: Pool): Promise<Date | null> {
-  const [rows] = await pool.query('SELECT MAX(Date) AS lastDate FROM dim_date');
-  const row = (rows as any[])[0];
-  if (!row?.lastDate) return null;
-  const d = row.lastDate as Date;
-  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const [runs] = await pool.query(
+    `SELECT MAX(finished_at_utc) AS lastRun FROM etl_run_log
+     WHERE status = 'success' AND (department = 'sales' OR (department IS NULL AND mode IN ('full', 'incremental')))`,
+  );
+  const lastRun = (runs as any[])[0]?.lastRun as Date | string | null | undefined;
+  if (lastRun) {
+    // the pool reads DATETIME as UTC (timezone 'Z'), so a Date here is already the UTC instant
+    const utc = lastRun instanceof Date ? lastRun : utcSqlDateTimeToDate(String(lastRun));
+    if (utc) {
+      const local = DateTime.fromJSDate(utc).setZone(getAppTimezone());
+      return new Date(Date.UTC(local.year, local.month - 1, local.day));
+    }
+  }
+  const [rows] = await pool.query('SELECT MAX(OrderDate) AS lastDate FROM v_sales_orders');
+  const d = (rows as any[])[0]?.lastDate as Date | null | undefined;
+  if (!d) return null;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
 async function fetchCompanyNamesByKey(pool: Pool): Promise<Map<number, string>> {
@@ -257,10 +273,10 @@ async function computeWorkingDays(
 
 /**
  * Company-wide daily sales target, LYD 560,000/day -- a fixed business constant, not derived from
- * Fact_Targets. Confirmed with the business owner (2026-09-14 revision pass): "560 is a critical
+ * v_sales_targets. Confirmed with the business owner (2026-09-14 revision pass): "560 is a critical
  * number, it has no relation with the target." Previously this was computed as Full-Year Target
  * Revenue / working days in the year (per-company/segment scope-aware); that formula produced
- * ~LYD 559K against the live Fact_Targets data, which read as "wrong" because the two numbers were
+ * ~LYD 559K against the live v_sales_targets data, which read as "wrong" because the two numbers were
  * never meant to be the same thing -- the Critical Number is a flat operational pace goal, the FY
  * Target is a separate planning figure.
  *
@@ -541,7 +557,7 @@ export interface ForcedClosureOccurrence {
 
 export interface ForcedClosureBranchSummary {
   branch: string;
-  /** Human-readable branch/team name from dim_salesteam (e.g. "Factory Outlet") -- falls back to
+  /** Human-readable branch/team name from dim_sales_team (e.g. "Factory Outlet") -- falls back to
    * the branch code itself if the code doesn't resolve (shouldn't happen for real data, but a
    * closure record referencing a retired/renamed team shouldn't disappear from the list). */
   branchName: string;
@@ -565,7 +581,7 @@ export interface ForcedClosuresCard {
  * endpoint already reads for the Branch filter dropdown. */
 async function fetchBranchNamesByKey(pool: Pool): Promise<Map<string, string>> {
   // "key" is a reserved word in MySQL and can't be used bare as a column alias.
-  const [rows] = await pool.query('SELECT SalesTeamKey AS branchKey, SalesTeam AS branchName FROM dim_salesteam');
+  const [rows] = await pool.query('SELECT SalesTeamKey AS branchKey, SalesTeam AS branchName FROM dim_sales_team');
   const map = new Map<string, string>();
   for (const r of rows as any[]) map.set(String(r.branchKey), String(r.branchName));
   return map;
@@ -623,7 +639,7 @@ async function fetchDailyActuals(pool: Pool, window: DateWindow, filters: Filter
   const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const sql = `
     SELECT fsl.DateKey AS dateKey, COALESCE(SUM(fsl.Value), 0) AS value
-    FROM fact_saleslines fsl
+    FROM v_sales_lines fsl
     WHERE fsl.DateKey BETWEEN ? AND ?
       AND ${clause}
     GROUP BY fsl.DateKey

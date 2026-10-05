@@ -18,7 +18,7 @@ interface MockOpts {
 function setupMockPool(opts: MockOpts = {}) {
   queryMock.mockReset();
   queryMock.mockImplementation(async (sql: string) => {
-    if (/FROM Dim_SalesTeam WHERE SalesTeamKey/.test(sql)) {
+    if (/FROM dim_sales_team WHERE SalesTeamKey/.test(sql)) {
       return [[{ 1: 1 }]]; // salesTeamExists -> true
     }
     if (/FROM Dim_Company WHERE CompanyKey/.test(sql)) {
@@ -37,7 +37,7 @@ function setupMockPool(opts: MockOpts = {}) {
     if (/INSERT INTO sales_team_admin_profile_history/.test(sql)) {
       return [{ affectedRows: 1 }];
     }
-    if (/FROM Dim_SalesTeam st/.test(sql)) {
+    if (/FROM dim_sales_team st/.test(sql)) {
       // getSalesTeamRow's BASE_SELECT
       return [[{
         sales_team_key: 'TK-1', sales_team_name: 'Team 1', team_code: 'TK-1',

@@ -101,7 +101,7 @@ export const YOY_YELLOW_THRESHOLD = -0.1;
 /**
  * Classify `actual` against the same metric's own prior-period value, for pages/metrics with no
  * absolute target in their data model (e.g. Customer Growth, Invoices Engine, BCG Matrix -- none
- * of them have a Fact_Targets-style benchmark). Mirrors classifyVsTarget's green/yellow/red
+ * of them have a v_sales_targets-style benchmark). Mirrors classifyVsTarget's green/yellow/red
  * banding, but the benchmark is last period's actual instead of a fixed target.
  *
  * - GREEN: actual >= prior (at or above last period)

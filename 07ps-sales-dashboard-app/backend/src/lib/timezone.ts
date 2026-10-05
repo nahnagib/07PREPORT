@@ -20,7 +20,7 @@ import { DateTime } from 'luxon';
 const DEFAULT_APP_TIMEZONE = 'Africa/Tripoli';
 
 /** The single configured business/display timezone (APP_TIMEZONE, IANA id). It is BOTH the zone the
- * naive business fact columns (Fact_Orders.OrderDateTime/QuotationDate, ...) are stored in -- it must
+ * naive business fact columns (v_sales_orders.OrderDateTime/QuotationDate, ...) are stored in -- it must
  * equal the ETL's TIMEZONE, the refresh check flags a mismatch -- and the zone shown to users.
  * Operational metadata (etl_run_log.*_utc) is UTC and is never converted with this. Read lazily so
  * tests can set the variable. An invalid value falls back to the default rather than throwing on

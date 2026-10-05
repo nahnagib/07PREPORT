@@ -6,22 +6,22 @@ import { computeProductDashboard, resolvePeriod } from '../productDashboard';
 /** Mocks pool.query by SQL text (same convention as the other measure tests). */
 const META = [{ AsOfDate: '2026-09-29', LookbackDays: 90, ConfigJson: '{"intercompany_customers":{"names":["x"]},"bcg":{"profit_threshold_pct":35}}' }];
 
-/** groupRows = null -> dim_productdashboardgroup does not exist yet (per-company rows are served). */
+/** groupRows = null -> dim_sales_product_group does not exist yet (per-company rows are served). */
 function makePool(salesRows: unknown[], productRows: unknown[], meta: unknown[] = META, groupRows: unknown[] | null = null) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
-    if (sql.includes('SELECT DISTINCT Company FROM fact_productsalesdaily')) {
+    if (sql.includes('SELECT DISTINCT Company FROM v_sales_product_daily')) {
       const keys = (params[0] as number[]) ?? [];
       return [[...(keys.includes(1) ? [{ Company: 'Majaal' }] : []), ...(keys.includes(2) ? [{ Company: 'Tika' }] : [])]];
     }
-    if (sql.includes('FROM fact_productsalesdaily')) return [salesRows];
-    if (sql.includes('FROM dim_productdashboardgroup')) {
+    if (sql.includes('FROM v_sales_product_daily')) return [salesRows];
+    if (sql.includes('FROM dim_sales_product_group')) {
       if (groupRows === null) throw Object.assign(new Error('no table'), { code: 'ER_NO_SUCH_TABLE' });
       return [groupRows];
     }
-    if (sql.includes('FROM dim_productdashboard')) return [productRows];
-    if (sql.includes('FROM productdashboard_meta')) return [meta];
+    if (sql.includes('FROM v_sales_product_dashboard')) return [productRows];
+    if (sql.includes('FROM etl_sales_product_dashboard_meta')) return [meta];
     throw new Error(`unexpected SQL: ${sql}`);
   });
   return { pool: { query } as unknown as Pool, calls };
@@ -83,7 +83,7 @@ describe('computeProductDashboard', () => {
 
     const out = await computeProductDashboard(pool, { fromDate: '2026-01-01', toDate: '2026-01-31', filters: { salespersonKeys: [42] } });
 
-    const salesCall = calls.find((c) => c.sql.includes('fact_productsalesdaily'))!;
+    const salesCall = calls.find((c) => c.sql.includes('v_sales_product_daily'))!;
     expect(salesCall.sql).toContain('d.SalespersonKey IN (?)');
     // MySQL reserved words (LINES, VALUE is fine) must never be used as bare aliases.
     expect(salesCall.sql).not.toMatch(/\bAS lines\b/i);
@@ -150,10 +150,10 @@ describe('computeProductDashboard', () => {
       const { pool, calls } = makePool(sales.filter((r) => r.k.startsWith('TIKA')), products, META, groups);
       const out = await computeProductDashboard(pool, { fromDate: '2026-01-01', toDate: '2026-01-10', company: 'TIKA' });
       expect(out.view).toBe('Tika');
-      const salesCall = calls.find((c) => c.sql.includes('fact_productsalesdaily'))!;
+      const salesCall = calls.find((c) => c.sql.includes('v_sales_product_daily'))!;
       expect(salesCall.sql).toContain('d.Company = ?');
       expect(salesCall.params[salesCall.params.length - 1]).toBe('Tika');
-      expect(calls.some((c) => c.sql.includes('dim_productdashboardgroup'))).toBe(false);
+      expect(calls.some((c) => c.sql.includes('dim_sales_product_group'))).toBe(false);
       expect(out.products.map((p) => p.productMatchKey).sort()).toEqual(['TIKA|CEM AIR', 'TIKA|X']);
       expect(out.products.find((p) => p.productMatchKey === 'TIKA|CEM AIR')).toMatchObject({ value: 700, volume: 90, companies: ['Tika'] });
       expect(out.totals.value).toBe(705);
@@ -163,7 +163,7 @@ describe('computeProductDashboard', () => {
       const { pool, calls } = makePool(sales.filter((r) => r.k.startsWith('MAJAAL')), products, META, groups);
       const out = await computeProductDashboard(pool, { filters: { companyKeys: [1] } });
       expect(out.view).toBe('Majaal');
-      expect(calls.some((c) => c.sql.includes('dim_productdashboardgroup'))).toBe(false);
+      expect(calls.some((c) => c.sql.includes('dim_sales_product_group'))).toBe(false);
       const salesCall = calls.find((c) => c.sql.includes('SUM(CASE'))!;
       expect(salesCall.sql).toContain('d.CompanyKey IN (?)');
       expect(out.products.every((p) => p.company === 'Majaal')).toBe(true);

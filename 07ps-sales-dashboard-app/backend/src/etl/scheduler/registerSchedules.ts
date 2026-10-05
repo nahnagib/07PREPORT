@@ -34,6 +34,7 @@ export function registerEtlSchedules(): void {
       cron.schedule(config.schedule.incrementalCron, () => {
         etlLogger.info('Scheduled incremental ETL tick -- enqueueing job');
         enqueuePipelineRun({
+          job: 'sales_incremental',
           mode: 'incremental',
           loadMode: 'incremental',
           outputMode: 'sql',
@@ -57,6 +58,7 @@ export function registerEtlSchedules(): void {
       cron.schedule(config.schedule.fullCron, () => {
         etlLogger.info('Scheduled full-refresh ETL tick -- enqueueing job');
         enqueuePipelineRun({
+          job: 'full_all',
           mode: 'full',
           loadMode: 'full',
           outputMode: 'sql',
@@ -68,5 +70,28 @@ export function registerEtlSchedules(): void {
     }
   } else {
     etlLogger.info('Full-refresh ETL schedule disabled (ETL_SCHEDULE_FULL_ENABLED=false)');
+  }
+
+  if (config.schedule.financeEnabled) {
+    if (!cron.validate(config.schedule.financeCron)) {
+      etlLogger.error('Invalid ETL_SCHEDULE_FINANCE_CRON -- receivables snapshot schedule not registered', {
+        cron: config.schedule.financeCron,
+      });
+    } else {
+      cron.schedule(config.schedule.financeCron, () => {
+        etlLogger.info('Scheduled receivables snapshot tick -- enqueueing job');
+        enqueuePipelineRun({
+          job: 'finance_receivables',
+          mode: 'finance',
+          loadMode: 'full',
+          outputMode: 'sql',
+          label: 'scheduled-finance',
+          triggerSource: 'scheduled',
+        }).catch(onScheduledEnqueueError('finance'));
+      }, { timezone: config.schedule.timezone });
+      etlLogger.info('Registered receivables snapshot schedule', { cron: config.schedule.financeCron });
+    }
+  } else {
+    etlLogger.info('Receivables snapshot schedule disabled (ETL_SCHEDULE_FINANCE_ENABLED=false)');
   }
 }

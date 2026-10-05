@@ -2,6 +2,7 @@ import { Queue } from 'bullmq';
 import { pool } from '../../db/pool';
 import { getEtlConfig } from '../config/etlConfig';
 import { etlLogger } from '../services/etlLogger';
+import { platformJobFor, type PlatformJob } from '../services/pythonRunner';
 import {
   createQueuedRun,
   EtlLoadMode,
@@ -88,6 +89,8 @@ export async function hasActiveWorker(): Promise<boolean> {
 }
 
 export interface EtlJobData {
+  /** ETL platform job; absent on jobs queued before the platform (derived from loadMode then). */
+  job?: PlatformJob;
   mode: EtlMode;
   loadMode: EtlLoadMode;
   outputMode: EtlOutputMode;
@@ -139,6 +142,7 @@ async function withEnqueueGuard<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export interface EnqueuePipelineRunInput {
+  job?: PlatformJob;
   mode: EtlMode;
   loadMode: EtlLoadMode;
   outputMode: EtlOutputMode;
@@ -173,6 +177,7 @@ export async function enqueuePipelineRun(input: EnqueuePipelineRunInput) {
   const runId = await withEnqueueGuard(async () => {
     if (await hasActiveEtlRun()) throw new EtlAlreadyRunningError();
     return createQueuedRun({
+      jobType: platformJobFor(input.loadMode, input.job),
       mode: input.mode,
       loadMode: input.loadMode,
       outputMode: input.outputMode,
@@ -187,6 +192,7 @@ export async function enqueuePipelineRun(input: EnqueuePipelineRunInput) {
   await setRunJobId(runId, jobId);
 
   const data: EtlJobData = {
+    job: platformJobFor(input.loadMode, input.job),
     mode: input.mode,
     loadMode: input.loadMode,
     outputMode: input.outputMode,

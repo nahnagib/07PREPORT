@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // vitest hoists vi.mock(...) calls above this import automatically, so runPipeline still picks up
 // the mocked axios/etlConfig/etlLogger declared below.
-import { resetEtlApi, runPipeline } from '../pythonRunner';
+import { platformJobFor, resetEtlApi, runPipeline } from '../pythonRunner';
 
 const hoisted = vi.hoisted(() => ({
   postMock: vi.fn(),
@@ -66,7 +66,7 @@ describe('pythonRunner.runPipeline', () => {
     expect(result.durationMs).toBe(1234);
     expect(onLine).toHaveBeenCalledWith('Pipeline step extract started', 'stdout');
     expect(hoisted.postMock).toHaveBeenCalledWith('/etl/run', expect.objectContaining({
-      loadMode: 'incremental', outputMode: 'sql', fast: true,
+      job: 'sales_incremental', loadMode: 'incremental', outputMode: 'sql', fast: true,
     }));
   });
 
@@ -175,5 +175,13 @@ describe('pythonRunner.resetEtlApi', () => {
     const result = await resetEtlApi();
 
     expect(result).toBeNull();
+  });
+});
+
+describe('platformJobFor', () => {
+  it('maps full/incremental to ETL platform jobs and keeps an explicit job', () => {
+    expect(platformJobFor('incremental')).toBe('sales_incremental');
+    expect(platformJobFor('full')).toBe('full_all');
+    expect(platformJobFor('full', 'finance_receivables')).toBe('finance_receivables');
   });
 });

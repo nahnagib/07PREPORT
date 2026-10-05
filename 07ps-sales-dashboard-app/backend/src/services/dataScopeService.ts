@@ -19,8 +19,8 @@ const VALID_DIMENSIONS = new Set(DATA_SCOPE_DIMENSIONS.map((d) => d.key));
 const DIMENSION_LOOKUP: Partial<Record<keyof Filters, { table: string; keyCol: string; labelCol: string }>> = {
   companyKeys: { table: 'Dim_Company', keyCol: 'CompanyKey', labelCol: 'Company' },
   segmentKeys: { table: 'Dim_Segment', keyCol: 'SegmentKey', labelCol: 'Segment' },
-  channelKeys: { table: 'Dim_DistributionChannel', keyCol: 'ChannelKey', labelCol: 'DistributionChannel' },
-  salesTeamKeys: { table: 'Dim_SalesTeam', keyCol: 'SalesTeamKey', labelCol: 'SalesTeam' },
+  channelKeys: { table: 'dim_channel', keyCol: 'ChannelKey', labelCol: 'DistributionChannel' },
+  salesTeamKeys: { table: 'dim_sales_team', keyCol: 'SalesTeamKey', labelCol: 'SalesTeam' },
   salespersonKeys: { table: 'Dim_Salesperson', keyCol: 'SalespersonKey', labelCol: 'salesperson' },
 };
 

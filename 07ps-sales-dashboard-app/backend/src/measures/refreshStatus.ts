@@ -2,8 +2,8 @@
  * Last Update / Last Refresh Time -- required at the bottom of the Tachometer page -- and the
  * consistency check behind the "Refresh log looks wrong" banner. See docs/ETL.md sections 8-9.
  *
- *   Last Update       -> MAX(Fact_Orders.OrderDateTime)   (business-timezone wall-clock)
- *   Last Order Created-> MAX(Fact_Orders.QuotationDate)   (Odoo create_date; business-timezone wall-clock)
+ *   Last Update       -> MAX(v_sales_orders.OrderDateTime)   (business-timezone wall-clock)
+ *   Last Order Created-> MAX(v_sales_orders.QuotationDate)   (Odoo create_date; business-timezone wall-clock)
  *   Last Refresh Time -> etl_run_log.finished_at_utc of the most recent status = 'success' row
  *                        (UTC; written by the pipeline only after the load + validation passed, in
  *                        the same transaction that stores the watermark)
@@ -75,7 +75,7 @@ export interface RefreshCheckInput {
   lastRun: LastSuccessfulRun | null;
   /** The latest such run that finished after `lastRun`, if any. */
   failedAfterLoad?: FailedAfterLoadRun | null;
-  /** MAX(QuotationDate) / MAX(OrderDateTime) of the loaded Fact_Orders, already converted to UTC. */
+  /** MAX(QuotationDate) / MAX(OrderDateTime) of the loaded v_sales_orders, already converted to UTC. */
   targetOrderCreatedUtc: Date | null;
   targetOrderDateUtc: Date | null;
   toleranceMinutes: number;
@@ -217,11 +217,11 @@ export function evaluateRefreshConsistency(input: RefreshCheckInput): RefreshChe
 async function fetchTargetMax(pool: Pool, column: 'OrderDateTime' | 'QuotationDate'): Promise<Date | null> {
   try {
     const [rows] = await pool.query(
-      `SELECT DATE_FORMAT(MAX(${column}), '%Y-%m-%d %H:%i:%s') AS v FROM Fact_Orders`,
+      `SELECT DATE_FORMAT(MAX(${column}), '%Y-%m-%d %H:%i:%s') AS v FROM v_sales_orders`,
     );
     return tripoliSqlDateTimeToDate((rows as any[])[0]?.v ?? null);
   } catch (err) {
-    // Unknown column / missing table (1054 / 1146): Fact_Orders only has QuotationDate when Fact_Sales
+    // Unknown column / missing table (1054 / 1146): v_sales_orders only has QuotationDate when v_sales_documents
     // had rows to align it with, so "unknown" is a legitimate answer. Anything else (connection loss,
     // permissions) is a real failure and still propagates.
     const errno = (err as { errno?: number }).errno;
@@ -232,12 +232,17 @@ async function fetchTargetMax(pool: Pool, column: 'OrderDateTime' | 'QuotationDa
 
 export const fetchLastUpdate = (pool: Pool) => fetchTargetMax(pool, 'OrderDateTime');
 
-/** Fact_Orders has no literal CreatedDateTime column: Odoo's sale.order.create_date is written to
+/** v_sales_orders has no literal CreatedDateTime column: Odoo's sale.order.create_date is written to
  * QuotationDate (data/etl/src/sales_pipeline/facts/fact_sales.py), falling back to date_order only
  * when create_date itself is missing. */
 export const fetchLastOrderCreated = (pool: Pool) => fetchTargetMax(pool, 'QuotationDate');
 
-/** The most recent successful run, or null if etl_run_log is missing/empty (migration 0022 not applied). */
+/** Sales freshness ignores every other department's runs (core_dims, finance ...): rows written by the platform carry
+ * department = 'sales'; rows of the legacy pipeline (before migration 0028's backfill, or written by it since) have no
+ * department and a full/incremental mode. */
+const SALES_RUNS = "(department = 'sales' OR (department IS NULL AND mode IN ('full', 'incremental')))";
+
+/** The most recent successful SALES run, or null if etl_run_log is missing/empty (migration 0022 not applied). */
 export async function fetchLastSuccessfulRun(pool: Pool): Promise<LastSuccessfulRun | null> {
   try {
     const [rows] = await pool.query(
@@ -247,7 +252,7 @@ export async function fetchLastSuccessfulRun(pool: Pool): Promise<LastSuccessful
               DATE_FORMAT(watermark_order_created_utc, '%Y-%m-%d %H:%i:%s') AS watermark_order_created_utc,
               business_timezone, legacy_backfill
        FROM etl_run_log
-       WHERE status = 'success' AND finished_at_utc IS NOT NULL
+       WHERE status = 'success' AND finished_at_utc IS NOT NULL AND ${SALES_RUNS}
        ORDER BY finished_at_utc DESC, run_id DESC LIMIT 1`,
     );
     const row = (rows as any[])[0];
@@ -274,7 +279,7 @@ export async function fetchFailedAfterLoad(pool: Pool, since: Date | null): Prom
               DATE_FORMAT(finished_at_utc, '%Y-%m-%d %H:%i:%s') AS finished_at_utc,
               DATE_FORMAT(watermark_order_created_utc, '%Y-%m-%d %H:%i:%s') AS watermark_order_created_utc
        FROM etl_run_log
-       WHERE status = 'failed' AND watermark_order_created_utc IS NOT NULL AND finished_at_utc IS NOT NULL
+       WHERE status = 'failed' AND watermark_order_created_utc IS NOT NULL AND finished_at_utc IS NOT NULL AND ${SALES_RUNS}
        ORDER BY finished_at_utc DESC, run_id DESC LIMIT 1`,
     );
     const row = (rows as any[])[0];

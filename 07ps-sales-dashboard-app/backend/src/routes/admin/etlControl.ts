@@ -8,7 +8,7 @@ import { EtlAlreadyRunningError, EtlJobData, enqueuePipelineRun, getEtlQueue, ha
 import { isQueueReachable } from '../../etl/queue/queueHealth';
 import { publishCancelRequest } from '../../etl/queue/etlControlChannel';
 import { etlLogger } from '../../etl/services/etlLogger';
-import { getEtlPreflight, resetEtlApi } from '../../etl/services/pythonRunner';
+import { getEtlPreflight, resetEtlApi, type PlatformJob } from '../../etl/services/pythonRunner';
 import {
   EtlMode,
   EtlRunStatus,
@@ -155,6 +155,11 @@ adminEtlControlRouter.get('/scheduler-config', async (_req, res, next) => {
         enabled: config.schedule.fullEnabled,
         nextRun: config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null,
       },
+      finance: {
+        cron: config.schedule.financeCron,
+        enabled: config.schedule.financeEnabled,
+        nextRun: config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null,
+      },
     });
   } catch (err) {
     next(err);
@@ -162,17 +167,19 @@ adminEtlControlRouter.get('/scheduler-config', async (_req, res, next) => {
 });
 
 interface StartConfig {
+  job: PlatformJob;
   mode: EtlMode;
   loadMode: 'full' | 'incremental';
   outputMode: 'sql' | 'excel' | 'both';
   fast?: boolean;
 }
 
-const START_CONFIGS: Record<'incremental' | 'full' | 'sql' | 'excel', StartConfig> = {
-  incremental: { mode: 'incremental', loadMode: 'incremental', outputMode: 'sql', fast: true },
-  full: { mode: 'full', loadMode: 'full', outputMode: 'sql' },
-  sql: { mode: 'sql', loadMode: 'incremental', outputMode: 'sql' },
-  excel: { mode: 'excel', loadMode: 'full', outputMode: 'excel' },
+/** One entry per ETL platform job an admin may start. The pre-platform "sql" and "excel" modes are gone: the platform
+ * loads the warehouse only (no Excel export) and "sql" was a second name for a sales refresh. */
+const START_CONFIGS: Record<'incremental' | 'full' | 'finance', StartConfig> = {
+  incremental: { job: 'sales_incremental', mode: 'incremental', loadMode: 'incremental', outputMode: 'sql', fast: true },
+  full: { job: 'full_all', mode: 'full', loadMode: 'full', outputMode: 'sql' },
+  finance: { job: 'finance_receivables', mode: 'finance', loadMode: 'full', outputMode: 'sql' },
 };
 
 /** Shared by the start-* routes and retry: preflight checks, then enqueue. Returns true if it
@@ -225,6 +232,7 @@ async function startConfiguredRun(
     // enqueuePipelineRun itself re-checks "is a run active" under a cross-process lock, so two
     // simultaneous clicks can't both get through.
     const { job, runId } = await enqueuePipelineRun({
+      job: cfg.job,
       mode: cfg.mode,
       loadMode: cfg.loadMode,
       outputMode: cfg.outputMode,
@@ -257,8 +265,7 @@ function makeStartHandler(key: keyof typeof START_CONFIGS) {
 
 adminEtlControlRouter.post('/start/incremental', makeStartHandler('incremental'));
 adminEtlControlRouter.post('/start/full', makeStartHandler('full'));
-adminEtlControlRouter.post('/start/sql', makeStartHandler('sql'));
-adminEtlControlRouter.post('/start/excel', makeStartHandler('excel'));
+adminEtlControlRouter.post('/start/finance', makeStartHandler('finance'));
 
 /**
  * Re-runs a failed/cancelled run with the same mode (the newest one if no runId is given). It is a

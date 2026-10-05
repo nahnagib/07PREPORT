@@ -1,5 +1,5 @@
 /**
- * Data-quality validation for Fact_Opportunity, surfaced on the Pipeline Health page.
+ * Data-quality validation for v_sales_opportunities, surfaced on the Pipeline Health page.
  *
  * Deliberately scoped WITHOUT pipelineHealth.ts's `b2bClause` (`SalesSegment = 'B2B'`) even though
  * this feeds the B2B-only Pipeline Health page: a row with a NULL/blank SalesSegment can never
@@ -67,7 +67,7 @@ export async function computeOpportunityDataQuality(
       SUM(CASE WHEN ${OPEN_MISSING_EXPECTED_CLOSE} THEN 1 ELSE 0 END) AS openMissingExpectedClose,
       SUM(CASE WHEN ${CONFLICTING_STATUS_FLAGS} THEN 1 ELSE 0 END) AS conflictingStatusFlags,
       SUM(CASE WHEN ${DIRTY} THEN 1 ELSE 0 END) AS dirtyRecords
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
   const [rows] = await pool.query(sql, [window.start.toISOString().slice(0, 10), window.end.toISOString().slice(0, 10), ...params]);

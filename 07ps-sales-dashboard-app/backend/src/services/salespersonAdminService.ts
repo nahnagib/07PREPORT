@@ -2,11 +2,11 @@ import { pool } from '../db/pool';
 import { ValidationError } from '../lib/errors';
 
 /**
- * Admin Salesperson Management -- reads live Dim_Salesperson/Fact_SalesLines/Fact_Targets
+ * Admin Salesperson Management -- reads live Dim_Salesperson/v_sales_lines/v_sales_targets
  * (unchanged, read-only) and overlays the admin-owned salesperson_admin_profile table added in
  * data/warehouse/migrations/0016_admin_salesperson_profile.sql. See that migration's header for
  * why this is an overlay rather than a direct edit of the ETL-owned dims: Dim_Salesperson/
- * Dim_SalesTeam/Dim_Company/Fact_Targets are all fully dropped-and-reloaded by the ETL on every
+ * dim_sales_team/Dim_Company/v_sales_targets are all fully dropped-and-reloaded by the ETL on every
  * refresh, so a direct write would be silently wiped, and Dim_Salesperson has no enforced key to
  * reliably UPDATE against anyway.
  *
@@ -16,7 +16,7 @@ import { ValidationError } from '../lib/errors';
  * EVERY dashboard/report (Tachometer, Revenue Trend, Critical Number, Pipeline Health/Trend,
  * Activity Momentum, Customer Growth, Invoices Engine, the Overview PDF Report) via
  * measures/filters.ts's effectiveSegmentExpr/effectiveChannelExpr/effectiveSalesTeamExpr, and
- * target_override_amount replaces this salesperson's real Fact_Targets-derived contribution
+ * target_override_amount replaces this salesperson's real v_sales_targets-derived contribution
  * everywhere a target figure is computed (measures/tachometer.ts's fetchTargetForMonths/
  * fetchTargetForMonthsGrouped). BCG Matrix/Brand Performance are the one exception -- they classify
  * products, not salesperson revenue, and are unaffected by any of this. See measures/filters.ts's
@@ -89,22 +89,22 @@ const BASE_SELECT = `
   FROM Dim_Salesperson ds
   LEFT JOIN (
     SELECT fsl.SalespersonKey, SUM(fsl.value) AS ytd_value
-    FROM Fact_SalesLines fsl
+    FROM v_sales_lines fsl
     JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date BETWEEN ? AND ?
     GROUP BY fsl.SalespersonKey
   ) sales ON sales.SalespersonKey = ds.SalespersonKey
   LEFT JOIN (
     SELECT ft.SalespersonKey, SUM(ft.Target_Revenue) AS ytd_target
-    FROM Fact_Targets ft
+    FROM v_sales_targets ft
     WHERE ft.Year = ?
     GROUP BY ft.SalespersonKey
   ) tgt ON tgt.SalespersonKey = ds.SalespersonKey
   LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey
   LEFT JOIN app_user au ON au.user_id = sap.updated_by
-  LEFT JOIN Dim_DistributionChannel dc ON dc.ChannelKey = sap.channel_key_override
+  LEFT JOIN dim_channel dc ON dc.ChannelKey = sap.channel_key_override
   LEFT JOIN Dim_Segment dsg ON dsg.SegmentKey = sap.segment_key_override
-  LEFT JOIN Dim_SalesTeam dst ON dst.SalesTeamKey = sap.sales_team_key_override
+  LEFT JOIN dim_sales_team dst ON dst.SalesTeamKey = sap.sales_team_key_override
   LEFT JOIN Dim_Company dcmp ON dcmp.CompanyKey = sap.company_key_override
   LEFT JOIN (
     -- app_user.salesperson_key has no unique constraint (see 0017's header), so this picks a
@@ -193,7 +193,7 @@ async function salespersonExists(salespersonKey: number): Promise<boolean> {
 }
 
 async function channelExists(channelKey: number): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_DistributionChannel WHERE ChannelKey = ? LIMIT 1', [channelKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_channel WHERE ChannelKey = ? LIMIT 1', [channelKey]);
   return (rows as unknown[]).length > 0;
 }
 
@@ -203,7 +203,7 @@ async function segmentExists(segmentKey: number): Promise<boolean> {
 }
 
 async function salesTeamExists(salesTeamKey: string): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_SalesTeam WHERE SalesTeamKey = ? LIMIT 1', [salesTeamKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_sales_team WHERE SalesTeamKey = ? LIMIT 1', [salesTeamKey]);
   return (rows as unknown[]).length > 0;
 }
 

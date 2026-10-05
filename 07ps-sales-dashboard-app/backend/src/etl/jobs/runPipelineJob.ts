@@ -3,9 +3,9 @@ import { getEtlConfig } from '../config/etlConfig';
 import { EtlJobData } from '../queue/etlQueue';
 import { subscribeToCancelRequests } from '../queue/etlControlChannel';
 import {
-  correlateLatestPipelineRunLog,
+  correlateLatestEtlRun,
   finishRun,
-  getMaxPipelineRunLogId,
+  getMaxEtlRunId,
   markRunRetrying,
   markRunStarted,
 } from '../services/etlRunTracker';
@@ -20,12 +20,12 @@ const activeControllers = new Map<string, AbortController>();
 const STAGE_PATTERN = /Pipeline step (\S+) (started|completed|failed)/;
 
 async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
-  const { loadMode, outputMode, fast, extraArgs, label, runId } = job.data;
+  const { job: platformJob, loadMode, outputMode, fast, extraArgs, label, runId } = job.data;
   etlLogger.info('Job picked up by worker', { jobId: job.id, runId, label, attempt: job.attemptsMade + 1 });
 
   await markRunStarted(runId);
   await job.updateProgress({ stage: 'starting', stageStatus: 'started' });
-  const pipelineRunLogBaseline = await getMaxPipelineRunLogId();
+  const pipelineRunLogBaseline = await getMaxEtlRunId();
 
   const controller = new AbortController();
   activeControllers.set(String(job.id), controller);
@@ -47,6 +47,7 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
 
   try {
     const result = await runPipeline({
+      job: platformJob,
       loadMode,
       outputMode,
       fast,
@@ -71,7 +72,7 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
     // logic) -- attempted for both success and failure so a failed run still surfaces whatever
     // partial counts the pipeline itself recorded before it failed.
     const correlated =
-      outputMode !== 'excel' ? await correlateLatestPipelineRunLog(pipelineRunLogBaseline) : null;
+      outputMode !== 'excel' ? await correlateLatestEtlRun(pipelineRunLogBaseline) : null;
 
     if (result.cancelled) {
       recordedTerminalStatus = true;

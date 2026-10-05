@@ -21,6 +21,9 @@ export interface EtlConfig {
     incrementalEnabled: boolean;
     fullCron: string;
     fullEnabled: boolean;
+    /** Daily receivables snapshot (finance_receivables); 06:30 in ETL_SCHEDULE_TIMEZONE (set Africa/Tripoli). */
+    financeCron: string;
+    financeEnabled: boolean;
     /** IANA zone the cron expressions are read in (ETL_SCHEDULE_TIMEZONE). Unset = the server's own
      * zone, as before; setting it makes the schedule and the displayed "next run" agree regardless
      * of where the API process happens to run. */
@@ -62,6 +65,8 @@ export function getEtlConfig(): EtlConfig {
       incrementalEnabled: bool('ETL_SCHEDULE_INCREMENTAL_ENABLED', true),
       fullCron: process.env.ETL_SCHEDULE_FULL_CRON || '0 2 * * *',
       fullEnabled: bool('ETL_SCHEDULE_FULL_ENABLED', true),
+      financeCron: process.env.ETL_SCHEDULE_FINANCE_CRON || '30 6 * * *',
+      financeEnabled: bool('ETL_SCHEDULE_FINANCE_ENABLED', true),
       timezone: process.env.ETL_SCHEDULE_TIMEZONE || undefined,
     },
     redis: {

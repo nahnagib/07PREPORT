@@ -55,6 +55,9 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   // a soft delete, Export is the Excel download. Seeded for the Excellence Manager role (0027).
   { key: 'kaizen_board', label: 'Kaizen Board', group: 'dashboard', actions: DASHBOARD },
   { key: 'kaizen_cards', label: 'Kaizen Cards', group: 'data_entry', actions: ['view', 'create', 'edit', 'delete', 'export'] },
+  // Price (Finance) department. Granted to the full-access roles by migration 0034 (not to Salesperson; an admin may
+  // enable it, the API then scopes a salesperson to their own SalespersonKey).
+  { key: 'debt_report', label: 'Debt Report', group: 'dashboard', actions: DASHBOARD },
 
   // Admin Panel sections. Actions mirror the endpoints each section actually has (e.g. users can't
   // be deleted, only disabled -- an edit; salespersons/sales teams are ETL-owned, edit only).

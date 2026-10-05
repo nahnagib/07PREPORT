@@ -64,7 +64,7 @@ export async function getSalespersonOptions(): Promise<SalespersonOption[]> {
        dst.SalesTeam AS sales_team_name,
        ds.DistributionChannel AS distribution_channel
      FROM Dim_Salesperson ds
-     LEFT JOIN Dim_SalesTeam dst ON dst.SalesTeamKey = ds.SalesTeamKey
+     LEFT JOIN dim_sales_team dst ON dst.SalesTeamKey = ds.SalesTeamKey
      ORDER BY ds.salesperson`,
   );
   return rows as SalespersonOption[];

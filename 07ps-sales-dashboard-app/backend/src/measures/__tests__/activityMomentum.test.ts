@@ -25,7 +25,7 @@ describe('checkActivityColumnsAvailable', () => {
     vi.resetModules();
   });
 
-  it('is available when DaysSinceLastQuotation and OpportunityAge both exist on Fact_Opportunity', async () => {
+  it('is available when DaysSinceLastQuotation and OpportunityAge both exist on v_sales_opportunities', async () => {
     const { checkActivityColumnsAvailable } = await import('../activityMomentum');
     const query = vi.fn(async () => [[{ cnt: 2 }]]);
     const pool = { query } as unknown as Pool;
@@ -172,7 +172,7 @@ describe('computeActivityRates -- no double-counting in Inactive Deals Ratio', (
   });
 });
 
-describe('computeActivityRates -- queries the real, live Fact_Opportunity columns', () => {
+describe('computeActivityRates -- queries the real, live v_sales_opportunities columns', () => {
   /**
    * Guards against reintroducing the 2026-09-17 bug: the SQL must reference the columns that
    * actually exist on the live table (HasQuotation/LastQuotationDate/DaysSinceLastQuotation/

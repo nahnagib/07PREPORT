@@ -6,7 +6,7 @@
  * (data/etl/src/sales_pipeline/facts/fact_opportunity.py) and wrote #W/O Activity, #W/O Next Step
  * and Inactive Deals Ratio against those 6 columns, gated behind checkActivityColumnsAvailable()
  * so they'd degrade to "--" until a migration + ETL backfill landed them on the live table. That
- * migration never happened: querying the live `Fact_Opportunity` schema directly
+ * migration never happened: querying the live `v_sales_opportunities` schema directly
  * (information_schema.columns) shows those 6 columns do not exist on it at all, and never did --
  * the OUTPUT_DEFINITION.md / DATA_MODEL.md docs for this table never mention them either. So the
  * gate was permanently closed, not "pending a backfill."
@@ -167,7 +167,7 @@ export async function checkActivityColumnsAvailable(pool: Pool): Promise<boolean
     // check here -- column presence is the only thing this needs to guard against.
     const [colRows] = await pool.query(
       `SELECT COUNT(*) AS cnt FROM information_schema.columns
-       WHERE table_schema = DATABASE() AND table_name = 'Fact_Opportunity'
+       WHERE table_schema = DATABASE() AND table_name = 'v_sales_opportunities'
          AND column_name IN ('DaysSinceLastQuotation', 'OpportunityAge')`,
     );
     cachedAvailable = Number((colRows as any[])[0].cnt) >= 2;
@@ -223,7 +223,7 @@ export async function computeOpportunityActivityCounts(
       SUM(CASE WHEN t.status = 'unclassified' THEN 1 ELSE 0 END) AS unclassified
     FROM (
       SELECT ${activityStatusCaseSql(activityAvailable)} AS status
-      FROM Fact_Opportunity fo
+      FROM v_sales_opportunities fo
       WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
     ) t
   `;
@@ -277,7 +277,7 @@ export async function computeActivityRates(
     SELECT
       SUM(CASE WHEN fo.IsOpen = 1 AND fo.SalesSegment = 'B2B' THEN 1 ELSE 0 END) AS openCount,
       SUM(CASE WHEN fo.IsOpen = 1 AND (${WITHOUT_ACTIVITY_SQL} OR ${WITHOUT_NEXT_STEP_SQL}) THEN 1 ELSE 0 END) AS atRiskCount
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -291,7 +291,7 @@ export async function computeActivityRates(
 }
 
 // ---------------------------------------------------------------------------
-// Total Lost Opportunity by Reason -- always available (LostReasonID/Dim_LostReason are live,
+// Total Lost Opportunity by Reason -- always available (LostReasonID/dim_sales_lost_reason are live,
 // unrelated to the activity-column gap).
 // ---------------------------------------------------------------------------
 
@@ -305,8 +305,8 @@ async function fetchLostByReason(pool: Pool, anchor: Date, filters: Filters): Pr
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT COALESCE(dlr.LostReasonEnglish, 'Unspecified') AS reason, COUNT(*) AS cnt
-    FROM Fact_Opportunity fo
-    LEFT JOIN Dim_LostReason dlr ON fo.LostReasonID = dlr.LostReasonID
+    FROM v_sales_opportunities fo
+    LEFT JOIN dim_sales_lost_reason dlr ON fo.LostReasonID = dlr.LostReasonID
     WHERE fo.IsLost = 1 AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
     GROUP BY reason
     ORDER BY cnt DESC
@@ -334,7 +334,7 @@ async function fetchNewOpportunitiesByMonth(pool: Pool, anchor: Date, filters: F
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT YEAR(fo.OpportunityCreatedDate) AS yr, MONTH(fo.OpportunityCreatedDate) AS mo, COUNT(*) AS cnt
-    FROM Fact_Opportunity fo
+    FROM v_sales_opportunities fo
     WHERE YEAR(fo.OpportunityCreatedDate) = ? AND ${clause}
     GROUP BY YEAR(fo.OpportunityCreatedDate), MONTH(fo.OpportunityCreatedDate)
   `;
@@ -390,7 +390,7 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
   ];
   // Same status CASE as the Zone A tiles, so every Details filter lists exactly its tile's count.
   selectParts.push(`${activityStatusCaseSql(activityAvailable)} AS activityStatus`);
-  const sql = `SELECT ${selectParts.join(', ')} FROM Fact_Opportunity fo
+  const sql = `SELECT ${selectParts.join(', ')} FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}`;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);

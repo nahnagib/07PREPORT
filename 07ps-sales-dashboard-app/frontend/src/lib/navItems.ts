@@ -1,4 +1,4 @@
-import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store, ClipboardList } from 'lucide-react';
+import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store, ClipboardList, HandCoins } from 'lucide-react';
 
 /** Which department hub (PromotionHubPage/ProductHubPage via DepartmentHubPage) lists a given
  * report card, and which sidebar tab it's grouped under. Normally matches the `href`'s route
@@ -6,7 +6,7 @@ import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldC
  * whose Next.js routes were moved from app/(departments)/promotion/* to
  * app/(departments)/product/* to match `department: 'product'` (a card's "Open report" link and
  * its actual route must agree). */
-export type NavDepartment = 'promotion' | 'product' | 'process';
+export type NavDepartment = 'promotion' | 'product' | 'process' | 'price';
 
 /** Single source of truth for primary nav entries, each tied to a `pages.page_key` from the
  * permissions model (0009_auth_identity.sql). Every nav component (BottomNavBar, DepartmentHubPage,
@@ -44,6 +44,8 @@ export const NAV_ITEMS = [
   { label: 'Product Lifecycle', icon: RefreshCw, href: '/product/product-lifecycle', pageKey: 'product_lifecycle', department: 'product' },
   // Process department. The card list/entry screens live under this href (see ROUTE_PAGE_KEYS).
   { label: 'Kaizen Board', icon: ClipboardList, href: '/process/kaizen-board', pageKey: 'kaizen_board', department: 'process' },
+  // Price (Finance) department: open customer receivables from the daily snapshot (finance ETL, 06:30).
+  { label: 'Debt Report', icon: HandCoins, href: '/price/debt-report', pageKey: 'debt_report', department: 'price' },
 ] as const;
 
 /** Admin Panel sections, in tab order -- AdminLayout's tab row, the Admin nav link's landing
