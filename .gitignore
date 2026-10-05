@@ -198,3 +198,12 @@ credentials/
 
 # Generated reports and exports. The prompt files already tracked here stay tracked.
 Claude outputs/*
+
+# Kept local, never committed (decision 2026-10-05): manual videos/archives, go-live email log (recipient addresses),
+# review CSVs with customer data, local dev-server launch config.
+User_Manuals/**/*.mov
+User_Manuals/**/*.zip
+User_Manuals/**/*.tgz
+GoLive_Emails/
+docs/*.csv
+/.claude/launch.json
