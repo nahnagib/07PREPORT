@@ -1,5 +1,5 @@
-import type { DebtComparison, DebtMeta, DebtOption, DebtReportScope } from '../api';
-import { formatCompactCurrency, formatCurrencyFull, formatDate, formatNumber } from '../format';
+import type { DebtDrillKind, DebtMeta, DebtOption, DebtReportScope } from '../api';
+import { formatNumber } from '../format';
 
 /**
  * Pure helpers of the Debt Report page (app/(departments)/price/debt-report). Every label and threshold comes from
@@ -47,21 +47,24 @@ export function agingColors(buckets: { agingBucketKey: number; isOverdue: boolea
   return out;
 }
 
-/** "+LYD 1.2M" / "−LYD 350K" / "LYD 0". */
-export function signedCompact(v: number): string {
-  if (Math.abs(v) < 0.5) return formatCompactCurrency(0);
-  return `${v > 0 ? '+' : '−'}${formatCompactCurrency(Math.abs(v))}`;
+/** Tooltip of the Invoice size / Customer size filters: the tiers classify on Odoo's company-currency (LYD) residual. */
+export const SIZE_TIER_HINT = 'Size tier based on LYD value';
+
+/** "42.3%" or "—". */
+export function pctLabel(p: number | null | undefined): string {
+  return p === null || p === undefined ? '—' : `${(p * 100).toFixed(1)}%`;
 }
 
-/** One line of the "change in overdue" card: the change, or when it becomes available. */
-export function changeLine(c: DebtComparison & { change: number | null }): string {
-  if (c.change === null) return `${c.days}d: available from ${formatDate(c.availableFrom)}`;
-  return `${c.days}d: ${signedCompact(c.change)}`;
+/** What a drill-down lists: an overdue bar its overdue lines, an aging bar / a table row every open line. */
+export function drillTitle(kind: DebtDrillKind, label: string, currency: string): string {
+  const what =
+    kind === 'aging' ? 'Open documents in' : kind === 'account' ? 'Open documents of' : 'Overdue documents of';
+  return `${what} ${label} · ${currency}`;
 }
 
-/** Table cell of a per-customer change: the amount, or "—" until the comparison snapshot exists. */
-export function changeCell(v: number | null): string {
-  return v === null ? '—' : `${v > 0 ? '+' : ''}${formatCurrencyFull(v)}`;
+/** The figure a drill-down must reconcile to: the overdue amount, or the open balance for an aging bar / table row. */
+export function drillReconciles(kind: DebtDrillKind): 'overdueAmount' | 'openBalance' {
+  return kind === 'aging' || kind === 'account' ? 'openBalance' : 'overdueAmount';
 }
 
 export interface DebtPageFilters {

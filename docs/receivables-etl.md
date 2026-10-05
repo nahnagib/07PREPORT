@@ -19,10 +19,12 @@ receivable from Odoo once a day, conformed with sales through the core dimension
 | `bridge_finance_invoice_order` | invoice → sales order (`SalesOrderKey` = `dim_sales_order`) |
 | `fact_finance_receivable_snapshot` | **one row per open receivable line per snapshot date** (PK `SnapshotDateKey, line_id`) |
 | `dim_finance_receivable_scope` | the two receivable scopes, our labels (en + ar), `is_default` (`scope.py`) |
-| `v_finance_receivable_line` | every snapshot, every scope, inter-company included, Odoo's labels (en + ar): what the Debt Report API reads |
-| `v_finance_receivable_latest` | the latest snapshot, default scope (customer debt, no inter-company), Odoo's labels (en + ar) |
-| `v_finance_customer_exposure` | latest snapshot per company + customer: open, overdue, not due, 90+, credit limit and ratio, `sales_last_90d`, DSO |
-| `v_finance_receivable_trend` | open and overdue amounts per snapshot date, company and bucket |
+| `cfg_finance_report_exclusion` | what the Debt Report leaves out, by rule: `segment` (Backoffice, Inter Company) and `sales_team` names (0036) |
+| `v_finance_excluded_sales_team` | the sales teams those rules resolve to, with the rule(s) that caught each |
+| `v_finance_receivable_line` | every snapshot, every scope, inter-company and excluded lines included, Odoo's labels (en + ar); flags `is_excluded_segment` / `is_excluded_team` / `is_report_excluded` |
+| `v_finance_receivable_latest` | the latest snapshot, default scope (customer debt, no inter-company), excluded lines left out, Odoo's labels (en + ar) |
+| `v_finance_customer_exposure` | latest snapshot per company + customer + **currency**: open documents, their original amount, open, overdue, not due, 90+, salespeople / teams / segments |
+| `v_finance_receivable_trend` | open, overdue and not-due amounts per snapshot date, company, **currency** and bucket |
 
 **Inter-company receivables** are flagged `is_intercompany = 1`:
 
@@ -45,6 +47,33 @@ included, and is what the Debt Report API reads. `v_finance_receivable_latest`, 
 `v_finance_receivable_trend` show the default only: customer debt, inter-company excluded. With every scope and
 inter-company included, the totals equal Odoo's open receivable lines: check with
 `scripts/finance/check_receivable_totals.py`, which must print MATCH.
+
+**Report exclusions** (0036; decisions of 2026-10-05). The Debt Report and the three default views leave out every line
+whose sales team is in an excluded segment or has an excluded name. The list lives in one place, the table
+`cfg_finance_report_exclusion`; change it there, no deploy needed:
+
+| rule_type | name | teams today |
+|---|---|---|
+| `segment` | Backoffice | BMH-ALL-02, BMH-ALL-04, MJ-ALL-03, TK-ALL-03 |
+| `segment` | Inter Company | BMH-ALL-00 |
+| `sales_team` | مبيعات BMH | BMH-ALL-00 |
+| `sales_team` | مبيعات الادارة المالية | BMH-ALL-02 (asked as "مبيعات الادارة المالية - SALES") |
+| `sales_team` | SALES | MJ-ALL-03, TK-ALL-03 |
+
+- The segment is the line's own sales team's segment (`dim_sales_team.SegmentKey`, SalesTeam.xlsx), the rule of the
+  segment filter and role scoping; `dim_customer.CustomerSegment` is not used.
+- Names match byte for byte (`utf8mb4_bin`): no case, space, hyphen or alef/hamza folding. مبيعات الإدارة
+  (BMH-ALL-01, hamza, B2C) is a different team and is not excluded.
+- The "Inter Company" segment is not the inter-company flag: the flag is a separate toggle, and the segment is
+  always excluded.
+- The API applies it in every query (`EXCLUDED_TEAMS_CONDITION`, measures/debtReport.ts); no parameter or toggle brings
+  the lines back. `v_finance_receivable_line` keeps them, so Odoo reconciliation is unchanged.
+
+**Currencies.** Every Debt Report amount is `residual_doc_ccy` (Odoo `amount_residual_currency`) in the line's own
+currency (`CurrencyKey`): never added across currencies and never converted. Overdue (`days_past_due > 0`) + not yet
+due = open in each currency. The invoice amount is the document's `amount_total` with the sign of its open balance
+(credit notes and inbound payments negative), counted once per document. Only the Invoice / Customer size tiers
+still classify on the company-currency (LYD) residual; it is never shown or added up.
 
 ## 2. Rules
 

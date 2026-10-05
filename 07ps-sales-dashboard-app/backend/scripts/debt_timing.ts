@@ -1,7 +1,7 @@
 // Phase 7: p50/p95 of each Debt Report measure on the local warehouse (read-only). DB_* from the environment.
 //   npx tsx scripts/debt_timing.ts [runs=10]
 import { pool } from '../src/db/pool';
-import { DEFAULT_DEBT_QUERY, fetchDebtCustomers, fetchDebtDocuments, fetchDebtMeta, fetchDebtOverview, fetchDebtTrend, parseDebtQuery } from '../src/measures/debtReport';
+import { DEFAULT_DEBT_QUERY, fetchDebtCustomers, fetchDebtDrilldown, fetchDebtMeta, fetchDebtOverview, fetchDebtTrend, parseDebtQuery } from '../src/measures/debtReport';
 
 const runs = Number(process.argv[2] ?? 10);
 async function time(name: string, fn: () => Promise<unknown>) {
@@ -17,13 +17,14 @@ async function time(name: string, fn: () => Promise<unknown>) {
 }
 (async () => {
   const all = parseDebtQuery({ includeOther: 'true', includeIntercompany: 'true' });
-  const top = (await fetchDebtCustomers(pool, DEFAULT_DEBT_QUERY, {}, {})).rows[0];
+  const top = (await fetchDebtCustomers(pool, DEFAULT_DEBT_QUERY, {})).rows[0];
   await time('meta', () => fetchDebtMeta(pool, DEFAULT_DEBT_QUERY, {}));
   await time('overview (default)', () => fetchDebtOverview(pool, DEFAULT_DEBT_QUERY, {}));
   await time('overview (all scopes)', () => fetchDebtOverview(pool, all, {}));
   await time('trend', () => fetchDebtTrend(pool, DEFAULT_DEBT_QUERY, {}));
-  await time('customers (default)', () => fetchDebtCustomers(pool, DEFAULT_DEBT_QUERY, {}, {}));
-  await time('customers (all scopes)', () => fetchDebtCustomers(pool, all, {}, {}));
-  await time('documents (top customer)', () => fetchDebtDocuments(pool, DEFAULT_DEBT_QUERY, { companyKeys: [top.companyKey] }, top.customerKey));
+  await time('customers (default)', () => fetchDebtCustomers(pool, DEFAULT_DEBT_QUERY, {}));
+  await time('customers (all scopes)', () => fetchDebtCustomers(pool, all, {}));
+  const account = { kind: 'account' as const, key: `${top.companyKey}:${top.customerKey}`, currency: top.currency };
+  await time('drilldown (top customer row)', () => fetchDebtDrilldown(pool, DEFAULT_DEBT_QUERY, {}, account));
   await pool.end();
 })();

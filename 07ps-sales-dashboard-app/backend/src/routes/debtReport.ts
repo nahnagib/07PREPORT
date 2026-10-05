@@ -3,26 +3,32 @@ import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
-import { applyRoleDataScope, applySalespersonLock, type Filters } from '../measures/filters';
+import type { Filters } from '../measures/filters';
 import { fetchDepartmentFreshness } from '../measures/departmentFreshness';
 import {
   DebtQueryError,
   fetchDebtCustomers,
-  fetchDebtDocuments,
+  fetchDebtDrilldown,
   fetchDebtMeta,
   fetchDebtOverview,
   fetchDebtTrend,
   parseDebtQuery,
+  parseDrill,
 } from '../measures/debtReport';
 
 /**
  * Debt Report (Finance / Price department; measures/debtReport.ts), permission page `debt_report`:
  *
- *   GET /debt-report/meta       snapshots, filter options, labels (en + ar), size tiers, Odoo link base, finance freshness
- *   GET /debt-report/overview   KPIs, aging distribution, overdue by customer (top 15) / salesperson / team
- *   GET /debt-report/trend      open vs overdue per snapshot date
- *   GET /debt-report/customers  customer exposure (one row per company + customer)
- *   GET /debt-report/documents?customerKey=<id>   that customer's open lines (the drill-down)
+ *   GET /debt-report/meta       snapshots, filter options (currencies too), labels (en + ar), size tiers, the report
+ *                               exclusions, Odoo link base, finance freshness
+ *   GET /debt-report/overview   per currency: KPIs, aging distribution, overdue by customer (top 15) / salesperson / team
+ *   GET /debt-report/trend      open / overdue / not due per snapshot date and currency
+ *   GET /debt-report/customers  one row per company + customer + currency
+ *   GET /debt-report/drilldown?kind=customer|aging|salesperson|team|account&key=<key>&currency=<code>
+ *                               the open lines behind one chart point / table row, in that currency
+ *
+ * Every endpoint leaves out the excluded segments and sales teams (cfg_finance_report_exclusion; measures/debtReport.ts
+ * EXCLUDED_TEAMS_CONDITION) -- no parameter can bring them back.
  *
  * Same middleware chain as every page: View on debt_report (403 otherwise -- a role without the grant, e.g.
  * Salesperson by default, gets 403 on every endpoint), then resolveScopedFilters (role data scope + salesperson lock:
@@ -33,12 +39,6 @@ import {
 export const debtReportRouter = Router();
 
 debtReportRouter.use(requireAuth, requirePasswordChangeCleared, requirePermission('debt_report', 'view'), attachUserContext, resolveScopedFilters);
-
-/** The caller's forced scope alone (no page filter): what restricts a customer's sales_last_90d. */
-export function securityFilters(req: Request): Filters {
-  const ctx = req.userContext!;
-  return applySalespersonLock(applyRoleDataScope({}, ctx.dataScopeRules ?? []), ctx);
-}
 
 type Handler = (req: Request) => Promise<unknown>;
 
@@ -78,14 +78,13 @@ debtReportRouter.get(
 
 debtReportRouter.get(
   '/customers',
-  handle((req) => fetchDebtCustomers(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req), securityFilters(req))),
+  handle((req) => fetchDebtCustomers(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req))),
 );
 
 debtReportRouter.get(
-  '/documents',
-  handle(async (req) => {
-    const customerKey = Number(req.query.customerKey);
-    if (!Number.isInteger(customerKey)) throw new DebtQueryError('customerKey is required');
-    return fetchDebtDocuments(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req), customerKey);
+  '/drilldown',
+  handle((req) => {
+    const query = req.query as Record<string, unknown>;
+    return fetchDebtDrilldown(pool, parseDebtQuery(query), scoped(req), parseDrill(query));
   }),
 );

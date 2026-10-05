@@ -7,9 +7,11 @@
  *   FINANCE_TIER_MEDIUM_MIN  from which it is "Medium"; below it is "Small" (10000)
  *   ODOO_WEB_BASE_URL        base of the "open in Odoo" links (falls back to ODOO_URL, then majaal.odoo.com)
  *
- * Tiers are computed at query time from aggregated open amounts: a document's tier from the sum of its open lines,
- * a customer's from its open balance per company, both on the selected snapshot and receivable scopes (the
- * signed net amount: a credit balance is Small).
+ * Tiers are computed at query time from aggregated open amounts IN LYD (Odoo's company-currency residual, the one
+ * place the report still uses it: it only classifies, it is never shown or added up): a document's tier from the sum
+ * of its open lines, a customer's from its open balance per company, both on the selected snapshot and receivable
+ * scopes (the signed net amount: a credit balance is Small). The excluded segments / teams are NOT configured here:
+ * they live in the warehouse table cfg_finance_report_exclusion (migration 0036), read by the views and the API.
  */
 
 function numberEnv(name: string, fallback: number): number {
@@ -58,7 +60,3 @@ export function odooWebBaseUrl(): string {
 
 /** Number of customers in the "Overdue by customer" chart. */
 export const DEBT_TOP_CUSTOMERS = 15;
-/** Comparison windows of the "change in overdue" KPI and the exposure table, in days. */
-export const DEBT_CHANGE_WINDOWS = [7, 30] as const;
-/** Days of sales behind sales_last_90d / DSO. */
-export const DEBT_SALES_WINDOW_DAYS = 90;

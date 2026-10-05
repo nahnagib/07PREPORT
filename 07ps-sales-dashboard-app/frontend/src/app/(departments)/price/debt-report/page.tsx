@@ -1,23 +1,21 @@
 'use client';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
+import { DebtDrilldownModal, type DebtDrillTarget } from '../../../../components/debt/DebtDrilldownModal';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useDebtReport } from '../../../../lib/hooks';
-import type { DebtCustomerRow, DebtCustomers, DebtDocumentRow, DebtDocuments, DebtMeta, DebtOverview, DebtTrend } from '../../../../lib/api';
-import { formatCompactCurrency, formatCurrencyFull, formatDate, formatNumber, formatTimestamp } from '../../../../lib/format';
+import type { DebtCurrencyOverview, DebtCustomerRow, DebtCustomers, DebtDrilldown, DebtDrillKind, DebtMeta, DebtOverview, DebtTrend } from '../../../../lib/api';
+import { formatCompactMoney, formatDate, formatMoney, formatNumber, formatTimestamp } from '../../../../lib/format';
 import {
   DEFAULT_DEBT_FILTERS,
+  SIZE_TIER_HINT,
   agingColors,
-  changeCell,
-  changeLine,
   isDefaultFilters,
   optLabel,
-  pickLabel,
-  safeOdooUrl,
+  pctLabel,
   tierLabel,
   toScope,
   type DebtPageFilters,
@@ -44,7 +42,14 @@ import {
  * Debt Report (Price / Finance department): open customer receivables from the daily snapshot taken by the finance ETL
  * at 06:30 (fact_finance_receivable_snapshot). Default view: the latest snapshot, customer debt only (customer invoices,
  * credit notes, receipts, inbound customer payments), inter-company excluded -- the v_finance_* views. The two toggles
- * add the other receivable entries and the inter-company balances; with both on the totals are Odoo's Aged Receivable.
+ * add the other receivable entries and the inter-company balances.
+ *
+ * The whole page leaves out the excluded segments and sales teams (warehouse table cfg_finance_report_exclusion,
+ * applied by the API to every number; listed in the strip from GET /debt-report/meta). Every amount is in its own
+ * currency -- never added across currencies, never converted: the KPI cards show one group per currency, the charts
+ * and the trend show the currency picked in the selector, the customer table one row per company + customer +
+ * currency. Clicking a chart bar or a table row opens the lines behind it (GET /debt-report/drilldown), which add up to
+ * the figure clicked.
  *
  * Every label comes from GET /debt-report/meta: Odoo's own labels (English or Arabic, the page's "Odoo labels" switch;
  * the app itself is English-only), our scope and aging-bucket names, and the size-tier thresholds from the backend
@@ -58,9 +63,9 @@ export default function DebtReportPage() {
   const [filters, setFilters] = useState<DebtPageFilters>(DEFAULT_DEBT_FILTERS);
   const [search, setSearch] = useState('');
   const [lang, setLang] = useState<LabelLang>('en');
-  const [selected, setSelected] = useState<DebtCustomerRow | null>(null);
+  const [pickedCurrency, setPickedCurrency] = useState<string | null>(null);
+  const [drill, setDrill] = useState<DebtDrillTarget | null>(null);
   const [showAllPeople, setShowAllPeople] = useState(false);
-  const drillRef = useRef<HTMLDivElement>(null);
 
   // customer search: debounced into the filters
   useEffect(() => {
@@ -78,19 +83,19 @@ export default function DebtReportPage() {
   const overview = useDebtReport<DebtOverview>(token, authError, retryAuth, 'overview', scope, undefined, allowed);
   const trend = useDebtReport<DebtTrend>(token, authError, retryAuth, 'trend', scope, undefined, allowed);
   const customers = useDebtReport<DebtCustomers>(token, authError, retryAuth, 'customers', scope, undefined, allowed);
-  const drillExtra = useMemo<Record<string, string | number>>(() => {
-    const extra: Record<string, string | number> = {};
-    if (selected) extra.customerKey = selected.customerKey;
-    return extra;
-  }, [selected]);
-  const drillScope = useMemo(() => (selected ? { ...scope, companyKeys: [selected.companyKey] } : scope), [scope, selected]);
-  const documents = useDebtReport<DebtDocuments>(token, authError, retryAuth, 'documents', drillScope, drillExtra, allowed && selected !== null);
+  const drillExtra = useMemo<Record<string, string | number>>(
+    () => {
+      const extra: Record<string, string | number> = {};
+      if (drill) Object.assign(extra, { kind: drill.kind, key: drill.key, currency: drill.currency });
+      return extra;
+    },
+    [drill],
+  );
+  const drilldown = useDebtReport<DebtDrilldown>(token, authError, retryAuth, 'drilldown', scope, drillExtra, allowed && drill !== null);
 
   // a drill-down belongs to the filters it was opened with
-  useEffect(() => setSelected(null), [scope]);
-  useEffect(() => {
-    if (selected) drillRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [selected]);
+  useEffect(() => setDrill(null), [scope]);
+  const closeDrill = useCallback(() => setDrill(null), []);
 
   const o = meta.data?.options;
   const set = <K extends keyof DebtPageFilters>(key: K, value: DebtPageFilters[K]) => setFilters((f) => ({ ...f, [key]: value }));
@@ -103,91 +108,96 @@ export default function DebtReportPage() {
   };
   const defaultScope = o?.scopes.find((s) => s.isDefault);
   const otherScope = o?.scopes.find((s) => !s.isDefault);
+  const exclusions = meta.data?.exclusions;
 
-  const k = overview.data?.kpis;
   const snapshotDate = overview.data?.snapshotDate ?? meta.data?.snapshotDate ?? null;
-  const colors = useMemo(() => agingColors(overview.data?.aging ?? []), [overview.data?.aging]);
+  const currencies = overview.data?.currencies ?? [];
+  // the charts' currency: the one picked, else the first (most lines -- LYD); a pick that has no line any more falls back
+  const currency = currencies.find((c) => c.currency === pickedCurrency)?.currency ?? currencies[0]?.currency ?? null;
+  const cur: DebtCurrencyOverview | undefined = currencies.find((c) => c.currency === currency);
+  const colors = useMemo(() => agingColors(cur?.aging ?? []), [cur?.aging]);
+  const compact = (v: number) => formatCompactMoney(currency ?? '', v);
+  const full = (v: number) => formatMoney(currency ?? '', v);
 
-  const groupPoints = (list: DebtOverview['topCustomers'] | undefined, limit?: number): GroupedBarChartPoint[] =>
-    (list ?? []).slice(0, limit).map((g) => ({ label: g.label, overdue: g.overdue, _pct: g.pctOfOverdue, _open: g.open, _detail: g.detail ?? null }));
+  const openDrill = (kind: DebtDrillKind, key: string, label: string, expected: number) => {
+    if (currency) setDrill({ kind, key, label, currency, expected });
+  };
+
+  // bar labels are what a click returns: made unique (two customers with the same name), mapped back to the point
+  const groupPoints = (list: DebtCurrencyOverview['topCustomers'] | undefined, limit?: number): GroupedBarChartPoint[] => {
+    const seen = new Map<string, number>();
+    return (list ?? []).slice(0, limit).map((g) => {
+      const n = (seen.get(g.label) ?? 0) + 1;
+      seen.set(g.label, n);
+      return { label: n > 1 ? `${g.label} (${n})` : g.label, overdue: g.overdue, _key: g.key, _name: g.label, _pct: g.pctOfOverdue, _open: g.open, _detail: g.detail ?? null };
+    });
+  };
+  const onGroupClick = (kind: DebtDrillKind, points: GroupedBarChartPoint[]) => (label: string) => {
+    const p = points.find((x) => x.label === label);
+    if (p) openDrill(kind, String(p._key), String(p._name), Number(p.overdue));
+  };
   const groupTooltip = (p: GroupedBarChartPoint) => (
-    <TooltipBox title={String(p.label)}>
+    <TooltipBox title={String(p._name ?? p.label)}>
       {p._detail ? <TooltipRow label="Company" value={String(p._detail)} /> : null}
-      <TooltipRow label="Overdue" value={formatCurrencyFull(Number(p.overdue))} />
-      <TooltipRow label="% of total overdue" value={p._pct === null || p._pct === undefined ? '—' : `${(Number(p._pct) * 100).toFixed(1)}%`} />
-      <TooltipRow label="Open (net)" value={formatCurrencyFull(Number(p._open))} />
+      <TooltipRow label="Overdue" value={full(Number(p.overdue))} />
+      <TooltipRow label="% of total overdue" value={pctLabel(p._pct as number | null)} />
+      <TooltipRow label="Open (net)" value={full(Number(p._open))} />
+      <TooltipRow label="" value="Click for the invoices" />
     </TooltipBox>
   );
   const barHeight = (n: number) => Math.max(220, n * 30 + 50);
   const peopleLimit = showAllPeople ? undefined : 15;
 
-  const agingPoints: GroupedBarChartPoint[] = (overview.data?.aging ?? []).map((a) => ({
+  const agingPoints: GroupedBarChartPoint[] = (cur?.aging ?? []).map((a) => ({
     label: a.label,
     amount: a.amount,
     _key: a.agingBucketKey,
     _n: a.lineCount,
-    _overdue: a.isOverdue ? 1 : 0,
   }));
-  const trendPoints = (trend.data?.points ?? []).map((p) => ({ label: formatDate(p.snapshotDate), open: p.open, overdue: p.overdue }));
+  const trendPoints = (trend.data?.points ?? [])
+    .filter((p) => p.currency === currency)
+    .map((p) => ({ label: formatDate(p.snapshotDate), total: p.open, overdue: p.overdue, notDue: p.notDue }));
 
+  // ---- customer table ------------------------------------------------------------------------------------------------
+  const customerRows: CustomerGridRow[] = (customers.data?.rows ?? []).map((r) => ({
+    ...r,
+    id: `${r.companyKey}:${r.customerKey}:${r.currency}`,
+    salespersonList: r.salespersons.join(', '),
+    teamList: r.salesTeams.join(', '),
+    segmentList: r.segments.join(', '),
+  }));
+  const distinctOptions = (values: string[]) => [...new Set(values)].sort((a, b) => a.localeCompare(b)).map((v) => ({ value: v, label: v }));
+  const rowMoney = (key: 'invoiceAmount' | 'open' | 'overdue', header: string): DataGridColumn<CustomerGridRow> => ({
+    key, header, align: 'right', width: 160, rawValue: (r) => r[key], render: (r) => formatMoney(r.currency, r[key]),
+  });
   const customerColumns: DataGridColumn<CustomerGridRow>[] = [
-    { key: 'company', header: 'Company', width: 90 },
+    { key: 'company', header: 'Company', width: 90, filterOptions: distinctOptions(customerRows.map((r) => r.company)) },
     { key: 'customer', header: 'Customer', width: 230, render: (r) => <span dir="auto">{r.customer}</span> },
-    money('open', 'Open'),
-    money('overdue', 'Overdue'),
-    money('overdue90Plus', '90+ days'),
-    { key: 'creditLimit', header: 'Credit limit', align: 'right', width: 140, rawValue: (r) => r.creditLimit ?? '', render: (r) => (r.creditLimit === null ? '—' : formatCurrencyFull(r.creditLimit)) },
-    { key: 'overLimit', header: 'Over limit', width: 95, render: (r) => (r.overLimit === 'Yes' ? <Flag text="Over limit" /> : r.creditLimit === null ? '—' : 'No') },
-    { key: 'oldestOverdueDays', header: 'Oldest overdue (days)', align: 'right', width: 120, rawValue: (r) => r.oldestOverdueDays ?? '', render: (r) => (r.oldestOverdueDays === null ? '—' : formatNumber(r.oldestOverdueDays)) },
-    money('salesLast90d', `Sales last ${meta.data?.salesWindowDays ?? 90} days`),
-    { key: 'dsoDays', header: 'DSO (days)', align: 'right', width: 95, rawValue: (r) => r.dsoDays ?? '', render: (r) => (r.dsoDays === null ? '—' : formatNumber(Math.round(r.dsoDays))) },
-    { key: 'change7d', header: 'Change 7d', align: 'right', width: 140, rawValue: (r) => r.change7d ?? '', render: (r) => changeCell(r.change7d) },
-    { key: 'change30d', header: 'Change 30d', align: 'right', width: 140, rawValue: (r) => r.change30d ?? '', render: (r) => changeCell(r.change30d) },
+    { key: 'currency', header: 'Currency', width: 90, filterOptions: distinctOptions(customerRows.map((r) => r.currency)) },
+    { key: 'openDocuments', header: 'Open documents', align: 'right', width: 110, render: (r) => formatNumber(r.openDocuments) },
+    rowMoney('invoiceAmount', 'Total invoices amount'),
+    rowMoney('open', 'Total debt'),
+    rowMoney('overdue', 'Due debt'),
+    listColumn('salespersonList', 'Salesperson', 180, distinctOptions(customerRows.flatMap((r) => r.salespersons)), (r) => r.salespersons),
+    listColumn('teamList', 'Team', 180, distinctOptions(customerRows.flatMap((r) => r.salesTeams)), (r) => r.salesTeams),
+    listColumn('segmentList', 'Segment', 110, distinctOptions(customerRows.flatMap((r) => r.segments)), (r) => r.segments),
   ];
-  const customerRows: CustomerGridRow[] = (customers.data?.rows ?? []).map((r) => ({ ...r, id: `${r.companyKey}:${r.customerKey}`, overLimit: r.overCreditLimit ? 'Yes' : 'No' }));
-
-  const documentColumns: DataGridColumn<DocumentGridRow>[] = [
-    { key: 'document', header: 'Document', width: 150 },
-    { key: 'typeLabel', header: 'Document type', width: 170, render: (r) => <span dir="auto">{r.typeLabel}</span> },
-    { key: 'invoiceDate', header: 'Invoice date', width: 110, rawValue: (r) => r.invoiceDate ?? '', render: (r) => formatDate(r.invoiceDate) },
-    { key: 'dueDate', header: 'Due date', width: 110, rawValue: (r) => r.dueDate ?? '', render: (r) => formatDate(r.dueDate) },
-    { key: 'daysPastDue', header: 'Days past due', align: 'right', width: 95, render: (r) => formatNumber(r.daysPastDue) },
-    { key: 'agingBucket', header: 'Aging bucket', width: 120 },
-    { key: 'residualCompanyCcy', header: 'Residual (company currency)', align: 'right', width: 160, render: (r) => formatCurrencyFull(r.residualCompanyCcy) },
-    {
-      key: 'residualDocCcy', header: 'Residual (document currency)', align: 'right', width: 170, rawValue: (r) => r.residualDocCcy ?? '',
-      render: (r) => (r.residualDocCcy === null ? '—' : `${r.docCurrency ?? ''} ${formatNumber(r.residualDocCcy, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`),
-    },
-    { key: 'paymentTerm', header: 'Payment term', width: 130, render: (r) => <span dir="auto">{r.paymentTerm ?? '—'}</span> },
-    { key: 'salesperson', header: 'Salesperson', width: 150 },
-    { key: 'salespersonSource', header: 'Salesperson source', width: 120 },
-    { key: 'salesTeam', header: 'Team', width: 150, render: (r) => <span dir="auto">{r.salesTeam ?? '—'}</span> },
-    { key: 'deliveryLabel', header: 'Delivery status', width: 140, render: (r) => <span dir="auto">{r.deliveryLabel}</span> },
-    {
-      key: 'odooUrl', header: 'Odoo', width: 80, rawValue: (r) => r.odooUrl,
-      render: (r) => {
-        const href = safeOdooUrl(r.odooUrl);
-        return href ? (
-          <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: 'var(--ps-color-accent)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            Open <ExternalLink size={12} aria-hidden />
-          </a>
-        ) : '—';
-      },
-    },
-  ];
-  const documentRows: DocumentGridRow[] = (documents.data?.rows ?? []).map((d) => ({
-    ...d,
-    id: String(d.lineId),
-    typeLabel: [pickLabel(d.documentTypeLabelEn, d.documentTypeLabelAr, lang), pickLabel(d.journalEn, d.journalAr, lang)].filter((x) => x && x !== '—').join(' / '),
-    deliveryLabel: d.deliveryStatus === null ? '—' : pickLabel(d.deliveryStatusLabelEn, d.deliveryStatusLabelAr, lang),
-  }));
 
   const freshness = meta.data?.freshness;
-  const nothing = overview.data && overview.data.kpis.lineCount === 0;
+  const nothing = overview.data && overview.data.lineCount === 0;
+  const firstSnapshot = meta.data?.snapshots[0]?.date ?? null;
   const trendNote =
-    trend.data && trend.data.snapshotCount < 2
-      ? `The trend needs at least 2 snapshots. History started on ${formatDate(meta.data?.snapshots[0]?.date ?? snapshotDate)} and grows by one snapshot a day (06:30).`
-      : null;
+    `Snapshot history started on ${formatDate(firstSnapshot ?? snapshotDate)} and grows by one snapshot a day (06:30).` +
+    (trend.data && trend.data.snapshotCount < 2 ? ' The trend needs at least 2 snapshots.' : '');
+  const exclusionText = exclusions
+    ? [
+        exclusions.segments.length ? `segments ${exclusions.segments.join(', ')}` : null,
+        exclusions.salesTeams.length ? `teams ${exclusions.salesTeams.join(', ')}` : null,
+      ]
+        .filter(Boolean)
+        .join('; ')
+    : null;
+  const exclusionTitle = exclusions?.teams.map((t) => `${t.salesTeamKey} ${t.salesTeam} (${t.segment ?? '—'})`).join('\n');
 
   return (
     <PermissionGuard pageKey="debt_report">
@@ -259,9 +269,9 @@ export default function DebtReportPage() {
               <Field width={190}>
                 <Select label="Document type" options={opts(o?.documentTypes)} value={filters.documentTypeKeys} onChange={(v) => set('documentTypeKeys', v)} multiSelect placeholder="All" />
               </Field>
-              <Field width={190}>
+              <Field width={190} title={SIZE_TIER_HINT}>
                 <Select
-                  label="Invoice size"
+                  label="Invoice size ⓘ"
                   options={(o?.sizeTiers ?? []).map((t) => ({ value: t.value, label: tierLabel(t, lang) }))}
                   value={filters.invoiceTiers}
                   onChange={(v) => set('invoiceTiers', v as DebtPageFilters['invoiceTiers'])}
@@ -269,9 +279,9 @@ export default function DebtReportPage() {
                   placeholder="All"
                 />
               </Field>
-              <Field width={190}>
+              <Field width={190} title={SIZE_TIER_HINT}>
                 <Select
-                  label="Customer size"
+                  label="Customer size ⓘ"
                   options={(o?.sizeTiers ?? []).map((t) => ({ value: t.value, label: tierLabel(t, lang) }))}
                   value={filters.customerTiers}
                   onChange={(v) => set('customerTiers', v as DebtPageFilters['customerTiers'])}
@@ -312,6 +322,12 @@ export default function DebtReportPage() {
             </strong>
             {filters.includeIntercompany ? ', inter-company included' : ', inter-company excluded'}
           </span>
+          {exclusionText ? (
+            <span title={exclusionTitle} dir="auto">
+              Always excluded: <strong style={{ color: 'var(--ps-color-text)' }}>{exclusionText}</strong>
+            </span>
+          ) : null}
+          <span>Amounts per currency, never converted</span>
         </div>
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px) clamp(16px, 3vw, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)', minWidth: 0 }}>
@@ -323,60 +339,98 @@ export default function DebtReportPage() {
             <EmptyState message="No open receivable matches these filters." onResetFilters={() => setFilters(DEFAULT_DEBT_FILTERS)} />
           ) : (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
-                <Kpi title={formatCurrencyFull(k?.openAmount)} label="Open debt (net)" value={formatCompactCurrency(k?.openAmount ?? 0)} variance={`${formatNumber(k?.lineCount ?? 0)} open lines`} status="neutral" />
-                <Kpi
-                  title={formatCurrencyFull(k?.overdueAmount)}
-                  label="Overdue amount"
-                  value={formatCompactCurrency(k?.overdueAmount ?? 0)}
-                  variance={k?.overduePctOfOpen === null || k?.overduePctOfOpen === undefined ? '— of open' : `${(k.overduePctOfOpen * 100).toFixed(1)}% of open`}
-                  status="alert"
-                />
-                <Kpi label="Overdue documents" value={formatNumber(k?.overdueDocuments ?? 0)} variance="with an overdue balance" status="watch" />
-                <Kpi label="Customers with overdue balance" value={formatNumber(k?.customersOverdue ?? 0)} variance="per company" status="watch" />
-                <Kpi title={formatCurrencyFull(k?.overdue90Plus)} label="Overdue 90+ days" value={formatCompactCurrency(k?.overdue90Plus ?? 0)} variance={k && k.overdueAmount ? `${((k.overdue90Plus / k.overdueAmount) * 100).toFixed(1)}% of overdue` : undefined} status="alert" />
-                <Kpi
-                  label="Customers over credit limit"
-                  value={formatNumber(k?.customersOverCreditLimit ?? 0)}
-                  variance={k?.customersWithCreditLimit ? `of ${formatNumber(k.customersWithCreditLimit)} with a credit limit` : 'no customer has a credit limit > 0'}
-                  status="neutral"
-                />
-                <Kpi
-                  label="Change in overdue"
-                  value={k?.overdueChange[0]?.change === null || k?.overdueChange[0] === undefined ? '—' : changeLine(k.overdueChange[0]).replace(/^\d+d: /, '')}
-                  variance={(k?.overdueChange ?? []).map(changeLine).join(' · ')}
-                  status="neutral"
-                />
+              {currencies.map((c) => (
+                <section key={c.currency} aria-label={`${c.currency} totals`} style={{ minWidth: 0 }}>
+                  <h2 style={h2}>{c.currency}</h2>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 170px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
+                    <Kpi title={formatMoney(c.currency, c.kpis.openAmount)} label="Open debt" value={formatCompactMoney(c.currency, c.kpis.openAmount)} variance="overdue + not yet due" status="neutral" />
+                    <Kpi label="Open documents" value={formatNumber(c.kpis.openDocuments)} variance="invoices, credit notes, payments" status="neutral" />
+                    <Kpi label="Customers" value={formatNumber(c.kpis.customers)} variance="with an open balance" status="neutral" />
+                    <Kpi
+                      title={formatMoney(c.currency, c.kpis.overdueAmount)}
+                      label="Overdue"
+                      value={formatCompactMoney(c.currency, c.kpis.overdueAmount)}
+                      variance={`${pctLabel(c.kpis.overduePctOfOpen)} of open debt`}
+                      status="alert"
+                    />
+                    <Kpi
+                      title={formatMoney(c.currency, c.kpis.notDueAmount)}
+                      label="Not yet due"
+                      value={formatCompactMoney(c.currency, c.kpis.notDueAmount)}
+                      variance={`${pctLabel(c.kpis.notDuePctOfOpen)} of open debt`}
+                      status="success"
+                    />
+                  </div>
+                </section>
+              ))}
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+                <PillField label="Charts currency">
+                  {currencies.map((c) => (
+                    <Button key={c.currency} variant={c.currency === currency ? 'primary' : 'secondary'} style={pill} onClick={() => setPickedCurrency(c.currency)}>
+                      {c.currency}
+                    </Button>
+                  ))}
+                </PillField>
+                <p style={{ ...note, margin: 0 }}>The charts and the trend below show {currency ?? '—'} only. Click a bar to see the invoices behind it.</p>
               </div>
 
-              <div style={grid2}>
-                <ChartPanel
-                  title="Overdue by customer"
-                  infoText={`Top ${meta.data?.topCustomers ?? 15} customers by overdue amount (company currency); % of the total overdue`}
-                  tableColumns={[{ key: 'label', header: 'Customer' }, { key: 'overdueLabel', header: 'Overdue', align: 'right' }, { key: 'pctLabel', header: '% of total', align: 'right' }]}
-                  tableRows={(overview.data?.topCustomers ?? []).map((g) => ({ ...g, overdueLabel: formatCurrencyFull(g.overdue), pctLabel: g.pctOfOverdue === null ? '—' : `${(g.pctOfOverdue * 100).toFixed(1)}%` }))}
-                  getRowId={(r) => r.key}
-                >
-                  {overview.data?.topCustomers.length ? (
-                    <GroupedBarChart
+              <ChartPanel title={`Trend: open debt · ${currency ?? ''}`} infoText="Total open debt per snapshot date (line), split into overdue and not yet due (stacked bars), with the same filters">
+                {trend.error ? (
+                  <ErrorState message={trend.error} onRetry={trend.retry} />
+                ) : (
+                  <>
+                    <p style={note}>{trendNote}</p>
+                    <ComboChart
                       showTitle={false}
-                      points={groupPoints(overview.data.topCustomers)}
-                      bars={[{ key: 'overdue', name: 'Overdue', color: 'var(--ps-color-alert)' }]}
-                      valueFormatter={(v) => formatCompactCurrency(v)}
-                      tooltipContent={groupTooltip}
-                      height={barHeight(overview.data.topCustomers.length)}
-                      yAxisWidth={170}
+                      points={trendPoints}
+                      bars={[
+                        { key: 'overdue', name: 'Overdue', color: 'var(--ps-color-alert)', stackId: 'debt' },
+                        { key: 'notDue', name: 'Not yet due', color: 'var(--ps-color-accent)', stackId: 'debt' },
+                      ]}
+                      lines={[{ key: 'total', name: 'Total open debt', color: 'var(--ps-color-text)', yAxisId: 'left', labelFormatter: compact }]}
+                      leftAxisFormatter={compact}
+                      tooltipFormatters={{ total: full, overdue: full, notDue: full }}
+                      height={300}
                     />
-                  ) : (
-                    <NoData />
-                  )}
-                </ChartPanel>
+                  </>
+                )}
+              </ChartPanel>
+
+              <div style={grid2}>
+                {(() => {
+                  const points = groupPoints(cur?.topCustomers);
+                  return (
+                    <ChartPanel
+                      title={`Overdue by customer · ${currency ?? ''}`}
+                      infoText={`Top ${meta.data?.topCustomers ?? 15} customers by overdue amount; % of the total overdue. Click a bar for its overdue invoices`}
+                      tableColumns={[{ key: 'label', header: 'Customer' }, { key: 'overdueLabel', header: 'Overdue', align: 'right' }, { key: 'pctLabel', header: '% of total', align: 'right' }]}
+                      tableRows={(cur?.topCustomers ?? []).map((g) => ({ ...g, overdueLabel: full(g.overdue), pctLabel: pctLabel(g.pctOfOverdue) }))}
+                      getRowId={(r) => r.key}
+                    >
+                      {points.length ? (
+                        <GroupedBarChart
+                          showTitle={false}
+                          points={points}
+                          bars={[{ key: 'overdue', name: 'Overdue', color: 'var(--ps-color-alert)' }]}
+                          valueFormatter={compact}
+                          tooltipContent={groupTooltip}
+                          onCategoryClick={onGroupClick('customer', points)}
+                          height={barHeight(points.length)}
+                          yAxisWidth={170}
+                        />
+                      ) : (
+                        <NoData />
+                      )}
+                    </ChartPanel>
+                  );
+                })()}
 
                 <ChartPanel
-                  title="Aging distribution"
-                  infoText="Open amount per aging bucket (days past the line's own due date). Not due in blue, overdue in red; due today is not overdue"
+                  title={`Distribution · ${currency ?? ''}`}
+                  infoText="Open amount per aging bucket (days past the line's own due date). Not due in blue, overdue in red; due today is not overdue. Click a bar for its invoices"
                   tableColumns={[{ key: 'label', header: 'Bucket' }, { key: 'amountLabel', header: 'Open amount', align: 'right' }, { key: 'lineCount', header: 'Lines', align: 'right' }]}
-                  tableRows={(overview.data?.aging ?? []).map((a) => ({ ...a, id: String(a.agingBucketKey), amountLabel: formatCurrencyFull(a.amount) }))}
+                  tableRows={(cur?.aging ?? []).map((a) => ({ ...a, id: String(a.agingBucketKey), amountLabel: full(a.amount) }))}
                   getRowId={(r) => r.id}
                 >
                   <GroupedBarChart
@@ -384,11 +438,16 @@ export default function DebtReportPage() {
                     points={agingPoints}
                     bars={[{ key: 'amount', name: 'Open amount', color: 'var(--ps-color-accent)' }]}
                     colorForPoint={(p) => colors.get(Number(p._key))}
-                    valueFormatter={(v) => formatCompactCurrency(v)}
+                    valueFormatter={compact}
+                    onCategoryClick={(label) => {
+                      const p = agingPoints.find((x) => x.label === label);
+                      if (p && Number(p._n) > 0) openDrill('aging', String(p._key), String(p.label), Number(p.amount));
+                    }}
                     tooltipContent={(p) => (
                       <TooltipBox title={String(p.label)}>
-                        <TooltipRow label="Open amount" value={formatCurrencyFull(Number(p.amount))} />
+                        <TooltipRow label="Open amount" value={full(Number(p.amount))} />
                         <TooltipRow label="Lines" value={formatNumber(Number(p._n))} />
+                        <TooltipRow label="" value="Click for the invoices" />
                       </TooltipBox>
                     )}
                     height={barHeight(agingPoints.length)}
@@ -400,70 +459,54 @@ export default function DebtReportPage() {
               <div style={grid2}>
                 {(
                   [
-                    ['Overdue by salesperson', overview.data?.bySalesperson, 'Salesperson of the invoice (else the customer of record)'],
-                    ['Overdue by team', overview.data?.byTeam, 'Team of the invoice (else the salesperson’s team), Excel org'],
+                    ['salesperson', 'Overdue by salesperson', cur?.bySalesperson, 'Salesperson of the invoice (else the customer of record). Click a bar for its overdue invoices'],
+                    ['team', 'Overdue by team', cur?.byTeam, 'Team of the invoice (else the salesperson’s team), Excel org. Click a bar for its overdue invoices'],
                   ] as const
-                ).map(([title, list, info]) => (
-                  <ChartPanel
-                    key={title}
-                    title={title}
-                    infoText={info}
-                    tableColumns={[{ key: 'label', header: 'Name' }, { key: 'overdueLabel', header: 'Overdue', align: 'right' }, { key: 'pctLabel', header: '% of total', align: 'right' }]}
-                    tableRows={(list ?? []).map((g) => ({ ...g, overdueLabel: formatCurrencyFull(g.overdue), pctLabel: g.pctOfOverdue === null ? '—' : `${(g.pctOfOverdue * 100).toFixed(1)}%` }))}
-                    getRowId={(r) => r.key}
-                    headerActions={
-                      (list?.length ?? 0) > 15 ? (
-                        <Button variant="ghost" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setShowAllPeople((s) => !s)}>
-                          {showAllPeople ? 'Top 15' : `All ${list?.length}`}
-                        </Button>
-                      ) : null
-                    }
-                  >
-                    {list?.length ? (
-                      <GroupedBarChart
-                        showTitle={false}
-                        points={groupPoints(list, peopleLimit)}
-                        bars={[{ key: 'overdue', name: 'Overdue', color: 'var(--ps-color-alert)' }]}
-                        valueFormatter={(v) => formatCompactCurrency(v)}
-                        tooltipContent={groupTooltip}
-                        height={barHeight(Math.min(list.length, peopleLimit ?? list.length))}
-                        yAxisWidth={150}
-                      />
-                    ) : (
-                      <NoData />
-                    )}
-                  </ChartPanel>
-                ))}
+                ).map(([kind, title, list, info]) => {
+                  const points = groupPoints(list, peopleLimit);
+                  return (
+                    <ChartPanel
+                      key={kind}
+                      title={`${title} · ${currency ?? ''}`}
+                      infoText={info}
+                      tableColumns={[{ key: 'label', header: 'Name' }, { key: 'overdueLabel', header: 'Overdue', align: 'right' }, { key: 'pctLabel', header: '% of total', align: 'right' }]}
+                      tableRows={(list ?? []).map((g) => ({ ...g, overdueLabel: full(g.overdue), pctLabel: pctLabel(g.pctOfOverdue) }))}
+                      getRowId={(r) => r.key}
+                      headerActions={
+                        (list?.length ?? 0) > 15 ? (
+                          <Button variant="ghost" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setShowAllPeople((s) => !s)}>
+                            {showAllPeople ? 'Top 15' : `All ${list?.length}`}
+                          </Button>
+                        ) : null
+                      }
+                    >
+                      {points.length ? (
+                        <GroupedBarChart
+                          showTitle={false}
+                          points={points}
+                          bars={[{ key: 'overdue', name: 'Overdue', color: 'var(--ps-color-alert)' }]}
+                          valueFormatter={compact}
+                          tooltipContent={groupTooltip}
+                          onCategoryClick={onGroupClick(kind, points)}
+                          height={barHeight(points.length)}
+                          yAxisWidth={150}
+                        />
+                      ) : (
+                        <NoData />
+                      )}
+                    </ChartPanel>
+                  );
+                })}
               </div>
-
-              <ChartPanel title="Trend: open vs overdue" infoText="Open and overdue amounts per snapshot date, with the same filters">
-                {trend.error ? (
-                  <ErrorState message={trend.error} onRetry={trend.retry} />
-                ) : (
-                  <>
-                    {trendNote ? <p style={note}>{trendNote}</p> : null}
-                    <ComboChart
-                      showTitle={false}
-                      points={trendPoints}
-                      bars={[
-                        { key: 'open', name: 'Open (net)', color: 'var(--ps-color-accent)' },
-                        { key: 'overdue', name: 'Overdue', color: 'var(--ps-color-alert)' },
-                      ]}
-                      leftAxisFormatter={(v) => formatCompactCurrency(v)}
-                      tooltipFormatters={{ open: (v) => formatCurrencyFull(v), overdue: (v) => formatCurrencyFull(v) }}
-                      height={280}
-                    />
-                  </>
-                )}
-              </ChartPanel>
             </>
           )}
 
           <section style={{ minWidth: 0 }}>
-            <h2 style={h2}>Customer exposure</h2>
+            <h2 style={h2}>Customers</h2>
             <p style={note}>
-              One row per company and customer, sorted by overdue amount. Click a customer to see their open documents. Sales and DSO: the customer’s
-              invoiced sales in the {meta.data?.salesWindowDays ?? 90} days up to the snapshot (DSO = open ÷ sales × {meta.data?.salesWindowDays ?? 90}).
+              One row per company, customer and currency, sorted by due debt. Total invoices amount = the original amounts of the open documents
+              (credit notes and payments negative). Salesperson, team and segment list every value on the customer’s lines. Click a row for its
+              open documents.
             </p>
             {customers.error ? (
               <ErrorState message={customers.error} onRetry={customers.retry} />
@@ -474,45 +517,26 @@ export default function DebtReportPage() {
                 columns={customerColumns}
                 rows={customerRows}
                 getRowId={(r) => r.id}
-                fileName={`debt-customer-exposure-${snapshotDate ?? 'latest'}`}
+                fileName={`debt-customers-${snapshotDate ?? 'latest'}`}
                 pageSize={15}
                 maxBodyHeight={520}
-                onRowClick={(r) => setSelected(r)}
+                onRowClick={(r) => setDrill({ kind: 'account', key: `${r.companyKey}:${r.customerKey}`, label: `${r.customer} · ${r.company}`, currency: r.currency, expected: r.open })}
               />
             )}
           </section>
-
-          {selected ? (
-            <section ref={drillRef} style={{ minWidth: 0, scrollMarginTop: 16 }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 12 }}>
-                <h2 style={h2}>
-                  Documents of <span dir="auto">{selected.customer}</span> · {selected.company}
-                </h2>
-                <button type="button" onClick={() => setSelected(null)} style={linkButton}>
-                  Close
-                </button>
-              </div>
-              <p style={note}>
-                Open {formatCurrencyFull(selected.open)} · overdue {formatCurrencyFull(selected.overdue)}. Each line is aged by its own due date (an
-                instalment’s own maturity).
-              </p>
-              {documents.error ? (
-                <ErrorState message={documents.error} onRetry={documents.retry} />
-              ) : documents.loading && !documents.data ? (
-                <LoadingSkeleton variant="table" />
-              ) : (
-                <DataGrid<DocumentGridRow>
-                  columns={documentColumns}
-                  rows={documentRows}
-                  getRowId={(r) => r.id}
-                  fileName={`debt-documents-${selected.customerKey}-${snapshotDate ?? 'latest'}`}
-                  pageSize={20}
-                  maxBodyHeight={560}
-                />
-              )}
-            </section>
-          ) : null}
         </main>
+
+        {drill ? (
+          <DebtDrilldownModal
+            target={drill}
+            data={drilldown.data}
+            loading={drilldown.loading}
+            error={drilldown.error}
+            onRetry={drilldown.retry}
+            onClose={closeDrill}
+            snapshotDate={snapshotDate}
+          />
+        ) : null}
 
         <BottomNavBar active="Debt Report" />
       </div>
@@ -520,11 +544,17 @@ export default function DebtReportPage() {
   );
 }
 
-type CustomerGridRow = DebtCustomerRow & { id: string; overLimit: 'Yes' | 'No' } & Record<string, unknown>;
-type DocumentGridRow = DebtDocumentRow & { id: string; typeLabel: string; deliveryLabel: string } & Record<string, unknown>;
+type CustomerGridRow = DebtCustomerRow & { id: string; salespersonList: string; teamList: string; segmentList: string } & Record<string, unknown>;
 
-function money<T extends Record<string, unknown>>(key: keyof T & string, header: string): DataGridColumn<T> {
-  return { key, header, align: 'right', width: 150, rawValue: (r) => Number(r[key] ?? 0), render: (r) => formatCurrencyFull(Number(r[key] ?? 0)) };
+/** A column listing several names; its dropdown filter keeps the rows where any of them matches. */
+function listColumn(
+  key: 'salespersonList' | 'teamList' | 'segmentList',
+  header: string,
+  width: number,
+  filterOptions: { value: string; label: string }[],
+  values: (r: CustomerGridRow) => string[],
+): DataGridColumn<CustomerGridRow> {
+  return { key, header, width, filterOptions, filterMatch: (r, v) => values(r).includes(v), render: (r) => <span dir="auto">{r[key]}</span> };
 }
 
 const pill: React.CSSProperties = { padding: '6px 12px', fontSize: 12.5 };
@@ -535,7 +565,6 @@ const strip: React.CSSProperties = {
 };
 const note: React.CSSProperties = { margin: '0 0 12px', fontSize: 12, color: 'var(--ps-color-muted-text)' };
 const h2: React.CSSProperties = { margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: 'var(--ps-color-text)' };
-const linkButton: React.CSSProperties = { background: 'none', border: 'none', padding: 0, color: 'var(--ps-color-accent)', fontWeight: 600, cursor: 'pointer', fontSize: 12 };
 
 function Kpi({ title, ...props }: React.ComponentProps<typeof KpiTile> & { title?: string }) {
   return (
@@ -545,8 +574,12 @@ function Kpi({ title, ...props }: React.ComponentProps<typeof KpiTile> & { title
   );
 }
 
-function Field({ children, width = 160 }: { children: React.ReactNode; width?: number }) {
-  return <div style={{ width, flexShrink: 0, maxWidth: '100%' }}>{children}</div>;
+function Field({ children, width = 160, title }: { children: React.ReactNode; width?: number; title?: string }) {
+  return (
+    <div title={title} style={{ width, flexShrink: 0, maxWidth: '100%' }}>
+      {children}
+    </div>
+  );
 }
 
 function PillField({ label, children }: { label: string; children: React.ReactNode }) {
@@ -564,12 +597,6 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
       {label}
     </label>
-  );
-}
-
-function Flag({ text }: { text: string }) {
-  return (
-    <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--ps-color-alert)', background: 'var(--ps-color-alert-bg)', padding: '2px 8px', borderRadius: 999 }}>{text}</span>
   );
 }
 

@@ -2339,12 +2339,6 @@ export interface DebtOption {
   labelAr: string | null;
 }
 
-export interface DebtComparison {
-  days: number;
-  comparedWith: string | null;
-  availableFrom: string | null;
-}
-
 export interface DebtFreshness {
   department: string;
   lastSuccessUtc: string | null;
@@ -2354,6 +2348,13 @@ export interface DebtFreshness {
   dataAsOf: string | null;
 }
 
+/** What the whole report leaves out (warehouse table cfg_finance_report_exclusion, migration 0036). */
+export interface DebtExclusions {
+  segments: string[];
+  salesTeams: string[];
+  teams: { salesTeamKey: string; salesTeam: string; segment: string | null; bySegment: boolean; byTeam: boolean }[];
+}
+
 export interface DebtMeta {
   snapshots: { date: string; lineCount: number }[];
   snapshotDate: string | null;
@@ -2361,6 +2362,7 @@ export interface DebtMeta {
     companies: DebtOption[];
     salespersons: DebtOption[];
     salesTeams: DebtOption[];
+    currencies: DebtOption[];
     agingBuckets: (DebtOption & { isOverdue: boolean })[];
     deliveryStatuses: DebtOption[];
     paymentTerms: DebtOption[];
@@ -2368,10 +2370,9 @@ export interface DebtMeta {
     scopes: (DebtOption & { isDefault: boolean; description: string | null })[];
     sizeTiers: (DebtOption & { min: number | null; max: number | null })[];
   };
+  exclusions: DebtExclusions;
   odooBaseUrl: string;
   topCustomers: number;
-  changeWindows: number[];
-  salesWindowDays: number;
   freshness: DebtFreshness;
 }
 
@@ -2384,18 +2385,17 @@ export interface DebtGroupPoint {
   pctOfOverdue: number | null;
 }
 
-export interface DebtOverview {
-  snapshotDate: string | null;
+/** Every amount of a Debt Report response is in its own currency (`currency`); currencies are never added together. */
+export interface DebtCurrencyOverview {
+  currency: string;
   kpis: {
     openAmount: number;
+    openDocuments: number;
+    customers: number;
     overdueAmount: number;
     overduePctOfOpen: number | null;
-    overdueDocuments: number;
-    customersOverdue: number;
-    overdue90Plus: number;
-    customersOverCreditLimit: number;
-    customersWithCreditLimit: number;
-    overdueChange: (DebtComparison & { previousOverdue: number | null; change: number | null })[];
+    notDueAmount: number;
+    notDuePctOfOpen: number | null;
     lineCount: number;
   };
   aging: { agingBucketKey: number; label: string; isOverdue: boolean; amount: number; lineCount: number }[];
@@ -2404,8 +2404,15 @@ export interface DebtOverview {
   byTeam: DebtGroupPoint[];
 }
 
+export interface DebtOverview {
+  snapshotDate: string | null;
+  lineCount: number;
+  currencies: DebtCurrencyOverview[];
+}
+
 export interface DebtTrend {
-  points: { snapshotDate: string; open: number; overdue: number }[];
+  points: { snapshotDate: string; currency: string; open: number; overdue: number; notDue: number }[];
+  currencies: string[];
   snapshotCount: number;
 }
 
@@ -2414,63 +2421,53 @@ export interface DebtCustomerRow {
   company: string;
   customerKey: number;
   customer: string;
+  currency: string;
+  openDocuments: number;
+  invoiceAmount: number;
   open: number;
   overdue: number;
-  overdue90Plus: number;
-  creditLimit: number | null;
-  overCreditLimit: boolean;
-  oldestOverdueDays: number | null;
-  salesLast90d: number;
-  dsoDays: number | null;
-  change7d: number | null;
-  change30d: number | null;
-  customerTier: DebtSizeTier;
+  notDue: number;
+  salespersons: string[];
+  salesTeams: string[];
+  segments: string[];
   lineCount: number;
 }
 
 export interface DebtCustomers {
   snapshotDate: string | null;
+  currencies: string[];
   rows: DebtCustomerRow[];
-  changes: DebtComparison[];
 }
 
-export interface DebtDocumentRow {
+export type DebtDrillKind = 'customer' | 'aging' | 'salesperson' | 'team' | 'account';
+
+export interface DebtDrillRow {
   lineId: number;
   moveId: number;
+  company: string;
   document: string | null;
   documentTypeKey: string;
-  documentTypeLabelEn: string | null;
-  documentTypeLabelAr: string | null;
-  journalEn: string | null;
-  journalAr: string | null;
-  receivableScope: string;
-  isIntercompany: boolean;
-  company: string;
   invoiceDate: string | null;
   dueDate: string | null;
-  daysPastDue: number;
-  agingBucketKey: number;
-  agingBucket: string;
-  residualCompanyCcy: number;
-  companyCurrency: string | null;
-  residualDocCcy: number | null;
-  docCurrency: string | null;
-  paymentTerm: string | null;
-  salesperson: string | null;
-  salespersonSource: string;
-  salesTeam: string | null;
-  deliveryStatus: string | null;
-  deliveryStatusLabelEn: string | null;
-  deliveryStatusLabelAr: string | null;
-  paymentStateLabelEn: string | null;
-  paymentStateLabelAr: string | null;
-  invoiceTier: DebtSizeTier;
+  daysOverdue: number;
+  customerKey: number;
+  customer: string;
+  currency: string;
+  invoiceAmount: number;
+  openBalance: number;
+  overdueAmount: number;
+  salesperson: string;
+  salesTeamKey: string;
+  salesTeam: string;
+  segment: string | null;
   odooUrl: string;
 }
 
-export interface DebtDocuments {
+export interface DebtDrilldown {
   snapshotDate: string | null;
-  rows: DebtDocumentRow[];
+  drill: { kind: DebtDrillKind; key: string; currency: string };
+  rows: DebtDrillRow[];
+  totals: { lines: number; openDocuments: number; invoiceAmount: number; openBalance: number; overdueAmount: number };
 }
 
 /** Query string of a Debt Report request. Lists go as repeated keys (the server's scoped filters read arrays). */
@@ -2490,7 +2487,7 @@ export function buildDebtReportQuery(scope: DebtReportScope, extra: Record<strin
   return params.toString();
 }
 
-export type DebtReportEndpoint = 'meta' | 'overview' | 'trend' | 'customers' | 'documents';
+export type DebtReportEndpoint = 'meta' | 'overview' | 'trend' | 'customers' | 'drilldown';
 
 export function fetchDebtReport<T>(token: string, endpoint: DebtReportEndpoint, scope: DebtReportScope, extra: Record<string, string | number> = {}, signal?: AbortSignal): Promise<T> {
   const qs = buildDebtReportQuery(scope, extra);

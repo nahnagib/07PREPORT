@@ -90,6 +90,23 @@ export function formatCompactCurrency(value: number): string {
   return `LYD ${compactNumber(value)}`;
 }
 
+/** Minor-unit decimals of a currency as Odoo shows it: the dinar has 3, USD / EUR and the rest 2. */
+export function currencyDecimals(currency: string): number {
+  return currency === 'LYD' ? 3 : 2;
+}
+
+/** Full amount in any currency, with its code: "USD 42,100.50", "LYD 1,234.567". Never converts. */
+export function formatMoney(currency: string, value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  const d = currencyDecimals(currency);
+  return `${currency} ${value.toLocaleString(DISPLAY_LOCALE, { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+}
+
+/** Compact amount in any currency, with its code: "LYD 579.6K", "USD 42.1K". */
+export function formatCompactMoney(currency: string, value: number): string {
+  return `${currency} ${compactNumber(value)}`;
+}
+
 export function formatCompactVolume(value: number): string {
   return compactNumber(value);
 }

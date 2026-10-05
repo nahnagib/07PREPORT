@@ -102,7 +102,7 @@ beforeEach(() => {
   queries.length = 0;
 });
 
-const ENDPOINTS = ['/meta', '/overview', '/trend', '/customers', '/documents?customerKey=100'];
+const ENDPOINTS = ['/meta', '/overview', '/trend', '/customers', '/drilldown?kind=customer&key=100&currency=LYD'];
 
 describe('Debt Report access', () => {
   it.each(ENDPOINTS)('%s: 200 for the full-access roles (Admin implicitly, GCFO by grant)', async (path) => {
@@ -134,10 +134,14 @@ describe('Debt Report access', () => {
     expect(queries.filter((q) => q.sql.includes('fact_finance_receivable_snapshot f'))).toHaveLength(0);
   });
 
-  it("restricts a salesperson's 90-day sales (DSO) to their own lines too", async () => {
-    await get('/debt-report/customers', 'salespersonEnabled');
-    const q = queries.find((x) => x.sql.includes('fact_sales_lines'));
-    expect(q?.sql).toContain('sl.SalespersonKey IN (?)');
+  it.each(ENDPOINTS)('%s: every pass over the lines leaves out the excluded segments and teams, whatever is asked', async (path) => {
+    const sep = path.includes('?') ? '&' : '?';
+    // both scope toggles on, and the excluded team / segments explicitly requested
+    const res = await get(`/debt-report${path}${sep}includeOther=true&includeIntercompany=true&salesTeamKeys=BMH-ALL-00&segmentKeys=3&segmentKeys=4`, 'admin');
+    expect(res.status).toBe(200);
+    const lineQueries = queries.filter((q) => q.sql.includes('FROM fact_finance_receivable_snapshot f'));
+    expect(lineQueries.length).toBeGreaterThan(0);
+    for (const q of lineQueries) expect(q.sql).toContain('f.SalesTeamKey NOT IN (SELECT x.SalesTeamKey FROM v_finance_excluded_sales_team x)');
   });
 
   it("keeps a role's data scope (B2B Director: segment 1) on every query", async () => {
@@ -148,9 +152,11 @@ describe('Debt Report access', () => {
     expect((await get('/debt-report/overview?segmentKeys=2', 'b2b')).status).toBe(403);
   });
 
-  it('400 on a bad parameter, 400 without a customer for the drill-down', async () => {
+  it('400 on a bad parameter, 400 on an incomplete drill-down', async () => {
     expect((await get('/debt-report/overview?overdueStatus=late', 'gcfo')).status).toBe(400);
-    expect((await get('/debt-report/documents', 'gcfo')).status).toBe(400);
+    expect((await get('/debt-report/drilldown', 'gcfo')).status).toBe(400);
+    expect((await get('/debt-report/drilldown?kind=aging&key=5', 'gcfo')).status).toBe(400); // no currency
+    expect((await get('/debt-report/drilldown?kind=team&key=a%27b&currency=LYD', 'gcfo')).status).toBe(400);
   });
 
   it('meta carries the finance freshness, never the sales refresh', async () => {

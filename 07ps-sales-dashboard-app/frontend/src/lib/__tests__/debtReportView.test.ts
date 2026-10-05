@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { buildDebtReportQuery } from '../api';
+import { formatCompactMoney, formatMoney } from '../format';
 import {
   DEFAULT_DEBT_FILTERS,
   activeFilterCount,
+  SIZE_TIER_HINT,
   agingColors,
-  changeCell,
-  changeLine,
+  drillReconciles,
+  drillTitle,
   isDefaultFilters,
+  pctLabel,
   optLabel,
   safeOdooUrl,
   tierLabel,
@@ -34,11 +37,24 @@ describe('Debt Report view helpers', () => {
     expect(new Set(colors.values()).size).toBe(8);
   });
 
-  it('says when a comparison becomes available until the snapshot exists', () => {
-    expect(changeLine({ days: 7, comparedWith: null, availableFrom: '2026-10-11', change: null })).toBe('7d: available from 11 Oct 2026');
-    expect(changeLine({ days: 30, comparedWith: '2026-09-04', availableFrom: '2026-10-04', change: 1_250_000 })).toBe('30d: +LYD 1.3M');
-    expect(changeCell(null)).toBe('—');
-    expect(changeCell(-1234.5)).toBe('LYD -1,234.500');
+  it('shows every amount with its own currency code, never converted', () => {
+    expect(formatCompactMoney('LYD', 579_600)).toBe('LYD 579.6K');
+    expect(formatCompactMoney('USD', 42_100)).toBe('USD 42.1K');
+    expect(formatMoney('LYD', -1234.5)).toBe('LYD -1,234.500');
+    expect(formatMoney('EUR', 5034.4)).toBe('EUR 5,034.40');
+    expect(formatMoney('USD', null)).toBe('—');
+    expect(pctLabel(0.6)).toBe('60.0%');
+    expect(pctLabel(null)).toBe('—');
+  });
+
+  it('titles a drill-down by what was clicked and reconciles it to the right figure', () => {
+    expect(drillTitle('customer', 'ACME', 'USD')).toBe('Overdue documents of ACME · USD');
+    expect(drillTitle('aging', 'Overdue 90+', 'LYD')).toBe('Open documents in Overdue 90+ · LYD');
+    expect(drillReconciles('team')).toBe('overdueAmount');
+    expect(drillReconciles('salesperson')).toBe('overdueAmount');
+    expect(drillReconciles('aging')).toBe('openBalance');
+    expect(drillReconciles('account')).toBe('openBalance');
+    expect(SIZE_TIER_HINT).toBe('Size tier based on LYD value');
   });
 
   it('defaults to customer debt without inter-company and counts what is set', () => {
@@ -55,8 +71,8 @@ describe('Debt Report view helpers', () => {
   });
 
   it('sends lists as repeated parameters and leaves defaults out', () => {
-    const qs = buildDebtReportQuery({ companyKeys: [1, 3], includeOther: true, overdueStatus: 'all', invoiceTiers: ['large'] }, { customerKey: 5 });
-    expect(qs).toBe('includeOther=true&companyKeys=1&companyKeys=3&invoiceTiers=large&customerKey=5');
+    const qs = buildDebtReportQuery({ companyKeys: [1, 3], includeOther: true, overdueStatus: 'all', invoiceTiers: ['large'] }, { kind: 'aging', key: 8, currency: 'USD' });
+    expect(qs).toBe('includeOther=true&companyKeys=1&companyKeys=3&invoiceTiers=large&kind=aging&key=8&currency=USD');
     expect(buildDebtReportQuery({})).toBe('');
   });
 

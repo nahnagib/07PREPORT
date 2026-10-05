@@ -47,6 +47,9 @@ export interface DataGridColumn<T> {
    * row[key]) instead of the free-text "Filter..." box -- for columns with a small, known set of
    * values such as a status or stage. */
   filterOptions?: { value: string; label: string }[];
+  /** Custom match for the dropdown filter, e.g. a cell listing several names that should match any of them. Defaults
+   * to the exact match on the raw value. */
+  filterMatch?: (row: T, filterValue: string) => boolean;
 }
 
 export interface DataGridProps<T extends Record<string, unknown>> {
@@ -134,7 +137,11 @@ export function DataGrid<T extends Record<string, unknown>>({
         accessorFn: (row: T) => (col.rawValue ? col.rawValue(row) : row[col.key]),
         header: col.header,
         size: col.width ?? 130,
-        filterFn: (col.filterOptions ? equalsOption : containsText) as FilterFn<T>,
+        filterFn: (col.filterMatch
+          ? ((row, _id, fv) => fv == null || fv === '' || col.filterMatch!(row.original, String(fv))) as FilterFn<T>
+          : col.filterOptions
+            ? equalsOption
+            : containsText) as FilterFn<T>,
         cell: (info) => (col.render ? col.render(info.row.original) : String(info.getValue() ?? '')),
       })),
     [columns],

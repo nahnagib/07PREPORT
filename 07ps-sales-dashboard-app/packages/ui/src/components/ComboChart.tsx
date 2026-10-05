@@ -10,6 +10,7 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  LabelList,
 } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
 import { useCanExport } from '../exportPermission';
@@ -19,6 +20,8 @@ export interface ComboBarSeries {
   key: string;
   name: string;
   color: string;
+  /** Bars sharing a stackId are stacked on top of each other (e.g. the parts of a total); unset = side by side. */
+  stackId?: string;
 }
 
 export interface ComboLineSeries {
@@ -28,6 +31,8 @@ export interface ComboLineSeries {
   /** Which Y axis this line reads against. Defaults to 'right' -- bars are always the primary
    * (left) series, lines are the usual secondary-axis complement. */
   yAxisId?: 'left' | 'right';
+  /** When set, each point's value is printed above it with this formatter (e.g. the total of stacked bars). */
+  labelFormatter?: (value: number) => string;
 }
 
 export interface ComboChartPoint {
@@ -208,7 +213,8 @@ export function ComboChart({
                 dataKey={b.key}
                 name={b.name}
                 fill={b.color}
-                radius={[4, 4, 0, 0]}
+                stackId={b.stackId}
+                radius={b.stackId ? [0, 0, 0, 0] : [4, 4, 0, 0]}
                 barSize={points.length > 8 ? 18 : 32}
                 hide={!!hidden[b.key]}
                 isAnimationActive={false}
@@ -241,7 +247,17 @@ export function ComboChart({
                 hide={!!hidden[l.key]}
                 isAnimationActive={false}
                 connectNulls
-              />
+              >
+                {l.labelFormatter ? (
+                  <LabelList
+                    dataKey={l.key}
+                    position="top"
+                    offset={8}
+                    formatter={(v: number) => l.labelFormatter!(Number(v))}
+                    style={{ fontSize: 11, fontWeight: 600, fill: 'var(--ps-color-text)' }}
+                  />
+                ) : null}
+              </Line>
             ))}
           </ComposedChart>
         </ResponsiveContainer>
