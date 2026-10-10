@@ -39,6 +39,11 @@ TEAM_FALLBACK_TO_SALESPERSON = {"fact_sales_lines": True, "fact_sales_orders": T
                                 "fact_sales_deliveries": False, "fact_sales_leads": False, "fact_sales_opportunities": False}
 DATE_KEY_COLUMNS = ("DateKey", "OrderDateKey", "ScheduledDateKey", "DoneDateKey", "LeadCreatedDateKey",
                     "OpportunityCreatedDateKey", "ExpectedCloseDateKey", "FirstQuotationDateKey", "SnapshotDateKey")
+BCG_KEY_COLUMNS = ("CompanyKey", "ProductMasterKey", "ProductKey")
+BCG_PERIODS = ("YTD", "LYTD")
+BCG_VOLUME_THRESHOLDS = {"MAJAAL": 3500.0, "TIKA": 25000.0}
+BCG_PROFIT_THRESHOLD = 0.35
+BCG_RANK = {"Dogs": 1, "Cash Cows": 2, "Strategic": 3, "Stars": 4}
 
 
 @dataclass
@@ -155,6 +160,127 @@ def _ident_text(v) -> str:
 def _team_key(v) -> str:
     text = _ident_text(v)
     return UNKNOWN_TEXT if text in ("", LEGACY_UNKNOWN_TEAM) else text
+
+
+def _first_nonblank(values: pd.Series):
+    present = values.astype("string").str.strip().replace("", pd.NA).dropna()
+    return present.iloc[0] if len(present) else pd.NA
+
+
+def _sum_numeric(values: pd.Series):
+    nums = pd.to_numeric(values, errors="coerce")
+    return nums.sum(min_count=1)
+
+
+def _weighted_average(values: pd.Series, weights: pd.Series):
+    vals = pd.to_numeric(values, errors="coerce")
+    w = pd.to_numeric(weights, errors="coerce")
+    valid = vals.notna() & w.notna() & w.ne(0)
+    if not valid.any():
+        return pd.NA
+    return (vals[valid] * w[valid]).sum() / w[valid].sum()
+
+
+def _bcg_classes(company, quantity, gross_profit) -> tuple[Any, Any, Any, Any]:
+    threshold = BCG_VOLUME_THRESHOLDS.get(str(company).strip().upper()) if isinstance(company, str) else None
+    qty = pd.to_numeric(pd.Series([quantity]), errors="coerce").iloc[0]
+    gp = pd.to_numeric(pd.Series([gross_profit]), errors="coerce").iloc[0]
+    volume_class = pd.NA if threshold is None or pd.isna(qty) else ("HV" if qty >= threshold else "LV")
+    profit_class = "Unknown" if pd.isna(gp) else ("HP" if gp >= BCG_PROFIT_THRESHOLD else "LP")
+    if pd.isna(volume_class):
+        return pd.NA, profit_class, pd.NA, "Unclassified"
+    code = f"{volume_class}/{profit_class}"
+    return volume_class, profit_class, code, {
+        "HV/HP": "Stars", "HV/LP": "Cash Cows", "LV/HP": "Strategic", "LV/LP": "Dogs",
+    }.get(code, "Unclassified")
+
+
+def _bcg_movement(ytd_class, lytd_class):
+    ytd_missing = pd.isna(ytd_class)
+    lytd_missing = pd.isna(lytd_class)
+    if not ytd_missing and not lytd_missing and ytd_class == lytd_class:
+        return "Stable"
+    if not ytd_missing and lytd_missing:
+        return "New"
+    if ytd_missing and not lytd_missing:
+        return "Lost"
+    ytd_rank = BCG_RANK.get(str(ytd_class))
+    lytd_rank = BCG_RANK.get(str(lytd_class))
+    if ytd_rank is None or lytd_rank is None:
+        return pd.NA
+    if ytd_rank > lytd_rank:
+        return "Improved"
+    if ytd_rank < lytd_rank:
+        return "Declined"
+    return pd.NA
+
+
+def collapse_duplicate_bcg_keys(df: pd.DataFrame) -> pd.DataFrame:
+    """After conformance, multiple uncatalogued products can share the mart's unknown key bucket.
+
+    The BCG builder is unique by legacy product identity, but the warehouse primary key is the conformed
+    (CompanyKey, ProductMasterKey, ProductKey). Collapse any duplicate conformed keys before the loader validates.
+    """
+    if df.empty or not set(BCG_KEY_COLUMNS).issubset(df.columns) or not df.duplicated(list(BCG_KEY_COLUMNS)).any():
+        return df
+
+    rows: list[dict[str, Any]] = []
+    for _, group in df.groupby(list(BCG_KEY_COLUMNS), dropna=False, sort=False):
+        row = group.iloc[0].to_dict()
+        if len(group) > 1:
+            for col in ("Company", "ProductName", "ProductNameClean"):
+                if col in group.columns:
+                    row[col] = _first_nonblank(group[col])
+            for period in BCG_PERIODS:
+                qty_col = f"total_quantity_{period}"
+                value_col = f"total_value_{period}"
+                avg_price_col = f"avg_unit_price_{period}"
+                cost_col = f"avg_product_cost_{period}"
+                gp_col = f"perc_gross_profit_{period}"
+                qty = _sum_numeric(group[qty_col]) if qty_col in group.columns else pd.NA
+                value = _sum_numeric(group[value_col]) if value_col in group.columns else pd.NA
+                if qty_col in row:
+                    row[qty_col] = qty
+                if value_col in row:
+                    row[value_col] = value
+                avg_price = value / qty if pd.notna(value) and pd.notna(qty) and qty != 0 else pd.NA
+                if avg_price_col in row:
+                    row[avg_price_col] = avg_price
+                avg_cost = _weighted_average(group[cost_col], group[qty_col]) if cost_col in group.columns and qty_col in group.columns else pd.NA
+                if cost_col in row:
+                    row[cost_col] = avg_cost
+                gross_profit = (
+                    (avg_price - avg_cost) / avg_price
+                    if pd.notna(avg_price) and avg_price != 0 and pd.notna(avg_cost)
+                    else pd.NA
+                )
+                if gp_col in row:
+                    row[gp_col] = gross_profit
+                volume_class, profit_class, code, bcg_class = _bcg_classes(row.get("Company"), qty, gross_profit)
+                for col, value_out in (
+                    (f"volume_class_{period}", volume_class),
+                    (f"profit_class_{period}", profit_class),
+                    (f"bcg_code_{period}", code),
+                    (f"bcg_class_{period}", bcg_class),
+                ):
+                    if col in row:
+                        row[col] = value_out
+            ytd_qty = pd.to_numeric(pd.Series([row.get("total_quantity_YTD")]), errors="coerce").iloc[0]
+            lytd_qty = pd.to_numeric(pd.Series([row.get("total_quantity_LYTD")]), errors="coerce").iloc[0]
+            if "quantity_growth_pct" in row:
+                row["quantity_growth_pct"] = (
+                    (ytd_qty - lytd_qty) / lytd_qty
+                    if pd.notna(ytd_qty) and pd.notna(lytd_qty) and lytd_qty != 0
+                    else pd.NA
+                )
+            ytd_gp = pd.to_numeric(pd.Series([row.get("perc_gross_profit_YTD")]), errors="coerce").iloc[0]
+            lytd_gp = pd.to_numeric(pd.Series([row.get("perc_gross_profit_LYTD")]), errors="coerce").iloc[0]
+            if "gross_profit_change_pp" in row:
+                row["gross_profit_change_pp"] = ytd_gp - lytd_gp if pd.notna(ytd_gp) and pd.notna(lytd_gp) else pd.NA
+            if "bcg_movement" in row:
+                row["bcg_movement"] = _bcg_movement(row.get("bcg_class_YTD"), row.get("bcg_class_LYTD"))
+        rows.append(row)
+    return pd.DataFrame(rows, columns=df.columns).reset_index(drop=True)
 
 
 def target_sheet_rows(sheet: pd.DataFrame) -> pd.DataFrame:
@@ -275,6 +401,7 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
                 unresolved = [k for k in legacy_keys if not (isinstance(k, str) and k in maps.master_keys) and k not in legacy_to_odoo]
                 out.fell("fact_sales_bcg_matrix.ProductKey (uncatalogued product without an Odoo id)", unresolved)
                 df["ProductKey"] = legacy_keys.map(lambda v: UNKNOWN if isinstance(v, str) and v in maps.master_keys else legacy_to_odoo.get(v, UNKNOWN)).to_numpy()
+                df = collapse_duplicate_bcg_keys(df)
         for c in ("SalesTeamKey",):
             if c in df.columns:
                 df[c] = df[c].map(_team_key)

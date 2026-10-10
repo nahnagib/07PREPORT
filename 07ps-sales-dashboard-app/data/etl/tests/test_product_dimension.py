@@ -6,6 +6,7 @@ import pandas as pd
 from config.settings import Settings
 from sales_pipeline.legacy_transform import (
     BCGMatrixBuilder,
+    BlockedCustomersLoader,
     Logger,
     PipelineSettings,
     ProductActiveFlagReconciler,
@@ -287,6 +288,24 @@ def test_product_name_normalization_known_examples() -> None:
     assert normalize_product_name("Xtreme-SuperCol S1") == "Xtreme - SuperCol S1"
     assert normalize_product_name("Xtreme XtraCol PRO") == "Xtreme XtraCol PRO"
     assert normalize_product_name(None) == "Unknown Product"
+
+
+def test_blocked_customer_dates_are_dayfirst(tmp_path: Path) -> None:
+    path = tmp_path / "blocked.xlsx"
+    pd.DataFrame([{
+        "CustomerID": "C1",
+        "CustomerName": "Customer",
+        "IsBlocked": "yes",
+        "BlockedDate": "08/10/2026",
+        "UnblockedDate": "09/10/2026",
+        "BlockedReason": "",
+        "Notes": "",
+    }]).to_excel(path, index=False)
+
+    out = BlockedCustomersLoader(Logger(enabled=False)).load(path)
+
+    assert out.loc[0, "BlockedDate"] == pd.Timestamp("2026-10-08")
+    assert out.loc[0, "UnblockedDate"] == pd.Timestamp("2026-10-09")
 
 
 def test_product_name_columns_exist_and_are_clean_across_product_outputs() -> None:

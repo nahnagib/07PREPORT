@@ -87,3 +87,46 @@ def test_order_id_is_corrected_when_the_name_exists_in_the_rows_company():
     df = pd.DataFrame({"SalesDocumentID": [34292, 5, 34292], "order_number": ["S24144", "S00005", "S24144"], "CompanyKey": [2, 1, 1]})
     ids, fixed = cf.correct_order_ids(df, orders, "SalesDocumentID", "order_number")
     assert ids == [74793, 5, 34292] and fixed == 1  # legacy Tika (2) row carrying Majaal's id -> Tika's order
+
+
+def test_bcg_duplicate_unknown_key_rows_are_collapsed_before_load():
+    df = pd.DataFrame({
+        "Company": ["Majaal", "Majaal", "Majaal"],
+        "ProductMasterKey": [UNKNOWN_TEXT, UNKNOWN_TEXT, "M-GR"],
+        "ProductName": ["Unknown A", "Unknown B", "Grout"],
+        "ProductNameClean": ["UNKNOWN A", "UNKNOWN B", "GROUT"],
+        "total_quantity_YTD": [10.0, 20.0, 5.0],
+        "total_quantity_LYTD": [5.0, 5.0, 1.0],
+        "total_value_YTD": [100.0, 300.0, 50.0],
+        "total_value_LYTD": [50.0, 100.0, 10.0],
+        "avg_unit_price_YTD": [10.0, 15.0, 10.0],
+        "avg_unit_price_LYTD": [10.0, 20.0, 10.0],
+        "avg_product_cost_YTD": [5.0, 6.0, 2.0],
+        "avg_product_cost_LYTD": [4.0, 8.0, 2.0],
+        "perc_gross_profit_YTD": [0.5, 0.6, 0.8],
+        "perc_gross_profit_LYTD": [0.6, 0.6, 0.8],
+        "volume_class_YTD": ["LV", "LV", "LV"],
+        "volume_class_LYTD": ["LV", "LV", "LV"],
+        "profit_class_YTD": ["HP", "HP", "HP"],
+        "profit_class_LYTD": ["HP", "HP", "HP"],
+        "bcg_code_YTD": ["LV/HP", "LV/HP", "LV/HP"],
+        "bcg_code_LYTD": ["LV/HP", "LV/HP", "LV/HP"],
+        "bcg_class_YTD": ["Strategic", "Strategic", "Strategic"],
+        "bcg_class_LYTD": ["Strategic", "Strategic", "Strategic"],
+        "quantity_growth_pct": [1.0, 3.0, 4.0],
+        "gross_profit_change_pp": [-0.1, 0.0, 0.0],
+        "bcg_movement": ["Stable", "Stable", "Stable"],
+        "CompanyKey": [UNKNOWN, UNKNOWN, 1],
+        "ProductKey": [UNKNOWN, UNKNOWN, UNKNOWN],
+    })
+
+    out = cf.collapse_duplicate_bcg_keys(df)
+
+    assert not out.duplicated(["CompanyKey", "ProductMasterKey", "ProductKey"]).any()
+    unknown = out.set_index(["CompanyKey", "ProductMasterKey", "ProductKey"]).loc[(UNKNOWN, UNKNOWN_TEXT, UNKNOWN)]
+    assert unknown["total_quantity_YTD"] == 30.0
+    assert unknown["total_value_YTD"] == 400.0
+    assert unknown["avg_unit_price_YTD"] == pytest.approx(400.0 / 30.0)
+    assert unknown["avg_product_cost_YTD"] == pytest.approx((10.0 * 5.0 + 20.0 * 6.0) / 30.0)
+    assert unknown["quantity_growth_pct"] == 2.0
+    assert out.loc[out["ProductMasterKey"].eq("M-GR"), "ProductName"].tolist() == ["Grout"]

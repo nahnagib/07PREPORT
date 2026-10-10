@@ -567,8 +567,8 @@ class BlockedCustomersLoader:
             .fillna(0)
             .astype(int)
         )
-        df["BlockedDate"] = pd.to_datetime(df["BlockedDate"], errors="coerce")
-        df["UnblockedDate"] = pd.to_datetime(df["UnblockedDate"], errors="coerce")
+        df["BlockedDate"] = pd.to_datetime(df["BlockedDate"], errors="coerce", dayfirst=True)
+        df["UnblockedDate"] = pd.to_datetime(df["UnblockedDate"], errors="coerce", dayfirst=True)
         return df
 
     def export_template(self, path: PathLike) -> Path:
