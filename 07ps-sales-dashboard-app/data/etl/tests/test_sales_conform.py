@@ -130,3 +130,80 @@ def test_bcg_duplicate_unknown_key_rows_are_collapsed_before_load():
     assert unknown["avg_product_cost_YTD"] == pytest.approx((10.0 * 5.0 + 20.0 * 6.0) / 30.0)
     assert unknown["quantity_growth_pct"] == 2.0
     assert out.loc[out["ProductMasterKey"].eq("M-GR"), "ProductName"].tolist() == ["Grout"]
+
+
+def test_product_cost_duplicate_unknown_key_rows_are_collapsed_before_load():
+    df = pd.DataFrame({
+        "OdooProductID": [1001, 1002, 500],
+        "OdooProductTemplateID": [2001, 2002, 900],
+        "Company": ["NewCo", "NewCo", "Majaal"],
+        "ProductMasterKey": [UNKNOWN_TEXT, UNKNOWN_TEXT, "M-GR"],
+        "ProductNameRaw": ["Unknown A", "Unknown B", "Grout"],
+        "ProductName": ["Unknown A", "Unknown B", "Grout"],
+        "ProductNameClean": ["UNKNOWN A", "UNKNOWN B", "GROUT"],
+        "OdooProductName": ["Unknown A", "Unknown B", "Grout"],
+        "OdooProductNameClean": ["UNKNOWN A", "UNKNOWN B", "GROUT"],
+        "SKU": ["A", "B", "G"],
+        "ProductCost": [5.0, 7.0, 2.0],
+        "IsActive": [False, True, True],
+        "ProductKey": [UNKNOWN, UNKNOWN, 500],
+        "CompanyKey": [UNKNOWN, UNKNOWN, 1],
+    })
+
+    out = cf.collapse_duplicate_product_cost_keys(df)
+
+    assert not out.duplicated(["ProductKey", "CompanyKey"]).any()
+    unknown = out.set_index(["ProductKey", "CompanyKey"]).loc[(UNKNOWN, UNKNOWN)]
+    assert unknown["ProductCost"] == pytest.approx(6.0)
+    assert bool(unknown["IsActive"]) is True
+    assert out.loc[out["ProductKey"].eq(500), "ProductName"].tolist() == ["Grout"]
+
+
+def test_inventory_duplicate_unknown_key_rows_are_collapsed_before_load():
+    df = pd.DataFrame({
+        "SnapshotDate": [pd.Timestamp("2026-10-10").date()] * 3,
+        "SnapshotDateKey": [20261010, 20261010, 20261010],
+        "Company": ["NewCo", "NewCo", "Majaal"],
+        "CompanyKey": [UNKNOWN, UNKNOWN, 1],
+        "ProductMasterKey": [UNKNOWN_TEXT, UNKNOWN_TEXT, "M-GR"],
+        "ProductName": ["Unknown A", "Unknown B", "Grout"],
+        "ProductNameClean": ["UNKNOWN A", "UNKNOWN B", "GROUT"],
+        "OdooProductID": [1001, 1002, 500],
+        "OdooProductName": ["Unknown A", "Unknown B", "Grout"],
+        "OdooProductNameClean": ["UNKNOWN A", "UNKNOWN B", "GROUT"],
+        "SKU": ["A", "B", "G"],
+        "LocationID": [10, 10, 10],
+        "LocationName": ["Main", "Main", "Main"],
+        "WarehouseName": ["WH", "WH", "WH"],
+        "OnHandQty": [2.0, 3.0, 4.0],
+        "ReservedQty": [1.0, 1.5, 0.0],
+        "AvailableQty": [1.0, 1.5, 4.0],
+        "ProductCost": [5.0, 7.0, 2.0],
+        "InventoryValue": [10.0, 21.0, 8.0],
+        "InventoryStatus": ["In Stock", "In Stock", "In Stock"],
+        "DOH": [20.0, 30.0, 40.0],
+        "Avg_Daily_Sales": [0.1, 0.1, 0.1],
+        "Velocity_Class": ["Unknown", "Unknown", "Normal Stock"],
+        "ProductMatchKey": ["NEWCO|A", "NEWCO|B", "MAJAAL|GROUT"],
+        "StockClass": ["FinishedGoods", "FinishedGoods", "FinishedGoods"],
+        "ProductKey": [UNKNOWN, UNKNOWN, 500],
+    })
+
+    out = cf.collapse_duplicate_inventory_keys(df)
+
+    assert not out.duplicated(["SnapshotDateKey", "CompanyKey", "ProductKey", "LocationID"]).any()
+    unknown = out.set_index(["SnapshotDateKey", "CompanyKey", "ProductKey", "LocationID"]).loc[(20261010, UNKNOWN, UNKNOWN, 10)]
+    assert unknown["OnHandQty"] == 5.0
+    assert unknown["InventoryValue"] == 31.0
+    assert unknown["ProductCost"] == pytest.approx((2.0 * 5.0 + 3.0 * 7.0) / 5.0)
+    assert unknown["DOH"] == pytest.approx(25.0)
+    assert out.loc[out["ProductKey"].eq(500), "ProductName"].tolist() == ["Grout"]
+
+
+def test_product_fallback_labels_include_odoo_name():
+    df = pd.DataFrame({
+        "OdooProductID": [1001, 1002],
+        "OdooProductName": ["Unknown A", "Unknown B"],
+    })
+
+    assert cf._product_fallback_labels(df, [1002, 1001]) == ["1002 | Unknown B", "1001 | Unknown A"]

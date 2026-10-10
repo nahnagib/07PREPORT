@@ -40,10 +40,13 @@ TEAM_FALLBACK_TO_SALESPERSON = {"fact_sales_lines": True, "fact_sales_orders": T
 DATE_KEY_COLUMNS = ("DateKey", "OrderDateKey", "ScheduledDateKey", "DoneDateKey", "LeadCreatedDateKey",
                     "OpportunityCreatedDateKey", "ExpectedCloseDateKey", "FirstQuotationDateKey", "SnapshotDateKey")
 BCG_KEY_COLUMNS = ("CompanyKey", "ProductMasterKey", "ProductKey")
+PRODUCT_COST_KEY_COLUMNS = ("ProductKey", "CompanyKey")
+INVENTORY_KEY_COLUMNS = ("SnapshotDateKey", "CompanyKey", "ProductKey", "LocationID")
 BCG_PERIODS = ("YTD", "LYTD")
 BCG_VOLUME_THRESHOLDS = {"MAJAAL": 3500.0, "TIKA": 25000.0}
 BCG_PROFIT_THRESHOLD = 0.35
 BCG_RANK = {"Dogs": 1, "Cash Cows": 2, "Strategic": 3, "Stars": 4}
+INVENTORY_VELOCITY_THRESHOLDS = {"TIKA": (60.0, 30.0), "MAJAAL": (180.0, 60.0)}
 
 
 @dataclass
@@ -181,6 +184,23 @@ def _weighted_average(values: pd.Series, weights: pd.Series):
     return (vals[valid] * w[valid]).sum() / w[valid].sum()
 
 
+def _product_fallback_labels(df: pd.DataFrame, product_ids: list[Any]) -> list[str]:
+    if not product_ids or "OdooProductID" not in df.columns:
+        return product_ids
+    label_cols = ["ProductName", "OdooProductName", "ProductNameRaw", "OdooProductNameClean", "ProductNameClean"]
+    present = [c for c in label_cols if c in df.columns]
+    work = df[["OdooProductID", *present]].copy()
+    work["_pid"] = pd.to_numeric(work["OdooProductID"], errors="coerce")
+    labels: dict[int, str] = {}
+    for record in work.dropna(subset=["_pid"]).to_dict("records"):
+        pid = int(record["_pid"])
+        if pid in labels:
+            continue
+        name = next((str(record[c]).strip() for c in present if pd.notna(record.get(c)) and str(record[c]).strip()), "")
+        labels[pid] = f"{pid} | {name}" if name else str(pid)
+    return [labels.get(int(pid), str(pid)) for pid in product_ids]
+
+
 def _bcg_classes(company, quantity, gross_profit) -> tuple[Any, Any, Any, Any]:
     threshold = BCG_VOLUME_THRESHOLDS.get(str(company).strip().upper()) if isinstance(company, str) else None
     qty = pd.to_numeric(pd.Series([quantity]), errors="coerce").iloc[0]
@@ -279,6 +299,87 @@ def collapse_duplicate_bcg_keys(df: pd.DataFrame) -> pd.DataFrame:
                 row["gross_profit_change_pp"] = ytd_gp - lytd_gp if pd.notna(ytd_gp) and pd.notna(lytd_gp) else pd.NA
             if "bcg_movement" in row:
                 row["bcg_movement"] = _bcg_movement(row.get("bcg_class_YTD"), row.get("bcg_class_LYTD"))
+        rows.append(row)
+    return pd.DataFrame(rows, columns=df.columns).reset_index(drop=True)
+
+
+def collapse_duplicate_product_cost_keys(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or not set(PRODUCT_COST_KEY_COLUMNS).issubset(df.columns) or not df.duplicated(list(PRODUCT_COST_KEY_COLUMNS)).any():
+        return df
+
+    rows: list[dict[str, Any]] = []
+    for _, group in df.groupby(list(PRODUCT_COST_KEY_COLUMNS), dropna=False, sort=False):
+        row = group.iloc[0].to_dict()
+        if len(group) > 1:
+            for col in [
+                "Company", "ProductMasterKey", "ProductNameRaw", "ProductName", "ProductNameClean",
+                "OdooProductName", "OdooProductNameClean", "SKU",
+            ]:
+                if col in group.columns:
+                    row[col] = _first_nonblank(group[col])
+            for col in ("OdooProductID", "OdooProductTemplateID"):
+                if col in group.columns:
+                    nums = pd.to_numeric(group[col], errors="coerce").dropna()
+                    row[col] = nums.iloc[0] if len(nums) else pd.NA
+            if "ProductCost" in group.columns:
+                row["ProductCost"] = pd.to_numeric(group["ProductCost"], errors="coerce").mean()
+            if "IsActive" in group.columns:
+                row["IsActive"] = bool(group["IsActive"].fillna(False).astype(bool).any())
+        rows.append(row)
+    return pd.DataFrame(rows, columns=df.columns).reset_index(drop=True)
+
+
+def _inventory_velocity_class(company, doh, on_hand) -> str:
+    doh_value = pd.to_numeric(pd.Series([doh]), errors="coerce").iloc[0]
+    on_hand_value = pd.to_numeric(pd.Series([on_hand]), errors="coerce").fillna(0.0).iloc[0]
+    if pd.isna(doh_value):
+        return "No Movement" if on_hand_value > 0 else "Unknown"
+    threshold = INVENTORY_VELOCITY_THRESHOLDS.get(str(company).strip().upper()) if isinstance(company, str) else None
+    if threshold is None:
+        return "Unknown"
+    high, low = threshold
+    if doh_value > high:
+        return "High Stock"
+    if doh_value < low:
+        return "Low Stock"
+    return "Normal Stock"
+
+
+def collapse_duplicate_inventory_keys(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or not set(INVENTORY_KEY_COLUMNS).issubset(df.columns) or not df.duplicated(list(INVENTORY_KEY_COLUMNS)).any():
+        return df
+
+    sum_cols = ["OnHandQty", "ReservedQty", "AvailableQty", "InventoryValue", "Avg_Daily_Sales"]
+    rows: list[dict[str, Any]] = []
+    for _, group in df.groupby(list(INVENTORY_KEY_COLUMNS), dropna=False, sort=False):
+        row = group.iloc[0].to_dict()
+        if len(group) > 1:
+            for col in [
+                "SnapshotDate", "Company", "ProductMasterKey", "ProductName", "ProductNameClean",
+                "OdooProductName", "OdooProductNameClean", "SKU", "LocationName", "WarehouseName",
+                "InventoryStatus", "ProductMatchKey", "StockClass",
+            ]:
+                if col in group.columns:
+                    row[col] = _first_nonblank(group[col])
+            if "OdooProductID" in group.columns:
+                nums = pd.to_numeric(group["OdooProductID"], errors="coerce").dropna()
+                row["OdooProductID"] = nums.iloc[0] if len(nums) else pd.NA
+            for col in sum_cols:
+                if col in group.columns:
+                    row[col] = _sum_numeric(group[col])
+            if "ProductCost" in group.columns:
+                weights = group.get("OnHandQty", pd.Series(1.0, index=group.index))
+                row["ProductCost"] = _weighted_average(group["ProductCost"], pd.to_numeric(weights, errors="coerce").abs())
+            on_hand = row.get("OnHandQty")
+            avg_daily = row.get("Avg_Daily_Sales")
+            if "DOH" in row:
+                row["DOH"] = (
+                    on_hand / avg_daily
+                    if pd.notna(on_hand) and pd.notna(avg_daily) and avg_daily > 0
+                    else pd.NA
+                )
+            if "Velocity_Class" in row:
+                row["Velocity_Class"] = _inventory_velocity_class(row.get("Company"), row.get("DOH"), row.get("OnHandQty"))
         rows.append(row)
     return pd.DataFrame(rows, columns=df.columns).reset_index(drop=True)
 
@@ -414,16 +515,27 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
     inv = s["Fact_Inventory"].rename(columns={"ProductKey": "_legacy_product_key"}).copy()
     inv["CompanyKey"] = inv["CompanyKey"].map(lambda v: UNKNOWN if pd.isna(v) else {2: 3}.get(int(v), int(v)))
     pk, fell = maps.products(_col(inv, "OdooProductID"))
-    out.fell("fact_sales_inventory_snapshot.ProductKey", fell)
+    out.fell("fact_sales_inventory_snapshot.ProductKey (Odoo product id)", _product_fallback_labels(inv, fell))
     inv["ProductKey"] = pk
     inv["ProductMasterKey"] = maps.product_masters(pk, inv["CompanyKey"])
+    inv = collapse_duplicate_inventory_keys(inv)
     out.tables["fact_sales_inventory_snapshot"] = _date_keys(inv.drop(columns=["_legacy_product_key"]))
 
     cost = s["Dim_ProductCost"].rename(columns={"ProductKey": "ProductMasterKey"}).copy()
-    pk, _ = maps.products(_col(cost, "OdooProductID"))
+    pk, fell = maps.products(_col(cost, "OdooProductID"))
+    out.fell("dim_sales_product_cost.ProductKey (Odoo product id)", _product_fallback_labels(cost, fell))
     cost["ProductKey"] = pk
     cost["CompanyKey"] = cost["Company"].map(lambda c: company_by_name.get(str(c).strip().upper(), UNKNOWN) if isinstance(c, str) else UNKNOWN)
+    unknown_cost_companies = sorted(
+        set(
+            str(c).strip()
+            for c in cost.loc[cost["CompanyKey"].eq(UNKNOWN), "Company"].dropna().tolist()
+            if str(c).strip()
+        )
+    )
+    out.fell("dim_sales_product_cost.CompanyKey (cost company)", unknown_cost_companies)
     cost["ProductMasterKey"] = maps.product_masters(pk, cost["CompanyKey"])
+    cost = collapse_duplicate_product_cost_keys(cost)
     out.tables["dim_sales_product_cost"] = cost
 
     # small sales dimensions ------------------------------------------------------------------------------------------------
