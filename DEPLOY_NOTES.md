@@ -1,7 +1,7 @@
 # Deploy notes: ETL schedules, Receivables and Collections, Odoo-matched exclusions
 
-Branch `feature/debt-aging-map`. This release also carries the per-currency report and the Aging Map (migrations 0036,
-0037). Paths are relative to `07ps-sales-dashboard-app/`. All times are **Africa/Tripoli**.
+On `main` (commit 13c4d67 and later). This release carries the per-currency report, the Aging Map, Athena, the
+Collections trend and the 2026-10-11 exclusions (migrations 0024, 0036-0042). Paths are relative to `07ps-sales-dashboard-app/`. All times are **Africa/Tripoli**.
 
 ## What changes, in short
 
@@ -33,7 +33,7 @@ Branch `feature/debt-aging-map`. This release also carries the per-currency repo
     and the tables and views (`fact_finance_*`, `v_finance_*`, `cfg_finance_report_exclusion`).
   - The Roles page label is written from code at every backend start, so the rename needs no migration.
 - **Filters:** every filter is a dropdown, worded as on the other pages.
-  - Company All / Majaal / Tika, Branch (the sales team), Salesperson, Customer (searchable).
+  - Company (multi-select: every company of the snapshot, incl. Athena), Branch (the sales team), Salesperson, Customer (searchable).
   - Overdue status All / Overdue / Not yet due.
   - Customer Category: the Customer Growth categories A–D (dim_customer.CustomerClass_LY).
   - Include (other receivable entries / inter-company), Odoo labels.
@@ -84,6 +84,7 @@ that may `CREATE TABLE` / `ALTER TABLE` / `CREATE VIEW`, not the app or ETL acco
 
 | # | File | What it does |
 |---|---|---|
+| 0 | `data/warehouse/migrations/0024_salesperson_target_seasonality.sql` | per-salesperson monthly shares of a target override; **the Tachometer reads it** |
 | 1 | `data/warehouse/migrations/0036_finance_receivable_currency_exclusions.sql` | exclusion table `cfg_finance_report_exclusion`, per-currency views |
 | 2 | `data/warehouse/migrations/0037_finance_debt_aging.sql` | Aging Map settings (`cfg_finance_aging_*`, `cfg_finance_payment_term_days`) |
 | 3 | `data/warehouse/migrations/0038_etl_job_runs_partial_skipped.sql` | run statuses `partial` / `skipped` in `etl_job_runs.status` |
@@ -96,15 +97,18 @@ that may `CREATE TABLE` / `ALTER TABLE` / `CREATE VIEW`, not the app or ETL acco
 cd 07ps-sales-dashboard-app
 set -a; . /path/to/migration.env; set +a      # DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME
 python3 data/warehouse/apply_migrations.py \
+  0024_salesperson_target_seasonality.sql \
   0036_finance_receivable_currency_exclusions.sql 0037_finance_debt_aging.sql \
-  0038_etl_job_runs_partial_skipped.sql 0039_finance_report_exclusion_odoo_teams.sql \n  0040_finance_collections.sql 0041_finance_report_exclusion_segments.sql 0042_finance_collection_split.sql
+  0038_etl_job_runs_partial_skipped.sql 0039_finance_report_exclusion_odoo_teams.sql \
+  0040_finance_collections.sql 0041_finance_report_exclusion_segments.sql 0042_finance_collection_split.sql
 ```
 
-(`scripts/deploy.sh` does the same with `MIGRATIONS="0036_… 0037_… 0038_… 0039_…"` and `MIGRATION_ENV_FILE`.)
+(`scripts/deploy.sh` does the same with `MIGRATIONS="0024_… 0036_… … 0042_…"` and `MIGRATION_ENV_FILE`.)
 
 - **0038 before the new worker:** otherwise recording a partial or skipped run fails, and the run stays "running" in
   the Control Center until the stale-run sweep (6 h).
 - **0039 before the new backend:** the new API reads the `invoices_only` column it adds.
+- **0024 before the new backend:** the Tachometer's target-override months read `salesperson_target_seasonality`.
 - **0040 + 0042 before the new ETL image:** the finance job now also loads collections; without the tables that step
   fails (the receivables snapshot is already committed, the run ends `partial`) and the Collections chart shows an error.
 - **First finance run after 0040/0042** reads the whole customer payment history from Odoo (read-only, ~70,000 payments,
