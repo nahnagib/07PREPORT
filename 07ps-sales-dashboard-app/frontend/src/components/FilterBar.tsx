@@ -38,7 +38,8 @@ export interface FilterBarProps {
    * wired refreshStatus.lastOrderCreated through yet just don't render this field. */
   lastOrderCreated?: string | null;
   /** Last successful ETL refresh. Non-admin users see only this timestamp in place of Last Order
-   * Date / Last Order Created (those are data-validation figures, shown to admins only). */
+   * Date / Last Order Created (those are data-validation figures, shown to admins only); admins see
+   * it below them. */
   lastRefreshTime?: string | null;
   dateFromDate?: string;
   dateToDate?: string;
@@ -94,6 +95,10 @@ export interface FilterBarProps {
 }
 
 const fieldBox: React.CSSProperties = { width: 152, flexShrink: 0 };
+
+/** Companies run without sales teams (Athena, ETL CompanyKey 9: a travel agency, salespeople only).
+ * When the Company selection is only these, Customer Group and Branch are locked and cleared. */
+const NO_TEAM_COMPANY_KEYS = new Set([9]);
 
 /** Matches Select/DateInput's own label styling exactly (font-size 12 + margin-bottom 4), so
  * non-field controls (Last Order info text) that have no label of their own still
@@ -183,6 +188,18 @@ export function FilterBar({
     return { disabled: false, lockedReason: undefined, loading };
   };
   const lockedReason = isSalesperson ? 'Locked to your assigned scope' : undefined;
+  const companyKeys = filters.companyKeys ?? [];
+  const noTeamCompany = showCompanyDimension && companyKeys.length > 0 && companyKeys.every((k) => NO_TEAM_COMPANY_KEYS.has(k));
+  const teamLockedReason = lockedReason ?? (noTeamCompany ? 'Not used for this company' : undefined);
+
+  // A Customer Group / Branch picked before switching to a no-team company would still filter the
+  // data while its dropdown is locked, so clear it.
+  useEffect(() => {
+    if (noTeamCompany && ((filters.segmentKeys?.length ?? 0) > 0 || (filters.salesTeamKeys?.length ?? 0) > 0)) {
+      onChange({ ...filters, segmentKeys: [], salesTeamKeys: [] });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noTeamCompany, filters.segmentKeys, filters.salesTeamKeys]);
 
   // Collapsed by default so the page opens on a clean view; each page mount starts collapsed
   // again (no cross-page persistence needed -- "collapsed by default" per the revision request).
@@ -318,7 +335,7 @@ export function FilterBar({
               value={(filters.segmentKeys ?? []).map(String)}
               onChange={(v) => onChange({ ...filters, segmentKeys: v.map(Number) })}
               multiSelect
-              {...fieldState(customerGroups.length, lockedReason)}
+              {...fieldState(customerGroups.length, teamLockedReason)}
             />
           </div>
 
@@ -341,7 +358,7 @@ export function FilterBar({
               onChange={(v) => onChange({ ...filters, salesTeamKeys: v })}
               multiSelect
               searchable
-              {...fieldState(branches.length, lockedReason)}
+              {...fieldState(branches.length, teamLockedReason)}
             />
           </div>
 
@@ -434,6 +451,20 @@ export function FilterBar({
               }}
             >
               Last Order Created: {formatTimestamp(lastOrderCreated)}
+            </div>
+          ) : null}
+          {isAdmin ? (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                height: 16,
+                fontSize: 11,
+                color: 'var(--ps-color-muted-text)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Last Refresh Time: {formatTimestamp(lastRefreshTime)}
             </div>
           ) : null}
         </div>
