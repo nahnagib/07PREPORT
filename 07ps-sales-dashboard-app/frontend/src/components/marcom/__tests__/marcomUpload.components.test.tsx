@@ -106,11 +106,12 @@ describe('BatchHistory', () => {
   const batch = (over: Partial<BatchItem> = {}): BatchItem => ({
     batchId: 4, filename: 'mar.xlsx', fileHash: 'h', templateVersion: '1.0', uploadedBy: { id: 1, name: 'Nahla' }, uploadedAt: '2026-09-20T09:00:00.000Z',
     status: 'SUCCESS', period: { from: '2026-03', to: '2026-03', label: 'March 2026' }, totals: { inserted: 9, updated: 1, unchanged: 2, examplesSkipped: 7 },
-    canRollback: true, rolledBackAt: null, rolledBackBy: null, rollbackReason: null, errorMessage: null, ...over,
+    canRollback: true, rolledBackAt: null, rolledBackBy: null, rollbackReason: null,
+    canRemove: true, removedAt: null, removedBy: null, removeReason: null, errorMessage: null, ...over,
   });
   const render = (rows: BatchItem[] | null, over: Record<string, unknown> = {}) => renderToStaticMarkup(
     <BatchHistory rows={rows} loading={false} error={null} detail={null} detailLoading={false} onRetry={noop} onOpen={noop} onCloseDetail={noop}
-      onDownload={noop} onRollback={noop} {...over} />,
+      onDownload={noop} onRollback={noop} onRemove={noop} {...over} />,
   );
 
   it('empty history shows the empty state', () => expect(render([])).toContain('No MARCOM uploads yet'));
@@ -124,6 +125,18 @@ describe('BatchHistory', () => {
     expect(m).toContain('9 / 1 / 2');
     expect(m).toContain('March 2026');
     expect(m.match(/Roll back latest batch/g)).toHaveLength(1);
+  });
+  it('"Remove batch" on every successful batch (not only the latest), never on removed / rolled back / failed ones', () => {
+    const m = render([
+      batch({ batchId: 5 }), batch({ batchId: 4, canRollback: false }),
+      batch({ batchId: 3, status: 'REMOVED', canRollback: false, canRemove: false }),
+      batch({ batchId: 2, status: 'ROLLED_BACK', canRollback: false, canRemove: false }),
+    ]);
+    expect(m.match(/Remove batch/g)).toHaveLength(2);
+    expect(m).toContain('⊘ Removed');
+  });
+  it('without the delete permission there is no Remove batch button', () => {
+    expect(render([batch()], { onRemove: undefined })).not.toContain('Remove batch');
   });
 });
 

@@ -8,11 +8,13 @@ const STATUS_LABEL: Record<BatchItem['status'], string> = {
   SUCCESS: '✔ Success',
   FAILED: '✖ Failed',
   ROLLED_BACK: '↺ Rolled back',
+  REMOVED: '⊘ Removed',
 };
 const STATUS_COLOR: Record<BatchItem['status'], string> = {
   SUCCESS: 'var(--ps-color-success)',
   FAILED: 'var(--ps-color-alert)',
   ROLLED_BACK: 'var(--ps-color-muted-text)',
+  REMOVED: 'var(--ps-color-muted-text)',
 };
 
 export function StatusBadge({ status }: { status: BatchItem['status'] }) {
@@ -37,6 +39,8 @@ export interface BatchHistoryProps {
   onDownload?: (id: number) => void;
   /** Omitted when the user may not delete (roll back). */
   onRollback?: (batch: BatchItem) => void;
+  /** Omitted when the user may not delete. Any successful batch, not only the latest. */
+  onRemove?: (batch: BatchItem) => void;
 }
 
 export function BatchHistory(p: BatchHistoryProps) {
@@ -75,6 +79,11 @@ export function BatchHistory(p: BatchHistoryProps) {
                         Roll back latest batch
                       </Button>
                     )}
+                    {b.canRemove && p.onRemove && (
+                      <Button variant="secondary" style={{ padding: '4px 8px', fontSize: 12, color: 'var(--ps-color-alert)' }} onClick={() => p.onRemove?.(b)}>
+                        Remove batch
+                      </Button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -111,6 +120,11 @@ function BatchDetailView({ detail, onClose }: { detail: BatchDetail; onClose: ()
       {detail.status === 'ROLLED_BACK' && (
         <div style={{ fontSize: 13 }}>
           Rolled back {formatTimestamp(detail.rolledBackAt)}{detail.rolledBackBy ? ` by ${detail.rolledBackBy}` : ''}. Reason: {detail.rollbackReason ?? '—'}
+        </div>
+      )}
+      {detail.status === 'REMOVED' && (
+        <div style={{ fontSize: 13 }}>
+          Removed {formatTimestamp(detail.removedAt)}{detail.removedBy ? ` by ${detail.removedBy}` : ''}. Reason: {detail.removeReason ?? '—'}
         </div>
       )}
       {detail.status === 'FAILED' && <div style={{ fontSize: 13, color: 'var(--ps-color-alert)' }}>✖ {detail.errorMessage ?? 'The import failed and nothing was saved.'}</div>}

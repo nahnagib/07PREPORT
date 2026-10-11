@@ -7,8 +7,9 @@ import { PermissionGuard } from '../../../components/AuthGuard';
 import { UploadDropzone } from '../../../components/marcom/UploadDropzone';
 import { UploadPreview } from '../../../components/marcom/UploadPreview';
 import { BatchHistory, RollbackDialog } from '../../../components/marcom/BatchHistory';
+import { RemoveBatchDialog } from '../../../components/marcom/RemoveBatchDialog';
 import { useAuth } from '../../../lib/AuthProvider';
-import { BatchDetail, BatchItem, MarcomApiError, marcomApi } from '../../../lib/marcomApi';
+import { BatchDetail, BatchItem, MarcomApiError, RemovePreview, marcomApi } from '../../../lib/marcomApi';
 import { canConfirm, initialUploadState, uploadReducer } from '../../../lib/marcomUploadMachine';
 
 export default function MarcomUploadPage() {
@@ -40,6 +41,13 @@ function Body() {
   const [rollbackBusy, setRollbackBusy] = useState(false);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<BatchItem | null>(null);
+  const [removePreview, setRemovePreview] = useState<RemovePreview | null>(null);
+  const [removePreviewLoading, setRemovePreviewLoading] = useState(false);
+  const [removePreviewError, setRemovePreviewError] = useState<string | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const loadHistory = useCallback(() => {
     if (!token) return;
@@ -106,6 +114,42 @@ function Body() {
       setRollbackError(describe(err, 'The rollback failed. Nothing was changed.'));
     } finally {
       setRollbackBusy(false);
+    }
+  }
+
+  const loadRemovePreview = useCallback((b: BatchItem) => {
+    if (!token) return;
+    setRemovePreview(null);
+    setRemovePreviewError(null);
+    setRemovePreviewLoading(true);
+    marcomApi.removePreview(token, b.batchId)
+      .then(setRemovePreview)
+      .catch((err) => setRemovePreviewError(describe(err, 'Could not load what the removal would change.')))
+      .finally(() => setRemovePreviewLoading(false));
+  }, [token]);
+
+  function openRemove(b: BatchItem) {
+    setRemoveError(null);
+    setRemoveTarget(b);
+    loadRemovePreview(b);
+  }
+
+  async function doRemove(reason: string) {
+    if (!token || !removeTarget) return;
+    setRemoveBusy(true);
+    setRemoveError(null);
+    try {
+      const r = await marcomApi.removeBatch(token, removeTarget.batchId, reason);
+      setNotice(`Batch #${r.batchId} removed: ${r.totals.deleted} row${r.totals.deleted === 1 ? '' : 's'} deleted` +
+        (r.totals.otherBatchRowsAffected ? `, ${r.totals.otherBatchRowsAffected} row(s) of other batches adjusted` : '') +
+        (r.brandsDeleted.length ? `; brands deleted: ${r.brandsDeleted.join(', ')}` : '') + '.');
+      setRemoveTarget(null);
+      setDetail(null);
+      loadHistory();
+    } catch (err) {
+      setRemoveError(describe(err, 'The removal failed. Nothing was changed.'));
+    } finally {
+      setRemoveBusy(false);
     }
   }
 
@@ -197,6 +241,12 @@ function Body() {
 
       <div>
         <h2 style={{ fontSize: 16, margin: '0 0 8px' }}>Import history</h2>
+        {notice && (
+          <div role="status" style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', padding: '10px 12px', marginBottom: 8, borderRadius: 8, fontSize: 13, border: '1px solid var(--ps-color-success-border)', background: 'var(--ps-color-success-bg)', color: 'var(--ps-color-text)' }}>
+            <span>✔ {notice}</span>
+            <Button variant="ghost" onClick={() => setNotice(null)} aria-label="Dismiss" style={{ padding: '0 6px' }}>✕</Button>
+          </div>
+        )}
         <BatchHistory
           rows={rows}
           loading={histLoading}
@@ -208,10 +258,22 @@ function Body() {
           onCloseDetail={() => setDetail(null)}
           onDownload={!mayDownload ? undefined : (id) => safely(() => marcomApi.downloadBatchFile(token!, id), 'Could not download the original file.')}
           onRollback={!mayRollback ? undefined : (b) => { setRollbackError(null); setRollbackTarget(b); }}
+          onRemove={!mayRollback ? undefined : openRemove}
         />
       </div>
 
       <RollbackDialog batch={rollbackTarget} busy={rollbackBusy} error={rollbackError} onConfirm={doRollback} onCancel={() => setRollbackTarget(null)} />
+      <RemoveBatchDialog
+        batch={removeTarget}
+        preview={removePreview}
+        previewLoading={removePreviewLoading}
+        previewError={removePreviewError}
+        onRetryPreview={() => removeTarget && loadRemovePreview(removeTarget)}
+        busy={removeBusy}
+        error={removeError}
+        onConfirm={doRemove}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   );
 }

@@ -33,6 +33,8 @@ Errors are `{ "error": "<message>", "code": "<STABLE_CODE>", ... }`.
 | `GET /marcom/upload/batches/:id` | Batch detail | counts per table, warnings, new brands |
 | `GET /marcom/upload/batches/:id/file` | Download the original file | audited |
 | `POST /marcom/upload/batches/:id/rollback` | Roll back the **latest** successful batch | body `{ reason }` (required) |
+| `GET /marcom/upload/batches/:id/remove-preview` | What removing this batch would do (dry run, writes nothing) | `delete` permission |
+| `POST /marcom/upload/batches/:id/remove` | Remove **any** successful batch | body `{ reason }` (required), `delete` permission |
 | `GET /marcom/freshness` | Latest period + uploader + upload date | for the page headers (Phase 4) |
 
 ### `POST /marcom/upload/validate` → 200
@@ -96,6 +98,44 @@ Refusals: `403 STAGED_FORBIDDEN` (someone else's), `404 STAGED_NOT_FOUND`, `410 
 Request `{ "reason": "Spend figures were wrong" }` → `{ "batchId": 2 }`.
 Refusals: `400 REASON_REQUIRED`, `404 BATCH_NOT_FOUND`, `409 NOT_LATEST` (+`latestBatchId`), `409 NOT_ROLLBACKABLE`.
 
+### Remove batch (2026-10-11): `GET …/remove-preview`, `POST …/remove`
+
+Any successful batch can be removed, not only the latest (`backend/src/marcom/removal.ts`, `service.ts removeBatch`).
+Same `admin_marcom_upload` permission (`delete`), same MySQL named lock and one transaction as commit / rollback. The
+preview and the removal build the same plan; the removal rebuilds it under the lock.
+
+Rules, for the removed batch B and each MARCOM table:
+
+| | Rule |
+|---|---|
+| a | Every row B inserted is deleted (current or not), except c2. |
+| b | A row of B that a **later** batch superseded (same natural key): the later row stays current and is not touched; only B's old version is deleted. Nothing points from the later row to B's row, so nothing is left dangling. |
+| c1 | Rows of an **earlier** batch that B superseded, while B's row is still current: re-armed (current again), as rollback does. |
+| c2 | A row of B that a later batch re-uploaded **unchanged** (the later file has the same key and values, so its commit wrote nothing): kept and handed over to the earliest such batch (`batch_id` = that batch), read from the later batches' stored files. The earlier row then points at that batch. |
+| c3 | A later batch superseded B's row: the earlier row stays history and its `superseded_by_batch` now points at that later batch, so rolling that batch back later re-arms the right value. |
+| d | Brands B created: deleted when no remaining row uses them; otherwise kept (and owned by the earliest batch that still uses them). The preview lists them as "kept, still used by batch N". |
+| e | The batch row, its summary, its original file and its audit entries stay. Status becomes `REMOVED` (migration 0043) with `removed_by`, `removed_at`, `remove_reason`. |
+| f | A removed or rolled-back batch cannot be removed (`409 NOT_REMOVABLE`); the reason is required (`400 REASON_REQUIRED`). |
+| g | `audit_log.after_value`: `{ event: 'remove_batch', batchId, reason, counts (per table), brandsDeleted, brandsKept }`. |
+
+Removing the latest batch gives exactly what a rollback gives (tested). "Roll back latest batch" is unchanged and uses the
+same core. The report pages and `GET /marcom/freshness` read the live rows on every request (no cache), so they follow at once.
+
+Preview response (shortened):
+
+```json
+{ "batch": { "batchId": 7, "filename": "…", "status": "SUCCESS" }, "canRemove": true, "blockedReason": null,
+  "tables": [{ "id": "spend", "label": "P1 MARCOM Spending", "deleted": 27, "deletedCurrent": 24,
+               "deletedSuperseded": [{ "key": "2026|1|majaal", "label": "2026-01 · Majaal", "supersededBy": 8 }],
+               "handedOver": [], "rearmed": [], "relinked": [] }],
+  "totals": { "deleted": 27, "otherBatchRowsAffected": 0 },
+  "brands": { "deleted": ["Brand A", "Brand B", "Core Brand"], "kept": [{ "name": "Majaal", "usedBy": [8] }] } }
+```
+
+Remove request `{ "reason": "Test data uploaded by mistake" }` → `{ batchId, counts, totals, brandsDeleted, brandsKept }`.
+Refusals: `400 REASON_REQUIRED`, `404 BATCH_NOT_FOUND`, `409 NOT_REMOVABLE`, `409 LATER_FILE_MISSING` (a later batch kept
+rows unchanged but its file is not stored), `503 BUSY`.
+
 ### `GET /marcom/freshness`
 
 `{ "hasData": true, "latestPeriod": { "year": 2026, "month": 3, "label": "March 2026" }, "uploadedBy": "Nahla", "uploadedAt": "…", "batchId": 4 }`
@@ -111,6 +151,9 @@ python data/warehouse/apply_migrations.py
 
 Note: on a *fresh* database migration `0018` currently fails (pre-existing, unrelated). If you hit that, apply
 only the new files: `0022_marcom_contribution.sql`, then `0023_marcom_upload_staging.sql`.
+
+**Remove batch** needs `0043_marcom_batch_removed.sql` (status `REMOVED` + `removed_by` / `removed_at` / `remove_reason`;
+idempotent; reverse: `data/warehouse/down/0043_marcom_batch_removed_down.sql`, which turns REMOVED batches into ROLLED_BACK).
 Dev-only down script (destroys MARCOM data): `data/warehouse/down/0022_0023_marcom_down.sql`.
 
 Optional env: `MARCOM_STAGING_DIR` (private dir for staged files; default `<os tmp>/07ps-marcom-staging`),
@@ -123,11 +166,12 @@ npm test --workspace backend                      # unit tests; DB-backed suites
 npx vitest run frontend/src                       # state machine + component tests (from the repo root)
 
 python backend/scripts/marcomTestDb.py up         # throwaway MySQL 8 in docker (127.0.0.1:33307, db marcom_test)
-npm run test:marcom-db --workspace backend        # DB-backed service + HTTP route tests (92 tests)
+npm run test:marcom-db --workspace backend        # DB-backed service + HTTP route tests (incl. removeBatch.test.ts)
 python backend/scripts/marcomTestDb.py down
 ```
 
 The DB suites refuse to run against any database not named `marcom_test` on localhost — they TRUNCATE the MARCOM tables.
+An existing test container created before 0026 / 0043 needs those two files applied (or `marcomTestDb.py reset`).
 
 ## Manual test script (real template)
 
@@ -140,6 +184,10 @@ The DB suites refuse to run against any database not named `marcom_test` on loca
 6. Type `Agust` in the month → "Blocking errors" with `P1 - MARCOM Spending`, `B7`, `INVALID_MONTH`; Confirm stays disabled; **Download error report (CSV)** works.
 7. **Roll back latest batch** (needs a reason) → history shows "↺ Rolled back"; re-upload of step 3's file shows it as an update again (values reverted).
 8. In a second browser tab validate a file, wait > 1 h (or set `expires_at` in the past), click Confirm → "This upload expired… please re-upload".
+9. **Remove batch** on an OLDER batch (not the latest): the dialog first shows the impact (rows deleted per sheet, rows a later batch
+   already replaced, brands deleted / kept). The red button stays disabled until a reason is entered AND the file name (or `REMOVE`)
+   is typed. Confirm → the row shows "⊘ Removed" (Details: who / when / why), a green notice gives the counts, and the Brand filter of
+   the four report pages no longer lists the deleted brands. Removing it again is refused; the original file still downloads.
 
 ## Assumptions / behaviour worth knowing
 
@@ -148,6 +196,6 @@ The DB suites refuse to run against any database not named `marcom_test` on loca
   its summary, the original file and the `audit_log` entry remain, so nothing is lost for audit.
 - "Period covered" is the reporting months of the month-keyed sheets (P1, P3, P4-A). Campaign/event dates are used only if the file has none.
 - A no-op commit (everything unchanged) is allowed by the API and recorded as a batch (`0 inserted, N unchanged`); the UI does not offer it.
-- Audit: `audit_log.action` is limited to CREATE/UPDATE/DELETE, so the real verb (`validate`, `commit`, `rollback`, `file_download`) is in `after_value.event`.
+- Audit: `audit_log.action` is limited to CREATE/UPDATE/DELETE, so the real verb (`validate`, `commit`, `rollback`, `remove_batch`, `file_download`) is in `after_value.event`.
 - Auth is bearer-JWT (no cookies) so there is no CSRF surface; that matches the rest of the API.
 - `permission`: one permission, `admin_marcom_upload`, gates every upload route (view). It is separate from the four report-page permissions.

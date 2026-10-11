@@ -11,7 +11,7 @@ import { issuesToCsv } from '../marcom/csv';
 import { isUuid } from '../marcom/staging';
 import {
   MarcomError, auditMarcom, commitUpload, getBatch, getBatchFile, getFreshness, getStagedIssues,
-  listBatches, rollbackBatch, validateUpload,
+  listBatches, previewRemoveBatch, removeBatch, rollbackBatch, validateUpload,
 } from '../marcom/service';
 
 /**
@@ -152,6 +152,27 @@ marcomUploadRouter.post('/batches/:id/rollback', requirePermission('admin_marcom
     const id = intParam(req.params.id);
     if (id === null) { res.status(404).json({ error: 'Batch not found.', code: 'BATCH_NOT_FOUND' }); return; }
     res.json(await rollbackBatch({ batchId: id, actor: actorOf(req), reason: req.body?.reason }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// "Remove batch": any successful batch (not only the latest). The preview is a dry run and writes nothing.
+marcomUploadRouter.get('/batches/:id/remove-preview', requirePermission('admin_marcom_upload', 'delete'), async (req, res, next) => {
+  try {
+    const id = intParam(req.params.id);
+    if (id === null) { res.status(404).json({ error: 'Batch not found.', code: 'BATCH_NOT_FOUND' }); return; }
+    res.json(await previewRemoveBatch(id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+marcomUploadRouter.post('/batches/:id/remove', requirePermission('admin_marcom_upload', 'delete'), async (req, res, next) => {
+  try {
+    const id = intParam(req.params.id);
+    if (id === null) { res.status(404).json({ error: 'Batch not found.', code: 'BATCH_NOT_FOUND' }); return; }
+    res.json(await removeBatch({ batchId: id, actor: actorOf(req), reason: req.body?.reason }));
   } catch (err) {
     next(err);
   }

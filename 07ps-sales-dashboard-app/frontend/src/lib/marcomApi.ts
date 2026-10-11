@@ -40,10 +40,40 @@ export interface CommitResult {
 export interface BatchItem {
   batchId: number; filename: string; fileHash: string; templateVersion: string;
   uploadedBy: { id: number | null; name: string | null }; uploadedAt: string;
-  status: 'SUCCESS' | 'FAILED' | 'ROLLED_BACK'; period: Period | null;
+  status: 'SUCCESS' | 'FAILED' | 'ROLLED_BACK' | 'REMOVED'; period: Period | null;
   totals: { inserted: number; updated: number; unchanged: number; examplesSkipped: number } | null;
   canRollback: boolean; rolledBackAt: string | null; rolledBackBy: string | null; rollbackReason: string | null;
+  /** any successful batch can be removed (not only the latest) */
+  canRemove: boolean; removedAt: string | null; removedBy: string | null; removeReason: string | null;
   errorMessage: string | null;
+}
+
+/** GET /marcom/upload/batches/:id/remove-preview: what "Remove batch" would do (nothing is written). */
+export interface RemovePreview {
+  batch: BatchItem;
+  canRemove: boolean;
+  blockedReason: string | null;
+  tables: {
+    id: TableId; label: string;
+    /** this batch's rows that are deleted */
+    deleted: number; deletedCurrent: number;
+    /** rows a later batch had already replaced: only this batch's old version goes */
+    deletedSuperseded: { key: string; label: string; supersededBy: number }[];
+    /** rows a later batch re-uploaded unchanged: they stay, owned by that batch */
+    handedOver: { label: string; toBatch: number }[];
+    /** earlier batches' rows that become current again */
+    rearmed: { label: string; batch: number }[];
+    /** earlier batches' history rows re-linked to the batch that now replaces them */
+    relinked: { label: string; batch: number; toBatch: number }[];
+  }[];
+  totals: { deleted: number; otherBatchRowsAffected: number };
+  brands: { deleted: string[]; kept: { name: string; usedBy: number[] }[] };
+}
+export interface RemoveResult {
+  batchId: number;
+  totals: { deleted: number; otherBatchRowsAffected: number };
+  brandsDeleted: string[];
+  brandsKept: { name: string; usedBy: number[] }[];
 }
 export interface BatchDetail extends BatchItem {
   tables: { id: TableId; label: string; inserted: number; updated: number; unchanged: number }[];
@@ -151,4 +181,7 @@ export const marcomApi = {
     saveBlob(await (await call(`/marcom/upload/batches/${id}/file`, token)).blob(), `MARCOM_upload_batch_${id}.xlsx`),
   rollback: (token: string, id: number, reason: string) =>
     post<{ batchId: number }>(`/marcom/upload/batches/${id}/rollback`, token, { reason }),
+  removePreview: (token: string, id: number) => json<RemovePreview>(`/marcom/upload/batches/${id}/remove-preview`, token),
+  removeBatch: (token: string, id: number, reason: string) =>
+    post<RemoveResult>(`/marcom/upload/batches/${id}/remove`, token, { reason }),
 };

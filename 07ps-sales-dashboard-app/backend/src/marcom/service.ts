@@ -5,7 +5,8 @@ import { ValidationError } from '../lib/errors';
 import { assertSafeXlsx } from './zipGuard';
 import { runParse } from './parseRunner';
 import { Issue, ParseResult, ParsedRow, TableId, sanitizeText } from './parser';
-import { ADAPTERS, ADAPTER_BY_ID, Adapter, FieldType, normalize, selectCurrentSql } from './tables';
+import { ADAPTERS, ADAPTER_BY_ID, Adapter, FieldType, keyOf, normalize, selectCurrentSql } from './tables';
+import { LaterKeys, RemovalPlan, applyRemoval, planCounts, planRemoval } from './removal';
 import { CurrentRow, FieldChange, TableDiff, diffTable, rowOfCell } from './diff';
 import { MONTHS, TABLE_LABELS, TEMPLATE_VERSION } from './templateConfig';
 import { STAGED_TTL_MINUTES, cleanupExpiredStaged, removeStagedFile, stagedPath, writeStaged } from './staging';
@@ -465,48 +466,187 @@ export async function commitUpload(input: { stagedUploadId: string; actor: Actor
   return result;
 }
 
-// ---------------------------------------------------------------------------- rollback
+// ---------------------------------------------------------------------------- rollback / remove
 
-export async function rollbackBatch(input: { batchId: number; actor: Actor; reason: string }): Promise<{ batchId: number }> {
-  const reason = sanitizeText(String(input.reason ?? '')).slice(0, 500);
-  if (reason.length < 3) throw new MarcomError(400, 'REASON_REQUIRED', 'A reason (at least 3 characters) is required to roll back a batch.');
+function cleanReason(raw: unknown, what: string): string {
+  const reason = sanitizeText(String(raw ?? '')).slice(0, 500);
+  if (reason.length < 3) throw new MarcomError(400, 'REASON_REQUIRED', `A reason (at least 3 characters) is required to ${what}.`);
+  return reason;
+}
 
-  await withWriteLock(async (conn) => {
+/**
+ * The natural keys in the files of the successful batches after `batchId` that re-stated rows unchanged (summary
+ * totals.unchanged > 0): commit wrote nothing for those rows, so the removed batch's row is what they uploaded too
+ * (removal.ts rule c2). Read from each batch's stored original file.
+ */
+async function laterBatchKeys(q: Q, batchId: number): Promise<LaterKeys> {
+  const later = await rows<{ batch_id: number; filename: string; summary_json: unknown; has_file: number }>(
+    q,
+    `SELECT batch_id, filename, summary_json, original_file IS NOT NULL AS has_file FROM marcom_upload_batch
+      WHERE batch_id > ? AND status = 'SUCCESS' ORDER BY batch_id`,
+    [batchId],
+  );
+  const out: LaterKeys = new Map();
+  for (const b of later) {
+    if (!(Number(parseJson(b.summary_json)?.totals?.unchanged ?? 0) > 0)) continue;
+    if (!b.has_file) {
+      throw new MarcomError(409, 'LATER_FILE_MISSING',
+        `Batch ${b.batch_id} kept some rows unchanged but its original file is not stored, so the removal cannot tell which rows it still needs.`);
+    }
+    const file = (await rows<{ original_file: Buffer }>(q, 'SELECT original_file FROM marcom_upload_batch WHERE batch_id = ?', [b.batch_id]))[0].original_file;
+    const tmp = crypto.randomUUID();
+    const filePath = writeStaged(tmp, file);
+    try {
+      const parse = await runParse(filePath, b.filename, {});
+      const keys: Partial<Record<TableId, Set<string>>> = {};
+      for (const a of ADAPTERS) keys[a.id] = new Set(parse.tables[a.id].rows.map((r) => keyOf(a, r.data)));
+      out.set(b.batch_id, keys);
+    } finally {
+      removeStagedFile(tmp);
+    }
+  }
+  return out;
+}
+
+type LockedBatch = { batch_id: number; status: string };
+
+/** Shared by rollback and remove: lock the batch, plan, apply, set the status -- one transaction under the write lock. */
+// eslint-disable-next-line no-unused-vars -- the base rule misreads parameter names in TS function types (see line 18)
+type OnConn<T, A extends unknown[] = []> = (...args: [PoolConnection, ...A]) => Promise<T>;
+
+async function removeWithin(
+  batchId: number,
+  check: OnConn<void, [LockedBatch]>,
+  finish: OnConn<void>,
+  laterKeysFor: OnConn<LaterKeys>,
+): Promise<RemovalPlan> {
+  return withWriteLock(async (conn) => {
     await conn.beginTransaction();
     try {
-      const b = (await rows<{ batch_id: number; status: string }>(conn, 'SELECT batch_id, status FROM marcom_upload_batch WHERE batch_id = ? FOR UPDATE', [input.batchId]))[0];
+      const b = (await rows<LockedBatch>(conn, 'SELECT batch_id, status FROM marcom_upload_batch WHERE batch_id = ? FOR UPDATE', [batchId]))[0];
       if (!b) throw new MarcomError(404, 'BATCH_NOT_FOUND', 'Batch not found.');
-      if (b.status !== 'SUCCESS') throw new MarcomError(409, 'NOT_ROLLBACKABLE', `Only successful batches can be rolled back (this one is ${b.status}).`);
-      const latest = (await rows<{ id: number }>(conn, "SELECT MAX(batch_id) AS id FROM marcom_upload_batch WHERE status = 'SUCCESS'"))[0]?.id;
-      if (latest !== input.batchId) {
-        throw new MarcomError(409, 'NOT_LATEST', 'Only the latest successful batch can be rolled back.', { latestBatchId: latest });
-      }
-
-      for (const a of ADAPTERS) {
-        // 1) remove what this batch inserted (frees the unique "current" slot), 2) re-arm what it superseded.
-        await conn.query(`DELETE FROM ${a.table} WHERE batch_id = ?`, [input.batchId]);
-        await conn.query(`UPDATE ${a.table} SET is_current = 1, superseded_by_batch = NULL WHERE superseded_by_batch = ?`, [input.batchId]);
-      }
-      // Brands this batch created that nothing else references any more.
-      await conn.query(
-        `DELETE FROM marcom_brand WHERE created_batch_id = ?
-           AND NOT EXISTS (SELECT 1 FROM marcom_spend_monthly x WHERE x.brand_id = marcom_brand.brand_id)
-           AND NOT EXISTS (SELECT 1 FROM marcom_campaign x WHERE x.brand_id = marcom_brand.brand_id)
-           AND NOT EXISTS (SELECT 1 FROM marcom_event x WHERE x.brand_id = marcom_brand.brand_id)`,
-        [input.batchId],
-      );
-      await conn.query(
-        `UPDATE marcom_upload_batch SET status = 'ROLLED_BACK', rolled_back_by = ?, rolled_back_at = NOW(), rollback_reason = ? WHERE batch_id = ?`,
-        [input.actor.id, reason, input.batchId],
-      );
+      await check(conn, b);
+      const plan = await planRemoval(conn, batchId, await laterKeysFor(conn));
+      await applyRemoval(conn, plan);
+      await finish(conn);
       await conn.commit();
+      return plan;
     } catch (err) {
       await conn.rollback().catch(() => undefined);
       throw err;
     }
   });
+}
+
+export async function rollbackBatch(input: { batchId: number; actor: Actor; reason: string }): Promise<{ batchId: number }> {
+  const reason = cleanReason(input.reason, 'roll back a batch');
+  await removeWithin(
+    input.batchId,
+    async (conn, b) => {
+      if (b.status !== 'SUCCESS') throw new MarcomError(409, 'NOT_ROLLBACKABLE', `Only successful batches can be rolled back (this one is ${b.status}).`);
+      const latest = await latestSuccessId(conn);
+      if (latest !== input.batchId) {
+        throw new MarcomError(409, 'NOT_LATEST', 'Only the latest successful batch can be rolled back.', { latestBatchId: latest });
+      }
+    },
+    async (conn) => {
+      await conn.query(
+        `UPDATE marcom_upload_batch SET status = 'ROLLED_BACK', rolled_back_by = ?, rolled_back_at = NOW(), rollback_reason = ? WHERE batch_id = ?`,
+        [input.actor.id, reason, input.batchId],
+      );
+    },
+    async () => new Map(), // the latest batch: no later batch can hold any of its rows
+  );
   await audit(input.actor.id, 'marcom_upload_batch', String(input.batchId), 'UPDATE', { event: 'rollback', reason });
   return { batchId: input.batchId };
+}
+
+/** What removing a batch would do (dry run, nothing written): GET /marcom/upload/batches/:id/remove-preview. */
+export interface RemovePreview {
+  batch: BatchListItem;
+  canRemove: boolean;
+  /** why it cannot be removed (its status), when canRemove is false */
+  blockedReason: string | null;
+  tables: {
+    id: TableId; label: string; deleted: number; deletedCurrent: number;
+    deletedSuperseded: { key: string; label: string; supersededBy: number }[];
+    handedOver: { label: string; toBatch: number }[];
+    rearmed: { label: string; batch: number }[];
+    relinked: { label: string; batch: number; toBatch: number }[];
+  }[];
+  totals: { deleted: number; otherBatchRowsAffected: number };
+  brands: { deleted: string[]; kept: { name: string; usedBy: number[] }[] };
+}
+
+function previewOf(item: BatchListItem, plan: RemovalPlan | null, blockedReason: string | null): RemovePreview {
+  const tables = (plan?.tables ?? []).map((t) => ({
+    id: t.id, label: t.label, deleted: t.deleteIds.length, deletedCurrent: t.deletedCurrent,
+    deletedSuperseded: t.deletedSuperseded,
+    handedOver: t.handedOver.map((h) => ({ label: h.label, toBatch: h.toBatch })),
+    rearmed: t.rearm.map((r) => ({ label: r.label, batch: r.batch })),
+    relinked: t.relink.map((r) => ({ label: r.label, batch: r.batch, toBatch: r.toBatch })),
+  }));
+  return {
+    batch: item,
+    canRemove: blockedReason === null,
+    blockedReason,
+    tables,
+    totals: {
+      deleted: tables.reduce((n, t) => n + t.deleted, 0),
+      otherBatchRowsAffected: tables.reduce((n, t) => n + t.handedOver.length + t.rearmed.length + t.relinked.length, 0),
+    },
+    brands: {
+      deleted: (plan?.brands.deleted ?? []).map((b) => b.name),
+      kept: (plan?.brands.kept ?? []).map((b) => ({ name: b.name, usedBy: b.usedBy })),
+    },
+  };
+}
+
+const notRemovable = (status: string) =>
+  status === 'SUCCESS' ? null : `Only successful batches can be removed (this one is ${status === 'ROLLED_BACK' ? 'rolled back' : status.toLowerCase()}).`;
+
+export async function previewRemoveBatch(batchId: number): Promise<RemovePreview> {
+  const r = (await rows<BatchRow>(pool, `${BATCH_SELECT} WHERE b.batch_id = ?`, [batchId]))[0];
+  if (!r) throw new MarcomError(404, 'BATCH_NOT_FOUND', 'Batch not found.');
+  const item = toItem(r, await latestSuccessId(pool));
+  const blocked = notRemovable(r.status);
+  if (blocked) return previewOf(item, null, blocked);
+  return previewOf(item, await planRemoval(pool, batchId, await laterBatchKeys(pool, batchId)), null);
+}
+
+export interface RemoveResult {
+  batchId: number;
+  counts: ReturnType<typeof planCounts>;
+  totals: { deleted: number; otherBatchRowsAffected: number };
+  brandsDeleted: string[];
+  brandsKept: { name: string; usedBy: number[] }[];
+}
+
+/** POST /marcom/upload/batches/:id/remove: removes any successful batch (removal.ts rules), keeps its record and file. */
+export async function removeBatch(input: { batchId: number; actor: Actor; reason: string }): Promise<RemoveResult> {
+  const reason = cleanReason(input.reason, 'remove a batch');
+  const plan = await removeWithin(
+    input.batchId,
+    async (_conn, b) => {
+      const blocked = notRemovable(b.status);
+      if (blocked) throw new MarcomError(409, 'NOT_REMOVABLE', blocked);
+    },
+    async (conn) => {
+      await conn.query(
+        `UPDATE marcom_upload_batch SET status = 'REMOVED', removed_by = ?, removed_at = NOW(), remove_reason = ? WHERE batch_id = ?`,
+        [input.actor.id, reason, input.batchId],
+      );
+    },
+    (conn) => laterBatchKeys(conn, input.batchId),
+  );
+  const p = previewOf({} as BatchListItem, plan, null);
+  const result: RemoveResult = {
+    batchId: input.batchId, counts: planCounts(plan), totals: p.totals, brandsDeleted: p.brands.deleted, brandsKept: p.brands.kept,
+  };
+  await audit(input.actor.id, 'marcom_upload_batch', String(input.batchId), 'UPDATE', {
+    event: 'remove_batch', batchId: input.batchId, reason, counts: result.counts, brandsDeleted: result.brandsDeleted, brandsKept: result.brandsKept,
+  });
+  return result;
 }
 
 // ---------------------------------------------------------------------------- history
@@ -518,13 +658,18 @@ export interface BatchListItem {
   templateVersion: string;
   uploadedBy: { id: number | null; name: string | null };
   uploadedAt: string;
-  status: 'SUCCESS' | 'FAILED' | 'ROLLED_BACK';
+  status: 'SUCCESS' | 'FAILED' | 'ROLLED_BACK' | 'REMOVED';
   period: Period | null;
   totals: { inserted: number; updated: number; unchanged: number; examplesSkipped: number } | null;
   canRollback: boolean;
+  /** any successful batch can be removed (POST /batches/:id/remove) */
+  canRemove: boolean;
   rolledBackAt: string | null;
   rolledBackBy: string | null;
   rollbackReason: string | null;
+  removedAt: string | null;
+  removedBy: string | null;
+  removeReason: string | null;
   errorMessage: string | null;
 }
 
@@ -532,15 +677,17 @@ type BatchRow = {
   batch_id: number; filename: string; file_hash: string; template_version: string; uploaded_by: number | null;
   uploader: string | null; uploaded_at: Date; status: BatchListItem['status']; summary_json: unknown;
   pf: string | null; pt: string | null; rolled_back_at: Date | null; rollbacker: string | null; rollback_reason: string | null;
-  error_message: string | null;
+  removed_at: Date | null; remover: string | null; remove_reason: string | null; error_message: string | null;
 };
 
 const BATCH_SELECT = `SELECT b.batch_id, b.filename, b.file_hash, b.template_version, b.uploaded_by, u.display_name AS uploader,
     b.uploaded_at, b.status, b.summary_json, DATE_FORMAT(b.period_from, '%Y-%m') AS pf, DATE_FORMAT(b.period_to, '%Y-%m') AS pt,
-    b.rolled_back_at, ru.display_name AS rollbacker, b.rollback_reason, b.error_message
+    b.rolled_back_at, ru.display_name AS rollbacker, b.rollback_reason, b.removed_at, rm.display_name AS remover, b.remove_reason,
+    b.error_message
   FROM marcom_upload_batch b
   LEFT JOIN app_user u ON u.user_id = b.uploaded_by
-  LEFT JOIN app_user ru ON ru.user_id = b.rolled_back_by`;
+  LEFT JOIN app_user ru ON ru.user_id = b.rolled_back_by
+  LEFT JOIN app_user rm ON rm.user_id = b.removed_by`;
 
 const parseJson = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v) as Record<string, any> | null;
 
@@ -553,8 +700,11 @@ function toItem(r: BatchRow, latestSuccess: number | null): BatchListItem {
     period: r.pf && r.pt ? { from: r.pf, to: r.pt, label: periodLabel(r.pf, r.pt) } : null,
     totals: s?.totals ?? null,
     canRollback: r.status === 'SUCCESS' && r.batch_id === latestSuccess,
+    canRemove: r.status === 'SUCCESS',
     rolledBackAt: r.rolled_back_at ? r.rolled_back_at.toISOString() : null,
-    rolledBackBy: r.rollbacker, rollbackReason: r.rollback_reason, errorMessage: r.error_message,
+    rolledBackBy: r.rollbacker, rollbackReason: r.rollback_reason,
+    removedAt: r.removed_at ? r.removed_at.toISOString() : null, removedBy: r.remover, removeReason: r.remove_reason,
+    errorMessage: r.error_message,
   };
 }
 

@@ -4,7 +4,7 @@ import express from 'express';
 import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { resetMarcom } from '../../marcom/__tests__/helpers/db';
+import { resetMarcom, snapshot } from '../../marcom/__tests__/helpers/db';
 import { TEMPLATE, monthFile } from '../../marcom/__tests__/helpers/workbooks';
 
 const RUN_DB = process.env.MARCOM_TEST_DB === '1';
@@ -98,6 +98,8 @@ describe.skipIf(!RUN_DB)('/marcom/upload routes (HTTP, DB-backed)', () => {
     { name: 'GET /batches/:id', run: (w) => call('GET', `/marcom/upload/batches/${goodBatch}`, w) },
     { name: 'GET /batches/:id/file', run: (w) => call('GET', `/marcom/upload/batches/${goodBatch}/file`, w) },
     { name: 'POST /batches/:id/rollback', run: (w) => call('POST', `/marcom/upload/batches/${goodBatch}/rollback`, w, { json: { reason: 'because' } }) },
+    { name: 'GET /batches/:id/remove-preview', run: (w) => call('GET', `/marcom/upload/batches/${goodBatch}/remove-preview`, w) },
+    { name: 'POST /batches/:id/remove', run: (w) => call('POST', `/marcom/upload/batches/${goodBatch}/remove`, w, { json: { reason: 'because' } }) },
   ];
 
   describe('authorization (server-side, every route)', () => {
@@ -180,6 +182,22 @@ describe.skipIf(!RUN_DB)('/marcom/upload routes (HTTP, DB-backed)', () => {
       expect((await call('POST', `/marcom/upload/batches/${goodBatch}/rollback`, 'admin', { json: {} })).status).toBe(400);
       expect((await call('POST', '/marcom/upload/batches/99999/rollback', 'admin', { json: { reason: 'nope nope' } })).status).toBe(404);
       expect((await call('POST', '/marcom/upload/batches/abc/rollback', 'admin', { json: { reason: 'nope nope' } })).status).toBe(404);
+    });
+
+    it('remove: preview writes nothing, needs a reason (400), 404 for an unknown batch, coded JSON', async () => {
+      const before = await snapshot(pool as never);
+      const pv = await call('GET', `/marcom/upload/batches/${goodBatch}/remove-preview`, 'admin');
+      expect(pv.status).toBe(200);
+      const body = await pv.json();
+      expect(body).toMatchObject({ canRemove: true, batch: { batchId: goodBatch } });
+      expect(body.totals.deleted).toBeGreaterThan(0);
+      expect(await snapshot(pool as never)).toEqual(before);
+      const noReason = await call('POST', `/marcom/upload/batches/${goodBatch}/remove`, 'admin', { json: {} });
+      expect(noReason.status).toBe(400);
+      expect((await noReason.json()).code).toBe('REASON_REQUIRED');
+      expect((await call('GET', '/marcom/upload/batches/99999/remove-preview', 'admin')).status).toBe(404);
+      expect((await call('POST', '/marcom/upload/batches/99999/remove', 'admin', { json: { reason: 'nope nope' } })).status).toBe(404);
+      expect(await snapshot(pool as never)).toEqual(before);
     });
   });
 
