@@ -15,7 +15,8 @@ import type { AddressInfo } from 'node:net';
  * and every amount is compared PER CURRENCY (residual_doc_ccy):
  *   - the exclusion config: each configured segment / team name exists (exact bytes) and resolves to exactly its teams;
  *   - (a) no line of an excluded segment or team reaches any endpoint, even with both toggles on or the teams asked for;
- *   - (b) overdue + not yet due = open in every currency, on the KPIs and the trend;
+ *   - (b) overdue + not yet due = open invoices in every currency, on the KPIs and the trend (invoice lines only;
+ *     credit notes / payments are Unapplied credits, every line is the Net balance -- decisions of 2026-10-06);
  *   - (c) every bar of the four charts, and customer-table rows, equal the sum of their drill-down;
  *   - defaults (latest snapshot, customer debt, no inter-company) = v_finance_receivable_latest / _customer_exposure /
  *     _trend; every filter = the same condition on v_finance_receivable_line;
@@ -76,27 +77,33 @@ const qa = async (sql: string, params: unknown[] = []): Promise<Json[]> => (awai
 const n = (v: unknown) => Number(v ?? 0);
 const close = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThan(0.005);
 
+/** A customer-invoice line on v_finance_receivable_line (the only lines behind Open invoices / Overdue / Not yet due). */
+const INVOICE = "(move_type = 'out_invoice' AND PaymentKey = -1 AND receivable_scope = 'customer_debt' AND is_intercompany = 0)";
 /** Per-currency totals on the line view: the same conditions the page means, written independently. */
-type Totals = Map<string, { open: number; overdue: number; lines: number }>;
+type Totals = Map<string, { open: number; overdue: number; net: number; lines: number }>;
 async function direct(where: string, params: unknown[] = []): Promise<Totals> {
   const r = await qa(
-    `SELECT doc_currency AS c, SUM(residual_doc_ccy) AS open_amount,
-            SUM(CASE WHEN days_past_due > 0 THEN residual_doc_ccy ELSE 0 END) AS overdue, COUNT(*) AS n
+    `SELECT doc_currency AS c, SUM(CASE WHEN ${INVOICE} THEN residual_doc_ccy ELSE 0 END) AS open_amount,
+            SUM(CASE WHEN ${INVOICE} AND days_past_due > 0 THEN residual_doc_ccy ELSE 0 END) AS overdue,
+            SUM(residual_doc_ccy) AS net, COUNT(*) AS n
      FROM v_finance_receivable_line WHERE SnapshotDateKey = ? AND ${where} GROUP BY doc_currency`,
     [snap, ...params],
   );
-  return new Map(r.map((x) => [String(x.c), { open: n(x.open_amount), overdue: n(x.overdue), lines: n(x.n) }]));
+  return new Map(r.map((x) => [String(x.c), { open: n(x.open_amount), overdue: n(x.overdue), net: n(x.net), lines: n(x.n) }]));
 }
 /** The overview's per-currency KPIs in the same shape. */
 const kpiTotals = (body: Json): Totals =>
-  new Map(body.currencies.map((c: Json) => [c.currency, { open: c.kpis.openAmount, overdue: c.kpis.overdueAmount, lines: c.kpis.lineCount }]));
+  new Map(
+    body.currencies.map((c: Json) => [c.currency, { open: c.kpis.openAmount, overdue: c.kpis.overdueAmount, net: c.kpis.netBalance, lines: c.kpis.lineCount }]),
+  );
 function sameTotals(got: Totals, want: Totals, label: string) {
   expect([...got.keys()].sort(), label).toEqual([...want.keys()].sort());
   for (const [c, w] of want) {
     const g = got.get(c)!;
     expect(g.lines, `${label} ${c} lines`).toBe(w.lines);
-    expect(Math.abs(g.open - w.open), `${label} ${c} open`).toBeLessThan(0.005);
+    expect(Math.abs(g.open - w.open), `${label} ${c} open invoices`).toBeLessThan(0.005);
     expect(Math.abs(g.overdue - w.overdue), `${label} ${c} overdue`).toBeLessThan(0.005);
+    expect(Math.abs(g.net - w.net), `${label} ${c} net balance`).toBeLessThan(0.005);
   }
 }
 const KEPT = 'is_report_excluded = 0';
@@ -104,7 +111,10 @@ const DEFAULT = `receivable_scope = 'customer_debt' AND is_intercompany = 0 AND 
 const tier = (expr: string) => `CASE WHEN ${expr} >= 100000 THEN 'large' WHEN ${expr} >= 10000 THEN 'medium' ELSE 'small' END`;
 
 describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
+  /** teams whose every line is excluded (segment / sales_team rules) */
   let excludedTeamKeys: Set<string>;
+  /** teams whose customer invoices only are excluded (invoice_team rule, 0039: -1 = no Odoo sales team) */
+  let invoiceOnlyTeamKeys: Set<string>;
   let excludedSegments: Set<string>;
 
   beforeAll(async () => {
@@ -122,8 +132,9 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
     );
     USERS.salesperson.salespersonKey = n(sp.k);
     USERS.salespersonEnabled.salespersonKey = n(sp.k);
-    const x = await qa('SELECT SalesTeamKey FROM v_finance_excluded_sales_team');
-    excludedTeamKeys = new Set(x.map((r) => String(r.SalesTeamKey)));
+    const x = await qa('SELECT SalesTeamKey, invoices_only FROM v_finance_excluded_sales_team');
+    excludedTeamKeys = new Set(x.filter((r) => !n(r.invoices_only)).map((r) => String(r.SalesTeamKey)));
+    invoiceOnlyTeamKeys = new Set(x.filter((r) => n(r.invoices_only)).map((r) => String(r.SalesTeamKey)));
     excludedSegments = new Set((await qa("SELECT name FROM cfg_finance_report_exclusion WHERE rule_type = 'segment'")).map((r) => String(r.name)));
   });
   afterAll(async () => {
@@ -135,7 +146,7 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
   it('every configured segment exists in dim_segment and every configured team name in dim_sales_team (exact bytes)', async () => {
     const cfg = await qa('SELECT rule_type, name FROM cfg_finance_report_exclusion');
     expect(cfg.filter((c) => c.rule_type === 'segment').length).toBeGreaterThan(0);
-    expect(cfg.filter((c) => c.rule_type === 'sales_team').length).toBeGreaterThan(0);
+    expect(cfg.every((c) => ['segment', 'sales_team', 'invoice_team'].includes(String(c.rule_type)))).toBe(true);
     for (const c of cfg) {
       const sql =
         c.rule_type === 'segment'
@@ -152,9 +163,26 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
           OR BINARY st.SalesTeam IN (SELECT BINARY name FROM cfg_finance_report_exclusion WHERE rule_type = 'sales_team')`,
     );
     expect([...excludedTeamKeys].sort()).toEqual(want.map((r) => String(r.SalesTeamKey)).sort());
-    // decisions of 2026-10-05; the look-alike مبيعات الإدارة (BMH-ALL-01, hamza) must not be caught
-    for (const k of ['BMH-ALL-00', 'BMH-ALL-02', 'MJ-ALL-03', 'TK-ALL-03']) expect(excludedTeamKeys.has(k), k).toBe(true);
-    expect(excludedTeamKeys.has('BMH-ALL-01')).toBe(false);
+    // decision of 2026-10-11 (0041): the segments Backoffice and Inter Company, nothing else -- BMH-ALL-02 (Backoffice) and
+    // BMH-ALL-00 (Inter Company) stay out; EXPORT and the documents without an Odoo team are back in; the look-alike
+    // مبيعات الإدارة (BMH-ALL-01, hamza) must not be caught
+    for (const k of ['BMH-ALL-00', 'BMH-ALL-02']) expect(excludedTeamKeys.has(k), k).toBe(true);
+    for (const k of ['BMH-ALL-01', '-1']) expect(excludedTeamKeys.has(k), k).toBe(false);
+    expect([...invoiceOnlyTeamKeys]).toEqual([]);
+    const exportTeam = await q1("SELECT SalesTeamKey AS k FROM dim_sales_team WHERE SalesTeam = 'EXPORT'");
+    if (exportTeam) expect(excludedTeamKeys.has(String(exportTeam.k))).toBe(false); // ODOO-TEAM-27
+  });
+
+  it('team -1 (no Odoo sales team): every line is in the report (0041), customer invoices included', async () => {
+    const rows = await qa(
+      `SELECT move_type, PaymentKey <> -1 AS is_payment, is_report_excluded AS x, COUNT(*) AS c FROM v_finance_receivable_line
+        WHERE SnapshotDateKey = ? AND SalesTeamKey = '-1' GROUP BY 1, 2, 3`,
+      [snap],
+    );
+    for (const r of rows) expect(n(r.x), `${r.move_type} payment=${r.is_payment}`).toBe(0);
+    const invoices = rows.some((r) => r.move_type === 'out_invoice' && !n(r.is_payment));
+    const d = (await get('/debt-report/drilldown?kind=team&key=-1&currency=LYD&includeOther=true&includeIntercompany=true')).body;
+    if (invoices) expect(d.rows.some((r: Json) => r.lineKind === 'invoice')).toBe(true);
   });
 
   // ---- (a) no excluded line reaches any endpoint -----------------------------------------------------------------
@@ -236,22 +264,34 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
     expect(checked).toBeGreaterThan(20);
   });
 
-  it('(c) customer-table rows equal their drill-down (open, due debt, open documents, invoice amount)', async () => {
+  it('(c) customer-table rows equal their drill-down (net, open invoices, due debt, credits, open invoices count, invoice amount)', async () => {
     const rows = (await get('/debt-report/customers')).body.rows as Json[];
-    for (const r of [...rows.slice(0, 10), ...rows.filter((x) => x.currency !== 'LYD').slice(0, 5)]) {
+    const creditOnly = rows.filter((x) => x.openDocuments === 0).slice(0, 3);
+    expect(creditOnly.length).toBeGreaterThan(0); // credit-only customers stay in the table
+    for (const r of [...rows.slice(0, 10), ...rows.filter((x) => x.currency !== 'LYD').slice(0, 5), ...creditOnly]) {
       const d = (await get(`/debt-report/drilldown?kind=account&key=${r.companyKey}:${r.customerKey}&currency=${r.currency}`)).body;
-      close(d.totals.openBalance, r.open);
-      close(d.totals.overdueAmount, r.overdue);
-      close(d.totals.invoiceAmount, r.invoiceAmount);
-      expect(d.totals.openDocuments).toBe(r.openDocuments);
+      close(d.totals.openBalance, r.net);
+      const inv = d.rows.filter((x: Json) => x.lineKind === 'invoice');
+      close(inv.reduce((t: number, x: Json) => t + x.openBalance, 0), r.open);
+      close(inv.reduce((t: number, x: Json) => t + x.overdueAmount, 0), r.overdue);
+      close(d.rows.filter((x: Json) => ['credit_note', 'payment'].includes(x.lineKind)).reduce((t: number, x: Json) => t + x.openBalance, 0), r.credits);
+      const firstLine = new Map<number, Json>();
+      for (const x of inv) if (!firstLine.has(x.moveId) || x.lineId < firstLine.get(x.moveId).lineId) firstLine.set(x.moveId, x);
+      expect(firstLine.size).toBe(r.openDocuments);
+      close([...firstLine.values()].reduce((t, x) => t + x.invoiceAmount, 0), r.invoiceAmount);
     }
   });
 
   // ---- defaults = the views ---------------------------------------------------------------------------------------
   it('default overview = v_finance_receivable_latest, per currency', async () => {
+    // the view holds every default line (= Net balance); invoices are its out_invoice lines (no payment)
     const v = await qa(
-      `SELECT doc_currency AS c, SUM(residual_doc_ccy) AS o, SUM(CASE WHEN days_past_due > 0 THEN residual_doc_ccy ELSE 0 END) AS d,
-              COUNT(*) AS n, COUNT(DISTINCT move_id) AS docs, COUNT(DISTINCT CustomerKey) AS cust
+      `SELECT doc_currency AS c, SUM(residual_doc_ccy) AS net, COUNT(*) AS n,
+              SUM(CASE WHEN move_type = 'out_invoice' AND PaymentKey = -1 THEN residual_doc_ccy ELSE 0 END) AS o,
+              SUM(CASE WHEN move_type = 'out_invoice' AND PaymentKey = -1 AND days_past_due > 0 THEN residual_doc_ccy ELSE 0 END) AS d,
+              SUM(CASE WHEN NOT (move_type = 'out_invoice' AND PaymentKey = -1) THEN residual_doc_ccy ELSE 0 END) AS credits,
+              COUNT(DISTINCT CASE WHEN move_type = 'out_invoice' AND PaymentKey = -1 THEN move_id END) AS docs,
+              COUNT(DISTINCT CASE WHEN move_type = 'out_invoice' AND PaymentKey = -1 THEN CustomerKey END) AS cust
        FROM v_finance_receivable_latest GROUP BY doc_currency`,
     );
     const { status, body } = await get('/debt-report/overview');
@@ -261,6 +301,8 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
       const c = body.currencies.find((y: Json) => y.currency === x.c);
       close(c.kpis.openAmount, n(x.o));
       close(c.kpis.overdueAmount, n(x.d));
+      close(c.kpis.netBalance, n(x.net));
+      close(c.kpis.unappliedCredits, n(x.credits));
       expect(c.kpis.lineCount).toBe(n(x.n));
       expect(c.kpis.openDocuments).toBe(n(x.docs));
       expect(c.kpis.customers).toBe(n(x.cust));
@@ -272,30 +314,43 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
   });
 
   it('default customers = v_finance_customer_exposure (one row per company + customer + currency)', async () => {
-    const view = await qa('SELECT CompanyKey, CustomerKey, currency, open_documents, invoice_amount, open_amount, overdue_amount, not_due_amount FROM v_finance_customer_exposure');
+    // the view's open amount is every line (= the row's net); the invoice figures are written directly on the line view
+    const view = await qa('SELECT CompanyKey, CustomerKey, currency, open_amount FROM v_finance_customer_exposure');
+    const inv = await qa(
+      `SELECT CompanyKey, CustomerKey, doc_currency AS currency, COUNT(DISTINCT move_id) AS docs, SUM(residual_doc_ccy) AS o,
+              SUM(CASE WHEN days_past_due > 0 THEN residual_doc_ccy ELSE 0 END) AS d
+       FROM v_finance_receivable_line WHERE SnapshotDateKey = ? AND ${DEFAULT} AND ${INVOICE}
+       GROUP BY CompanyKey, CustomerKey, doc_currency`,
+      [snap],
+    );
+    const invByKey = new Map(inv.map((x) => [`${x.CompanyKey}:${x.CustomerKey}:${x.currency}`, x]));
     const { body } = await get('/debt-report/customers');
     expect(body.rows.length).toBe(view.length);
     const byKey = new Map(body.rows.map((r: Json) => [`${r.companyKey}:${r.customerKey}:${r.currency}`, r]));
     for (const v of view) {
-      const r = byKey.get(`${v.CompanyKey}:${v.CustomerKey}:${v.currency}`) as Json;
+      const key = `${v.CompanyKey}:${v.CustomerKey}:${v.currency}`;
+      const r = byKey.get(key) as Json;
       expect(r).toBeDefined();
-      close(r.open, n(v.open_amount));
-      close(r.overdue, n(v.overdue_amount));
-      close(r.notDue, n(v.not_due_amount));
-      close(r.invoiceAmount, n(v.invoice_amount));
-      expect(r.openDocuments).toBe(n(v.open_documents));
+      close(r.net, n(v.open_amount));
+      const i = invByKey.get(key);
+      close(r.open, n(i?.o));
+      close(r.overdue, n(i?.d));
+      close(r.notDue, n(i?.o) - n(i?.d));
+      expect(r.openDocuments).toBe(n(i?.docs));
     }
   });
 
-  it('default trend (latest point per currency) = v_finance_receivable_trend', async () => {
-    const v = await qa('SELECT currency AS c, SUM(open_amount) AS o, SUM(overdue_amount) AS d, SUM(not_due_amount) AS nd FROM v_finance_receivable_trend WHERE SnapshotDateKey = ? GROUP BY currency', [snap]);
+  it('default trend (latest point per currency): net = v_finance_receivable_trend, open / overdue = the invoice lines', async () => {
+    const v = await qa('SELECT currency AS c, SUM(open_amount) AS net FROM v_finance_receivable_trend WHERE SnapshotDateKey = ? GROUP BY currency', [snap]);
+    const want = await direct(DEFAULT);
     const { body } = await get('/debt-report/trend');
     const iso = `${String(snap).slice(0, 4)}-${String(snap).slice(4, 6)}-${String(snap).slice(6, 8)}`;
     for (const x of v) {
       const p = body.points.find((y: Json) => y.currency === x.c && y.snapshotDate === iso);
-      close(p.open, n(x.o));
-      close(p.overdue, n(x.d));
-      close(p.notDue, n(x.nd));
+      close(p.net, n(x.net));
+      close(p.open, want.get(x.c)!.open);
+      close(p.overdue, want.get(x.c)!.overdue);
+      close(p.notDue, want.get(x.c)!.open - want.get(x.c)!.overdue);
     }
   });
 
@@ -308,26 +363,21 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
     for (const s of await pick('SalespersonKey')) cases.push([`salespersonKeys=${s}`, 'SalespersonKey = ?', [s]]);
     for (const t of await pick('SalesTeamKey')) cases.push([`salesTeamKeys=${encodeURIComponent(t)}`, 'SalesTeamKey = ?', [t]]);
     for (const t of await pick('PaymentTermKey')) cases.push([`paymentTermKeys=${t}`, 'PaymentTermKey = ?', [t]]);
-    for (const d of await pick('document_type_key')) cases.push([`documentTypeKeys=${encodeURIComponent(d)}`, 'document_type_key = ?', [d]]);
     for (let b = 1; b <= 8; b++) cases.push([`agingBucketKeys=${b}`, 'AgingBucketKey = ?', [b]]);
     cases.push(['overdueStatus=overdue', 'days_past_due > 0', []]);
     cases.push(['overdueStatus=not_due', 'days_past_due <= 0', []]);
     for (const d of ['full', 'partial', 'pending']) cases.push([`deliveryStatuses=${d}`, 'delivery_status = ?', [d]]);
     cases.push(['deliveryStatuses=none', 'delivery_status IS NULL', []]);
     const cust = await q1(`SELECT CustomerKey AS k, customer AS c FROM v_finance_receivable_line WHERE SnapshotDateKey = ? AND ${DEFAULT} AND CustomerKey > 0 ORDER BY residual_company_ccy DESC LIMIT 1`, [snap]);
-    const term = String(cust.c).slice(0, 6);
-    cases.push([`customerSearch=${encodeURIComponent(term)}`, 'customer LIKE ?', [`%${term}%`]]);
     cases.push([`customerKeys=${cust.k}`, 'CustomerKey = ?', [cust.k]]);
+    // Customer Category = dim_customer.CustomerClass_LY, the column Customer Growth reads
+    for (const c of ['A', 'B', 'C', 'D']) cases.push([`customerCategories=${c}`, 'CustomerKey IN (SELECT CustomerKey FROM dim_customer WHERE CustomerClass_LY = ?)', [c]]);
+    cases.push(['customerCategories=none', "CustomerKey IN (SELECT CustomerKey FROM dim_customer WHERE CustomerClass_LY IS NULL OR CustomerClass_LY NOT IN ('A','B','C','D'))", []]);
     // size tiers classify on the LYD residual (company currency)
     for (const t of ['large', 'medium', 'small']) {
       cases.push([
         `invoiceTiers=${t}`,
         `move_id IN (SELECT move_id FROM v_finance_receivable_line WHERE SnapshotDateKey = ${snap} AND ${DEFAULT} GROUP BY move_id HAVING ${tier('SUM(residual_company_ccy)')} = ?)`,
-        [t],
-      ]);
-      cases.push([
-        `customerTiers=${t}`,
-        `(CompanyKey, CustomerKey) IN (SELECT CompanyKey, CustomerKey FROM v_finance_receivable_line WHERE SnapshotDateKey = ${snap} AND ${DEFAULT} GROUP BY CompanyKey, CustomerKey HAVING ${tier('SUM(residual_company_ccy)')} = ?)`,
         [t],
       ]);
     }
@@ -342,6 +392,22 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
     }
   });
 
+  it('a customer has the same Customer Category here as on Customer Growth (sample: every customer Customer Growth lists)', async () => {
+    const { fetchCategoryPerformance } = await import('../../measures/customerGrowth');
+    const growth = await fetchCategoryPerformance(pool, new Date(), {});
+    const onGrowth = new Map<number, string>();
+    for (const cat of growth) for (const c of cat.customers) onGrowth.set(c.customerKey, `Category ${cat.category}`);
+    const rows = (await get('/debt-report/customers?includeOther=true&includeIntercompany=true')).body.rows as Json[];
+    const both = rows.filter((r) => onGrowth.has(n(r.customerKey)));
+    expect(both.length, 'customers on both pages').toBeGreaterThan(5);
+    for (const r of both) expect(r.customerCategory, `customer ${r.customerKey}`).toBe(onGrowth.get(n(r.customerKey)));
+    // and the filter keeps exactly those customers
+    for (const cat of ['A', 'B', 'C', 'D']) {
+      const filtered = (await get(`/debt-report/customers?includeOther=true&includeIntercompany=true&customerCategories=${cat}`)).body.rows as Json[];
+      for (const r of filtered) expect(r.customerCategory).toBe(`Category ${cat}`);
+    }
+  });
+
   it('scope toggles add exactly the other-receivable and inter-company lines; all on + excluded = the fact total (= Odoo)', async () => {
     sameTotals(kpiTotals((await get('/debt-report/overview?includeOther=true')).body), await direct(`is_intercompany = 0 AND ${KEPT}`), 'includeOther');
     sameTotals(
@@ -353,9 +419,9 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
     const excluded = await direct('is_report_excluded = 1');
     const fact = await direct('1 = 1');
     for (const [c, f] of fact) {
-      const kept = both.get(c) ?? { open: 0, overdue: 0, lines: 0 };
-      const x = excluded.get(c) ?? { open: 0, overdue: 0, lines: 0 };
-      close(kept.open + x.open, f.open);
+      const kept = both.get(c) ?? { open: 0, overdue: 0, net: 0, lines: 0 };
+      const x = excluded.get(c) ?? { open: 0, overdue: 0, net: 0, lines: 0 };
+      close(kept.net + x.net, f.net);
       expect(kept.lines + x.lines).toBe(f.lines);
     }
     const factRows = n((await q1('SELECT COUNT(*) AS c FROM fact_finance_receivable_snapshot WHERE SnapshotDateKey = ?', [snap])).c);

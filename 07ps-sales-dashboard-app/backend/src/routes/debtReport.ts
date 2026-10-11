@@ -15,6 +15,8 @@ import {
   parseDebtQuery,
   parseDrill,
 } from '../measures/debtReport';
+import { fetchDebtAging, parseAgingQuery } from '../measures/debtAging';
+import { fetchCollectionsDrilldown, fetchCollectionsTrend, parseCollectionsQuery } from '../measures/debtCollections';
 
 /**
  * Debt Report (Finance / Price department; measures/debtReport.ts), permission page `debt_report`:
@@ -22,10 +24,19 @@ import {
  *   GET /debt-report/meta       snapshots, filter options (currencies too), labels (en + ar), size tiers, the report
  *                               exclusions, Odoo link base, finance freshness
  *   GET /debt-report/overview   per currency: KPIs, aging distribution, overdue by customer (top 15) / salesperson / team
- *   GET /debt-report/trend      open / overdue / not due per snapshot date and currency
+ *   GET /debt-report/trend      open / overdue / not due per snapshot date and currency (null = no row for the filters
+ *                               on that snapshot, e.g. a company not yet extracted then)
+ *   GET /debt-report/collections-trend?currency=&grain=day|week|month&from=&to=
+ *                               money collected per period (measures/debtCollections.ts): overdue / not yet due / other /
+ *                               not matched, payment count, collection rate; default the last 12 weeks (Sunday..Saturday)
+ *   GET /debt-report/collections-drilldown?currency=&grain=&period=<first day>
+ *                               the payments of one period and the invoices they were applied to
  *   GET /debt-report/customers  one row per company + customer + currency
  *   GET /debt-report/drilldown?kind=customer|aging|salesperson|team|account&key=<key>&currency=<code>
  *                               the open lines behind one chart point / table row, in that currency
+ *   GET /debt-report/aging?currency=<code>&term=<key|due_date|missing>
+ *                               the Aging Map: one customer per dot, zoned by its oldest open invoice against that
+ *                               invoice's term (measures/debtAging.ts; settings in the cfg_finance_aging_* tables, 0037)
  *
  * Every endpoint leaves out the excluded segments and sales teams (cfg_finance_report_exclusion; measures/debtReport.ts
  * EXCLUDED_TEAMS_CONDITION) -- no parameter can bring them back.
@@ -77,6 +88,19 @@ debtReportRouter.get(
 );
 
 debtReportRouter.get(
+  '/collections-trend',
+  handle((req) => fetchCollectionsTrend(pool, parseCollectionsQuery(req.query as Record<string, unknown>), scoped(req))),
+);
+
+debtReportRouter.get(
+  '/collections-drilldown',
+  handle((req) => {
+    const query = req.query as Record<string, unknown>;
+    return fetchCollectionsDrilldown(pool, parseCollectionsQuery(query), scoped(req), String(query.period ?? ''));
+  }),
+);
+
+debtReportRouter.get(
   '/customers',
   handle((req) => fetchDebtCustomers(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req))),
 );
@@ -87,4 +111,9 @@ debtReportRouter.get(
     const query = req.query as Record<string, unknown>;
     return fetchDebtDrilldown(pool, parseDebtQuery(query), scoped(req), parseDrill(query));
   }),
+);
+
+debtReportRouter.get(
+  '/aging',
+  handle((req) => fetchDebtAging(pool, parseAgingQuery(req.query as Record<string, unknown>), scoped(req))),
 );

@@ -25,7 +25,8 @@ _MULTI_SPACE = re.compile(r"\s+")
 
 MAJAAL = "Majaal"
 TIKA = "Tika"
-KNOWN_COMPANIES = (MAJAAL, TIKA)
+ATHENA = "Athena"
+KNOWN_COMPANIES = (MAJAAL, TIKA, ATHENA)
 
 
 def normalize_match_name(value: Any) -> str:
@@ -49,6 +50,8 @@ def normalize_match_company(value: Any) -> str:
         return MAJAAL
     if upper == "TIKA":
         return TIKA
+    if upper == "ATHENA":
+        return ATHENA
     return text
 
 

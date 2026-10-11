@@ -22,6 +22,16 @@ describe('fetchDepartmentFreshness', () => {
     expect(p.query.mock.calls[0][1]).toEqual(['finance']); // only this department's runs
   });
 
+  it('counts finance runs at any level: the snapshot step of a main / full_all run is a child row', async () => {
+    const p = pool([[{ at: '2026-10-07 06:02:00', job: 'finance_receivables' }], [], [{ k: 20261007 }]]);
+    const f = await fetchDepartmentFreshness(p, 'finance');
+    expect(f.lastSuccessUtc).toBe('2026-10-07T06:02:00.000Z');
+    for (const [sql] of p.query.mock.calls.slice(0, 2)) {
+      expect(sql).not.toMatch(/parent_run_uid/);
+    }
+    expect(p.query.mock.calls[0][0]).toMatch(/status = 'success'/);
+  });
+
   it('hides a failure older than the last success and has no snapshot date outside finance', async () => {
     const p = pool([[{ at: '2026-10-04 11:26:34', job: 'sales_full' }], [{ at: '2026-10-04 10:00:00', job: 'sales_full' }]]);
     const f = await fetchDepartmentFreshness(p, 'sales');

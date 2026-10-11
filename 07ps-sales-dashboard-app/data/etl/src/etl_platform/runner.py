@@ -1,9 +1,19 @@
 """Runs a registered job: dependency jobs first, then the job's tasks in dependency order.
 
 For every job run (unless ``JobSpec.log_run`` is False) one ``etl_run_log`` row goes ``running`` ->
-``success``/``failed``; dependency jobs get their own rows with ``parent_run_uid`` set. Every task gets an
+``success``/``partial``/``failed``; dependency jobs get their own rows with ``parent_run_uid`` set to the run that
+started them, so one ``full_all`` run is one top-level row plus its core_dims / finance / sales rows. Every task gets an
 ``etl_task_log`` row (rows extracted/loaded, -1 key fallbacks with sample source ids, watermark before/after).
-Every check result goes to ``etl_dq_result``. The whole invocation holds the MySQL ETL lock.
+Every check result goes to ``etl_dq_result``. The whole invocation holds the MySQL ETL lock, so a second trigger
+fails with ``RunLockError`` after the lock wait instead of running alongside.
+
+Failure rules for a job with dependency jobs:
+* a required dependency fails -> the job's own tasks do not run and the job fails;
+* a dependency whose own required dependency failed earlier in the run (finance when core_dims failed) is not
+  started: it gets a ``skipped`` row;
+* an optional dependency (``JobSpec.optional_jobs``, finance in ``full_all``) fails -> everything else still
+  runs and keeps its data, and the job ends ``partial`` with "<department> failed: <error>". Nothing is retried
+  inside the run; the next scheduled run tries again.
 
 Progress lines ``Pipeline step <task> started|completed|failed`` match the pattern the Node worker already
 parses (runPipelineJob.ts STAGE_PATTERN), so the ETL Control Center shows task progress unchanged.
@@ -34,6 +44,8 @@ from etl_platform.watermark import Watermark, WatermarkStore
 logger = logging.getLogger(__name__)
 
 STATUS_RUNNING, STATUS_SUCCESS, STATUS_FAILED, STATUS_SKIPPED = "running", "success", "failed", "skipped"
+STATUS_PARTIAL = "partial"  # an optional dependency job failed; the rest of the run succeeded
+NOT_RUN = (STATUS_FAILED, STATUS_SKIPPED)
 STALE_RUNNING_AFTER = _dt.timedelta(hours=6)  # same as sales_pipeline.etl_run_log
 FALLBACK_SAMPLE = 20
 
@@ -100,6 +112,38 @@ class RunContext:
             self._sources[key] = OdooSource.connect(self.config, profile, today=self.as_of)
         return self._sources[key]
 
+    def odoo_company_ids(self, profile: str = "default") -> tuple[int, ...]:
+        """Configured Odoo companies, with ODOO_COMPANY_NAMES resolved against accessible res.company rows."""
+        cache_key = f"odoo_company_ids:{profile}"
+        if cache_key in self.state:
+            return self.state[cache_key]
+        ids = list(self.config.odoo_company_ids)
+        names = self.config.odoo_company_names
+        if names:
+            from sales_pipeline.product_matching import normalize_match_company
+
+            source = self.odoo(profile)
+            companies = source.accessible_companies()
+            by_name = {
+                normalize_match_company(c.get("name")).upper(): int(c["id"])
+                for c in companies
+                if c.get("name") is not None
+            }
+            missing = [name for name in names if normalize_match_company(name).upper() not in by_name]
+            if missing:
+                visible = ", ".join(f"{c['id']} {c.get('name')}" for c in companies)
+                raise RuntimeError(
+                    "ODOO_COMPANY_NAMES not visible to the Odoo user: "
+                    + ", ".join(missing)
+                    + f". Visible companies: {visible}"
+                )
+            ids.extend(by_name[normalize_match_company(name).upper()] for name in names)
+        resolved = tuple(dict.fromkeys(int(i) for i in ids))
+        self.state[cache_key] = resolved
+        if f"odoo:{profile}" in self._sources:
+            self._sources[f"odoo:{profile}"].company_ids = resolved
+        return resolved
+
     def excel(self):
         if "excel" not in self._sources:
             from etl_platform.sources.excel import ExcelSource
@@ -141,6 +185,9 @@ class Runner:
         self.config = config
         self._sources: dict[str, Any] = {}
         self._done: dict[str, str] = {}
+        self._totals: dict[str, dict[str, int]] = {}
+        # status of the top-level job of the last run() (success / partial / failed); run.py maps it to an exit code
+        self.last_status: str | None = None
 
     # -- public -------------------------------------------------------------------------------------------
     def run(
@@ -153,12 +200,17 @@ class Runner:
         if dataset is not None:
             self._check_dataset_filter(job, dataset)
         meta.require_meta_tables(self.engine)
-        self._sync_dataset_registry()
         as_of = as_of or _dt.datetime.now(ZoneInfo(self.config.business_timezone)).date()
         self._done = {}
+        self._totals = {}
+        self.last_status = None
         with run_lock(self.engine, self.config.lock_name, self.config.lock_timeout_seconds):
-            return self._run_job(job, parent_uid=None, as_of=as_of, full_refresh=full_refresh, dataset=dataset,
-                                 allow_large_change=allow_large_change, trigger_source=trigger_source)
+            self._sync_dataset_registry()
+            try:
+                return self._run_job(job, parent_uid=None, as_of=as_of, full_refresh=full_refresh, dataset=dataset,
+                                     allow_large_change=allow_large_change, trigger_source=trigger_source)
+            finally:
+                self.last_status = self._done.get(job.name, STATUS_FAILED)
 
     # -- jobs ---------------------------------------------------------------------------------------------
     def _run_job(self, job: JobSpec, *, parent_uid: str | None, as_of: _dt.date, full_refresh: bool, dataset: str | None,
@@ -172,17 +224,29 @@ class Runner:
         issues: list[str] = []
         unregister = register_channel(lambda lvl, msg, ctx: issues.append(f"{lvl}: {msg}") if lvl in ("WARNING", "ERROR", "CRITICAL") else None)
         totals = {"extracted": 0, "loaded": 0}
+        optional_failures: list[str] = []
         try:
-            # Every dependency is attempted even if an earlier one failed (full_all still runs finance when
-            # sales fails); a dependency that itself needs a failed job fails fast in its own check below.
+            # Every dependency is attempted even if an earlier one failed (full_all still runs sales when finance
+            # fails); a dependency whose own required dependency failed is skipped, not started.
             dep_failures: list[str] = []
             for dep_name in job.depends_on_jobs:
-                if self._done.get(dep_name) == STATUS_FAILED:
-                    dep_failures.append(f"dependency job '{dep_name}' failed earlier in this run")
+                optional = dep_name in job.optional_jobs
+                failures = optional_failures if optional else dep_failures
+                if self._done.get(dep_name) in NOT_RUN:
+                    failures.append(f"dependency job '{dep_name}' {self._done[dep_name]} earlier in this run")
                     continue
                 if dep_name in self._done:
                     continue
                 dep = self.registry.get_job(dep_name)
+                blocker = self._failed_requirement(dep)
+                if blocker is not None:
+                    reason = f"skipped: dependency job '{blocker}' failed"
+                    logger.warning("Job %s %s", dep.name, reason)
+                    if dep.log_run:
+                        self._skipped_run_row(dep, run_uid, trigger_source, reason)
+                    self._done[dep.name] = STATUS_SKIPPED
+                    failures.append(f"{dep.department} {reason}" if optional else f"dependency job '{dep.name}' {reason}")
+                    continue
                 fresh = None if full_refresh else self._fresh_success(dep)
                 if fresh is not None:
                     logger.info("Job %s: dependency %s reused (succeeded at %s UTC, within %s min)", job.name, dep.name, fresh, self._reuse_window(dep))
@@ -192,9 +256,17 @@ class Runner:
                     self._run_job(dep, parent_uid=run_uid, as_of=as_of, full_refresh=full_refresh, dataset=None,
                                   allow_large_change=allow_large_change, trigger_source=trigger_source)
                 except Exception as exc:  # noqa: BLE001 - recorded on the dependency's own row; reported below
-                    dep_failures.append(f"dependency job '{dep.name}' failed: {exc}")
+                    if optional:
+                        logger.error("Job %s: optional dependency %s failed; the rest of the run continues", job.name, dep.name)
+                        failures.append(f"{dep.department} failed: {type(exc).__name__}: {exc}")
+                    else:
+                        failures.append(f"dependency job '{dep.name}' failed: {exc}")
+                finally:
+                    if not job.tasks:  # an umbrella job (main, full_all) reports what its dependency jobs loaded
+                        for key, value in self._totals.get(dep.name, {}).items():
+                            totals[key] += value
             if dep_failures:
-                raise DependencyFailed("; ".join(dep_failures))
+                raise DependencyFailed("; ".join(dep_failures + optional_failures))
 
             ctx = RunContext(self.engine, self.config, self.registry, run_uid, job, as_of, full_refresh, dataset,
                              allow_large_change, quality, WatermarkStore(self.engine), trigger_source, self._sources)
@@ -208,6 +280,7 @@ class Runner:
         except Exception as exc:
             finished = utc_now()
             message = f"{type(exc).__name__}: {exc}"
+            self._totals[job.name] = totals
             if job.log_run:
                 self._finish_run_row(run_uid, STATUS_FAILED, started, finished, totals, quality_issue_count(issues), message)
             notify("ERROR", f"ETL job '{job.name}' failed: {message}", job=job.name, run_uid=run_uid)
@@ -216,12 +289,25 @@ class Runner:
         finally:
             unregister()
         finished = utc_now()
+        status = STATUS_PARTIAL if optional_failures else STATUS_SUCCESS
+        message = "; ".join(optional_failures) or None
+        self._totals[job.name] = totals
         if job.log_run:
-            self._finish_run_row(run_uid, STATUS_SUCCESS, started, finished, totals, quality_issue_count(issues), None, job.on_success)
-        self._done[job.name] = STATUS_SUCCESS
-        logger.info("Job %s completed in %.1fs (extracted=%s loaded=%s)", job.name, (finished - started).total_seconds(),
-                    f"{totals['extracted']:,}", f"{totals['loaded']:,}")
+            self._finish_run_row(run_uid, status, started, finished, totals, quality_issue_count(issues), message, job.on_success)
+        self._done[job.name] = status
+        if status == STATUS_PARTIAL:
+            logger.warning("Job %s completed PARTIALLY in %.1fs: %s", job.name, (finished - started).total_seconds(), message)
+        else:
+            logger.info("Job %s completed in %.1fs (extracted=%s loaded=%s)", job.name, (finished - started).total_seconds(),
+                        f"{totals['extracted']:,}", f"{totals['loaded']:,}")
         return run_uid
+
+    def _failed_requirement(self, job: JobSpec) -> str | None:
+        """The first required dependency of ``job`` that failed or was skipped earlier in this run, else None."""
+        for dep_name in job.depends_on_jobs:
+            if dep_name not in job.optional_jobs and self._done.get(dep_name) in NOT_RUN:
+                return dep_name
+        return None
 
     def _check_dataset_filter(self, job: JobSpec, dataset: str) -> None:
         if dataset not in self.registry.datasets:
@@ -299,15 +385,23 @@ class Runner:
         }
         try:
             with self.engine.begin() as conn:
-                if status == STATUS_SUCCESS and on_success is not None:
+                if status in (STATUS_SUCCESS, STATUS_PARTIAL) and on_success is not None:
                     values.update(dict(on_success(conn) or {}))
                 conn.execute(t.update().where(t.c.run_uid == run_uid).values(**values))
         except Exception:
             # A run whose success cannot be recorded must not look successful: fail loudly (as the legacy
             # pipeline does), so it is retried rather than silently stale.
             logger.exception("Could not write etl_run_log for run %s", run_uid)
-            if status == STATUS_SUCCESS:
+            if status in (STATUS_SUCCESS, STATUS_PARTIAL):
                 raise
+
+    def _skipped_run_row(self, job: JobSpec, parent_uid: str, trigger_source: str, reason: str) -> None:
+        """A dependency job that was not started because a job it needs failed: a finished row, so the run's
+        history shows every step it was meant to take."""
+        run_uid = str(uuid.uuid4())
+        now = utc_now()
+        self._start_run_row(job, run_uid, parent_uid, trigger_source, now)
+        self._finish_run_row(run_uid, STATUS_SKIPPED, now, now, {}, 0, reason)
 
     def _start_task_row(self, ctx: RunContext, task: TaskSpec, started: _dt.datetime) -> int | None:
         t = meta.etl_task_log

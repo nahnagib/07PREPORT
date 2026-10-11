@@ -66,7 +66,7 @@ describe('pythonRunner.runPipeline', () => {
     expect(result.durationMs).toBe(1234);
     expect(onLine).toHaveBeenCalledWith('Pipeline step extract started', 'stdout');
     expect(hoisted.postMock).toHaveBeenCalledWith('/etl/run', expect.objectContaining({
-      job: 'sales_incremental', loadMode: 'incremental', outputMode: 'sql', fast: true,
+      job: 'main', loadMode: 'incremental', outputMode: 'sql', fast: true,
     }));
   });
 
@@ -180,7 +180,8 @@ describe('pythonRunner.resetEtlApi', () => {
 
 describe('platformJobFor', () => {
   it('maps full/incremental to ETL platform jobs and keeps an explicit job', () => {
-    expect(platformJobFor('incremental')).toBe('sales_incremental');
+    expect(platformJobFor('incremental')).toBe('main');
+    expect(platformJobFor('incremental', 'sales_incremental')).toBe('sales_incremental');
     expect(platformJobFor('full')).toBe('full_all');
     expect(platformJobFor('full', 'finance_receivables')).toBe('finance_receivables');
   });

@@ -1,3 +1,4 @@
+import { EXCLUDED_TEAMS_CONDITION } from '../../measures/debtReport';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
@@ -72,6 +73,12 @@ vi.mock('../../db/pool', () => ({
       queries.push({ sql, params });
       if (/MAX\(SnapshotDateKey\) AS k/.test(sql) || /MIN\(SnapshotDateKey\) AS k/.test(sql)) return [[{ k: 20261004 }], []];
       if (/SELECT 1 AS ok/.test(sql)) return [[{ ok: 1 }], []];
+      if (/FROM cfg_finance_aging_zone/.test(sql)) {
+        return [[
+          { zone_key: 'green', label_en: 'Green', upper_multiplier: '1.000', owner_en: 'Sales rep', action_en: 'a' },
+          { zone_key: 'black', label_en: 'Black', upper_multiplier: null, owner_en: 'Legal', action_en: 'b' },
+        ], []];
+      }
       if (/GROUP BY SnapshotDateKey ORDER BY SnapshotDateKey/.test(sql)) return [[{ k: 20261004, n: 1 }], []];
       return [[], []];
     },
@@ -102,7 +109,7 @@ beforeEach(() => {
   queries.length = 0;
 });
 
-const ENDPOINTS = ['/meta', '/overview', '/trend', '/customers', '/drilldown?kind=customer&key=100&currency=LYD'];
+const ENDPOINTS = ['/meta', '/overview', '/trend', '/customers', '/drilldown?kind=customer&key=100&currency=LYD', '/aging?currency=LYD&term=4'];
 
 describe('Debt Report access', () => {
   it.each(ENDPOINTS)('%s: 200 for the full-access roles (Admin implicitly, GCFO by grant)', async (path) => {
@@ -141,7 +148,7 @@ describe('Debt Report access', () => {
     expect(res.status).toBe(200);
     const lineQueries = queries.filter((q) => q.sql.includes('FROM fact_finance_receivable_snapshot f'));
     expect(lineQueries.length).toBeGreaterThan(0);
-    for (const q of lineQueries) expect(q.sql).toContain('f.SalesTeamKey NOT IN (SELECT x.SalesTeamKey FROM v_finance_excluded_sales_team x)');
+    for (const q of lineQueries) expect(q.sql).toContain(EXCLUDED_TEAMS_CONDITION);
   });
 
   it("keeps a role's data scope (B2B Director: segment 1) on every query", async () => {
@@ -157,6 +164,18 @@ describe('Debt Report access', () => {
     expect((await get('/debt-report/drilldown', 'gcfo')).status).toBe(400);
     expect((await get('/debt-report/drilldown?kind=aging&key=5', 'gcfo')).status).toBe(400); // no currency
     expect((await get('/debt-report/drilldown?kind=team&key=a%27b&currency=LYD', 'gcfo')).status).toBe(400);
+    expect((await get('/debt-report/aging?currency=LYDX', 'gcfo')).status).toBe(400);
+    expect((await get('/debt-report/aging?term=x', 'gcfo')).status).toBe(400);
+  });
+
+  it('aging ignores the line-level page filters (they would change which invoice is the oldest)', async () => {
+    const res = await get('/debt-report/aging?overdueStatus=overdue&agingBucketKeys=3&deliveryStatuses=full&paymentTermKeys=4&customerCategories=B', 'gcfo');
+    expect(res.status).toBe(200);
+    const q = queries.find((x) => x.sql.includes('ROW_NUMBER() OVER'));
+    expect(q).toBeTruthy();
+    expect(q!.sql).not.toMatch(/l\.days_past_due > 0|l\.AgingBucketKey IN|l\.delivery_status IN|l\.PaymentTermKey IN/);
+    expect(q!.sql).toContain('l.customer_category IN (?)'); // a customer-level filter still applies
+    expect(q!.params).toContain('B');
   });
 
   it('meta carries the finance freshness, never the sales refresh', async () => {

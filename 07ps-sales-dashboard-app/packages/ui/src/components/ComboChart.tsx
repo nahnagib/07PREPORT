@@ -70,6 +70,13 @@ export interface ComboChartProps {
    * selection (as opposed to a chart merely scoped by someone else's selection, which needs no
    * special styling since all of its bars already reflect the filtered data). */
   highlightedCategory?: string | null;
+  /** Join a line across points whose value is null (default true). False shows the gap -- for a time axis with
+   * missing days, where a joined line would draw a trend that has no data behind it. */
+  connectNulls?: boolean;
+  /** Space above the plot, px. Default 4, or 24 when a line prints its values (so the top label is not clipped). */
+  topPadding?: number;
+  /** Tooltip title for a point's label (default: the label itself), e.g. a full period name plus a count. */
+  tooltipLabelFormatter?: (label: string) => string;
 }
 
 function defaultFormatter(v: number): string {
@@ -100,6 +107,9 @@ export function ComboChart({
   onCategoryClick,
   onAreaClick,
   highlightedCategory = null,
+  connectNulls = true,
+  topPadding,
+  tooltipLabelFormatter,
 }: ComboChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
@@ -162,7 +172,7 @@ export function ComboChart({
         <ResponsiveContainer width="100%" height={height}>
           <ComposedChart
             data={points}
-            margin={{ top: 4, right: hasRightAxis ? 8 : 24, left: 0, bottom: 0 }}
+            margin={{ top: topPadding ?? (lines.some((l) => l.labelFormatter) ? 24 : 4), right: hasRightAxis ? 8 : 24, left: 0, bottom: 0 }}
             onClick={handleChartClick}
           >
             <CartesianGrid stroke="var(--ps-color-border)" strokeDasharray="3 3" vertical={false} />
@@ -192,6 +202,7 @@ export function ComboChart({
               />
             )}
             <Tooltip
+              labelFormatter={tooltipLabelFormatter ? (label: unknown) => tooltipLabelFormatter(String(label)) : undefined}
               formatter={(value: number, name: string, item: any) => {
                 const dataKey = item?.dataKey as string;
                 const isRightAxis = item?.payload && lines.some((l) => l.key === dataKey && (l.yAxisId ?? 'right') === 'right');
@@ -246,7 +257,7 @@ export function ComboChart({
                 dot={{ r: 3 }}
                 hide={!!hidden[l.key]}
                 isAnimationActive={false}
-                connectNulls
+                connectNulls={connectNulls}
               >
                 {l.labelFormatter ? (
                   <LabelList

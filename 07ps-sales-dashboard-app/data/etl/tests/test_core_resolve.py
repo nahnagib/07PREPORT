@@ -13,6 +13,7 @@ MAPS = KeyMaps(
     salesperson_channel={49: 3, 60: UNKNOWN, UNKNOWN: UNKNOWN},
     team_segment={"MJ-EST-BB": 1, "TK-BEN-BC-03": 2, UNKNOWN_TEXT: UNKNOWN},
     company_keys={1, 3, UNKNOWN},
+    company_name_keys={"MAJAAL": 1, "TIKA": 3, "ATHENA": 4},
     product_keys={500},
     product_master={(500, 1): "M-GR"},
     master_keys={"M-GR"},
@@ -52,3 +53,9 @@ def test_customer_salesperson_company_product_fallbacks_are_reported():
     assert MAPS.companies([3, "1", 2]) == ([3, 1, UNKNOWN], [2])
     assert MAPS.products([500, 501.0]) == ([500, UNKNOWN], [501])
     assert MAPS.product_masters([500, 500], [1, 3]) == ["M-GR", UNKNOWN_TEXT]
+
+
+def test_company_name_lookup_normalizes_known_odoo_names():
+    assert MAPS.company_by_name("Athena") == 4
+    assert MAPS.company_by_name(" TIKA ") == 3
+    assert MAPS.company_by_name("Not configured") == UNKNOWN

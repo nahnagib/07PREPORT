@@ -2,13 +2,27 @@ import 'dotenv/config';
 import { enqueuePipelineRun, getEtlQueue } from '../queue/etlQueue';
 import { EtlMode } from '../services/etlRunTracker';
 import { etlLogger } from '../services/etlLogger';
-import { LoadMode, OutputMode, runPipeline } from '../services/pythonRunner';
+import { ETL_EXIT_LOCKED, ETL_EXIT_PARTIAL, LoadMode, OutputMode, PipelineRunResult, runPipeline } from '../services/pythonRunner';
 
 export interface CommandOptions {
   /** CLI label distinguishing which artisan-style command triggered this run (etl:run vs.
    * etl:customers/etl:sales/etl:inventory/etl:products) for logging -- see the module-level
    * comment in customers.ts for why these are aliases today, not independent sub-pipelines. */
   label: string;
+}
+
+/** --sync runs: report partial / skipped / failed exits and pass the platform's exit code on. */
+function reportSyncResult(result: PipelineRunResult): void {
+  if (result.exitCode === 0) return;
+  const what =
+    result.exitCode === ETL_EXIT_PARTIAL
+      ? 'ETL run finished PARTIAL: a step (the receivables snapshot) failed, the rest loaded'
+      : result.exitCode === ETL_EXIT_LOCKED
+        ? 'ETL run skipped: another ETL run is already running'
+        : 'ETL run failed';
+  // eslint-disable-next-line no-console
+  console.error(`${what} (exit code ${result.exitCode}). See logs/etl/etl.log for details.`);
+  process.exitCode = result.exitCode > 0 ? result.exitCode : 1;
 }
 
 function parseArgv(argv: string[]) {
@@ -40,11 +54,7 @@ export async function runCommand({ label }: CommandOptions): Promise<void> {
       fast: !full,
       label: `${label}-sync`,
     });
-    if (result.exitCode !== 0) {
-      // eslint-disable-next-line no-console
-      console.error(`ETL run failed (exit code ${result.exitCode}). See logs/etl/etl.log for details.`);
-      process.exitCode = 1;
-    }
+    reportSyncResult(result);
     return;
   }
 
@@ -88,11 +98,7 @@ export async function runModeCommand({ label, mode, loadMode, outputMode, fast }
   if (sync) {
     etlLogger.info(`Running ETL synchronously (--sync)`, { label, loadMode, outputMode });
     const result = await runPipeline({ loadMode, outputMode, fast, label: `${label}-sync` });
-    if (result.exitCode !== 0) {
-      // eslint-disable-next-line no-console
-      console.error(`ETL run failed (exit code ${result.exitCode}). See logs/etl/etl.log for details.`);
-      process.exitCode = 1;
-    }
+    reportSyncResult(result);
     return;
   }
 

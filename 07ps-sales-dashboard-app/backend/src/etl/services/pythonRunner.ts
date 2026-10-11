@@ -5,13 +5,19 @@ import { etlLogger } from './etlLogger';
 export type LoadMode = 'full' | 'incremental';
 export type OutputMode = 'sql' | 'excel' | 'both';
 
-/** ETL platform jobs (data/etl/src/etl_platform, `python -m etl_platform.run <job>`) the backend starts. */
-export type PlatformJob = 'sales_incremental' | 'sales_full' | 'full_all' | 'core_dims' | 'finance_receivables';
+/** ETL platform jobs (data/etl/src/etl_platform, `python -m etl_platform.run <job>`) the backend starts. `main` = core
+ * dims -> sales incremental; `full_all` = core dims -> receivables snapshot -> sales full; `finance_receivables` = the
+ * receivables snapshot alone (its core dims dependency is reused when fresh). */
+export type PlatformJob = 'main' | 'sales_incremental' | 'sales_full' | 'full_all' | 'core_dims' | 'finance_receivables';
 
-/** Callers that only say full/incremental: full = core dims + sales (full_all), incremental = sales_incremental. */
+/** Callers that only say full/incremental: full = full_all, incremental = main. */
 export function platformJobFor(loadMode: LoadMode, job?: PlatformJob | null): PlatformJob {
-  return job ?? (loadMode === 'incremental' ? 'sales_incremental' : 'full_all');
+  return job ?? (loadMode === 'incremental' ? 'main' : 'full_all');
 }
+
+/** Exit codes of `python -m etl_platform.run` (data/etl/src/etl_platform/run.py) beyond 0 / 1. */
+export const ETL_EXIT_PARTIAL = 3; // an optional step (finance in full_all) failed; everything else loaded
+export const ETL_EXIT_LOCKED = 4; // another ETL run holds the lock; nothing was written
 
 export interface PipelineRunOptions {
   /** The ETL platform job to run; defaults from loadMode (platformJobFor). */
@@ -235,6 +241,8 @@ export async function runPipeline(options: PipelineRunOptions): Promise<Pipeline
         };
         if (result.cancelled) {
           etlLogger.info('ETL run cancelled', { label, durationMs });
+        } else if (result.exitCode === ETL_EXIT_PARTIAL) {
+          etlLogger.warn('ETL run finished partially (a step failed, the rest loaded)', { label, durationMs, exitCode: result.exitCode });
         } else if (result.exitCode === 0) {
           etlLogger.info('ETL run finished', { label, durationMs, exitCode: result.exitCode });
         } else {

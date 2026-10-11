@@ -7,6 +7,8 @@ export interface KpiTileProps {
   /** Metric + Period, e.g. "YTD Value" - Section 3.26 naming convention */
   label: string;
   value: string;
+  /** Optional second line under the value, e.g. the same amount in another currency ("≈ LYD 9,983,931.540") */
+  subValue?: string;
   /** Signed variance, e.g. "+8.20%" - Section 3.6 Variance KPI cards */
   variance?: string;
   status?: SemanticStatus;
@@ -43,7 +45,7 @@ const statusColorVar: Record<SemanticStatus, string> = {
  * Color-coding follows the single semantic scale (3.9); KPIs with no target use neutral grey/white.
  * Color is never the only signal (Section 5.10) - the numeric value is always shown alongside it.
  */
-export function KpiTile({ label, value, variance, status = 'neutral', loading, icon, accentColor, badgeLabel }: KpiTileProps) {
+export function KpiTile({ label, value, subValue, variance, status = 'neutral', loading, icon, accentColor, badgeLabel }: KpiTileProps) {
   const hasHeader = icon !== undefined && accentColor !== undefined && badgeLabel !== undefined;
 
   if (loading) {
@@ -70,6 +72,9 @@ export function KpiTile({ label, value, variance, status = 'neutral', loading, i
       >
         {value}
       </div>
+      {subValue && (
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>{subValue}</div>
+      )}
       <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>{label}</div>
       {variance && (
         <div

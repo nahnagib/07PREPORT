@@ -1,0 +1,38 @@
+# Local side-by-side override.
+# Keeps an existing 07ps-aging stack untouched by using different host ports and subnet.
+services:
+  redis:
+    ports: !override
+      - '127.0.0.1:16379:6379'
+
+  etl-api:
+    ports: !override
+      - '127.0.0.1:15001:5001'
+
+  backend:
+    environment:
+      # CORS: the browser calls the backend from this stack's frontend port, not 3000
+      FRONTEND_ORIGIN: http://localhost:13000
+    ports: !override
+      - '127.0.0.1:14000:4000'
+    networks:
+      default:
+        ipv4_address: 172.28.0.101
+
+  frontend:
+    build:
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:14000
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:14000
+    ports: !override
+      - '127.0.0.1:13000:3000'
+    networks:
+      default:
+        ipv4_address: 172.28.0.100
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

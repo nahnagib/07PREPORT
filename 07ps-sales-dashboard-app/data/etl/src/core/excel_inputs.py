@@ -82,7 +82,7 @@ PRODUCTS = SheetSchema(
     columns=(
         Column("ProductMasterKey", "str", unique=True),  # blank -> generated (core.transforms.product)
         Column("ProductKey", "str"),  # the sheet's family/SKU code; NOT unique
-        Column("Company", "str", nullable=False, allowed=("Majaal", "Tika")),
+        Column("Company", "str", nullable=False, allowed=("Majaal", "Tika", "Athena")),
         Column("Category", "str"),
         Column("Brand", "str"),
         Column("SubBrand", "str"),

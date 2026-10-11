@@ -8,7 +8,24 @@ export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel' | 'finance';
 export type EtlLoadMode = 'full' | 'incremental';
 export type EtlOutputMode = 'sql' | 'excel' | 'both';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';
-export type EtlRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled';
+/** partial = the run loaded but an optional step (the receivables snapshot) failed; skipped = refused because
+ * another ETL run held the lock (nothing written). Both need migration 0038. */
+export type EtlRunStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'skipped';
+export const FINISHED_RUN_STATUSES: EtlRunStatus[] = ['success', 'partial', 'failed', 'cancelled', 'skipped'];
+
+/** One ETL platform step of a run: an etl_run_log row whose parent_run_uid is the run's top-level row (core_dims,
+ * finance_receivables, sales_incremental under main). Times are UTC wall-clock strings. */
+export interface EtlRunStep {
+  runId: number;
+  job: string;
+  department: string | null;
+  status: string;
+  startedAtUtc: string | null;
+  finishedAtUtc: string | null;
+  durationSeconds: number | null;
+  rowsLoaded: number | null;
+  errorMessage: string | null;
+}
 
 export interface EtlJobRunRow {
   id: number;
@@ -31,6 +48,8 @@ export interface EtlJobRunRow {
   db_loaded_count: number | null;
   qa_issues_count: number | null;
   pipeline_run_log_id: number | null;
+  /** History rows only: the platform steps of this run (see EtlRunStep). */
+  steps?: EtlRunStep[];
 }
 
 /**
@@ -96,7 +115,7 @@ export async function markRunRetrying(runId: number, errorMessage: string): Prom
 }
 
 export interface FinishRunInput {
-  status: 'success' | 'failed' | 'cancelled';
+  status: 'success' | 'partial' | 'failed' | 'cancelled' | 'skipped';
   exitCode: number | null;
   errorMessage?: string | null;
   odooExtractCount?: number | null;
@@ -258,8 +277,9 @@ export async function getActiveRun(): Promise<EtlJobRunRow | null> {
  * (Success/Failed/Cancelled), or null for the true "Idle, never run" state. */
 export async function getLastFinishedRun(): Promise<EtlJobRunRow | null> {
   const [rows] = await pool.query(
-    `SELECT *${RAW_TIMESTAMP_COLUMNS} FROM etl_job_runs WHERE status IN ('success', 'failed', 'cancelled')
+    `SELECT *${RAW_TIMESTAMP_COLUMNS} FROM etl_job_runs WHERE status IN (?)
      ORDER BY finished_at DESC LIMIT 1`,
+    [FINISHED_RUN_STATUSES],
   );
   const row = (rows as (EtlJobRunRow & RawTimestampFields)[])[0];
   return row ? normalizeEtlJobRunRow(row) : null;
@@ -313,7 +333,49 @@ export async function listRunHistory(
     [...params, filters.pageSize, offset],
   );
 
-  return { rows: (rows as (EtlJobRunRow & RawTimestampFields)[]).map(normalizeEtlJobRunRow), total };
+  const runs = (rows as (EtlJobRunRow & RawTimestampFields)[]).map(normalizeEtlJobRunRow);
+  const steps = await fetchRunSteps(runs.map((r) => r.pipeline_run_log_id).filter((id): id is number => id !== null));
+  return { rows: runs.map((r) => ({ ...r, steps: r.pipeline_run_log_id === null ? [] : steps.get(Number(r.pipeline_run_log_id)) ?? [] })), total };
+}
+
+const STEP_ERROR_CHARS = 2000;
+
+/** The etl_run_log child rows (parent_run_uid = the top-level row's run_uid) of each given top-level run_id, in run
+ * order. One level is enough: inside main/full_all every step's own core_dims dependency is the run's core_dims step. */
+export async function fetchRunSteps(topLevelRunIds: number[]): Promise<Map<number, EtlRunStep[]>> {
+  const out = new Map<number, EtlRunStep[]>();
+  if (!topLevelRunIds.length) return out;
+  try {
+    const [rows] = await pool.query(
+      `SELECT p.run_id AS parent_id, c.run_id, c.job_name, c.department, c.status,
+              DATE_FORMAT(c.started_at_utc, '%Y-%m-%d %H:%i:%s') AS started_at_utc,
+              DATE_FORMAT(c.finished_at_utc, '%Y-%m-%d %H:%i:%s') AS finished_at_utc,
+              c.duration_seconds, c.rows_processed, LEFT(c.error_message, ?) AS error_message
+         FROM etl_run_log p JOIN etl_run_log c ON c.parent_run_uid = p.run_uid
+        WHERE p.run_id IN (?)
+        ORDER BY c.run_id`,
+      [STEP_ERROR_CHARS, topLevelRunIds],
+    );
+    for (const r of rows as any[]) {
+      const list = out.get(Number(r.parent_id)) ?? [];
+      list.push({
+        runId: Number(r.run_id),
+        job: r.job_name,
+        department: r.department ?? null,
+        status: r.status,
+        startedAtUtc: r.started_at_utc ?? null,
+        finishedAtUtc: r.finished_at_utc ?? null,
+        durationSeconds: r.duration_seconds === null ? null : Number(r.duration_seconds),
+        rowsLoaded: r.rows_processed === null ? null : Number(r.rows_processed),
+        errorMessage: r.error_message ?? null,
+      });
+      out.set(Number(r.parent_id), list);
+    }
+  } catch (err) {
+    // history must still load when etl_run_log is missing or unreadable; the steps are a detail
+    etlLogger.error('Could not read the ETL steps of the run history', { error: err instanceof Error ? err.message : String(err) });
+  }
+  return out;
 }
 
 /** The current max `etl_run_log.run_id`, captured right before a run starts -- the baseline
@@ -335,9 +397,11 @@ export async function correlateLatestEtlRun(baselineRunId: number): Promise<{
   odooExtractCount: number | null;
   dbLoadedCount: number | null;
   qaIssuesCount: number | null;
+  /** The platform's own summary ("finance failed: ..." on a partial run). */
+  errorMessage: string | null;
 } | null> {
   const [rows] = await pool.query(
-    `SELECT run_id, odoo_extract_count, rows_processed, qa_issues_count
+    `SELECT run_id, odoo_extract_count, rows_processed, qa_issues_count, error_message
      FROM etl_run_log WHERE run_id > ? AND parent_run_uid IS NULL ORDER BY run_id DESC LIMIT 1`,
     [baselineRunId],
   );
@@ -346,6 +410,7 @@ export async function correlateLatestEtlRun(baselineRunId: number): Promise<{
     odoo_extract_count: number | null;
     rows_processed: number | null;
     qa_issues_count: number | null;
+    error_message: string | null;
   }[])[0];
   if (!row) return null;
   return {
@@ -353,5 +418,6 @@ export async function correlateLatestEtlRun(baselineRunId: number): Promise<{
     odooExtractCount: row.odoo_extract_count,
     dbLoadedCount: row.rows_processed,
     qaIssuesCount: row.qa_issues_count,
+    errorMessage: row.error_message,
   };
 }

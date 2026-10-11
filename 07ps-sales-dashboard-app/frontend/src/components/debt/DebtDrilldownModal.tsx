@@ -120,7 +120,7 @@ export function DebtDrilldownModal({
               columns={columns}
               rows={rows}
               getRowId={(r) => r.id}
-              fileName={`debt-${target.kind}-${target.key}-${ccy}-${snapshotDate ?? 'latest'}`}
+              fileName={`receivables-collections-${target.kind}-${target.key}-${ccy}-${snapshotDate ?? 'latest'}`}
               pageSize={25}
               maxBodyHeight={460}
             />

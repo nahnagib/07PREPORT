@@ -2,7 +2,9 @@
 
   finance_receivables  open receivable journal items (account.move.line) from Odoo -> daily snapshot
                        fact_finance_receivable_snapshot + dim_finance_invoice + bridge_finance_invoice_order.
-                       Scheduled daily at 06:30 Africa/Tripoli (SCHEDULE). Depends on core_dims.
+                       Runs inside the nightly full_all (after core_dims, before sales) and on its own daily at
+                       15:00 Africa/Tripoli (ETL_SCHEDULE_FINANCE_CRON, "Receivables Snapshot"). Depends on core_dims
+                       (reused when it succeeded within ETL_CORE_DIMS_FRESH_MINUTES).
 
 Odoo credentials: profile "debt" (ODOO_DEBT_LOGIN / ODOO_DEBT_API_KEY / ODOO_DEBT_KEY_EXPIRES, the dedicated
 read-only bot user). Until those are set the job uses the default read-only ETL credentials and logs a WARNING on
@@ -39,7 +41,6 @@ from etl_platform.sources.odoo import OdooConfigError, OdooCredentials, m2o_id, 
 
 DEPARTMENT = "finance"
 PROFILE = "debt"
-SCHEDULE = {"cron": "30 6 * * *", "timezone": "Africa/Tripoli"}  # wired by the orchestration (phase 6)
 MAX_OPEN_AMOUNT_CHANGE_PCT = 50.0
 RECEIVABLE_DOMAIN = [("account_type", "=", "asset_receivable"), ("parent_state", "=", "posted"),
                      ("reconciled", "=", False), ("amount_residual", "!=", 0)]
@@ -118,7 +119,7 @@ PAYMENT_COLUMNS = {"id": "id", "move_id": "move_id:m2o_id", "name": "name", "pay
 # -- tasks -------------------------------------------------------------------------------------------------------------
 def extract_receivables(ctx: RunContext) -> TaskResult:
     src = finance_source(ctx)
-    companies = list(ctx.config.odoo_company_ids)
+    companies = list(ctx.odoo_company_ids(ctx.state.get("odoo_profile", PROFILE)))
     company_dom = [("company_id", "in", companies)] if companies else []
     line_fields, skipped_l = src.available_fields("account.move.line", LINE_FIELDS)
     lines = src.search_read_all("account.move.line", [*RECEIVABLE_DOMAIN, *company_dom], line_fields)
@@ -279,6 +280,14 @@ def load_receivables(ctx: RunContext) -> TaskResult:
         if keys:
             lo, hi = min(keys), max(keys)
             ensure_date_range(conn, _dt.date(lo // 10000, lo // 100 % 100, lo % 100), _dt.date(hi // 10000, hi // 100 % 100, hi % 100))
+        # the documents' own teams that have no Excel org team (ODOO-TEAM-<id>, e.g. EXPORT): members before the facts
+        own = {str(k) for k in [*fact["SalesTeamKey"], *(built.invoices["SalesTeamKey"] if len(built.invoices) else [])]
+               if str(k).startswith(tf.OWN_TEAM_PREFIX)}
+        if own:
+            odoo_teams = {int(r[0]): (r[1], None if r[2] is None else int(r[2]))
+                          for r in conn.execute(text("SELECT id, name, company_id FROM raw_odoo_crm_team"))}
+            company_keys = {int(r[0]) for r in conn.execute(text("SELECT CompanyKey FROM dim_company"))}
+            upsert(conn, "dim_sales_team", tf.own_team_members(own, odoo_teams, company_keys).assign(updated_at_utc=now))
         upsert(conn, "dim_finance_aging_bucket", aging.bucket_frame().assign(updated_at_utc=now))
         upsert(conn, "dim_finance_receivable_scope", rscope.scope_frame().assign(updated_at_utc=now))
         if len(built.invoices):
@@ -319,6 +328,12 @@ for table, key, load in (("dim_finance_aging_bucket", ("AgingBucketKey",), "upse
     REGISTRY.dataset(DatasetSpec(table, DEPARTMENT, "mart", "sql", table, load, key))
 REGISTRY.task(TaskSpec("extract_receivables", extract_receivables))
 REGISTRY.task(TaskSpec("load_receivables", load_receivables, depends_on=("extract_receivables",)))
-REGISTRY.job(JobSpec("finance_receivables", DEPARTMENT, tasks=("extract_receivables", "load_receivables"),
+# the collections tasks (departments/finance/collections.py, registered there) run after the snapshot is committed
+REGISTRY.job(JobSpec("finance_receivables", DEPARTMENT,
+                     tasks=("extract_receivables", "load_receivables", "extract_collections", "load_collections"),
                      depends_on_jobs=("core_dims",), mode="snapshot",
-                     description="Daily receivable snapshot (Debt report), 06:30 Africa/Tripoli."))
+                     description="Receivable snapshot of today + collections (customer payments) since the last run "
+                                 "(Receivables and Collections); nightly inside full_all, daily 15:00 alone."))
+
+# registers the collections tasks of the job above (only "jobs" modules are auto-imported; collections.py imports this module)
+from departments.finance import collections as _collections  # noqa: E402,F401

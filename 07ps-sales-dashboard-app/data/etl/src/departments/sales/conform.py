@@ -43,10 +43,10 @@ BCG_KEY_COLUMNS = ("CompanyKey", "ProductMasterKey", "ProductKey")
 PRODUCT_COST_KEY_COLUMNS = ("ProductKey", "CompanyKey")
 INVENTORY_KEY_COLUMNS = ("SnapshotDateKey", "CompanyKey", "ProductKey", "LocationID")
 BCG_PERIODS = ("YTD", "LYTD")
-BCG_VOLUME_THRESHOLDS = {"MAJAAL": 3500.0, "TIKA": 25000.0}
+BCG_VOLUME_THRESHOLDS = {"MAJAAL": 3500.0, "TIKA": 25000.0, "ATHENA": 3500.0}
 BCG_PROFIT_THRESHOLD = 0.35
 BCG_RANK = {"Dogs": 1, "Cash Cows": 2, "Strategic": 3, "Stars": 4}
-INVENTORY_VELOCITY_THRESHOLDS = {"TIKA": (60.0, 30.0), "MAJAAL": (180.0, 60.0)}
+INVENTORY_VELOCITY_THRESHOLDS = {"TIKA": (60.0, 30.0), "MAJAAL": (180.0, 60.0), "ATHENA": (180.0, 60.0)}
 
 
 @dataclass
@@ -485,13 +485,12 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
     for k, pid in zip(hybrid["ProductKey"].to_numpy(), lines["ProductKey"].to_numpy()):
         if isinstance(k, str) and k not in maps.master_keys and k not in legacy_to_odoo and pid != UNKNOWN:
             legacy_to_odoo[k] = int(pid)
-    company_by_name = {"MAJAAL": 1, "TIKA": 3}
     for name, table in (("Fact_ProductSalesDaily", "fact_sales_product_daily"), ("Dim_ProductDashboard", "dim_sales_product_dashboard"),
                         ("Dim_ProductDashboardGroup", "dim_sales_product_group"), ("ProductDashboard_Meta", "etl_sales_product_dashboard_meta"),
                         ("Fact_BCGMatrix", "fact_sales_bcg_matrix")):
         df = product[name].copy()
-        if "Company" in df.columns:  # the product builders work per company display name (Majaal / Tika)
-            df["CompanyKey"] = df["Company"].map(lambda c: company_by_name.get(str(c).strip().upper(), UNKNOWN) if isinstance(c, str) else UNKNOWN)
+        if "Company" in df.columns:  # the product builders work per company display name
+            df["CompanyKey"] = df["Company"].map(maps.company_by_name)
         elif "CompanyKey" in df.columns:
             df["CompanyKey"] = df["CompanyKey"].map(lambda v: UNKNOWN if pd.isna(v) else {2: 3}.get(int(v), int(v)))
         if "ProductKey" in df.columns:
@@ -525,7 +524,7 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
     pk, fell = maps.products(_col(cost, "OdooProductID"))
     out.fell("dim_sales_product_cost.ProductKey (Odoo product id)", _product_fallback_labels(cost, fell))
     cost["ProductKey"] = pk
-    cost["CompanyKey"] = cost["Company"].map(lambda c: company_by_name.get(str(c).strip().upper(), UNKNOWN) if isinstance(c, str) else UNKNOWN)
+    cost["CompanyKey"] = cost["Company"].map(maps.company_by_name)
     unknown_cost_companies = sorted(
         set(
             str(c).strip()

@@ -9,6 +9,11 @@ import { etlLogger } from '../services/etlLogger';
  * and never runs the pipeline itself (that's the worker's job, see commands/worker.ts). Both
  * schedules are independently configurable/disable-able via .env (ETL_SCHEDULE_*), matching the
  * "every hour / every 30 minutes / every night" flexibility asked for.
+ *
+ * Three schedules, all read in config.schedule.timezone (ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE):
+ *   incremental  ETL job `main`               core dims -> sales incremental (no finance)    every 3 h
+ *   full         ETL job `full_all`           core dims -> receivables -> sales full         02:00
+ *   finance      ETL job `finance_receivables` core dims (reused when fresh) -> receivables   15:00
  */
 /** A tick that lands while a run is still active is skipped, not queued behind it (that would build
  * a backlog after any long run) -- the next tick simply tries again. */
@@ -34,7 +39,7 @@ export function registerEtlSchedules(): void {
       cron.schedule(config.schedule.incrementalCron, () => {
         etlLogger.info('Scheduled incremental ETL tick -- enqueueing job');
         enqueuePipelineRun({
-          job: 'sales_incremental',
+          job: 'main',
           mode: 'incremental',
           loadMode: 'incremental',
           outputMode: 'sql',
@@ -43,7 +48,7 @@ export function registerEtlSchedules(): void {
           triggerSource: 'scheduled',
         }).catch(onScheduledEnqueueError('incremental'));
       }, { timezone: config.schedule.timezone });
-      etlLogger.info('Registered incremental ETL schedule', { cron: config.schedule.incrementalCron });
+      etlLogger.info('Registered incremental ETL schedule', { cron: config.schedule.incrementalCron, timezone: config.schedule.timezone });
     }
   } else {
     etlLogger.info('Incremental ETL schedule disabled (ETL_SCHEDULE_INCREMENTAL_ENABLED=false)');
@@ -66,7 +71,7 @@ export function registerEtlSchedules(): void {
           triggerSource: 'scheduled',
         }).catch(onScheduledEnqueueError('full'));
       }, { timezone: config.schedule.timezone });
-      etlLogger.info('Registered full-refresh ETL schedule', { cron: config.schedule.fullCron });
+      etlLogger.info('Registered full-refresh ETL schedule', { cron: config.schedule.fullCron, timezone: config.schedule.timezone });
     }
   } else {
     etlLogger.info('Full-refresh ETL schedule disabled (ETL_SCHEDULE_FULL_ENABLED=false)');
@@ -89,7 +94,7 @@ export function registerEtlSchedules(): void {
           triggerSource: 'scheduled',
         }).catch(onScheduledEnqueueError('finance'));
       }, { timezone: config.schedule.timezone });
-      etlLogger.info('Registered receivables snapshot schedule', { cron: config.schedule.financeCron });
+      etlLogger.info('Registered receivables snapshot schedule', { cron: config.schedule.financeCron, timezone: config.schedule.timezone });
     }
   } else {
     etlLogger.info('Receivables snapshot schedule disabled (ETL_SCHEDULE_FINANCE_ENABLED=false)');

@@ -183,7 +183,8 @@ class Checker:
             run = (st or {}).get("run") if isinstance(st, dict) else None
             if status == 200 and run and run.get("id") == run_id:
                 last = run
-                if run.get("status") in ("success", "failed", "cancelled"):
+                # partial = a step (the receivables snapshot) failed but the run loaded; skipped = another run held the lock
+                if run.get("status") in ("success", "partial", "failed", "cancelled", "skipped"):
                     break
             self.sleep(10)
         ok = bool(last) and last.get("status") == "success"

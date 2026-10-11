@@ -16,6 +16,7 @@ import {
   EtlStartMode,
   EtlPreflightResponse,
   EtlRunStatus,
+  EtlRunStep,
   EtlSchedulerConfigResponse,
   EtlStatusResponse,
 } from '../../../lib/api';
@@ -49,8 +50,10 @@ const STATUS_LABEL: Record<DisplayStatus, string> = {
   queued: 'Queued',
   running: 'Running',
   success: 'Success',
+  partial: 'Partial',
   failed: 'Failed',
   cancelled: 'Cancelled',
+  skipped: 'Skipped',
 };
 
 const STATUS_COLOR_VAR: Record<DisplayStatus, string> = {
@@ -58,8 +61,10 @@ const STATUS_COLOR_VAR: Record<DisplayStatus, string> = {
   queued: 'var(--ps-color-watch)',
   running: 'var(--ps-color-watch)',
   success: 'var(--ps-color-success)',
+  partial: 'var(--ps-color-watch)',
   failed: 'var(--ps-color-alert)',
   cancelled: 'var(--ps-color-neutral-text)',
+  skipped: 'var(--ps-color-neutral-text)',
 }; // eslint-disable-line no-unused-vars
 
 function StatusBadge({ status, large }: { status: DisplayStatus; large?: boolean }) {
@@ -129,6 +134,68 @@ const MODE_LABEL: Record<EtlMode, string> = {
   excel: 'Excel Mode (before 2026-10)',
 };
 
+/** The ETL steps of one run, in the order main / full_all runs them. */
+const STEP_LABEL: Record<string, string> = {
+  core_dims: 'Reference data',
+  finance_receivables: 'Receivables snapshot',
+  sales_incremental: 'Sales (incremental)',
+  sales_full: 'Sales (full)',
+};
+
+function stepStatus(status: string): DisplayStatus {
+  return status in STATUS_LABEL ? (status as DisplayStatus) : 'idle';
+}
+
+/** etl_run_log times are UTC wall-clock strings ("YYYY-MM-DD HH:mm:ss"). */
+function formatUtcWallClock(value: string | null): string {
+  return value ? formatDateTime(`${value.replace(' ', 'T')}Z`) : '—';
+}
+
+function StepChips({ steps }: { steps: EtlRunStep[] | undefined }) {
+  if (!steps?.length) return <>—</>;
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+      {steps.map((s) => (
+        <span key={s.runId} title={`${STEP_LABEL[s.job] ?? s.job}: ${STATUS_LABEL[stepStatus(s.status)]}`}>
+          <StatusBadge status={stepStatus(s.status)} />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function RunStepsTable({ steps }: { steps: EtlRunStep[] }) {
+  const cell: React.CSSProperties = { padding: '6px 8px', borderBottom: '1px solid var(--ps-color-border)', textAlign: 'left', verticalAlign: 'top' };
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, marginBottom: 10 }}>
+      <thead>
+        <tr style={{ color: 'var(--ps-color-muted-text)' }}>
+          <th style={cell}>Step</th>
+          <th style={cell}>Status</th>
+          <th style={cell}>Started</th>
+          <th style={cell}>Duration</th>
+          <th style={cell}>Loaded</th>
+          <th style={cell}>Error</th>
+        </tr>
+      </thead>
+      <tbody>
+        {steps.map((s) => (
+          <tr key={s.runId}>
+            <td style={cell}>
+              {STEP_LABEL[s.job] ?? s.job} <code style={{ color: 'var(--ps-color-muted-text)' }}>{s.job}</code>
+            </td>
+            <td style={cell}><StatusBadge status={stepStatus(s.status)} /></td>
+            <td style={cell}>{formatUtcWallClock(s.startedAtUtc)}</td>
+            <td style={cell}>{formatDuration(s.durationSeconds === null ? null : Math.round(s.durationSeconds))}</td>
+            <td style={cell}>{formatCount(s.rowsLoaded)}</td>
+            <td style={{ ...cell, maxWidth: 420, overflowWrap: 'anywhere' }}>{s.errorMessage ? s.errorMessage.split('\n')[0] : '—'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 const TRIGGER_LABEL: Record<string, string> = {
   scheduled: 'Scheduled',
   manual: 'Manual',
@@ -151,20 +218,22 @@ const MANUAL_MODES: {
   {
     mode: 'incremental',
     label: 'Sales Refresh',
-    description: 'Reloads the sales pages (job sales_incremental). Recommended for normal operations.',
+    description:
+      'The 3-hourly run (job main): reference data, then the sales refresh. Does not refresh Receivables and Collections. Recommended for normal operations.',
     confirmMessage: 'This process may take about 20-25 minutes. Do you want to continue?',
   },
   {
     mode: 'full',
     label: 'Full Refresh',
-    description: 'Shared reference data (customers, products, people, teams) and then sales (job full_all).',
-    confirmMessage: 'This process refreshes the reference data and every sales table and may take about 25 minutes. Do you want to continue?',
+    description: "The 02:00 run (job full_all): reference data (customers, products, people, teams), today's receivables snapshot, then every sales table rebuilt.",
+    confirmMessage: 'This process refreshes the reference data, the receivables snapshot and every sales table and may take about 25-40 minutes. Do you want to continue?',
     variant: 'danger',
   },
   {
     mode: 'finance',
     label: 'Receivables Snapshot',
-    description: "Today's open customer receivables for the Debt report (job finance_receivables). A re-run replaces today's snapshot.",
+    description:
+      "The 15:00 run (job finance_receivables): today's receivables snapshot for Receivables and Collections, with the reference data first when it is older than 3 hours. Also taken by the 02:00 Full Refresh; a re-run replaces today's snapshot.",
     confirmMessage: 'This process takes about 3-10 minutes and replaces today\'s receivables snapshot. Do you want to continue?',
   },
 ];
@@ -233,7 +302,7 @@ function EtlControlBody() {
   useEffect(() => {
     const prev = seenRun.current;
     if (run) {
-      if (prev && prev.id === run.id && (prev.status === 'queued' || prev.status === 'running') && run.status === 'success') {
+      if (prev && prev.id === run.id && (prev.status === 'queued' || prev.status === 'running') && (run.status === 'success' || run.status === 'partial')) {
         bumpDataVersion();
         setHistoryRefreshKey((k) => k + 1);
       }
@@ -455,6 +524,28 @@ function EtlControlBody() {
           ) : (
             <EmptyState message="No ETL runs recorded yet." />
           )}
+          {lastRun && !isActive && lastRun.status === 'partial' && (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 10,
+                borderRadius: 8,
+                background: 'color-mix(in srgb, var(--ps-color-watch) 10%, transparent)',
+                border: '1px solid var(--ps-color-watch)',
+                fontSize: 13,
+              }}
+            >
+              <strong style={{ color: 'var(--ps-color-watch)' }}>The last run finished partially.</strong> The other steps
+              loaded and kept their data; the failed step is tried again by the next scheduled run, or now with Receivables
+              Snapshot.
+              {lastRun.error_message && <div style={{ marginTop: 6 }}>{summarizeError(lastRun.error_message)}</div>}
+            </div>
+          )}
+          {lastRun && !isActive && lastRun.status === 'skipped' && (
+            <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
+              The last trigger was skipped: another ETL run was already running. Nothing was written.
+            </div>
+          )}
           {lastRun && !isActive && (lastRun.status === 'failed' || lastRun.status === 'cancelled') && (
             <div
               style={{
@@ -503,6 +594,7 @@ function EtlControlBody() {
           <dl style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13.5 }}>
             <InfoRow label="Next Incremental Refresh" value={formatDateTime(status?.nextIncrementalRun ?? null)} stacked />
             <InfoRow label="Next Full Refresh" value={formatDateTime(status?.nextFullRun ?? null)} stacked />
+            <InfoRow label="Next Receivables Snapshot" value={formatDateTime(status?.nextFinanceRun ?? null)} stacked />
           </dl>
         </Card>
       </div>
@@ -660,8 +752,9 @@ function EtlControlBody() {
         )}
         <p style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', margin: '16px 0 0' }}>
           Configured via <code>ETL_SCHEDULE_INCREMENTAL_CRON</code> / <code>ETL_SCHEDULE_FULL_CRON</code> /{' '}
-          <code>ETL_SCHEDULE_FINANCE_CRON</code> in{' '}
-          <code>backend/.env</code>. Change and restart the backend to apply.
+          <code>ETL_SCHEDULE_FINANCE_CRON</code> in <code>backend/.env</code>, read in{' '}
+          {schedulerConfig?.timezone ?? 'Africa/Tripoli'} time. Change and recreate the backend to apply. Incremental =
+          reference data + sales; Full = reference data + receivables + sales; Receivables Snapshot = receivables only.
         </p>
       </Card>
 
@@ -731,6 +824,7 @@ function RunHistorySection({ token, refreshKey }: { token: string | null; refres
     { key: 'trigger_source', header: 'Trigger', render: (r) => TRIGGER_LABEL[r.trigger_source] ?? r.trigger_source },
     { key: 'duration_seconds', header: 'Duration', render: (r) => formatDuration(r.duration_seconds) },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
+    { key: 'steps', header: 'Steps', render: (r) => <StepChips steps={r.steps} /> },
     { key: 'odoo_extract_count', header: 'Extracted', render: (r) => formatCount(r.odoo_extract_count) },
     { key: 'db_loaded_count', header: 'Loaded', render: (r) => formatCount(r.db_loaded_count) },
     { key: 'error_message', header: 'Errors', render: (r) => (r.error_message ? r.error_message.split('\n')[0] : '—') },
@@ -743,7 +837,8 @@ function RunHistorySection({ token, refreshKey }: { token: string | null; refres
       <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>Run History</h3>
       <p style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', margin: '0 0 16px' }}>
         Every scheduled and manually-triggered run (including from the CLI) appears here. Runs started with{' '}
-        <code>--sync</code> from a terminal bypass the queue and are not tracked here. Click a row to view its log.
+        <code>--sync</code> from a terminal bypass the queue and are not tracked here. Steps shows the run&apos;s ETL steps
+        (reference data, receivables snapshot, sales) in order. Click a row to see its steps and log.
       </p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16, alignItems: 'flex-end' }}>
@@ -759,8 +854,10 @@ function RunHistorySection({ token, refreshKey }: { token: string | null; refres
             { value: 'queued', label: 'Queued' },
             { value: 'running', label: 'Running' },
             { value: 'success', label: 'Success' },
+            { value: 'partial', label: 'Partial' },
             { value: 'failed', label: 'Failed' },
             { value: 'cancelled', label: 'Cancelled' },
+            { value: 'skipped', label: 'Skipped' },
           ]}
         />
         <FilterSelect
@@ -810,6 +907,7 @@ function RunHistorySection({ token, refreshKey }: { token: string | null; refres
                   Close ✕
                 </button>
               </div>
+              {selectedRun.steps && selectedRun.steps.length > 0 && <RunStepsTable steps={selectedRun.steps} />}
               <EtlLogPanel token={token} runId={selectedRun.id} live={false} />
             </div>
           )}

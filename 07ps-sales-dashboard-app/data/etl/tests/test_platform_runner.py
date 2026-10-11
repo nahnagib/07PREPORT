@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from dataclasses import replace
 
 import pytest
 from sqlalchemy import text
@@ -160,6 +161,33 @@ def test_dataset_filter_runs_only_matching_tasks(platform_engine, platform_confi
     r.job(JobSpec("j", "sales", tasks=("load_a", "load_b")))
     Runner(r, platform_engine, platform_config).run("j", as_of=AS_OF, dataset="b")
     assert calls == ["b"]
+
+
+def test_company_names_are_resolved_once_and_added_to_ids(platform_engine, platform_config, monkeypatch):
+    class FakeOdoo:
+        def __init__(self):
+            self.company_ids = ()
+            self.calls = 0
+
+        def accessible_companies(self):
+            self.calls += 1
+            return [{"id": 1, "name": "Majaal"}, {"id": 3, "name": "TIKA"}, {"id": 4, "name": "Athena"}]
+
+    source = FakeOdoo()
+
+    def connect(*args, **kwargs):
+        return source
+
+    monkeypatch.setattr("etl_platform.sources.odoo.OdooSource.connect", connect)
+    seen = []
+    r = Registry()
+    r.task(TaskSpec("resolve", lambda ctx: seen.append(ctx.odoo_company_ids()) or TaskResult()))
+    r.job(JobSpec("j", "core", tasks=("resolve",)))
+    cfg = replace(platform_config, odoo_company_ids=(1, 3), odoo_company_names=("Athena",))
+    Runner(r, platform_engine, cfg).run("j", as_of=AS_OF)
+    assert seen == [(1, 3, 4)]
+    assert source.company_ids == (1, 3, 4)
+    assert source.calls == 1
 
 
 def test_missing_meta_schema_is_reported(platform_config, tmp_path):

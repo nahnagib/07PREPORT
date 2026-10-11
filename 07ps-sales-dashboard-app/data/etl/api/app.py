@@ -6,7 +6,7 @@ instead of spawning the subprocess itself directly - everything above pythonRunn
 Endpoints:
   POST /etl/run                    - start a run, 202 {jobId} (409 if one is already active). Body: {"job": "<platform
                                       job>"} (validated against the platform registry); without "job", the legacy
-                                      {"loadMode"} maps to sales_incremental (incremental) or full_all (full)
+                                      {"loadMode"} maps to main (incremental) or full_all (full)
   GET  /etl/jobs/<job_id>          - poll status + new log lines (?after=<count> for incremental
                                       fetch, matching how pythonRunner.ts's polling loop tracks
                                       how many lines it has already consumed)

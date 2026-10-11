@@ -22,6 +22,7 @@ import pandas as pd
 from sqlalchemy import text
 
 from core.keys import UNKNOWN, UNKNOWN_TEXT
+from sales_pipeline.product_matching import normalize_match_company
 
 
 def _int_or_none(v: Any) -> int | None:
@@ -49,6 +50,7 @@ class KeyMaps:
     salesperson_channel: dict[int, int] = field(default_factory=dict)
     team_segment: dict[str, int] = field(default_factory=dict)
     company_keys: set[int] = field(default_factory=set)
+    company_name_keys: dict[str, int] = field(default_factory=dict)
     product_keys: set[int] = field(default_factory=set)
     product_master: dict[tuple[int, int], str] = field(default_factory=dict)
     master_keys: set[str] = field(default_factory=set)
@@ -58,6 +60,7 @@ class KeyMaps:
         def rows(sql):
             return conn.execute(text(sql)).fetchall()
 
+        company_rows = rows("SELECT CompanyKey, Company FROM dim_company")
         return cls(
             partner_customer={int(p): int(c) for p, c in rows("SELECT partner_id, CustomerKey FROM map_partner_customer")},
             user_salesperson={int(u): int(s) for u, s in rows("SELECT odoo_user_id, SalespersonKey FROM map_odoo_user_salesperson")},
@@ -65,7 +68,8 @@ class KeyMaps:
             salesperson_team={int(s): str(t) for s, t in rows("SELECT SalespersonKey, SalesTeamKey FROM dim_salesperson")},
             salesperson_channel={int(s): int(c) for s, c in rows("SELECT SalespersonKey, ChannelKey FROM dim_salesperson")},
             team_segment={str(t): int(s) for t, s in rows("SELECT SalesTeamKey, SegmentKey FROM dim_sales_team")},
-            company_keys={int(c) for (c,) in rows("SELECT CompanyKey FROM dim_company")},
+            company_keys={int(c) for c, _ in company_rows},
+            company_name_keys={normalize_match_company(n).upper(): int(c) for c, n in company_rows if n is not None},
             product_keys={int(p) for (p,) in rows("SELECT ProductKey FROM dim_product")},
             product_master={(int(p), int(c)): str(m) for p, c, m in rows("SELECT ProductKey, CompanyKey, ProductMasterKey FROM map_product_master")},
             master_keys={str(m) for (m,) in rows("SELECT ProductMasterKey FROM dim_product_master")},
@@ -132,6 +136,11 @@ class KeyMaps:
                 if cid is not None:
                     fell.append(cid)
         return keys, fell
+
+    def company_by_name(self, company_name: Any) -> int:
+        if company_name is None or (not isinstance(company_name, str) and pd.isna(company_name)):
+            return UNKNOWN
+        return self.company_name_keys.get(normalize_match_company(company_name).upper(), UNKNOWN)
 
     def products(self, product_ids: Iterable[Any]) -> tuple[list[int], list[int]]:
         keys, fell = [], []

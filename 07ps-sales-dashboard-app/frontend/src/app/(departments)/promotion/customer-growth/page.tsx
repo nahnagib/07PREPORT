@@ -39,16 +39,9 @@ import type {
   CustomerStatusLabel,
 } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
+import { CUSTOMER_CATEGORY_DEFINITION, customerCategoryColor, isCustomerCategory } from '../../../../lib/customerCategory';
 
-const CATEGORY_LETTERS = new Set(['A', 'B', 'C', 'D']);
-
-// Categorical palette for the Customers Category Share donut -- same "borrow a few brand hues for
-// a category dimension with no dedicated token" convention as Invoices Engine's INVOICE_CLASS_COLOR
-// and Pipeline Health's CATEGORY_PALETTE.
-const CATEGORY_DONUT_COLORS = ['var(--ps-color-trend-target)', 'var(--ps-color-accent)', 'var(--ps-color-gold)', 'var(--ps-color-muted-text)', 'var(--ps-color-watch)', 'var(--ps-color-last-year)'];
-function categoryDonutColor(index: number): string {
-  return CATEGORY_DONUT_COLORS[index % CATEGORY_DONUT_COLORS.length];
-}
+// Customer Category order, labels, palette and definition: lib/customerCategory.ts (shared with Receivables and Collections).
 
 const STATUS_SLICER_OPTIONS: { value: CustomerStatusLabel; label: string }[] = [
   { value: 'Active Retained', label: 'Active Retained' },
@@ -412,7 +405,7 @@ export default function CustomerGrowthPage() {
   }
 
   function handleCategoryClick(label: string) {
-    if (!CATEGORY_LETTERS.has(label)) return;
+    if (!isCustomerCategory(label)) return;
     if (categoryDrillMode) {
       if (categoryDrill == null) setCategoryDrill(label);
       // Already drilled into one category's customers -- no further drill level defined here.
@@ -497,7 +490,7 @@ export default function CustomerGrowthPage() {
     id: p.label,
     label: drilledCategoryRow ? p.label : `Category ${p.label}`,
     value: p.salesYtm,
-    color: categoryDonutColor(i),
+    color: customerCategoryColor(i),
   }));
 
   const tableRows = (data?.customersTable ?? [])
@@ -771,7 +764,7 @@ export default function CustomerGrowthPage() {
 
                 <ChartPanel<CategoryTableRow>
                   title="Customers Category Share"
-                  infoText="Share of Sales YTD by Customer Category (A highest value - D lowest); Sales LYTD stays available in the table below. Enable drill-down to click a category and see its individual customers, or leave it off to click a category and set it as the page's active filter."
+                  infoText={`Share of Sales YTD by ${CUSTOMER_CATEGORY_DEFINITION} Sales LYTD stays available in the table below. Enable drill-down to click a category and see its individual customers, or leave it off to click a category and set it as the page's active filter.`}
                   style={{ minHeight: 380 }}
                   tableColumns={overview.error ? undefined : categoryTableColumns}
                   tableRows={overview.error ? undefined : categoryTableRows}

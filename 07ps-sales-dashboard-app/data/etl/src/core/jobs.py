@@ -99,7 +99,8 @@ def extract_partner_company(ctx: RunContext) -> TaskResult:
     source = ctx.odoo(spec.profile)
     fields, skipped = source.available_fields(spec.model, spec.odoo_fields)
     frames, total = [], 0
-    for company_id in ctx.config.odoo_company_ids:
+    company_ids = ctx.odoo_company_ids(spec.profile)
+    for company_id in company_ids:
         records = source.search_read_all(spec.model, spec.domain, fields, include_archived=True, company_ids=[company_id])
         total += len(records)
         df = records_to_frame(records, spec, run_uid=ctx.run_uid, extracted_at=_now(), available=fields)
@@ -109,7 +110,7 @@ def extract_partner_company(ctx: RunContext) -> TaskResult:
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     with ctx.engine.begin() as conn:
         loaded = upsert(conn, spec.table, df) if len(df) else 0
-    return TaskResult(rows_extracted=total, rows_loaded=loaded, details={"companies": list(ctx.config.odoo_company_ids), "skipped_fields": skipped})
+    return TaskResult(rows_extracted=total, rows_loaded=loaded, details={"companies": list(company_ids), "skipped_fields": skipped})
 
 
 # -- Excel -------------------------------------------------------------------------------------------------------
@@ -134,13 +135,14 @@ def _excel_task(dataset: str, transform=None):
 
 # -- builds ------------------------------------------------------------------------------------------------------
 def build_reference_dims(ctx: RunContext) -> TaskResult:
-    companies = ref.build_companies(_read(ctx, "SELECT * FROM raw_odoo_res_company"), ctx.config.odoo_company_ids)
+    company_ids = ctx.odoo_company_ids()
+    companies = ref.build_companies(_read(ctx, "SELECT * FROM raw_odoo_res_company"), company_ids)
     currencies = ref.build_currencies(_read(ctx, "SELECT * FROM raw_odoo_res_currency"))
     terms = ref.build_payment_terms(_read(ctx, "SELECT * FROM raw_odoo_account_payment_term"),
                                     _read(ctx, "SELECT * FROM raw_odoo_account_payment_term_line"))
-    missing_scope = set(ctx.config.odoo_company_ids) - set(companies["CompanyKey"])
+    missing_scope = set(company_ids) - set(companies["CompanyKey"])
     if missing_scope:
-        raise RuntimeError(f"ODOO_COMPANY_IDS {sorted(missing_scope)} not found in res.company")
+        raise RuntimeError(f"Configured Odoo company id(s) {sorted(missing_scope)} not found in res.company")
     with ctx.engine.begin() as conn:
         n = upsert(conn, "dim_currency", _stamp(currencies)) + upsert(conn, "dim_company", _stamp(companies)) + upsert(conn, "dim_payment_term", _stamp(terms))
     return TaskResult(rows_loaded=n, details={"companies": len(companies), "currencies": len(currencies), "payment_terms": len(terms)})

@@ -39,6 +39,7 @@ import {
   type DateWindow,
   type Filters,
 } from './filters';
+import { CUSTOMER_CATEGORIES } from '../lib/customerCategory';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -475,7 +476,8 @@ export async function fetchCustomersContribution(
 
 // ---------------------------------------------------------------------------
 // Zone C (right) -- Customers Category Performance: Sales LYTM vs YTM by Customer Category
-// (Dim_Customer.CustomerClass_LY, A-D). "LYTM"/"YTM" map onto the existing LYTD/YTD windows --
+// (Dim_Customer.CustomerClass_LY, A-D -- the one definition is lib/customerCategory.ts, shared with Receivables and
+// Collections' Customer Category filter). "LYTM"/"YTM" map onto the existing LYTD/YTD windows --
 // no new date-period term exists elsewhere in this codebase, so no new one is invented here.
 // Honors scope.year via the same anchorForYear remap as everywhere else on this page. Each
 // category also carries its top 20 customers by YTD value, for the drill-down (same "return drill
@@ -496,7 +498,7 @@ export interface CategoryPerformanceRow {
   customers: CategoryCustomer[];
 }
 
-const CATEGORY_ORDER = ['A', 'B', 'C', 'D'];
+const CATEGORY_ORDER: readonly string[] = CUSTOMER_CATEGORIES;
 const CATEGORY_CUSTOMER_TOP_N = 20;
 
 interface ClassSalesRow {

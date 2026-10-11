@@ -221,6 +221,16 @@ class OdooSource:
             ctx["allowed_company_ids"] = list(self.company_ids)
         return ctx
 
+    def accessible_companies(self) -> list[dict[str, Any]]:
+        """Companies the current Odoo user can see, without applying the configured company scope.
+
+        This is used to resolve ODOO_COMPANY_NAMES before that scope is applied to reads.
+        """
+        return self.client.search_read(
+            "res.company", [], ["id", "name"], limit=0, order="id",
+            context={"lang": self.lang, "active_test": False},
+        )
+
     def _ctx(self, include_archived: bool, company_ids: Sequence[int] | None = None) -> dict[str, Any]:
         ctx = self.context
         if include_archived:

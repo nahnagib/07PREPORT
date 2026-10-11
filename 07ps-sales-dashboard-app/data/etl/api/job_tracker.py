@@ -42,7 +42,7 @@ class Job:
     fast: bool
     extra_args: List[str]
     label: Optional[str]
-    # the platform job (sales_incremental, full_all, finance_receivables, ...); empty = derived from load_mode
+    # the platform job (main, full_all, finance_receivables, ...); empty = derived from load_mode
     job_name: str = ""
     status: str = "pending"  # pending -> running -> completed | failed | cancelled
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -95,7 +95,7 @@ def _pump(stream, job: Job, stream_name: str) -> None:
     stream.close()
 
 
-LOAD_MODE_JOBS = {"incremental": "sales_incremental", "full": "full_all"}  # callers that send only loadMode
+LOAD_MODE_JOBS = {"incremental": "main", "full": "full_all"}  # callers that send only loadMode
 
 
 def platform_job_name(job: Job) -> str:

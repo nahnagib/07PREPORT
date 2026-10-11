@@ -10,7 +10,7 @@ import {
   markRunStarted,
 } from '../services/etlRunTracker';
 import { etlLogger } from '../services/etlLogger';
-import { runPipeline } from '../services/pythonRunner';
+import { ETL_EXIT_LOCKED, ETL_EXIT_PARTIAL, runPipeline } from '../services/pythonRunner';
 
 /** In-flight jobs on THIS worker process, keyed by BullMQ job id (== etl_job_runs.id, see
  * etlQueue.ts). Cancellation arrives over Redis pub/sub (etlControlChannel.ts) since the API
@@ -86,6 +86,35 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
       });
       etlLogger.info('Job cancelled', { jobId: job.id, runId, label });
       // No throw -- a deliberate cancellation should not trigger BullMQ's retry/backoff.
+      return;
+    }
+
+    // Partial (exit 3): the run loaded but an optional step failed (finance in main/full_all). Not retried by BullMQ:
+    // retrying would redo the 20-minute sales load; the next scheduled run tries finance again anyway.
+    if (result.exitCode === ETL_EXIT_PARTIAL) {
+      recordedTerminalStatus = true;
+      await finishRun(runId, {
+        status: 'partial',
+        exitCode: result.exitCode,
+        errorMessage: correlated?.errorMessage || result.stderrTail || 'A step of the run failed (see the run steps).',
+        pipelineRunLogId: correlated?.pipelineRunLogId,
+        odooExtractCount: correlated?.odooExtractCount,
+        dbLoadedCount: correlated?.dbLoadedCount,
+        qaIssuesCount: correlated?.qaIssuesCount,
+      });
+      etlLogger.warn('Job finished partially', { jobId: job.id, runId, label, error: correlated?.errorMessage });
+      return;
+    }
+
+    // Lock busy (exit 4): another ETL run (shell, CLI, a second API) is writing; this trigger is dropped, not retried.
+    if (result.exitCode === ETL_EXIT_LOCKED) {
+      recordedTerminalStatus = true;
+      await finishRun(runId, {
+        status: 'skipped',
+        exitCode: result.exitCode,
+        errorMessage: 'Skipped: another ETL run was already running (it holds the ETL lock). Nothing was written.',
+      });
+      etlLogger.info('Job skipped -- another ETL run holds the lock', { jobId: job.id, runId, label });
       return;
     }
 

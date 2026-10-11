@@ -120,7 +120,8 @@ class FinanceFakeOdoo(FakeOdooSource):
 @pytest.fixture
 def fin(platform_engine, platform_config, tmp_path, monkeypatch):
     for m in ("0029_core_dimensions.sql", "0030_core_team_map.sql", "0031_sales_mart.sql", "0032_core_odoo_labels.sql",
-              "0033_finance_receivables.sql", "0034_finance_receivable_scope.sql"):
+              "0033_finance_receivables.sql", "0034_finance_receivable_scope.sql",
+              "0040_finance_collections.sql", "0042_finance_collection_split.sql"):
         apply_migration_sqlite(platform_engine, m)
     load_definitions()
     for var in ("ODOO_DEBT_LOGIN", "ODOO_DEBT_API_KEY", "ODOO_DEBT_KEY_EXPIRES"):
@@ -156,7 +157,7 @@ def test_snapshot_rows_follow_the_receivable_rules(fin):
     # credit note due today: not overdue, negative, salesperson from the customer of record (no invoice user)
     assert f.loc[3, ["days_past_due", "AgingBucketKey", "residual_company_ccy", "salesperson_source", "PaymentKey"]].tolist() == \
         [0, 4, -200.0, "customer", -1]
-    assert f.loc[3, "SalespersonKey"] == 49 and f.loc[3, "SalesTeamKey"] == "TK-BEN-BC-03"  # no team -> salesperson's team
+    assert f.loc[3, "SalespersonKey"] == 49 and f.loc[3, "SalesTeamKey"] == "-1"  # no team -> Unknown, as Odoo's Sales Team filter sees it (never the salesperson's team)
     # foreign-currency unapplied payment: no maturity -> line date; both currencies kept
     assert f.loc[4, ["PaymentKey", "DueDateKey", "residual_company_ccy", "residual_doc_ccy", "CurrencyKey"]].tolist() == \
         [77, 20260920, -1000.0, -200.0, 2]
@@ -193,6 +194,20 @@ def test_checks_fallbacks_and_credential_warning(fin, caplog):
     assert '"13"' in log.iloc[0, 0]  # Odoo user 13 not in OdooUsers, reported
     run_log = _rows(engine, "SELECT department, job_name, status FROM etl_run_log WHERE job_name = 'finance_receivables'")
     assert run_log.values.tolist() == [["finance", "finance_receivables", "success"]]
+
+
+def test_an_odoo_team_that_follows_the_salesperson_keeps_its_own_name(fin):
+    """EXPORT (crm.team 27) is SALESPERSON in OdooTeams: sales uses the salesperson's team, receivables its own team."""
+    engine, run, fake = fin
+    fake.data["account.move"] = [dict(r, team_id=[27, "EXPORT"]) if r["id"] == 1003 else r for r in fake.data["account.move"]]
+    run()
+    f = _rows(engine, "SELECT f.line_id, f.SalesTeamKey, st.SalesTeam, st.CompanyKey, st.SegmentKey FROM fact_finance_receivable_snapshot f "
+                      "JOIN dim_sales_team st ON st.SalesTeamKey = f.SalesTeamKey ORDER BY f.line_id").set_index("line_id")
+    assert f.loc[5, "SalesTeamKey"] == "ODOO-TEAM-27" and f.loc[5, "SalesTeam"] == "EXPORT"
+    assert int(f.loc[5, "CompanyKey"]) == 3 and int(f.loc[5, "SegmentKey"]) == -1
+    assert f.loc[3, "SalesTeamKey"] == "-1"  # a document without an Odoo team (credit note 1001) stays Unknown
+    inv = _rows(engine, "SELECT SalesTeamKey FROM dim_finance_invoice WHERE move_id = 1003")
+    assert inv.iloc[0, 0] == "ODOO-TEAM-27"
 
 
 def test_rerun_of_the_same_day_replaces_that_day(fin):

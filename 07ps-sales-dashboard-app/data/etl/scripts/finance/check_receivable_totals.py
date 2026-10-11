@@ -4,9 +4,10 @@ the Debt page's default (customer debt, inter-company excluded) is printed next 
 
   python scripts/finance/check_receivable_totals.py [--date 2026-10-04]
 
-Uses the platform settings (DB_*, ODOO_*, the production guard variables, ODOO_COMPANY_IDS) and the default read-only
-Odoo credentials. Read-only on both sides. A posting in Odoo after the snapshot run shows up as a difference: re-run
-right after the job, or compare the line ids (the job's own end-of-extraction recount reports those).
+Uses the platform settings (DB_*, ODOO_*, the production guard variables, ODOO_COMPANY_IDS / ODOO_COMPANY_NAMES)
+and the default read-only Odoo credentials. Read-only on both sides. A posting in Odoo after the snapshot run shows
+up as a difference: re-run right after the job, or compare the line ids (the job's own end-of-extraction recount
+reports those).
 """
 
 from __future__ import annotations
@@ -26,6 +27,21 @@ from sqlalchemy import create_engine, text  # noqa: E402
 from departments.finance.jobs import RECEIVABLE_DOMAIN  # noqa: E402
 from etl_platform.config import PlatformConfig  # noqa: E402
 from etl_platform.sources.odoo import OdooSource  # noqa: E402
+from sales_pipeline.product_matching import normalize_match_company  # noqa: E402
+
+
+def scoped_company_ids(config: PlatformConfig, odoo: OdooSource) -> tuple[int, ...]:
+    ids = list(config.odoo_company_ids)
+    if config.odoo_company_names:
+        companies = odoo.accessible_companies()
+        by_name = {normalize_match_company(c.get("name")).upper(): int(c["id"]) for c in companies if c.get("name") is not None}
+        missing = [name for name in config.odoo_company_names if normalize_match_company(name).upper() not in by_name]
+        if missing:
+            raise RuntimeError("ODOO_COMPANY_NAMES not visible to the Odoo user: " + ", ".join(missing))
+        ids.extend(by_name[normalize_match_company(name).upper()] for name in config.odoo_company_names)
+    out = tuple(dict.fromkeys(ids))
+    odoo.company_ids = out
+    return out
 
 
 def main() -> int:
@@ -45,7 +61,7 @@ def main() -> int:
     ok = True
     print(f"Snapshot {snap} vs Odoo now (open receivable lines, posted, unreconciled, residual != 0)")
     print(f"{'company':>8} {'lines odoo':>11} {'lines snap':>11} {'residual odoo':>18} {'residual snap':>18} {'difference':>12} {'page default':>16}")
-    for company in config.odoo_company_ids:
+    for company in scoped_company_ids(config, odoo):
         domain = [*RECEIVABLE_DOMAIN, ("company_id", "=", company)]
         group = odoo.client.execute_kw("account.move.line", "read_group", [domain, ["amount_residual:sum"], []],
                                        {"lazy": False, "context": odoo.context})

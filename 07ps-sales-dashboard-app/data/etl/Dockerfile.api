@@ -8,6 +8,10 @@
 # api/+src/ reproduces the exact ModuleNotFoundError this session hit and fixed earlier.
 FROM python:3.11-slim
 WORKDIR /repo/data/etl
+# config/ (data/etl/config) and the platform packages (data/etl/src) importable from any folder, so
+# `docker compose exec etl-api python -m etl_platform.run main` works from the final WORKDIR (api/) too -
+# without it, etl_platform/config.py's `from config.settings import Settings` fails there.
+ENV PYTHONPATH=/repo/data/etl:/repo/data/etl/src
 
 # gcc: needed to build a couple of the real pipeline's transitive C-extension dependencies.
 # tzdata: the TZ env var / zoneinfo (TIMEZONE=Africa/Tripoli) need the IANA database.

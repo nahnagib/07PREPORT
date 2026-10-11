@@ -38,6 +38,7 @@
 
 import type { Pool } from 'mysql2/promise';
 import { classifyVsTarget, variancePct, TargetStatus } from './classify';
+import { EVEN_SPLIT_SEASONALITY_PCT, SEASONALITY_MONTH_COUNT } from '../lib/seasonality';
 import {
   buildWhereClause,
   dateOnlyUTC,

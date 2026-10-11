@@ -32,11 +32,24 @@ transforms, which the sales job still reuses. Wherever they disagree with this s
 | Job | Department | What it loads | Default schedule (Africa/Tripoli) |
 |---|---|---|---|
 | `core_dims` | core | shared dimensions: company, currency, payment term, customer (commercial partner), salesperson, sales team, channel, segment, product, product master, date, off-days, Odoo selection labels (`dim_odoo_selection_label`, en + ar) | run first by every job when older than `ETL_CORE_DIMS_FRESH_MINUTES` |
-| `sales_incremental` | sales | every `fact_sales_*` / `dim_sales_*` mart, swapped in at once after every orphan check passes | `ETL_SCHEDULE_INCREMENTAL_CRON` (5× a day) |
-| `sales_full` | sales | the same marts, as an explicit full run | — |
-| `full_all` | all | `core_dims` + `sales_full` | `ETL_SCHEDULE_FULL_CRON` (nightly) |
-| `finance_receivables` | finance | daily receivable snapshot (`fact_finance_receivable_snapshot`, `dim_finance_*`); runbook `docs/receivables-etl.md` | `ETL_SCHEDULE_FINANCE_CRON` (06:30) |
+| `main` | all | `core_dims` → `sales_incremental` (one run id, steps as child rows; no finance) | `ETL_SCHEDULE_INCREMENTAL_CRON` (every 3 h); "Sales Refresh"; `npm run etl:incremental` |
+| `full_all` | all | `core_dims` → `finance_receivables` → `sales_full` | `ETL_SCHEDULE_FULL_CRON` (02:00); "Full Refresh"; `npm run etl:full` |
+| `sales_incremental` | sales | every `fact_sales_*` / `dim_sales_*` mart, swapped in at once after every orphan check passes | inside `main` |
+| `sales_full` | sales | the same marts, as an explicit full run | inside `full_all` |
+| `finance_receivables` | finance | receivable snapshot of today (`fact_finance_receivable_snapshot`, `dim_finance_*`); runbook `docs/receivables-etl.md` | inside `full_all` (02:00); alone `ETL_SCHEDULE_FINANCE_CRON` (15:00) / "Receivables Snapshot" |
 | `platform_selfcheck` | — | diagnostics, never logged as a refresh | — |
+
+**Pipelines and schedules** (all crons in `ETL_SCHEDULE_TIMEZONE`, else `APP_TIMEZONE`, Africa/Tripoli): every 3 h
+`main` (core dims → sales, no finance); 02:00 `full_all` (core dims → receivables → sales full); 15:00
+`finance_receivables` alone (its core dims step is reused when it succeeded within `ETL_CORE_DIMS_FRESH_MINUTES`).
+`main` and `full_all` have no tasks of their own: their top-level `etl_run_log` row holds the run id, and the step
+rows point to it through `parent_run_uid` (the Control Center history shows them as the run's steps). In `full_all`
+finance runs before sales, so Receivables and Collections is fresh minutes into the run. Failure rules
+(`etl_platform/runner.py`): `core_dims` fails → the other steps get `skipped` rows and the run fails; finance fails
+inside `full_all` → core and sales still run and keep their data, the run is `partial` with "finance failed: <error>"
+and the 15:00 run retries; sales fails → the run fails (the snapshot stays). Exit codes of `etl_platform.run`:
+0 success, 1 failed, 2 bad arguments, 3 partial, 4 skipped (another run holds the lock; a second trigger waits
+`ETL_LOCK_TIMEOUT_SECONDS`, default 30, then gives up). The whole run holds the MySQL lock.
 
 **Incremental extraction.** `sales_incremental` still performs a full Odoo extraction of the sales models (about 20
 minutes). Write-date incremental extraction for sales is a planned follow-up (`docs/deployment-plan.md`, "After

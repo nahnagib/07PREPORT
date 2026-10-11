@@ -1,4 +1,4 @@
-# Deployment plan (Phase 8): ETL platform rebuild + Debt Report, one window
+# Deployment plan (Phase 8): ETL platform rebuild + Receivables and Collections, one window
 
 Status 2026-10-05, after Phase 7. Every step that writes to git, the server, the containers or Odoo configuration is
 **yours to run**. Nothing here has been done yet, except where section 0 says so.
@@ -30,7 +30,7 @@ seasonality import in `tachometer.ts`, `lib/seasonality.ts`, and **migration 002
 | 0031 | 2026-10-04 | sales marts and `v_sales_*` views |
 | 0032 | 2026-10-04 | Odoo selection labels |
 | 0033 | 2026-10-04 | finance receivables |
-| **0034** | **2026-10-04 (Phase 7)** | `receivable_scope`, `dim_finance_receivable_scope`, `v_finance_receivable_line`, default views = customer debt; Debt Report page grants |
+| **0034** | **2026-10-04 (Phase 7)** | `receivable_scope`, `dim_finance_receivable_scope`, `v_finance_receivable_line`, default views = customer debt; Receivables and Collections page grants |
 | 0035 | **not applied** (`migrations/manual/`, renumbered from 0034) | retire the legacy tables, after the observation period |
 
 - **Last loads:**
@@ -63,7 +63,7 @@ seasonality import in `tachometer.ts`, `lib/seasonality.ts`, and **migration 002
 |---|---|
 | Aged Receivable comparison for 2026-10-04 (A3) | waiting for your exports; `scripts/finance/compare_aged_receivable.py` |
 | Two more inter-company partners: 9651 مديونية شركة اثينا, 16388 مديونية اثينا (Athena) | Phase 7 report §2 |
-| Live screenshots of a salesperson **with** the Debt Report enabled | Phase 7 report §6 (needs a temporary grant) |
+| Live screenshots of a salesperson **with** the Receivables and Collections enabled | Phase 7 report §6 (needs a temporary grant) |
 | Second Odoo accounts, `OdooTeams` gaps, blocked-customer mapping | the review CSVs in `docs/` |
 | Debt bot user (`ODOO_DEBT_*`) | `receivables-etl.md` §3 |
 
@@ -115,10 +115,9 @@ git -C C:/Users/Lenovo/Desktop/07PREPORT-ppl switch --detach <C>
 
 | Variable | Value |
 |---|---|
-| `ETL_SCHEDULE_FINANCE_CRON` | `30 6 * * *` |
 | `ETL_SCHEDULE_TIMEZONE` | `Africa/Tripoli` |
-| `ETL_SCHEDULE_INCREMENTAL_ENABLED` / `_FULL_ENABLED` / `_FINANCE_ENABLED` | **`false`** until step 8 |
-| `ODOO_WEB_BASE_URL` (optional) | base of the Debt Report's "open in Odoo" links; defaults to `ODOO_URL` |
+| `ETL_SCHEDULE_INCREMENTAL_ENABLED` / `_FULL_ENABLED` | **`false`** until step 8 (no finance schedule since 2026-10-07: see `DEPLOY_NOTES.md`) |
+| `ODOO_WEB_BASE_URL` (optional) | base of the Receivables and Collections's "open in Odoo" links; defaults to `ODOO_URL` |
 | `FINANCE_TIER_LARGE_MIN` / `FINANCE_TIER_MEDIUM_MIN` (optional) | size tiers, default `100000` / `10000` |
 
 ### Step 5. Database
@@ -167,28 +166,28 @@ scripts/deploy.sh deploy <tag>
 3. **Totals:** `python scripts/finance/check_receivable_totals.py` (inside the etl-api container, or locally with the
    production `.env`) must print `MATCH`.
 4. **Pages, as admin:**
-   - Price → Debt Report loads: 7 KPIs, 5 charts, the exposure table.
+   - Price → Receivables and Collections loads: 7 KPIs, 5 charts, the exposure table.
    - A customer click opens the documents, and the Odoo link opens the record.
    - Both toggles on → open debt = the `check_receivable_totals.py` total.
    - Odoo labels → العربية switches the document / delivery labels.
 5. **Pages, as GCFO / B2B Director / a salesperson:**
    - GCFO and B2B Director see the page; B2B Director sees segment B2B only.
-   - A salesperson does not see Price → Debt Report and gets 403 on `/debt-report/*`.
+   - A salesperson does not see Price → Receivables and Collections and gets 403 on `/debt-report/*`.
 6. **The other pages:** the sales pages answer; footers show their own department's refresh.
 7. **Automated check (optional):** `DEBT_TEST_DB=1 npx vitest run -c vitest.debt-db.config.ts` with the production
    `DB_*`. It is read-only, takes about 40 s, and compares every endpoint with the views.
 
 ### Step 8. Enable the schedules, then observe for 7 days
 
-1. Set the three `ETL_SCHEDULE_*_ENABLED` to `true` and restart the backend. The Control Center scheduler panel shows
-   the incremental, full and finance (06:30) schedules.
+1. Set the two `ETL_SCHEDULE_*_ENABLED` to `true` and recreate the backend (`up -d`). The Control Center scheduler
+   panel shows the incremental and full schedules; both include the receivables snapshot.
 2. **Each day for 7 days:**
    - `etl_run_log` has no failed run;
    - `etl_dq_result` has no `fail`;
-   - from the second snapshot on, the finance sanity checks pass, the Debt Report trend shows two points, and
+   - from the second snapshot on, the finance sanity checks pass, the Receivables and Collections trend shows two points, and
      "Change in overdue (7d)" fills in from 2026-10-11 (if the first snapshot after deploy is today's);
    - the receivables recount in `etl_task_log.details.recount` is small or zero;
-   - `check_receivable_totals.py` says `MATCH` right after the 06:30 run.
+   - `check_receivable_totals.py` says `MATCH` right after a run.
 
 ### Step 9. Retire the legacy tables: 0035 (after the 7 days and your approval)
 
@@ -213,7 +212,7 @@ git -C C:/Users/Lenovo/Desktop/07PREPORT-ppl switch --detach f67644d
 Then run `scripts/deploy.sh rollback <previous tag>` (or `deploy` again from `f67644d`), and keep `etl-worker` /
 `etl-api` **stopped**. The old code reads the old table names, so the sales pages stay broken until a full restore.
 
-**Debt Report only:** apply `down/0034_finance_receivable_scope_down.sql`. It removes the grants, the scope column and
+**Receivables and Collections only:** apply `down/0034_finance_receivable_scope_down.sql`. It removes the grants, the scope column and
 the line view, and restores the 0033 views; the rest of the platform keeps running.
 
 **Full rollback** (before step 9):
@@ -235,14 +234,14 @@ the line view, and restores the 0033 views; the rest of the platform keeps runni
 [ ] 2  backup: powerBI_Data dump, Input copy, note 07PREPORT-ppl HEAD (f67644d)
 [ ] 3  git -C ../07PREPORT-ppl switch --detach <C>
 [ ] 4  07PREPORT-ppl data/etl/.env: ODOO_PROD_DB, ODOO_ALLOWED_HOSTS, ODOO_COMPANY_IDS=1,3, FINANCE_INTERCOMPANY_PARTNER_IDS=15905,15907
-[ ] 4  07PREPORT-ppl backend/.env: ETL_SCHEDULE_FINANCE_CRON=30 6 * * *, all ETL_SCHEDULE_*_ENABLED=false
+[ ] 4  07PREPORT-ppl backend/.env: no ETL_SCHEDULE_FINANCE_*, all ETL_SCHEDULE_*_ENABLED=false
 [ ] 5  database: production already at 0034 - nothing to apply (never 0024, never 0035 now)
 [ ] 6  scripts/deploy.sh deploy <tag> (rebuilds images); smoke check passes
 [ ] 6  Get-NetTCPConnection -RemotePort 3306: only the Docker stack
 [ ] 7  Control Center: Full Refresh -> success, DQ orphans pass, sales freshness updated
 [ ] 7  Control Center: Receivables Snapshot -> success, inter-company ids [15905, 15907] in details
 [ ] 7  check_receivable_totals.py -> MATCH
-[ ] 7  admin: Price -> Debt Report, KPIs/charts/table/drill-down/Odoo link, toggles total = Odoo, Arabic labels
+[ ] 7  admin: Price -> Receivables and Collections, KPIs/charts/table/drill-down/Odoo link, toggles total = Odoo, Arabic labels
 [ ] 7  GCFO + B2B Director see the page (B2B: segment B2B); salesperson: no page, 403 on /debt-report
 [ ] 7  sales pages answer; each footer shows its own department's refresh
 [ ] 8  ETL_SCHEDULE_*_ENABLED=true, restart backend, scheduler panel shows 3 schedules

@@ -9,10 +9,15 @@ Rules (docs/receivables-etl.md; spec of 2026-10-01, decisions of 2026-10-04):
     payment_state, state, delivery_status); labels come from dim_odoo_selection_label (core.labels);
   * amounts keep Odoo's sign: credit notes and inbound payments negative;
   * customer: the line partner's commercial partner (map_partner_customer, as sales);
-  * salesperson: move.invoice_user_id through sheet OdooUsers; when the move has no user, the customer's salesperson
-    of record (partner.user_id through OdooUsers) -- so payments net against invoices per salesperson;
-  * team: move.team_id through sheet OdooTeams (crm.team id, never the name); no team / SALESPERSON -> the
-    salesperson's effective team (as sales lines and orders); an Odoo team missing from OdooTeams -> '-1';
+  * salesperson: move.invoice_user_id through sheet OdooUsers -- for customer invoices and credit notes ONLY that,
+    as Odoo's Salesperson filter sees it (decision 2026-10-08): no user -> -1 Unassigned; for every other line (payments,
+    entries) with no user, the customer's salesperson of record (partner.user_id through OdooUsers), so payments net
+    against invoices per salesperson in the customer table;
+  * team: move.team_id through sheet OdooTeams (crm.team id, never the name) -- the document's OWN team, as Odoo's
+    Sales Team filter sees it, never the salesperson's team (decision 2026-10-06, so the report and Odoo filter the
+    same documents): no team -> '-1' Unknown; a team whose OdooTeams row says SALESPERSON (it has no Excel org team,
+    e.g. 27 EXPORT) -> its own member 'ODOO-TEAM-<id>', named after the Odoo team (decision 2026-10-08; sales keeps
+    the salesperson's team for those); an Odoo team missing from OdooTeams -> '-1';
   * payment term: move.invoice_payment_term_id, else the customer's default term for that company;
   * delivery status (customer invoices only): the invoice's sale orders (sale.order.invoice_ids; else invoice_origin
     names in the same company), rolled up in Odoo's own values: every order 'full' -> full; no order delivered at
@@ -110,10 +115,14 @@ def origin_names(invoice_origin: Any) -> list[str]:
     return [p.strip() for p in invoice_origin.split(",") if p.strip()]
 
 
+INVOICE_MOVE_TYPES = ("out_invoice", "out_refund")
+
+
 def _salespeople(maps: KeyMaps, inputs: FinanceInputs, out: FinanceBuild, scope: str, user_ids: list[Any],
-                 customer_keys: list[int]) -> tuple[list[int], list[str]]:
+                 customer_keys: list[int], move_types: list[Any] | None = None) -> tuple[list[int], list[str]]:
+    """``move_types``: when given, a customer invoice / credit note without a user stays -1 (Odoo's own Salesperson)."""
     keys, sources, fell = [], [], []
-    for u, c in zip(user_ids, customer_keys):
+    for n, (u, c) in enumerate(zip(user_ids, customer_keys)):
         uid = _int_or_none(u)
         if uid is not None:
             k = maps.user_salesperson.get(uid, UNKNOWN)
@@ -121,6 +130,9 @@ def _salespeople(maps: KeyMaps, inputs: FinanceInputs, out: FinanceBuild, scope:
                 fell.append(uid)
             keys.append(k)
             sources.append("invoice_user")
+        elif move_types is not None and move_types[n] in INVOICE_MOVE_TYPES:
+            keys.append(UNKNOWN)
+            sources.append("none")
         else:
             k = inputs.customer_salesperson.get(int(c), UNKNOWN)
             keys.append(k)
@@ -203,6 +215,35 @@ def build_payments(payments: pd.DataFrame, journals: pd.DataFrame, maps: KeyMaps
     })
 
 
+OWN_TEAM_PREFIX = "ODOO-TEAM-"
+
+
+def own_team_keys(maps: KeyMaps, odoo_team_ids: Iterable[Any], keys: Iterable[str]) -> list[str]:
+    """The document's own team for an Odoo team whose OdooTeams row says SALESPERSON: 'ODOO-TEAM-<id>' instead of the
+    '-1' maps.teams(person_fallback=False) gives it. Every other key is kept."""
+    out = []
+    for v, key in zip(odoo_team_ids, keys):
+        tid = _int_or_none(v)
+        mapped = maps.team_map.get(tid) if tid is not None else None
+        out.append(f"{OWN_TEAM_PREFIX}{tid}" if mapped is not None and mapped[1] else key)
+    return out
+
+
+def own_team_members(keys: Iterable[str], odoo_teams: Mapping[int, tuple[str | None, int | None]], company_keys: set[int]) -> pd.DataFrame:
+    """dim_sales_team rows for the ODOO-TEAM-<id> keys: the Odoo team's name and company, no segment (-1).
+    ``odoo_teams``: crm.team id -> (name, company id) from raw_odoo_crm_team."""
+    rows = []
+    for key in sorted(set(keys)):
+        tid = int(key[len(OWN_TEAM_PREFIX):])
+        name, company = odoo_teams.get(tid, (None, None))
+        rows.append({"SalesTeamKey": key, "SalesTeam": name or f"Odoo team {tid}",
+                     "CompanyKey": company if company in company_keys else UNKNOWN, "SalesTeamCompany": None,
+                     "SegmentKey": UNKNOWN, "SalesSegment": None, "SalesCity": None, "Territory": None,
+                     "SalesTeamStatus": "ODOO_TEAM"})
+    return pd.DataFrame(rows, columns=["SalesTeamKey", "SalesTeam", "CompanyKey", "SalesTeamCompany", "SegmentKey", "SalesSegment",
+                                       "SalesCity", "Territory", "SalesTeamStatus"])
+
+
 def build(lines: pd.DataFrame, moves: pd.DataFrame, so_inv: pd.DataFrame, origin_orders: pd.DataFrame, payments: pd.DataFrame,
           journals: pd.DataFrame, maps: KeyMaps, inputs: FinanceInputs, snapshot_date: _dt.date) -> FinanceBuild:
     out = _scratch()
@@ -219,8 +260,10 @@ def build(lines: pd.DataFrame, moves: pd.DataFrame, so_inv: pd.DataFrame, origin
     out.fell("fact_finance_receivable_snapshot.CustomerKey (partner id)", f1)
     companies, f2 = maps.companies(list(lines["company_id"]))
     out.fell("fact_finance_receivable_snapshot.CompanyKey (company id)", f2)
-    people, sources = _salespeople(maps, inputs, out, "fact_finance_receivable_snapshot", m("invoice_user_id"), customers)
-    teams, f3 = maps.teams(m("team_id"), people, person_fallback=True)
+    people, sources = _salespeople(maps, inputs, out, "fact_finance_receivable_snapshot", m("invoice_user_id"), customers,
+                                   [mt if pid is None or _int_or_none(pid) is None else None for mt, pid in zip(m("move_type"), lines["payment_id"])])
+    teams, f3 = maps.teams(m("team_id"), people, person_fallback=False)
+    teams = own_team_keys(maps, m("team_id"), teams)
     out.fell("fact_finance_receivable_snapshot.SalesTeamKey (Odoo team id not in OdooTeams)", f3)
     terms = _payment_terms(inputs, out, "fact_finance_receivable_snapshot", m("invoice_payment_term_id"), customers, companies)
     currencies = _currencies(inputs, out, "fact_finance_receivable_snapshot", list(lines["currency_id"]))
@@ -268,8 +311,10 @@ def build(lines: pd.DataFrame, moves: pd.DataFrame, so_inv: pd.DataFrame, origin
         mm = moves.copy()
         m_customers, _ = maps.customers(list(mm["commercial_partner_id"].where(mm["commercial_partner_id"].notna(), mm["partner_id"])))
         m_companies, _ = maps.companies(list(mm["company_id"]))
-        m_people, _ = _salespeople(maps, inputs, _scratch(), "dim_finance_invoice", list(mm["invoice_user_id"]), m_customers)
-        m_teams, _ = maps.teams(list(mm["team_id"]), m_people, person_fallback=True)
+        m_people, _ = _salespeople(maps, inputs, _scratch(), "dim_finance_invoice", list(mm["invoice_user_id"]), m_customers,
+                                   list(mm["move_type"]))
+        m_teams, _ = maps.teams(list(mm["team_id"]), m_people, person_fallback=False)
+        m_teams = own_team_keys(maps, list(mm["team_id"]), m_teams)
         out.invoices = pd.DataFrame({
             "move_id": mm["id"].astype("int64").to_numpy(),
             "document": mm["name"].to_numpy(),

@@ -1,4 +1,4 @@
-# Receivables ETL (Debt report): runbook
+# Receivables ETL (Receivables and Collections): runbook
 
 Finance department job `finance_receivables` (`data/etl/src/departments/finance/`). It snapshots every open customer
 receivable from Odoo once a day, conformed with sales through the core dimensions.
@@ -19,7 +19,7 @@ receivable from Odoo once a day, conformed with sales through the core dimension
 | `bridge_finance_invoice_order` | invoice → sales order (`SalesOrderKey` = `dim_sales_order`) |
 | `fact_finance_receivable_snapshot` | **one row per open receivable line per snapshot date** (PK `SnapshotDateKey, line_id`) |
 | `dim_finance_receivable_scope` | the two receivable scopes, our labels (en + ar), `is_default` (`scope.py`) |
-| `cfg_finance_report_exclusion` | what the Debt Report leaves out, by rule: `segment` (Backoffice, Inter Company) and `sales_team` names (0036) |
+| `cfg_finance_report_exclusion` | what the Receivables and Collections leaves out, by rule: `segment` (Backoffice, Inter Company) and `sales_team` names (0036) |
 | `v_finance_excluded_sales_team` | the sales teams those rules resolve to, with the rule(s) that caught each |
 | `v_finance_receivable_line` | every snapshot, every scope, inter-company and excluded lines included, Odoo's labels (en + ar); flags `is_excluded_segment` / `is_excluded_team` / `is_report_excluded` |
 | `v_finance_receivable_latest` | the latest snapshot, default scope (customer debt, no inter-company), excluded lines left out, Odoo's labels (en + ar) |
@@ -43,12 +43,12 @@ in `departments/finance/scope.py`, the one place the rules live (next to `aging.
 | `other_receivable` | everything else: Send / Customer payments, journal entries without an invoice, vendor payments |
 
 Inter-company stays a separate flag. `v_finance_receivable_line` holds every snapshot, every scope and inter-company
-included, and is what the Debt Report API reads. `v_finance_receivable_latest`, `v_finance_customer_exposure` and
+included, and is what the Receivables and Collections API reads. `v_finance_receivable_latest`, `v_finance_customer_exposure` and
 `v_finance_receivable_trend` show the default only: customer debt, inter-company excluded. With every scope and
 inter-company included, the totals equal Odoo's open receivable lines: check with
 `scripts/finance/check_receivable_totals.py`, which must print MATCH.
 
-**Report exclusions** (0036; decisions of 2026-10-05). The Debt Report and the three default views leave out every line
+**Report exclusions** (0036; decisions of 2026-10-05). The Receivables and Collections and the three default views leave out every line
 whose sales team is in an excluded segment or has an excluded name. The list lives in one place, the table
 `cfg_finance_report_exclusion`; change it there, no deploy needed:
 
@@ -69,7 +69,7 @@ whose sales team is in an excluded segment or has an excluded name. The list liv
 - The API applies it in every query (`EXCLUDED_TEAMS_CONDITION`, measures/debtReport.ts); no parameter or toggle brings
   the lines back. `v_finance_receivable_line` keeps them, so Odoo reconciliation is unchanged.
 
-**Currencies.** Every Debt Report amount is `residual_doc_ccy` (Odoo `amount_residual_currency`) in the line's own
+**Currencies.** Every Receivables and Collections amount is `residual_doc_ccy` (Odoo `amount_residual_currency`) in the line's own
 currency (`CurrencyKey`): never added across currencies and never converted. Overdue (`days_past_due > 0`) + not yet
 due = open in each currency. The invoice amount is the document's `amount_total` with the sign of its open balance
 (credit notes and inbound payments negative), counted once per document. Only the Invoice / Customer size tiers
@@ -174,8 +174,10 @@ cd 07ps-sales-dashboard-app/data/etl
 python -m etl_platform.run finance_receivables --trigger-source manual
 ```
 
-- **Schedule.** Daily at **06:30 Africa/Tripoli** (`departments/finance/jobs.py` `SCHEDULE`). The orchestration wires
-  it in phase 6.
+- **Schedule** (2026-10-08). Twice a day: inside the nightly `full_all` at 02:00 (after `core_dims`, before sales; a
+  failure leaves that run `partial`), and alone at 15:00 Africa/Tripoli (`ETL_SCHEDULE_FINANCE_CRON`, default
+  `0 15 * * *`; the same job as the Control Center's "Receivables Snapshot"). The 3-hourly `main` run does not take a
+  snapshot. Each run replaces today's snapshot; earlier days are kept.
 - **Dependencies.** It depends on `core_dims`, which is reused when it succeeded within `ETL_CORE_DIMS_FRESH_MINUTES`.
 - **Re-runs.** A re-run on the same day replaces that day's snapshot in one transaction; nothing else changes.
 - **Logged per run** (`etl_task_log.details`):
@@ -259,3 +261,110 @@ backfilled date against the Aged Receivable report for D.
   have no partner. Both go to customer `-1`.
 - **Salesperson fallbacks.** 1,868 lines have an invoice user that is not in `OdooUsers`. 5,186 lines have no
   salesperson at all (`salesperson_source = none`).
+
+## 8. Collections (2026-10-11)
+
+Tasks `extract_collections` and `load_collections` of the same `finance_receivables` job, after the snapshot
+(`data/etl/src/departments/finance/collections.py`, migrations 0040 + 0042). Report exclusions since 2026-10-11
+(migration 0041): segments **Backoffice** and **Inter Company** only.
+
+### Definition
+
+A **collection** is a **posted inbound customer payment** (`account.payment`, `payment_type = inbound`,
+`partner_type = customer`) that is **not an internal transfer**, dated by the **payment date** (`account.payment.date`,
+Odoo's date). The amount is the payment amount in the payment currency (`amount`); the LYD equivalent is Odoo's
+`amount_company_currency_signed`.
+
+Each payment is split by what it paid, from `account.partial.reconcile` on the payment's receivable line (amounts in the
+payment currency, `credit_amount_currency`):
+
+| Part | Meaning |
+| --- | --- |
+| Collected - overdue invoices | matched to customer invoice lines (`out_invoice`, `out_receipt`) whose due date is **before** the payment date |
+| Collected - not yet due | matched to customer invoice lines due on or after the payment date |
+| Other receivables | matched to other receivable debits (opening balances, refunds paid out, exchange-difference entries) |
+| Not matched yet | the rest: an advance or a payment not reconciled yet (as of the last refresh) |
+
+The four parts always add up to the payment.
+
+**Not collections:** credit notes, write-offs, exchange differences and netting entries that settle invoices. The
+collections start from cash (payments), never from reconciliations.
+
+**Attribution** (who collected it), one `fact_finance_collection` row per payment × allocation:
+
+* the invoice part goes to the matched invoices' salesperson (`invoice_user_id`; an invoice without one stays Unknown,
+  like the Debt Report) and branch (the invoice's Odoo team), one row per salesperson + branch, in proportion to the
+  amounts applied;
+* the "other" and "not matched" part is one row for the customer's salesperson of record and that salesperson's branch
+  (attribution `customer`), or Unknown (`none`).
+
+`fact_finance_collection_invoice` keeps every payment → invoice match (the drill-down's "Applied to").
+`v_finance_collection_trend` is the report source: the allocation rows with every filter key, inter-company customers and
+the report exclusions removed (the same exclusion condition as the Debt Report).
+
+### Loading
+
+* First run (empty `raw_odoo_customer_payment`): the full history (≈ 70,000 payments since 2021; ≈ 7 minutes).
+* Later runs: payments written since the last load (`write_date`, 1 hour overlap), every posted payment not reconciled
+  yet, and the payments behind reconciliations created since the last load; their rows are replaced.
+* Checks (fail the load): every payment's rows add up to the payment and its shares to 1; every row's parts add up to
+  the row; no orphan keys.
+* To rebuild everything: empty `raw_odoo_customer_payment` and run `finance_receivables`.
+
+### The chart
+
+**Collections trend · {currency}** next to the Receivables trend: stacked bars per day / week (Sunday..Saturday, as
+`reporting/ar_weekly`) / month with the four parts, a line for the total collected, and (right axis) the **collection
+rate**:
+
+> collection rate = money applied in the period to the invoice lines that were overdue at the start of the period ÷
+> that start overdue
+
+The start overdue comes from the receivable snapshot of the **day before** the period (lines due on or before that
+day), with the page's filters. That is `ar_weekly`'s definition; the receivable snapshot is used instead of rebuilding
+past balances from partial reconciliations so the dashboard keeps one definition of "overdue" (the Debt Report's). The
+rate exists only where that snapshot exists (snapshots started 2026-10-04); otherwise the line is hidden. Clicking a bar
+lists the payments of that period with the invoices they were applied to.
+
+API: `GET /debt-report/collections-trend?currency=&grain=day|week|month&from=&to=` (default: the last 12 weeks) and
+`GET /debt-report/collections-drilldown?currency=&grain=&period=<first day>`, same permission and filters as the Debt
+Report (`backend/src/measures/debtCollections.ts`). The open-invoice filters (overdue status, aging bucket, delivery
+status, payment term, invoice size) do not apply to payments.
+
+### Differences from the old Power BI "DebtReport" collections
+
+| Old Power BI | Now |
+| --- | --- |
+| Dated by the reconciliation's `create_date`: a payment matched late landed in the wrong week | Dated by the payment date |
+| Every reconciliation counted as cash: credit notes, write-offs, netting and inter-company inflated "collected" | Only posted customer payments; credit notes etc. are never collections; inter-company excluded |
+| Payments not matched to an invoice were not counted | Counted, shown as "Not matched yet" |
+| Salespersons excluded by name in the query; reconciliations < 2 days after the invoice dropped (cash sales) | No name lists, no date hacks: the report exclusions are the one config table (`cfg_finance_report_exclusion`) |
+| "Collection %" divided by the residual after payment | Divided by the overdue at the start of the period |
+| Current week only | Full history, day / week / month |
+| Plain-text Odoo API key, dev database | Credentials only in `data/etl/.env`; production read-only guard |
+
+### Reconciliation (2026-10-11, local warehouse vs live Odoo)
+
+September 2026, posted inbound customer payments that are not internal transfers (Odoo's Customer Payments list):
+
+| Company | Currency | Odoo payments | Odoo amount | Warehouse (before exclusions) | Inter-company | Excluded teams | Report |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Majaal | LYD | 543 | 6,127,681.00 | 6,127,681.00 | −1,100,000.00 | 0 | 5,027,681.00 |
+| Majaal | USD | 1 | 50,760.00 | 50,760.00 | 0 | 0 | 50,760.00 |
+| TIKA | LYD | 968 | 7,396,692.00 | 7,396,692.00 | −70,000.00 | −330,600.00 | 6,996,092.00 |
+| Athena | LYD | 179 | 877,990.00 | 877,990.00 | 0 | 0 | 877,990.00 |
+| Athena | USD | 51 | 135,215.00 | 135,215.00 | 0 | 0 | 135,215.00 |
+| Athena | EUR | 22 | 10,620.00 | 10,620.00 | 0 | 0 | 10,620.00 |
+
+TIKA's excluded teams: مبيعات الادارة المالية (Backoffice) −325,000.00 and مبيعات BMH (Inter Company) −5,600.00.
+
+`reporting/ar_weekly` (week 27 Sep – 3 Oct 2026, Ibrahim Garguom, LYD, "Total Cash Collected" 506,382.00): the
+warehouse gives 506,382.00 when dated by reconciliation date like `ar_weekly`, and 500,292.00 by payment date. The
+difference is two payments: BNK1/2026/09/0525 paid 27 Sep, matched 8 Oct (+8,510.00), and BNK1/2026/09/0515 paid
+26 Sep, matched 27 Sep (−14,600.00).
+
+## 9. Receivables trend chart (2026-10-11)
+
+One point per calendar day from the first to the last snapshot. A day without a snapshot, or a snapshot without any
+line for the selected filters (for example Athena before 2026-10-11, when it was first extracted), is a gap, not a zero
+(`GET /debt-report/trend` returns null amounts for such a snapshot).

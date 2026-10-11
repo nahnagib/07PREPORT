@@ -27,6 +27,11 @@ def _csv_env(name: str, default: str = "") -> tuple[str, ...]:
     return tuple(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
+def _text_csv_env(name: str, default: str = "") -> tuple[str, ...]:
+    raw = os.getenv(name, default)
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
+
+
 def _int_csv_env(name: str, default: str = "") -> tuple[int, ...]:
     values = []
     for part in os.getenv(name, default).split(","):
@@ -52,6 +57,9 @@ class PlatformConfig:
     odoo_allowed_hosts: tuple[str, ...] = ()
     allow_non_prod: bool = False
     odoo_company_ids: tuple[int, ...] = ()
+    # Optional names resolved against res.company at runtime, then unioned with ODOO_COMPANY_IDS.
+    # Useful when access to a new company is granted before its numeric Odoo id is known locally.
+    odoo_company_names: tuple[str, ...] = ()
     odoo_timeout_seconds: int = 60
     odoo_max_retries: int = 3
     odoo_connect_retry_window_seconds: float = 900.0
@@ -88,6 +96,7 @@ class PlatformConfig:
             odoo_allowed_hosts=_csv_env("ODOO_ALLOWED_HOSTS"),
             allow_non_prod=_bool_env("ALLOW_NON_PROD", False),
             odoo_company_ids=_int_csv_env("ODOO_COMPANY_IDS"),
+            odoo_company_names=_text_csv_env("ODOO_COMPANY_NAMES"),
             odoo_timeout_seconds=settings.rpc_timeout_seconds,
             odoo_max_retries=int(os.getenv("ETL_ODOO_MAX_RETRIES", "3")),
             odoo_connect_retry_window_seconds=settings.odoo_connect_retry_window_seconds,

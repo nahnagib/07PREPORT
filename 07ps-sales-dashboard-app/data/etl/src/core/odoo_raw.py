@@ -93,6 +93,7 @@ def _now() -> _dt.datetime:
 
 
 def extract_odoo_raw(ctx: RunContext, spec: RawOdooSpec) -> TaskResult:
+    ctx.odoo_company_ids(spec.profile)
     source = ctx.odoo(spec.profile)
     fields, skipped = source.available_fields(spec.model, spec.odoo_fields)
     before = ctx.watermarks.get(spec.dataset)

@@ -3,8 +3,11 @@
  * never moves the sales footer and vice versa. Sales keeps its richer check in refreshStatus.ts (it also compares
  * the log with the loaded orders); this is the generic per-department answer used by finance and the Control Center.
  *
- *   lastSuccessUtc   finished_at_utc of the newest successful top-level run of the department
- *   lastFailureUtc   the newest failed one, when it is newer than the last success (else null)
+ *   lastSuccessUtc   finished_at_utc of the newest successful run of the department at ANY level: since the
+ *                    pipeline is one run (main / full_all, department 'all'), finance_receivables and sales are
+ *                    child rows (parent_run_uid set); a standalone "Receivables Snapshot" re-run is top-level
+ *   lastFailureUtc   the newest failed one, when it is newer than the last success (else null); skipped rows
+ *                    (finance not started because core_dims failed) count as neither
  *   dataAsOf         finance: the newest receivable snapshot date (yyyy-mm-dd); null for other departments
  */
 import type { Pool } from 'mysql2/promise';
@@ -34,13 +37,13 @@ export function isEtlDepartment(value: unknown): value is EtlDepartment {
 export async function fetchDepartmentFreshness(pool: Pool, department: EtlDepartment): Promise<DepartmentFreshness> {
   const [ok] = await pool.query(
     `SELECT finished_at_utc AS at, job_name AS job FROM etl_run_log
-      WHERE department = ? AND status = 'success' AND parent_run_uid IS NULL AND finished_at_utc IS NOT NULL
+      WHERE department = ? AND status = 'success' AND finished_at_utc IS NOT NULL
       ORDER BY finished_at_utc DESC LIMIT 1`,
     [department],
   );
   const [bad] = await pool.query(
     `SELECT finished_at_utc AS at, job_name AS job FROM etl_run_log
-      WHERE department = ? AND status = 'failed' AND parent_run_uid IS NULL AND finished_at_utc IS NOT NULL
+      WHERE department = ? AND status = 'failed' AND finished_at_utc IS NOT NULL
       ORDER BY finished_at_utc DESC LIMIT 1`,
     [department],
   );

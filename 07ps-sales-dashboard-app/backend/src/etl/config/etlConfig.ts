@@ -1,4 +1,5 @@
 import path from 'path';
+import { getAppTimezone } from '../../lib/timezone';
 
 /**
  * Single place the ETL module reads process.env from -- every other file under src/etl imports
@@ -21,13 +22,14 @@ export interface EtlConfig {
     incrementalEnabled: boolean;
     fullCron: string;
     fullEnabled: boolean;
-    /** Daily receivables snapshot (finance_receivables); 06:30 in ETL_SCHEDULE_TIMEZONE (set Africa/Tripoli). */
+    /** Daily receivables snapshot (job finance_receivables alone): 15:00 by default. The nightly full refresh
+     * (full_all) takes one too; the 3-hourly incremental (main) does not. */
     financeCron: string;
     financeEnabled: boolean;
-    /** IANA zone the cron expressions are read in (ETL_SCHEDULE_TIMEZONE). Unset = the server's own
-     * zone, as before; setting it makes the schedule and the displayed "next run" agree regardless
-     * of where the API process happens to run. */
-    timezone?: string;
+    /** IANA zone every cron expression is read in: ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE (default
+     * Africa/Tripoli) -- never the process's own zone, which is UTC in a container without TZ. The displayed
+     * "next run" uses the same zone, so the two always agree. */
+    timezone: string;
   };
   redis: {
     host: string;
@@ -65,9 +67,9 @@ export function getEtlConfig(): EtlConfig {
       incrementalEnabled: bool('ETL_SCHEDULE_INCREMENTAL_ENABLED', true),
       fullCron: process.env.ETL_SCHEDULE_FULL_CRON || '0 2 * * *',
       fullEnabled: bool('ETL_SCHEDULE_FULL_ENABLED', true),
-      financeCron: process.env.ETL_SCHEDULE_FINANCE_CRON || '30 6 * * *',
+      financeCron: process.env.ETL_SCHEDULE_FINANCE_CRON || '0 15 * * *',
       financeEnabled: bool('ETL_SCHEDULE_FINANCE_ENABLED', true),
-      timezone: process.env.ETL_SCHEDULE_TIMEZONE || undefined,
+      timezone: process.env.ETL_SCHEDULE_TIMEZONE?.trim() || getAppTimezone(),
     },
     redis: {
       host: process.env.REDIS_HOST || 'localhost',

@@ -103,9 +103,10 @@ def test_customer_company_rows_only_for_commercial_partners_and_known_terms():
 # -- reference -------------------------------------------------------------------------------------------------------
 def test_company_display_names_and_scope():
     raw = pd.DataFrame([{"id": 1, "name": "Majaal", "currency_id": 102, "currency_name": "LYD"},
-                        {"id": 3, "name": "TIKA", "currency_id": 102, "currency_name": "LYD"}])
-    out = ref.build_companies(raw, [1, 3])
-    assert out[["CompanyKey", "Company", "is_in_scope"]].values.tolist() == [[1, "Majaal", 1], [3, "Tika", 1]]
+                        {"id": 3, "name": "TIKA", "currency_id": 102, "currency_name": "LYD"},
+                        {"id": 4, "name": "ATHENA", "currency_id": 102, "currency_name": "LYD"}])
+    out = ref.build_companies(raw, [1, 3, 4])
+    assert out[["CompanyKey", "Company", "is_in_scope"]].values.tolist() == [[1, "Majaal", 1], [3, "Tika", 1], [4, "Athena", 1]]
 
 
 def test_payment_term_instalment_flag_and_max_days():

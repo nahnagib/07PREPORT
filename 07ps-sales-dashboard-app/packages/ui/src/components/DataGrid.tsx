@@ -7,6 +7,7 @@ import {
   type ColumnPinningState,
   type ColumnSizingState,
   type FilterFn,
+  type Row,
   type SortingState,
   flexRender,
   getCoreRowModel,
@@ -35,6 +36,9 @@ export interface DataGridColumn<T> {
    * a compact "40.4M" but export/sort should use the exact underlying number). Falls back to
    * row[key]. */
   rawValue?: (row: T) => string | number;
+  /** Value used for sorting only, when the export value cannot sort -- e.g. a day count that is blank ("—") for some
+   * rows: rawValue keeps the blank for the export, sortValue gives it a number. Falls back to rawValue / row[key]. */
+  sortValue?: (row: T) => number | string;
   /** Marks this column as a semantic-status column (e.g. `render` shows a <SemanticBadge>) so the
    * PDF export -- which rasterizes a plain, detached DOM tree rather than mounting the real React
    * component -- can reproduce the exact same colored-dot-plus-label look instead of falling back
@@ -142,6 +146,15 @@ export function DataGrid<T extends Record<string, unknown>>({
           : col.filterOptions
             ? equalsOption
             : containsText) as FilterFn<T>,
+        ...(col.sortValue
+          ? {
+              sortingFn: (a: Row<T>, b: Row<T>) => {
+                const x = col.sortValue!(a.original);
+                const y = col.sortValue!(b.original);
+                return x < y ? -1 : x > y ? 1 : 0;
+              },
+            }
+          : {}),
         cell: (info) => (col.render ? col.render(info.row.original) : String(info.getValue() ?? '')),
       })),
     [columns],

@@ -5,7 +5,7 @@
 * A **task** is a function ``fn(ctx) -> TaskResult | None`` plus the tasks it depends on. Transforms called
   by tasks are pure DataFrame functions so they can be unit tested without a database.
 * A **job** is a named, ordered set of tasks, optionally depending on other jobs (department jobs depend on
-  ``core_dims``). ``full_all`` is a job with no tasks of its own, only job dependencies.
+  ``core_dims``). ``main`` and ``full_all`` are jobs with no tasks of their own, only job dependencies.
 
 Definitions live next to the code that implements them: ``core/jobs.py``, ``departments/<dept>/jobs.py``.
 ``load_definitions()`` imports them.
@@ -89,6 +89,9 @@ class JobSpec:
     department: str
     tasks: tuple[str, ...] = ()
     depends_on_jobs: tuple[str, ...] = ()
+    # Dependency jobs (a subset of depends_on_jobs) whose failure does not fail this job: it still runs its other
+    # dependencies and tasks and ends ``partial`` (e.g. ``main`` keeps the sales refresh when finance fails).
+    optional_jobs: tuple[str, ...] = ()
     mode: str = "full"  # stored in etl_run_log.mode
     # Skip this job when it is a dependency and succeeded within this many minutes (None = always run).
     # The window for core_dims comes from PlatformConfig.core_dims_fresh_minutes when this is "config".
@@ -155,6 +158,9 @@ class Registry:
             for dep in job.depends_on_jobs:
                 if dep not in self.jobs:
                     problems.append(f"job '{job.name}' depends on unknown job '{dep}'")
+            for dep in job.optional_jobs:
+                if dep not in job.depends_on_jobs:
+                    problems.append(f"job '{job.name}' lists optional job '{dep}' that is not one of its dependencies")
         for ds in self.datasets.values():
             if not ds.natural_key:
                 problems.append(f"dataset '{ds.name}' has no natural key")

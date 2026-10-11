@@ -12,6 +12,7 @@ import { getEtlPreflight, resetEtlApi, type PlatformJob } from '../../etl/servic
 import {
   EtlMode,
   EtlRunStatus,
+  FINISHED_RUN_STATUSES,
   forceResetActiveEtlRuns,
   getActiveRun,
   getLastFinishedRun,
@@ -38,6 +39,7 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       ? computeNextRunTime(config.schedule.incrementalCron, config.schedule.timezone)
       : null;
     const nextFull = config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null;
+    const nextFinance = config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null;
 
     // Checked up front so the UI can tell "queue is genuinely unreachable" apart from "a run is
     // genuinely active" -- those used to be indistinguishable (any queued/running row read as
@@ -80,6 +82,7 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
         elapsedMs: Date.now() - (active.started_at ?? active.queued_at).getTime(),
         nextIncrementalRun: nextIncremental,
         nextFullRun: nextFull,
+        nextFinanceRun: nextFinance,
       });
       return;
     }
@@ -94,6 +97,7 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       elapsedMs: null,
       nextIncrementalRun: nextIncremental,
       nextFullRun: nextFull,
+      nextFinanceRun: nextFinance,
     });
   } catch (err) {
     next(err);
@@ -118,8 +122,8 @@ adminEtlControlRouter.get('/preflight', async (_req, res, next) => {
   }
 });
 
-const VALID_STATUSES: EtlRunStatus[] = ['queued', 'running', 'success', 'failed', 'cancelled'];
-const VALID_MODES: EtlMode[] = ['incremental', 'full', 'sql', 'excel'];
+const VALID_STATUSES: EtlRunStatus[] = ['queued', 'running', ...FINISHED_RUN_STATUSES];
+const VALID_MODES: EtlMode[] = ['incremental', 'full', 'finance', 'sql', 'excel'];
 
 adminEtlControlRouter.get('/history', async (req: Request, res, next) => {
   try {
@@ -160,6 +164,7 @@ adminEtlControlRouter.get('/scheduler-config', async (_req, res, next) => {
         enabled: config.schedule.financeEnabled,
         nextRun: config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null,
       },
+      timezone: config.schedule.timezone,
     });
   } catch (err) {
     next(err);
@@ -175,9 +180,11 @@ interface StartConfig {
 }
 
 /** One entry per ETL platform job an admin may start. The pre-platform "sql" and "excel" modes are gone: the platform
- * loads the warehouse only (no Excel export) and "sql" was a second name for a sales refresh. */
+ * loads the warehouse only (no Excel export) and "sql" was a second name for a sales refresh. Sales Refresh = main
+ * (core dims -> sales), Full Refresh = full_all (core dims -> receivables -> sales full), Receivables Snapshot = the
+ * job of the 15:00 schedule (finance_receivables). All take the same lock / one-run-at-a-time guard. */
 const START_CONFIGS: Record<'incremental' | 'full' | 'finance', StartConfig> = {
-  incremental: { job: 'sales_incremental', mode: 'incremental', loadMode: 'incremental', outputMode: 'sql', fast: true },
+  incremental: { job: 'main', mode: 'incremental', loadMode: 'incremental', outputMode: 'sql', fast: true },
   full: { job: 'full_all', mode: 'full', loadMode: 'full', outputMode: 'sql' },
   finance: { job: 'finance_receivables', mode: 'finance', loadMode: 'full', outputMode: 'sql' },
 };
@@ -281,8 +288,8 @@ adminEtlControlRouter.post('/retry', async (req, res, next) => {
       res.status(404).json({ error: 'No run to retry.' });
       return;
     }
-    if (run.status !== 'failed' && run.status !== 'cancelled') {
-      res.status(400).json({ error: 'Only a failed or cancelled run can be retried.' });
+    if (run.status !== 'failed' && run.status !== 'cancelled' && run.status !== 'partial') {
+      res.status(400).json({ error: 'Only a failed, partial or cancelled run can be retried.' });
       return;
     }
     const key = run.mode as keyof typeof START_CONFIGS;
@@ -397,7 +404,7 @@ adminEtlControlRouter.get('/runs/:runId/log', async (req, res, next) => {
 
 const SSE_POLL_INTERVAL_MS = 1500;
 const SSE_HEARTBEAT_INTERVAL_MS = 15000;
-const TERMINAL_STATUSES: EtlRunStatus[] = ['success', 'failed', 'cancelled'];
+const TERMINAL_STATUSES: EtlRunStatus[] = FINISHED_RUN_STATUSES;
 
 /**
  * Live log/progress/status stream for one run, via Server-Sent Events. Chosen over a WebSocket:

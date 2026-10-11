@@ -216,5 +216,14 @@ for name, mode in (("sales_full", "full"), ("sales_incremental", "incremental"))
     REGISTRY.job(JobSpec(name, DEPARTMENT, tasks=("build_sales_sheets", "conform_sales", "load_sales_marts"),
                          depends_on_jobs=("core_dims",), mode=mode, on_success=sales_watermark,
                          description="Sales marts on conformed keys (legacy transforms, platform keys/load/quality)."))
-REGISTRY.job(JobSpec("full_all", "all", depends_on_jobs=("core_dims", "sales_full"), mode="full",
-                     description="Every department, nightly."))
+# The pipelines the schedules run (one run id, the steps as child rows):
+#   main     = core_dims -> sales_incremental                       every 3 h / "Sales Refresh" / npm run etl:incremental
+#   full_all = core_dims -> finance_receivables -> sales_full       02:00 / "Full Refresh"; finance before sales so the
+#              receivables report does not wait for the sales load; a finance failure leaves the run 'partial' and
+#              the sales rebuild still happens; a core_dims failure skips both.
+# The receivables snapshot also has its own daily schedule (finance_receivables alone, 15:00 Africa/Tripoli).
+REGISTRY.job(JobSpec("main", "all", depends_on_jobs=("core_dims", "sales_incremental"), mode="incremental",
+                     description="Scheduled pipeline: core dims -> sales (incremental). No finance."))
+REGISTRY.job(JobSpec("full_all", "all", depends_on_jobs=("core_dims", "finance_receivables", "sales_full"),
+                     optional_jobs=("finance_receivables",), mode="full",
+                     description="Nightly pipeline: core dims -> receivables snapshot -> sales (full rebuild)."))

@@ -12,5 +12,9 @@ const nextConfig = {
     // `basePath`, which is what broke every logo/static-asset URL. Keep all Next config here.)
     ignoreDuringBuilds: true,
   },
+  // Renamed reports: old links and bookmarks keep working (basePath is added to both sides automatically).
+  async redirects() {
+    return [{ source: '/price/debt-report', destination: '/price/receivables-collections', permanent: false }];
+  },
 };
 export default nextConfig;

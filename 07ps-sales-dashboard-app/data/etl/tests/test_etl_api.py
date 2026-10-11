@@ -42,7 +42,7 @@ def test_named_platform_job_is_started(api):
     assert r.status_code == 202 and started[-1].job_name == "finance_receivables"
 
 
-@pytest.mark.parametrize("load_mode, job", [("incremental", "sales_incremental"), ("full", "full_all")])
+@pytest.mark.parametrize("load_mode, job", [("incremental", "main"), ("full", "full_all")])
 def test_legacy_load_mode_maps_to_the_platform_job(api, load_mode, job):
     post, started, _ = api
     assert post({"loadMode": load_mode}).status_code == 202

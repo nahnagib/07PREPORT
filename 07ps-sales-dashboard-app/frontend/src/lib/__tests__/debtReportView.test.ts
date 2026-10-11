@@ -3,7 +3,11 @@ import { buildDebtReportQuery } from '../api';
 import { formatCompactMoney, formatMoney } from '../format';
 import {
   DEFAULT_DEBT_FILTERS,
+  dailyTrendPoints,
   activeFilterCount,
+  fromIncludeValues,
+  includeValues,
+  OVERDUE_STATUS_OPTIONS,
   SIZE_TIER_HINT,
   agingColors,
   drillReconciles,
@@ -54,14 +58,24 @@ describe('Debt Report view helpers', () => {
     expect(drillReconciles('salesperson')).toBe('overdueAmount');
     expect(drillReconciles('aging')).toBe('openBalance');
     expect(drillReconciles('account')).toBe('openBalance');
-    expect(SIZE_TIER_HINT).toBe('Size tier based on LYD value');
+    expect(SIZE_TIER_HINT).toBe("Size tier based on the invoice's open LYD value");
   });
 
   it('defaults to customer debt without inter-company and counts what is set', () => {
     expect(isDefaultFilters(DEFAULT_DEBT_FILTERS)).toBe(true);
-    const f = { ...DEFAULT_DEBT_FILTERS, includeOther: true, agingBucketKeys: [8], customerSearch: ' acme ' };
+    const f = { ...DEFAULT_DEBT_FILTERS, includeOther: true, agingBucketKeys: [8], customerKeys: [42], customerCategories: ['A'] };
     expect(isDefaultFilters(f)).toBe(false);
-    expect(activeFilterCount(f)).toBe(3);
+    expect(activeFilterCount(f)).toBe(4);
+    expect(DEFAULT_DEBT_FILTERS).not.toHaveProperty('documentTypeKeys');
+    expect(DEFAULT_DEBT_FILTERS).not.toHaveProperty('customerSearch');
+  });
+
+  it('maps the dropdowns: Include multi-select, Overdue status in the words of the cards (the Select adds "All")', () => {
+    expect(includeValues({ includeOther: true, includeIntercompany: false })).toEqual(['other']);
+    expect(fromIncludeValues(['intercompany'])).toEqual({ includeOther: false, includeIntercompany: true });
+    expect(OVERDUE_STATUS_OPTIONS.map((o) => o.label)).toEqual(['Overdue', 'Not yet due']);
+    const qs = buildDebtReportQuery(toScope({ ...DEFAULT_DEBT_FILTERS, customerKeys: [42], customerCategories: ['B', 'none'] }, false));
+    expect(qs).toBe('customerKeys=42&customerCategories=B&customerCategories=none');
   });
 
   it("never sends a salesperson's own company / salesperson / team selection (the server locks them)", () => {
@@ -79,5 +93,15 @@ describe('Debt Report view helpers', () => {
   it('renders only http(s) Odoo links', () => {
     expect(safeOdooUrl('https://majaal.odoo.com/web#id=1&model=account.move&view_type=form')).not.toBeNull();
     expect(safeOdooUrl('javascript:alert(1)')).toBeNull();
+  });
+});
+
+describe('dailyTrendPoints (Receivables trend on a calendar axis, 2026-10-11)', () => {
+  it('one point per day from the first to the last snapshot; missing days and empty snapshots are gaps', () => {
+    const p = (snapshotDate: string, open: number | null) => ({ snapshotDate, currency: 'LYD', open, overdue: open, notDue: open === null ? null : 0, net: open });
+    const out = dailyTrendPoints([p('2026-10-04', null), p('2026-10-06', 10), p('2026-10-08', 12)]);
+    expect(out.map((x) => x.total)).toEqual([null, null, 10, null, 12]);
+    expect(out).toHaveLength(5);
+    expect(dailyTrendPoints([])).toEqual([]);
   });
 });

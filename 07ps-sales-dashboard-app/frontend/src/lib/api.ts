@@ -1141,7 +1141,8 @@ export const adminApi = {
 
 // --- ETL Control Center types ---
 
-export type EtlRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'cancelled';
+/** partial = the run loaded but a step failed (the receivables snapshot); skipped = refused, another run held the lock. */
+export type EtlRunStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'skipped';
 /** What an admin can start. 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform. */
 export type EtlStartMode = 'incremental' | 'full' | 'finance';
 export type EtlMode = EtlStartMode | 'sql' | 'excel';
@@ -1169,6 +1170,21 @@ export interface EtlJobRun {
   db_loaded_count: number | null;
   qa_issues_count: number | null;
   pipeline_run_log_id: number | null;
+  /** History rows: the ETL steps of this run (core_dims, finance_receivables, sales_* under main / full_all). */
+  steps?: EtlRunStep[];
+}
+
+/** One etl_run_log row under a run's top-level row (backend etlRunTracker.fetchRunSteps). Times are UTC wall clock. */
+export interface EtlRunStep {
+  runId: number;
+  job: string;
+  department: string | null;
+  status: string;
+  startedAtUtc: string | null;
+  finishedAtUtc: string | null;
+  durationSeconds: number | null;
+  rowsLoaded: number | null;
+  errorMessage: string | null;
 }
 
 export interface EtlProgress {
@@ -1274,6 +1290,8 @@ export interface EtlStatusResponse {
   elapsedMs: number | null;
   nextIncrementalRun: string | null;
   nextFullRun: string | null;
+  /** The daily receivables snapshot (finance_receivables alone, 15:00 by default). */
+  nextFinanceRun?: string | null;
 }
 
 export interface EtlScheduleInfo {
@@ -1285,7 +1303,9 @@ export interface EtlScheduleInfo {
 export interface EtlSchedulerConfigResponse {
   incremental: EtlScheduleInfo;
   full: EtlScheduleInfo;
-  finance?: EtlScheduleInfo;
+  finance: EtlScheduleInfo;
+  /** IANA zone the crons are read in (ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE). */
+  timezone?: string;
 }
 
 /** One etl_run_log row (ETL platform run history), with the legacy pipeline_run_log field names kept as aliases -- see backend/src/routes/admin/etlRuns.ts. */
@@ -2314,8 +2334,8 @@ export function fetchProductDashboard(token: string, page: ProductDashboardPage,
 export type DebtSizeTier = 'large' | 'medium' | 'small';
 export type DebtOverdueStatus = 'all' | 'overdue' | 'not_due';
 
-/** Every Debt Report parameter. Company / salesperson / team / customer go through the server's scoped filters
- * (role data scope + salesperson lock); the rest are the page's own. */
+/** Every Receivables and Collections parameter (API /debt-report/*). Company / salesperson / team / customer go through
+ * the server's scoped filters (role data scope + salesperson lock); the rest are the page's own. */
 export interface DebtReportScope {
   snapshotDate?: string | null;
   includeOther?: boolean;
@@ -2323,14 +2343,14 @@ export interface DebtReportScope {
   companyKeys?: number[];
   salespersonKeys?: number[];
   salesTeamKeys?: string[];
-  customerSearch?: string;
+  customerKeys?: number[];
   overdueStatus?: DebtOverdueStatus;
   agingBucketKeys?: number[];
   deliveryStatuses?: string[];
   paymentTermKeys?: number[];
-  documentTypeKeys?: string[];
   invoiceTiers?: DebtSizeTier[];
-  customerTiers?: DebtSizeTier[];
+  /** Customer Category (the Customer Growth categories): 'A'..'D' or 'none' */
+  customerCategories?: string[];
 }
 
 export interface DebtOption {
@@ -2352,7 +2372,9 @@ export interface DebtFreshness {
 export interface DebtExclusions {
   segments: string[];
   salesTeams: string[];
-  teams: { salesTeamKey: string; salesTeam: string; segment: string | null; bySegment: boolean; byTeam: boolean }[];
+  /** teams whose customer invoices only are left out (0039: Unknown = no Odoo sales team) */
+  invoiceTeams?: string[];
+  teams: { salesTeamKey: string; salesTeam: string; segment: string | null; bySegment: boolean; byTeam: boolean; invoicesOnly?: boolean }[];
 }
 
 export interface DebtMeta {
@@ -2366,7 +2388,10 @@ export interface DebtMeta {
     agingBuckets: (DebtOption & { isOverdue: boolean })[];
     deliveryStatuses: DebtOption[];
     paymentTerms: DebtOption[];
-    documentTypes: DebtOption[];
+    /** customers with a line in the snapshot; label "name (Odoo id)" */
+    customers: DebtOption[];
+    /** Category A..D, No category */
+    customerCategories: DebtOption[];
     scopes: (DebtOption & { isDefault: boolean; description: string | null })[];
     sizeTiers: (DebtOption & { min: number | null; max: number | null })[];
   };
@@ -2388,6 +2413,9 @@ export interface DebtGroupPoint {
 /** Every amount of a Debt Report response is in its own currency (`currency`); currencies are never added together. */
 export interface DebtCurrencyOverview {
   currency: string;
+  /** Total debt (openAmount) / overdue / not due / customers: customer invoices only (Odoo's Amount Due), in the
+   * invoice currency; the *Company fields are the same in LYD (Odoo's own amount_residual, never a rate of ours).
+   * Credit notes and unreconciled payments are Unapplied credits; every line is the Net balance. */
   kpis: {
     openAmount: number;
     openDocuments: number;
@@ -2396,6 +2424,20 @@ export interface DebtCurrencyOverview {
     overduePctOfOpen: number | null;
     notDueAmount: number;
     notDuePctOfOpen: number | null;
+    openAmountCompany: number;
+    overdueAmountCompany: number;
+    notDueAmountCompany: number;
+    unappliedCredits: number;
+    creditNotes: number;
+    creditNoteDocuments: number;
+    payments: number;
+    paymentDocuments: number;
+    otherEntries: number;
+    otherDocuments: number;
+    intercompany: number;
+    intercompanyDocuments: number;
+    netBalance: number;
+    creditOnlyCustomers: number;
     lineCount: number;
   };
   aging: { agingBucketKey: number; label: string; isOverdue: boolean; amount: number; lineCount: number }[];
@@ -2404,14 +2446,28 @@ export interface DebtCurrencyOverview {
   byTeam: DebtGroupPoint[];
 }
 
+/** "All currencies (in LYD)": every currency's open invoices in the company currency; each customer counted once. */
+export interface DebtAllCurrencies {
+  currency: string;
+  openAmount: number;
+  openDocuments: number;
+  customers: number;
+  overdueAmount: number;
+  overduePctOfOpen: number | null;
+  notDueAmount: number;
+  notDuePctOfOpen: number | null;
+}
+
 export interface DebtOverview {
   snapshotDate: string | null;
   lineCount: number;
   currencies: DebtCurrencyOverview[];
+  allCurrencies: DebtAllCurrencies;
 }
 
 export interface DebtTrend {
-  points: { snapshotDate: string; currency: string; open: number; overdue: number; notDue: number }[];
+  /** null amounts = the snapshot has no line for the filters (e.g. a company not extracted yet then): a gap, not 0 */
+  points: { snapshotDate: string; currency: string; open: number | null; overdue: number | null; notDue: number | null; net: number | null }[];
   currencies: string[];
   snapshotCount: number;
 }
@@ -2421,12 +2477,21 @@ export interface DebtCustomerRow {
   company: string;
   customerKey: number;
   customer: string;
+  /** "Category A" ... "No category" (the Customer Growth category) */
+  customerCategory: string;
   currency: string;
+  /** open invoices (count, original amount, open amount) */
   openDocuments: number;
   invoiceAmount: number;
   open: number;
   overdue: number;
   notDue: number;
+  /** credit notes + unreconciled payments (zero or negative) */
+  credits: number;
+  /** other receivable entries + inter-company lines (only with their toggles) */
+  otherEntries: number;
+  /** every line */
+  net: number;
   salespersons: string[];
   salesTeams: string[];
   segments: string[];
@@ -2447,6 +2512,7 @@ export interface DebtDrillRow {
   company: string;
   document: string | null;
   documentTypeKey: string;
+  lineKind: 'invoice' | 'credit_note' | 'payment' | 'other' | 'intercompany';
   invoiceDate: string | null;
   dueDate: string | null;
   daysOverdue: number;
@@ -2470,6 +2536,65 @@ export interface DebtDrilldown {
   totals: { lines: number; openDocuments: number; invoiceAmount: number; openBalance: number; overdueAmount: number };
 }
 
+/** GET /debt-report/aging (backend measures/debtAging.ts): the Aging Map of one currency. Every zone, position and
+ * day count is computed by the server; the page only renders it. */
+export type DebtAgingTermSource = 'payment_term' | 'due_date' | 'missing';
+
+export interface DebtAgingCustomer {
+  customerKey: number;
+  customer: string;
+  companyKey: number;
+  company: string;
+  termKey: string;
+  termLabel: string;
+  termDays: number;
+  termSource: DebtAgingTermSource;
+  oldestOpenMoveId: number;
+  oldestOpenDocument: string | null;
+  odooUrl: string;
+  invoiceDate: string;
+  dueDate: string | null;
+  invoiceAge: number;
+  daysPastDue: number;
+  termWidth: number;
+  position: number;
+  zone: string;
+  zoneIndex: number;
+  owner: string;
+  nextZone: string | null;
+  daysToNextZone: number | null;
+  escalatingSoon: boolean;
+  /** open invoices in the invoice currency */
+  outstanding: number;
+  /** the same in LYD (Odoo's Amount Due column) */
+  outstandingCompany: number;
+  openInvoices: number;
+}
+
+export interface DebtAgingRange {
+  zone: string;
+  from: number;
+  to: number | null;
+}
+
+export interface DebtAgingZone {
+  key: string;
+  label: string;
+  owner: string;
+  lowerMultiplier: number;
+  upperMultiplier: number | null;
+}
+
+export interface DebtAging {
+  snapshotDate: string | null;
+  currency: string | null;
+  currencies: string[];
+  settings: { minStep: number; escalationWindowDays: number; axisCap: number };
+  zones: DebtAgingZone[];
+  terms: { key: string; label: string; termDays: number | null; customers: number; ranges: DebtAgingRange[] | null }[];
+  customers: DebtAgingCustomer[];
+}
+
 /** Query string of a Debt Report request. Lists go as repeated keys (the server's scoped filters read arrays). */
 export function buildDebtReportQuery(scope: DebtReportScope, extra: Record<string, string | number> = {}): string {
   const params = new URLSearchParams();
@@ -2480,14 +2605,63 @@ export function buildDebtReportQuery(scope: DebtReportScope, extra: Record<strin
   if (scope.snapshotDate) params.set('snapshotDate', scope.snapshotDate);
   if (scope.includeOther) params.set('includeOther', 'true');
   if (scope.includeIntercompany) params.set('includeIntercompany', 'true');
-  if (scope.customerSearch?.trim()) params.set('customerSearch', scope.customerSearch.trim());
   if (scope.overdueStatus && scope.overdueStatus !== 'all') params.set('overdueStatus', scope.overdueStatus);
-  for (const key of ['companyKeys', 'salespersonKeys', 'salesTeamKeys', 'agingBucketKeys', 'deliveryStatuses', 'paymentTermKeys', 'documentTypeKeys', 'invoiceTiers', 'customerTiers'] as const) list(key);
+  for (const key of ['companyKeys', 'salespersonKeys', 'salesTeamKeys', 'customerKeys', 'agingBucketKeys', 'deliveryStatuses', 'paymentTermKeys', 'invoiceTiers', 'customerCategories'] as const) list(key);
   for (const [k, v] of Object.entries(extra)) params.set(k, String(v));
   return params.toString();
 }
 
-export type DebtReportEndpoint = 'meta' | 'overview' | 'trend' | 'customers' | 'drilldown';
+export type DebtReportEndpoint = 'meta' | 'overview' | 'trend' | 'customers' | 'drilldown' | 'aging' | 'collections-trend' | 'collections-drilldown';
+
+/** GET /debt-report/collections-trend (backend measures/debtCollections.ts) */
+export type CollectionGrain = 'day' | 'week' | 'month';
+export interface CollectionPoint {
+  periodStart: string;
+  periodEnd: string;
+  /** posted customer payments dated in the period (payment currency) = the four parts below */
+  collected: number;
+  appliedOverdue: number;
+  appliedNotDue: number;
+  appliedOther: number;
+  unapplied: number;
+  payments: number;
+  startOverdue: number | null;
+  collectedOnStartOverdue: number | null;
+  collectionRate: number | null;
+}
+export interface CollectionsTrend {
+  currency: string | null;
+  currencies: string[];
+  grain: CollectionGrain;
+  from: string;
+  to: string;
+  points: CollectionPoint[];
+  firstPaymentDate: string | null;
+  loadedAt: string | null;
+}
+export interface CollectionPaymentRow {
+  paymentId: number;
+  payment: string;
+  paymentDate: string;
+  company: string;
+  customer: string;
+  salesperson: string;
+  salesTeam: string;
+  attribution: string;
+  amount: number;
+  appliedOverdue: number;
+  appliedNotDue: number;
+  appliedOther: number;
+  unapplied: number;
+  invoices: string;
+  odooUrl: string;
+}
+export interface CollectionsDrilldown {
+  currency: string | null;
+  period: { start: string; end: string };
+  truncated: boolean;
+  rows: CollectionPaymentRow[];
+}
 
 export function fetchDebtReport<T>(token: string, endpoint: DebtReportEndpoint, scope: DebtReportScope, extra: Record<string, string | number> = {}, signal?: AbortSignal): Promise<T> {
   const qs = buildDebtReportQuery(scope, extra);

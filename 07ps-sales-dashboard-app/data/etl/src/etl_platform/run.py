@@ -1,6 +1,11 @@
 """CLI: python -m etl_platform.run <job> [--date YYYY-MM-DD] [--full] [--dataset X] [--allow-large-change]
 
-Exit codes: 0 success, 1 the job failed, 2 bad arguments / unknown job or dataset.
+Exit codes (backend/src/etl/jobs/runPipelineJob.ts maps them to the etl_job_runs status):
+  0 success
+  1 the job failed
+  2 bad arguments / unknown job or dataset
+  3 partial: an optional dependency job failed (finance in full_all), everything else loaded
+  4 skipped: another ETL run holds the lock (nothing was written)
 Logs go to stdout (the Flask ETL API streams them to the Control Center) and to logs/platform_<job>_<ts>.log.
 """
 
@@ -13,11 +18,13 @@ import sys
 from pathlib import Path
 
 from etl_platform.config import PlatformConfig
-from etl_platform.db import create_platform_engine
+from etl_platform.db import RunLockError, create_platform_engine
 from etl_platform.registry import REGISTRY, RegistryError, load_definitions
-from etl_platform.runner import Runner
+from etl_platform.runner import STATUS_PARTIAL, Runner
 
 LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+
+EXIT_SUCCESS, EXIT_FAILED, EXIT_USAGE, EXIT_PARTIAL, EXIT_LOCKED = 0, 1, 2, 3, 4
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -73,20 +80,27 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     config = PlatformConfig.from_env(args.env_file)
     engine = create_platform_engine(config.database_url, config.db_session_timezone)
+    runner = Runner(REGISTRY, engine, config)
     try:
-        Runner(REGISTRY, engine, config).run(
+        runner.run(
             args.job, as_of=args.date, full_refresh=args.full, dataset=args.dataset,
             allow_large_change=args.allow_large_change, trigger_source=args.trigger_source,
         )
     except RegistryError as exc:
         log.error("%s", exc)
-        return 2
+        return EXIT_USAGE
+    except RunLockError as exc:
+        log.error("Job %s skipped: %s", args.job, exc)
+        return EXIT_LOCKED
     except Exception as exc:  # noqa: BLE001 - already logged and recorded by the runner
         log.error("Job %s failed: %s", args.job, exc)
-        return 1
+        return EXIT_FAILED
     finally:
         engine.dispose()
-    return 0
+    if runner.last_status == STATUS_PARTIAL:
+        log.warning("Job %s finished PARTIAL (see etl_run_log.error_message)", args.job)
+        return EXIT_PARTIAL
+    return EXIT_SUCCESS
 
 
 if __name__ == "__main__":

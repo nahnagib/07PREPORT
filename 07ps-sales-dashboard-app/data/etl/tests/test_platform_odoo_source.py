@@ -46,7 +46,9 @@ class FakeModels:
             else:
                 rows.sort(key=lambda r: r["id"])
             off, lim = kwargs.get("offset", 0), kwargs.get("limit")
-            return [{k: r[k] for k in kwargs["fields"] if k in r} for r in rows[off:off + lim]]
+            lim = None if lim == 0 else lim
+            page = rows[off:] if lim is None else rows[off:off + lim]
+            return [{k: r[k] for k in kwargs["fields"] if k in r} for r in page]
         if method == "search_count":
             return len(self.records)
         if method == "search":
@@ -200,6 +202,14 @@ def test_search_read_all_pages_by_offset_and_sends_context():
     assert [c[3]["offset"] for c in calls] == [0, 2, 4]
     assert all(c[3]["limit"] == 2 and c[3]["order"] == "id" for c in calls)
     assert calls[0][3]["context"] == {"lang": "en_US", "allowed_company_ids": [1, 3]}
+
+
+def test_accessible_companies_bypasses_configured_company_scope():
+    models = FakeModels([{"id": 1, "name": "Majaal"}, {"id": 3, "name": "TIKA"}, {"id": 4, "name": "Athena"}])
+    rows = _source(models).accessible_companies()
+    calls = [c for c in models.calls if c[1] == "search_read"]
+    assert [r["id"] for r in rows] == [1, 3, 4]
+    assert calls[0][3]["context"] == {"lang": "en_US", "active_test": False}
 
 
 def test_incremental_pages_in_id_order_and_terminates_when_many_share_one_second():
