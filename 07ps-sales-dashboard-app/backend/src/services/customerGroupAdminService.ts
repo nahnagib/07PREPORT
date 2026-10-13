@@ -3,11 +3,11 @@ import { ValidationError } from '../lib/errors';
 
 /**
  * Admin-controlled reference data for Customer Group -- an overlay on the live, ETL-replaced
- * Dim_Segment (same pattern as salesTeamAdminService.ts's overlay on dim_sales_team), stored in
+ * dim_segment (same pattern as salesTeamAdminService.ts's overlay on dim_sales_team), stored in
  * admin_customer_group (see data/warehouse/migrations/0018_reference_data_admin.sql for the full
- * rationale). Seeded once from Dim_Segment at migration time and from then on authoritative for
+ * rationale). Seeded once from dim_segment at migration time and from then on authoritative for
  * this admin page and for GET /filters/customer-groups -- there is deliberately no "if empty,
- * fall back to raw Dim_Segment" runtime branch, since the table is never empty after seeding.
+ * fall back to raw dim_segment" runtime branch, since the table is never empty after seeding.
  *
  * SCOPE (updated, Reports/Dashboards Honor Admin Salesperson Overrides, 2026-09): this table's
  * `name` is now used as the display label for a reclassified segment bucket in the Tachometer
@@ -15,7 +15,7 @@ import { ValidationError } from '../lib/errors';
  * matches a salesperson's effective segment. It still does NOT determine WHICH transactions land
  * in which segment bucket, though -- that's driven entirely by
  * salesperson_admin_profile.segment_key_override (falling back to the live
- * Dim_Segment.SegmentKey), via measures/filters.ts's effectiveSegmentExpr; this table only supplies
+ * dim_segment.SegmentKey), via measures/filters.ts's effectiveSegmentExpr; this table only supplies
  * the pretty name and is_active/display_order for the admin page and GET /filters/customer-groups.
  * Because of that, GET /filters/customer-groups only ever returns rows with a live
  * etl_segment_key -- a purely custom (unlinked) group has nothing in v_sales_lines/v_sales_targets
@@ -118,7 +118,7 @@ async function nameTakenByAnother(name: string, excludeId?: number): Promise<boo
 }
 
 async function etlSegmentExists(segmentKey: number): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_Segment WHERE SegmentKey = ? LIMIT 1', [segmentKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_segment WHERE SegmentKey = ? LIMIT 1', [segmentKey]);
   return (rows as unknown[]).length > 0;
 }
 
@@ -174,7 +174,7 @@ export async function createCustomerGroup(input: CreateCustomerGroupInput, actor
     if (await etlSegmentTakenByAnother(input.etlSegmentKey)) {
       throw new ValidationError('That ETL segment is already linked to another customer group.');
     }
-    const [rows] = await pool.query('SELECT Segment FROM Dim_Segment WHERE SegmentKey = ?', [input.etlSegmentKey]);
+    const [rows] = await pool.query('SELECT Segment FROM dim_segment WHERE SegmentKey = ?', [input.etlSegmentKey]);
     etlSegmentName = (rows as { Segment: string }[])[0]?.Segment ?? null;
   }
 
@@ -228,7 +228,7 @@ export async function updateCustomerGroup(id: number, input: UpdateCustomerGroup
       if (await etlSegmentTakenByAnother(input.etlSegmentKey, id)) {
         throw new ValidationError('That ETL segment is already linked to another customer group.');
       }
-      const [rows] = await pool.query('SELECT Segment FROM Dim_Segment WHERE SegmentKey = ?', [input.etlSegmentKey]);
+      const [rows] = await pool.query('SELECT Segment FROM dim_segment WHERE SegmentKey = ?', [input.etlSegmentKey]);
       etlSegmentKey = input.etlSegmentKey;
       etlSegmentName = (rows as { Segment: string }[])[0]?.Segment ?? null;
     }
@@ -308,6 +308,6 @@ export interface EtlSegmentOption {
 }
 
 export async function getEtlSegmentOptions(): Promise<EtlSegmentOption[]> {
-  const [rows] = await pool.query('SELECT SegmentKey AS segment_key, Segment AS segment_name FROM Dim_Segment ORDER BY SegmentKey');
+  const [rows] = await pool.query('SELECT SegmentKey AS segment_key, Segment AS segment_name FROM dim_segment ORDER BY SegmentKey');
   return rows as EtlSegmentOption[];
 }

@@ -6,6 +6,17 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Fixed (live: legacy tables read because of table-name case, 2026-10-13)
+- **DEPLOY NOTE: must be deployed together with `deploy/live-remap/02_remap.sql` — see `deploy/live-remap/README.md`.**
+- Live MySQL runs with `lower_case_table_names=0`, so `Dim_Company` and `dim_company` are two tables there. Migration 0029
+  renamed the legacy tables by their lowercase name only, so on live they stayed, and the backend (capitalised names)
+  kept reading the stale legacy `Dim_Company`, `Dim_Customer`, `Dim_Date`, `Dim_Salesperson`, `Dim_Segment`. Symptom: the
+  Company "ETL Relation" dropdown on live listed only 1 Majaal, 2 Tika (no Athena).
+- Every backend query now uses the lowercase core tables (18 files). The ETL Relation dropdown no longer offers `-1 Unknown`.
+- New guard test `backend/src/db/__tests__/tableNameCase.test.ts` (runs in CI): fails on any capitalised table name in backend SQL.
+- `deploy/live-remap/`: read-only checks, backup, a by-name remap of stored legacy keys (Tika 2 → 3, segment Unknown 5 → -1)
+  with audit/rollback, and post-deploy verification, for DevOps to run by hand. No migration; legacy tables untouched.
+
 ### Changed (UX enhancements, 2026-09)
 - Bottom page navigator scrolls horizontally (wheel/drag/touch, edge arrows + fades, active tab scrolled into view, RTL-aware).
 - Back button moved into the header; header Refresh and filter-bar Reset Filters removed.

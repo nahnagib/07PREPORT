@@ -16,7 +16,7 @@
  *                               |                                            | see that constant's docstring
  *   Daily/Monthly/Yearly       | v_sales_lines (value)                    | actual value for the day /
  *   Counter actuals            |                                            | MTD / YTD window
- *   Working Days / Weekly Rest | Dim_Date.IsWeeklyRestDay + calendar        | see computeWorkingDays below
+ *   Working Days / Weekly Rest | dim_date.IsWeeklyRestDay + calendar        | see computeWorkingDays below
  *   Official Holidays /        | official_holidays / forced_closures        | admin-owned tables (Admin
  *   Forced Closures            | (Admin Panel > Holidays & Closures)        | Panel > Official Holidays /
  *                               |                                            | Forced Closures) -- Company/
@@ -28,11 +28,11 @@
  *                               |                                            | Daily Critical Number
  *
  * Weekly-rest-day / working-day math is done with plain UTC date arithmetic (isFriday), not a
- * Dim_Date row lookup, because Dim_Date is only populated up to "today" (it's built incrementally
+ * dim_date row lookup, because dim_date is only populated up to "today" (it's built incrementally
  * as data lands) while a Daily Critical Number needs the FULL calendar year's working-day count,
  * including months that haven't happened yet. official_holidays/forced_closures, by contrast,
  * genuinely carry future-dated rows (e.g. Aug/Nov holidays already scheduled), so those are read
- * straight from the DB. Confirmed against the live data: every Dim_Date row with
+ * straight from the DB. Confirmed against the live data: every dim_date row with
  * IsWeeklyRestDay=1 is a Friday, and Friday is the only weekday ever flagged that way --
  * isFriday() reproduces that exactly.
  *
@@ -196,7 +196,7 @@ async function fetchOffDayRows(pool: Pool, type: OffDayType, window: DateWindow)
 
 /**
  * Most recent calendar date the ETL has actually loaded: the business-timezone date of the latest
- * SUCCESSFUL sales run in etl_run_log (the date the legacy pipeline used to extend Dim_Date to), falling
+ * SUCCESSFUL sales run in etl_run_log (the date the legacy pipeline used to extend dim_date to), falling
  * back to the latest order date when no sales run is logged yet. Independent of any Company/Branch scope.
  * Used by the /critical-number/overview route to detect "today hasn't loaded yet" and fall back to the
  * last available day instead of showing today's (empty) figures. Returns null only for an empty warehouse.

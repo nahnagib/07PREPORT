@@ -5,7 +5,7 @@ import { ValidationError } from '../lib/errors';
  * Sales Team Management -- same overlay pattern as salespersonAdminService.ts, keyed by
  * dim_sales_team.SalesTeamKey. See data/warehouse/migrations/0016_admin_salesperson_profile.sql's
  * "Sales Team Management" section for why team_name_override exists (dim_sales_team is ETL-owned
- * and full-replaced every refresh, same as Dim_Salesperson) and why team_code is a plain
+ * and full-replaced every refresh, same as dim_salesperson) and why team_code is a plain
  * admin-owned, NOT NULL + UNIQUE identifier independent of anything ETL-sourced.
  *
  * UPDATED (Reports/Dashboards Honor Admin Salesperson Overrides, 2026-09): segment_key_override
@@ -57,8 +57,8 @@ const BASE_SELECT = `
   FROM dim_sales_team st
   LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
   LEFT JOIN app_user au ON au.user_id = stap.updated_by
-  LEFT JOIN Dim_Segment dsg ON dsg.SegmentKey = stap.segment_key_override
-  LEFT JOIN Dim_Company dcmp ON dcmp.CompanyKey = stap.company_key_override
+  LEFT JOIN dim_segment dsg ON dsg.SegmentKey = stap.segment_key_override
+  LEFT JOIN dim_company dcmp ON dcmp.CompanyKey = stap.company_key_override
 `;
 
 function withNumericFields(row: SalesTeamAdminRow): SalesTeamAdminRow {
@@ -112,12 +112,12 @@ async function salesTeamExists(salesTeamKey: string): Promise<boolean> {
 }
 
 async function segmentExists(segmentKey: number): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_Segment WHERE SegmentKey = ? LIMIT 1', [segmentKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_segment WHERE SegmentKey = ? LIMIT 1', [segmentKey]);
   return (rows as unknown[]).length > 0;
 }
 
 async function companyExists(companyKey: number): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_Company WHERE CompanyKey = ? LIMIT 1', [companyKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_company WHERE CompanyKey = ? LIMIT 1', [companyKey]);
   return (rows as unknown[]).length > 0;
 }
 
@@ -138,7 +138,7 @@ export interface UpsertSalesTeamProfileInput {
   note?: string | null;
 }
 
-/** Validates against live dim_sales_team/Dim_Segment plus the overlay's own uniqueness rule on
+/** Validates against live dim_sales_team/dim_segment plus the overlay's own uniqueness rule on
  * team_code, upserts the overlay row, and appends one history row. Not wrapped in an explicit
  * transaction -- matches salespersonAdminService.ts's and the rest of this codebase's style for a
  * single-user, low-frequency admin action. */

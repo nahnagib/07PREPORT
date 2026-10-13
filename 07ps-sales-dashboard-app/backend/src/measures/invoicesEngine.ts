@@ -113,7 +113,7 @@ async function fetchInvoiceStats(pool: Pool, window: DateWindow, filters: Filter
       COALESCE(SUM(fsl.Value), 0)          AS totalValue,
       COALESCE(SUM(fsl.Volume), 0)         AS totalVolume
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date BETWEEN ? AND ?
       AND ${clause}
       AND ${cls.clause}
@@ -192,7 +192,7 @@ export async function fetchSalesTrendByYear(
       COALESCE(SUM(fsl.Value), 0)          AS invoiceSalesValue,
       COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date <= ? AND ${clause} AND ${cls.clause}
     GROUP BY dd.Year
     ORDER BY dd.Year
@@ -242,7 +242,7 @@ export async function fetchSalesTrendByYearClass(
       COALESCE(SUM(fsl.Value), 0)          AS invoiceSalesValue,
       COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date <= ? AND ${clause} AND ${cls.clause}
     GROUP BY dd.Year, fsl.\`Invoice Class\`
   `;
@@ -320,7 +320,7 @@ export async function fetchInvoicesTrendByYear(
       COALESCE(SUM(fsl.Value), 0)          AS totalValue,
       COALESCE(SUM(fsl.Volume), 0)         AS totalVolume
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date <= ? AND ${clause} AND ${cls.clause} AND ${yr.clause}
     GROUP BY dd.Year
     ORDER BY dd.Year
@@ -376,7 +376,7 @@ export async function fetchInvoiceClassificationYtd(
       COALESCE(SUM(fsl.Value), 0)          AS value,
       COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date BETWEEN ? AND ? AND ${clause}
     GROUP BY fsl.\`Invoice Class\`
   `;

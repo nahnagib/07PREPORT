@@ -100,7 +100,7 @@ async function loadCombos(window: DateWindow): Promise<Combo[]> {
         fsl.SalespersonKey AS sp,
         fsl.CustomerKey AS cu
      FROM v_sales_lines fsl
-     JOIN Dim_Date dd ON dd.DateKey = fsl.DateKey
+     JOIN dim_date dd ON dd.DateKey = fsl.DateKey
      LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fsl.SalespersonKey
      WHERE 1 = 1${dateClause}`,
     params,
@@ -143,8 +143,8 @@ async function loadNames(): Promise<NameMaps> {
     q(`SELECT st.SalesTeamKey AS k, COALESCE(stap.team_name_override, st.SalesTeam) AS name, st.SalesCity AS city
        FROM dim_sales_team st LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey ORDER BY st.SalesTeam`),
     q(`SELECT ds.SalespersonKey AS k, COALESCE(sap.admin_name_override, ds.salesperson) AS name
-       FROM Dim_Salesperson ds LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey ORDER BY ds.salesperson`),
-    q(`SELECT CustomerKey AS k, customer AS name FROM Dim_Customer ORDER BY customer`),
+       FROM dim_salesperson ds LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey ORDER BY ds.salesperson`),
+    q(`SELECT CustomerKey AS k, customer AS name FROM dim_customer ORDER BY customer`),
   ]);
   const fill = (dim: Dimension, rows: RowDataPacket[], build: (r: RowDataPacket) => Record<string, string | number | null>) => {
     for (const r of rows) maps[dim].set(String(r.k), { key: String(r.k), row: build(r) });

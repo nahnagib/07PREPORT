@@ -21,7 +21,7 @@ function setupMockPool(opts: MockOpts = {}) {
     if (/FROM dim_sales_team WHERE SalesTeamKey/.test(sql)) {
       return [[{ 1: 1 }]]; // salesTeamExists -> true
     }
-    if (/FROM Dim_Company WHERE CompanyKey/.test(sql)) {
+    if (/FROM dim_company WHERE CompanyKey/.test(sql)) {
       return [opts.companyExists === false ? [] : [{ 1: 1 }]];
     }
     if (/FROM sales_team_admin_profile WHERE team_code/.test(sql)) {
@@ -57,10 +57,10 @@ function insertCall() {
 describe('upsertSalesTeamProfile -- company_key_override', () => {
   beforeEach(() => setupMockPool());
 
-  it('companyExists queries Dim_Company.CompanyKey', async () => {
+  it('companyExists queries dim_company.CompanyKey', async () => {
     setupMockPool({ companyExists: true });
     await upsertSalesTeamProfile('TK-1', { companyKeyOverride: 2 }, 99);
-    const companyCheckCall = queryMock.mock.calls.find(([sql]) => /FROM Dim_Company WHERE CompanyKey/.test(sql as string));
+    const companyCheckCall = queryMock.mock.calls.find(([sql]) => /FROM dim_company WHERE CompanyKey/.test(sql as string));
     expect(companyCheckCall).toBeDefined();
     expect(companyCheckCall![1]).toEqual([2]);
   });

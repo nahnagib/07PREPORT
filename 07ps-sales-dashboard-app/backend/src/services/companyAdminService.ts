@@ -4,8 +4,8 @@ import { ValidationError } from '../lib/errors';
 /**
  * Admin-controlled reference data for Company -- same overlay pattern as
  * customerGroupAdminService.ts (see that file's header, and
- * data/warehouse/migrations/0018_reference_data_admin.sql), applied to Dim_Company instead of
- * Dim_Segment.
+ * data/warehouse/migrations/0018_reference_data_admin.sql), applied to dim_company instead of
+ * dim_segment.
  *
  * Unlike Customer Group/Distribution Channel, neither salesperson_admin_profile nor
  * sales_team_admin_profile has any company-related override column, and app_user.company_scope is
@@ -99,7 +99,7 @@ async function nameTakenByAnother(name: string, excludeId?: number): Promise<boo
 }
 
 async function etlCompanyExists(companyKey: number): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_Company WHERE CompanyKey = ? LIMIT 1', [companyKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_company WHERE CompanyKey = ? AND CompanyKey <> -1 LIMIT 1', [companyKey]);
   return (rows as unknown[]).length > 0;
 }
 
@@ -141,7 +141,7 @@ export async function createCompany(input: CreateCompanyInput, actorUserId: numb
     if (await etlCompanyTakenByAnother(input.etlCompanyKey)) {
       throw new ValidationError('That ETL company is already linked to another company record.');
     }
-    const [rows] = await pool.query('SELECT Company FROM Dim_Company WHERE CompanyKey = ?', [input.etlCompanyKey]);
+    const [rows] = await pool.query('SELECT Company FROM dim_company WHERE CompanyKey = ?', [input.etlCompanyKey]);
     etlCompanyName = (rows as { Company: string }[])[0]?.Company ?? null;
   }
 
@@ -195,7 +195,7 @@ export async function updateCompany(id: number, input: UpdateCompanyInput, actor
       if (await etlCompanyTakenByAnother(input.etlCompanyKey, id)) {
         throw new ValidationError('That ETL company is already linked to another company record.');
       }
-      const [rows] = await pool.query('SELECT Company FROM Dim_Company WHERE CompanyKey = ?', [input.etlCompanyKey]);
+      const [rows] = await pool.query('SELECT Company FROM dim_company WHERE CompanyKey = ?', [input.etlCompanyKey]);
       etlCompanyKey = input.etlCompanyKey;
       etlCompanyName = (rows as { Company: string }[])[0]?.Company ?? null;
     }
@@ -255,7 +255,14 @@ export interface EtlCompanyOption {
   company_name: string;
 }
 
+/**
+ * Every real Odoo company the core ETL knows (dim_company, CompanyKey = Odoo res.company id), in or out of scope;
+ * the -1 "Unknown" member is not a company to link. Lowercase dim_company on purpose: on a case-sensitive MySQL
+ * (lower_case_table_names=0, live) the legacy Dim_Company is a different, stale table (1 Majaal, 2 Tika).
+ */
 export async function getEtlCompanyOptions(): Promise<EtlCompanyOption[]> {
-  const [rows] = await pool.query('SELECT CompanyKey AS company_key, Company AS company_name FROM Dim_Company ORDER BY CompanyKey');
+  const [rows] = await pool.query(
+    'SELECT CompanyKey AS company_key, Company AS company_name FROM dim_company WHERE CompanyKey <> -1 ORDER BY CompanyKey',
+  );
   return rows as EtlCompanyOption[];
 }

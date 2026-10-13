@@ -3,14 +3,14 @@
  * Receivables and Collections' "Customer Category" filter).
  *
  * The category itself is computed by the sales ETL, once per customer, and stored on dim_customer.CustomerClass_LY
- * (Dim_Customer in the legacy views): A highest value - D lowest, from the customer's sales value in the last full
+ * (dim_customer in the legacy views): A highest value - D lowest, from the customer's sales value in the last full
  * calendar year before the ETL run (2025 for runs in 2026), for B2B and B2C customers only; other customers have no
  * category (NULL). The thresholds live only there (data/etl/src/sales_pipeline/legacy_transform.py
  * _add_customer_class) and are never repeated here. Both pages read the stored value as is -- neither recomputes it
  * for its own period -- so a customer has the same category on both.
  */
 
-/** dim_customer / Dim_Customer column that holds the category. */
+/** dim_customer / dim_customer column that holds the category. */
 export const CUSTOMER_CATEGORY_COLUMN = 'CustomerClass_LY';
 
 /** Display order (highest value first). */

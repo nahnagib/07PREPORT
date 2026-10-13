@@ -3,7 +3,7 @@
  *
  * IMPORTANT: this runs the exact same full pipeline as `etl:run`, just labeled differently in the
  * ETL log. The vendored pipeline (data/etl) is a single interdependent run -- dimensions and facts
- * are built in a fixed order with heavy cross-references (e.g. Dim_Customer depends on multiple
+ * are built in a fixed order with heavy cross-references (e.g. dim_customer depends on multiple
  * upstream builders; v_sales_documents depends on the CRM spine + v_sales_orders) -- so there is no existing
  * seam to extract "just the customers data" without restructuring the pipeline's internals. This
  * command exists so the command surface matches what was asked for and the door stays open for

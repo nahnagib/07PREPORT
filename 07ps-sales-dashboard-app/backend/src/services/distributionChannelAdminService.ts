@@ -5,7 +5,7 @@ import { ValidationError } from '../lib/errors';
  * Admin-controlled reference data for Distribution Channel -- same overlay pattern as
  * customerGroupAdminService.ts (see that file's header, and
  * data/warehouse/migrations/0018_reference_data_admin.sql), applied to dim_channel
- * instead of Dim_Segment.
+ * instead of dim_segment.
  *
  * Usage check only looks at salesperson_admin_profile.channel_key_override -- sales_team_admin_profile
  * has no channel column (only team_code/segment_key_override/target_override_amount/note), so a

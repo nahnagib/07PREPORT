@@ -12,12 +12,12 @@ import { getFilterOptions } from '../filters/optionsService';
  *
  * Queries the powerBI_Data warehouse tables with the proper case-sensitive table/column names:
  *
- *   Business Unit / Company -> Dim_Company
- *   Customer Group          -> Dim_Segment (NOT Dim_Customer -- see filters.ts's module docstring
+ *   Business Unit / Company -> dim_company
+ *   Customer Group          -> dim_segment (NOT dim_customer -- see filters.ts's module docstring
  *                               in src/measures for the full "why")
  *   Distribution Channel    -> dim_channel
  *   Branch                  -> dim_sales_team
- *   Sales Person            -> Dim_Salesperson
+ *   Sales Person            -> dim_salesperson
  *
  * No POS endpoint here -- confirmed unused in the real data, and a working-but-empty filter
  * is worse than an absent one.
@@ -122,11 +122,11 @@ const SALESPERSON_COMPANY_MAP_SQL = `
     sap.channel_key_override,
     sap.sales_team_key_override,
     COALESCE(sap.company_key_override, stap.company_key_override, dc.CompanyKey) AS effective_company_key
-  FROM Dim_Salesperson ds
+  FROM dim_salesperson ds
   LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey
   LEFT JOIN dim_sales_team st ON st.SalesTeamKey = COALESCE(sap.sales_team_key_override, ds.SalesTeamKey)
   LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
-  LEFT JOIN Dim_Company dc ON dc.Company = st.SalesTeamCompany
+  LEFT JOIN dim_company dc ON dc.Company = st.SalesTeamCompany
 `;
 
 /** Same channel-inference CASE logic as measures/filters.ts's effectiveChannelExpr, restated
@@ -270,7 +270,7 @@ filtersRouter.get('/branches', async (req, res, next) => {
         `SELECT st.SalesTeamKey as sales_team_key, COALESCE(stap.team_name_override, st.SalesTeam) as sales_team_name,
                 st.SalesCity as city, dc.CompanyKey as company_key
          FROM dim_sales_team st
-         LEFT JOIN Dim_Company dc ON dc.Company = st.SalesTeamCompany
+         LEFT JOIN dim_company dc ON dc.Company = st.SalesTeamCompany
          LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
          ORDER BY st.SalesTeam`,
       )) as [Record<string, unknown>[], unknown];
@@ -282,7 +282,7 @@ filtersRouter.get('/branches', async (req, res, next) => {
         `SELECT st.SalesTeamKey as sales_team_key, COALESCE(stap.team_name_override, st.SalesTeam) as sales_team_name,
                 st.SalesCity as city, dc.CompanyKey as company_key
          FROM dim_sales_team st
-         LEFT JOIN Dim_Company dc ON dc.Company = st.SalesTeamCompany
+         LEFT JOIN dim_company dc ON dc.Company = st.SalesTeamCompany
          LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
          WHERE ${companyClause.clause}
          ORDER BY st.SalesTeam`,
@@ -312,7 +312,7 @@ filtersRouter.get('/branches', async (req, res, next) => {
          FROM v_sales_lines fsl
          JOIN (${SALESPERSON_COMPANY_MAP_SQL}) sec ON sec.salesperson_key = fsl.SalespersonKey
          JOIN dim_sales_team st ON st.SalesTeamKey = COALESCE(sec.sales_team_key_override, fsl.SalesTeamKey)
-         LEFT JOIN Dim_Company dc ON dc.Company = st.SalesTeamCompany
+         LEFT JOIN dim_company dc ON dc.Company = st.SalesTeamCompany
          LEFT JOIN sales_team_admin_profile stap ON stap.sales_team_key = st.SalesTeamKey
          WHERE ${clauses.join(' AND ')}
          ORDER BY st.SalesTeam`,
@@ -334,14 +334,14 @@ filtersRouter.get('/branches', async (req, res, next) => {
  * the narrowed path below regardless of what query params are present.
  *
  * salesperson_name reads through salesperson_admin_profile.admin_name_override (falling back to
- * the raw Dim_Salesperson name), same pattern as /branches above.
+ * the raw dim_salesperson name), same pattern as /branches above.
  */
 filtersRouter.get('/salespersons', async (req, res, next) => {
   try {
     if (req.userContext?.roleCode === 'SALESPERSON') {
       const [rows] = await pool.query(
         `SELECT ds.SalespersonKey as salesperson_key, COALESCE(sap.admin_name_override, ds.salesperson) as salesperson_name
-         FROM Dim_Salesperson ds
+         FROM dim_salesperson ds
          LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey
          WHERE ds.SalespersonKey = ?`,
         [req.userContext.salespersonKey],
@@ -359,7 +359,7 @@ filtersRouter.get('/salespersons', async (req, res, next) => {
     if (companyKeys.length === 0 && segmentKeys.length === 0 && channelKeys.length === 0 && salesTeamKeys.length === 0) {
       [rows] = (await pool.query(
         `SELECT ds.SalespersonKey as salesperson_key, COALESCE(sap.admin_name_override, ds.salesperson) as salesperson_name
-         FROM Dim_Salesperson ds
+         FROM dim_salesperson ds
          LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey
          ORDER BY ds.salesperson`,
       )) as [Record<string, unknown>[], unknown];
@@ -389,7 +389,7 @@ filtersRouter.get('/salespersons', async (req, res, next) => {
       [rows] = (await pool.query(
         `SELECT DISTINCT ds.SalespersonKey AS salesperson_key, COALESCE(sec.admin_name_override, ds.salesperson) AS salesperson_name, ds.salesperson
          FROM v_sales_lines fsl
-         JOIN Dim_Salesperson ds ON ds.SalespersonKey = fsl.SalespersonKey
+         JOIN dim_salesperson ds ON ds.SalespersonKey = fsl.SalespersonKey
          JOIN (${SALESPERSON_COMPANY_MAP_SQL}) sec ON sec.salesperson_key = fsl.SalespersonKey
          WHERE ${clauses.join(' AND ')}
          ORDER BY ds.salesperson`,

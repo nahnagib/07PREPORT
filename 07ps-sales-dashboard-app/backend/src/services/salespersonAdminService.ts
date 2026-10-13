@@ -2,12 +2,12 @@ import { pool } from '../db/pool';
 import { ValidationError } from '../lib/errors';
 
 /**
- * Admin Salesperson Management -- reads live Dim_Salesperson/v_sales_lines/v_sales_targets
+ * Admin Salesperson Management -- reads live dim_salesperson/v_sales_lines/v_sales_targets
  * (unchanged, read-only) and overlays the admin-owned salesperson_admin_profile table added in
  * data/warehouse/migrations/0016_admin_salesperson_profile.sql. See that migration's header for
- * why this is an overlay rather than a direct edit of the ETL-owned dims: Dim_Salesperson/
- * dim_sales_team/Dim_Company/v_sales_targets are all fully dropped-and-reloaded by the ETL on every
- * refresh, so a direct write would be silently wiped, and Dim_Salesperson has no enforced key to
+ * why this is an overlay rather than a direct edit of the ETL-owned dims: dim_salesperson/
+ * dim_sales_team/dim_company/v_sales_targets are all fully dropped-and-reloaded by the ETL on every
+ * refresh, so a direct write would be silently wiped, and dim_salesperson has no enforced key to
  * reliably UPDATE against anyway.
  *
  * UPDATED (Reports/Dashboards Honor Admin Salesperson Overrides, 2026-09): the overlay fields
@@ -86,11 +86,11 @@ const BASE_SELECT = `
     au.email AS updated_by_email,
     lu.user_id AS linked_user_id,
     lu.email AS linked_user_email
-  FROM Dim_Salesperson ds
+  FROM dim_salesperson ds
   LEFT JOIN (
     SELECT fsl.SalespersonKey, SUM(fsl.value) AS ytd_value
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date BETWEEN ? AND ?
     GROUP BY fsl.SalespersonKey
   ) sales ON sales.SalespersonKey = ds.SalespersonKey
@@ -103,9 +103,9 @@ const BASE_SELECT = `
   LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey
   LEFT JOIN app_user au ON au.user_id = sap.updated_by
   LEFT JOIN dim_channel dc ON dc.ChannelKey = sap.channel_key_override
-  LEFT JOIN Dim_Segment dsg ON dsg.SegmentKey = sap.segment_key_override
+  LEFT JOIN dim_segment dsg ON dsg.SegmentKey = sap.segment_key_override
   LEFT JOIN dim_sales_team dst ON dst.SalesTeamKey = sap.sales_team_key_override
-  LEFT JOIN Dim_Company dcmp ON dcmp.CompanyKey = sap.company_key_override
+  LEFT JOIN dim_company dcmp ON dcmp.CompanyKey = sap.company_key_override
   LEFT JOIN (
     -- app_user.salesperson_key has no unique constraint (see 0017's header), so this picks a
     -- single deterministic row per salesperson rather than letting a plain JOIN multiply rows if
@@ -164,7 +164,7 @@ export async function listSalespersons(
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
   const [countRows] = await pool.query(
-    `SELECT COUNT(*) AS total FROM Dim_Salesperson ds
+    `SELECT COUNT(*) AS total FROM dim_salesperson ds
      LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey
      ${where}`,
     havingParams,
@@ -188,7 +188,7 @@ export async function getSalespersonRow(salespersonKey: number): Promise<Salespe
 }
 
 async function salespersonExists(salespersonKey: number): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_Salesperson WHERE SalespersonKey = ? LIMIT 1', [salespersonKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_salesperson WHERE SalespersonKey = ? LIMIT 1', [salespersonKey]);
   return (rows as unknown[]).length > 0;
 }
 
@@ -198,7 +198,7 @@ async function channelExists(channelKey: number): Promise<boolean> {
 }
 
 async function segmentExists(segmentKey: number): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_Segment WHERE SegmentKey = ? LIMIT 1', [segmentKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_segment WHERE SegmentKey = ? LIMIT 1', [segmentKey]);
   return (rows as unknown[]).length > 0;
 }
 
@@ -208,7 +208,7 @@ async function salesTeamExists(salesTeamKey: string): Promise<boolean> {
 }
 
 async function companyExists(companyKey: number): Promise<boolean> {
-  const [rows] = await pool.query('SELECT 1 FROM Dim_Company WHERE CompanyKey = ? LIMIT 1', [companyKey]);
+  const [rows] = await pool.query('SELECT 1 FROM dim_company WHERE CompanyKey = ? LIMIT 1', [companyKey]);
   return (rows as unknown[]).length > 0;
 }
 

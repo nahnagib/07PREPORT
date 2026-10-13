@@ -1,3 +1,20 @@
+# Deploy notes: table-name case fix (2026-10-13) — needs a MANUAL data step
+
+> **DEPLOY NOTE: must be deployed together with `deploy/live-remap/02_remap.sql` — see `deploy/live-remap/README.md`.**
+> Do not deploy this backend without running the remap (COMMIT) in the same window: from this release the backend reads
+> `dim_company` / `dim_segment` (core keys), and company / customer-group / role-scope values saved on live through the old
+> dropdowns hold LEGACY keys (Tika = 2, which is Namaa Al Bahr in `dim_company`).
+
+- **Cause:** live MySQL has `lower_case_table_names=0`; migration 0029 looked the legacy tables up by lowercase name, so on
+  live `Dim_Company`, `Dim_Customer`, `Dim_Date`, `Dim_Salesperson`, `Dim_Segment` were never retired and the backend read them.
+- **Code:** all backend SQL uses the lowercase core tables; ETL Relation dropdown without `-1 Unknown`; CI guard test.
+- **Data (manual, DevOps):** `deploy/live-remap/` in this order, one window: `01_readonly_checks.sql` (send results back
+  first) → `02_remap.sql` dry run → stop backend → backup (`00_backup.md`) → `02_remap.sql` COMMIT → deploy code
+  (`AUTO_ROLLBACK=0`) → `03_verify.sql`. Undo: code rollback + `04_rollback.sql`.
+- **No migration** in this release. Legacy tables are not renamed or dropped (Power BI may read them).
+
+---
+
 # Deploy notes: ETL schedules, Receivables and Collections, Odoo-matched exclusions
 
 On `main` (commit 13c4d67 and later). This release carries the per-currency report, the Aging Map, Athena, the

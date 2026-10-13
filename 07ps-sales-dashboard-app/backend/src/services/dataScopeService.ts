@@ -17,11 +17,11 @@ const VALID_DIMENSIONS = new Set(DATA_SCOPE_DIMENSIONS.map((d) => d.key));
 /** Dim_* lookup table/columns each dimension's value resolves a human-readable label from --
  * same mapping routes/filters.ts's value-list endpoints already use. */
 const DIMENSION_LOOKUP: Partial<Record<keyof Filters, { table: string; keyCol: string; labelCol: string }>> = {
-  companyKeys: { table: 'Dim_Company', keyCol: 'CompanyKey', labelCol: 'Company' },
-  segmentKeys: { table: 'Dim_Segment', keyCol: 'SegmentKey', labelCol: 'Segment' },
+  companyKeys: { table: 'dim_company', keyCol: 'CompanyKey', labelCol: 'Company' },
+  segmentKeys: { table: 'dim_segment', keyCol: 'SegmentKey', labelCol: 'Segment' },
   channelKeys: { table: 'dim_channel', keyCol: 'ChannelKey', labelCol: 'DistributionChannel' },
   salesTeamKeys: { table: 'dim_sales_team', keyCol: 'SalesTeamKey', labelCol: 'SalesTeam' },
-  salespersonKeys: { table: 'Dim_Salesperson', keyCol: 'SalespersonKey', labelCol: 'salesperson' },
+  salespersonKeys: { table: 'dim_salesperson', keyCol: 'SalespersonKey', labelCol: 'salesperson' },
 };
 
 interface RoleDataScopeRow {

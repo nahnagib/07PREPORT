@@ -4,18 +4,18 @@
  * Source tables (confirmed against the live throwaway/validation warehouse, same DB every other
  * page reads from -- not a second data source):
  *
- *   Dim_Customer  -- one row per customer. Static/slow-changing attributes only: CustomerKey,
+ *   dim_customer  -- one row per customer. Static/slow-changing attributes only: CustomerKey,
  *                     customer (name), First_Purchase_Date, Last_Purchase_Date, CustomerSegment
  *                     ('B2B'/'B2C'/'Unknown'), CustomerClass_LY (A/B/C/D, already computed
  *                     upstream from last-year value thresholds -- kept as-is, same "already
  *                     computed in source" convention as Invoices Engine's `Invoice Class`), and
  *                     IsBlocked (a true operational flag, independent of purchase behavior).
- *                     Dim_Customer also carries LY_Value/YTD_Value/CustomerStatus fields, but
+ *                     dim_customer also carries LY_Value/YTD_Value/CustomerStatus fields, but
  *                     those are frozen at the last ETL run relative to the pipeline's own "today"
  *                     -- not reactive to this page's anchorDate/Year selector -- so they are
  *                     deliberately NOT used here. Every YTD/LYTD-derived figure below is instead
  *                     computed live from v_sales_lines, exactly like every other page.
- *   v_sales_lines -- CustomerKey (joins to Dim_Customer), DateKey, Value, plus the same
+ *   v_sales_lines -- CustomerKey (joins to dim_customer), DateKey, Value, plus the same
  *                     CompanyKey/SegmentKey/ChannelKey/SalesTeamKey/SalespersonKey columns
  *                     buildWhereClause already filters on everywhere else.
  *
@@ -51,7 +51,7 @@ export interface CustomerGrowthScope {
    * filter: every windowed (YTD/LYTD/MTD/LMTD-style) query remaps its anchor into this year rather
    * than intersecting the window with a `Year = ?` clause. */
   year?: number;
-  /** Restricts to a single Customer Category ('A' | 'B' | 'C' | 'D', Dim_Customer.CustomerClass_LY)
+  /** Restricts to a single Customer Category ('A' | 'B' | 'C' | 'D', dim_customer.CustomerClass_LY)
    * -- sourced from a Customers Category Performance bar click when that chart's own drill-down
    * mode is off. Same self-exclusion convention as `year`/Customers Trend: fetchCategoryPerformance
    * (the chart that produces this scope) deliberately ignores it and always returns the full A-D
@@ -107,8 +107,8 @@ export async function fetchCustomerActivitySnapshot(
       MAX(CASE WHEN dd.Date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS hasLytd,
       MAX(CASE WHEN dd.Date < ? THEN 1 ELSE 0 END) AS hasBeforeLytd
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE ${clause} AND ${cat.clause}
     GROUP BY fsl.CustomerKey
   `;
@@ -153,7 +153,7 @@ async function fetchCustomerDim(pool: Pool): Promise<Map<number, CustomerDimRow>
       CustomerSegment AS customerSegment,
       CustomerClass_LY AS customerClass,
       IsBlocked AS isBlocked
-    FROM Dim_Customer
+    FROM dim_customer
   `;
   const [rows] = await pool.query(sql);
   const map = new Map<number, CustomerDimRow>();
@@ -202,7 +202,7 @@ export interface CustomerRow {
 }
 
 /** Every customer with at least one sale matching `filters` (all-time, no date bound), joined to
- * Dim_Customer's static attributes and classified. Backs both the Zone A Customer Status counts
+ * dim_customer's static attributes and classified. Backs both the Zone A Customer Status counts
  * (tallyCustomerStatusCounts) and the Details view's Customers Table + Status Slicer -- computed
  * once so the two can never disagree. Honors scope.category (a Customer Category page-filter row
  * whose v_sales_lines rows are excluded by fetchCustomerActivitySnapshot simply never appears
@@ -274,8 +274,8 @@ async function fetchDistinctCustomerCount(
   const sql = `
     SELECT COUNT(DISTINCT fsl.CustomerKey) AS cnt
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date BETWEEN ? AND ? AND ${clause} AND ${cat.clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params, ...cat.params]);
@@ -283,7 +283,7 @@ async function fetchDistinctCustomerCount(
 }
 
 /** A customer counts as "new" in `window` if they have a sale in the window AND their all-time
- * first purchase (Dim_Customer.First_Purchase_Date) also falls within that same window. */
+ * first purchase (dim_customer.First_Purchase_Date) also falls within that same window. */
 async function fetchNewCustomerCount(
   pool: Pool,
   window: DateWindow,
@@ -295,8 +295,8 @@ async function fetchNewCustomerCount(
   const sql = `
     SELECT COUNT(DISTINCT fsl.CustomerKey) AS cnt
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date BETWEEN ? AND ?
       AND dc.First_Purchase_Date BETWEEN ? AND ?
       AND ${clause} AND ${cat.clause}
@@ -400,8 +400,8 @@ export async function fetchCustomersTrendByYear(
       COALESCE(SUM(fsl.Value), 0) AS totalSalesValue,
       COUNT(DISTINCT fsl.CustomerKey) AS customerCount
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date <= ? AND ${clause} AND ${cat.clause}
     GROUP BY dd.Year
     ORDER BY dd.Year
@@ -452,8 +452,8 @@ export async function fetchCustomersContribution(
       COALESCE(dc.customer, CONCAT('Customer ', fsl.CustomerKey)) AS name,
       COALESCE(SUM(fsl.Value), 0) AS value
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    LEFT JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+    LEFT JOIN dim_customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date BETWEEN ? AND ? AND ${clause} AND ${cat.clause}
     GROUP BY fsl.CustomerKey, dc.customer
     HAVING value > 0
@@ -476,7 +476,7 @@ export async function fetchCustomersContribution(
 
 // ---------------------------------------------------------------------------
 // Zone C (right) -- Customers Category Performance: Sales LYTM vs YTM by Customer Category
-// (Dim_Customer.CustomerClass_LY, A-D -- the one definition is lib/customerCategory.ts, shared with Receivables and
+// (dim_customer.CustomerClass_LY, A-D -- the one definition is lib/customerCategory.ts, shared with Receivables and
 // Collections' Customer Category filter). "LYTM"/"YTM" map onto the existing LYTD/YTD windows --
 // no new date-period term exists elsewhere in this codebase, so no new one is invented here.
 // Honors scope.year via the same anchorForYear remap as everywhere else on this page. Each
@@ -516,8 +516,8 @@ async function fetchSalesByCustomerAndClass(pool: Pool, window: DateWindow, filt
       dc.CustomerClass_LY AS customerClass,
       COALESCE(SUM(fsl.Value), 0) AS value
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
-    JOIN Dim_Customer dc ON dc.CustomerKey = fsl.CustomerKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_customer dc ON dc.CustomerKey = fsl.CustomerKey
     WHERE dd.Date BETWEEN ? AND ? AND ${clause} AND dc.CustomerClass_LY IS NOT NULL
     GROUP BY fsl.CustomerKey, dc.customer, dc.CustomerClass_LY
   `;

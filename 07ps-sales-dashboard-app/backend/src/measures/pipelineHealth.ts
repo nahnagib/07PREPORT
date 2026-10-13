@@ -4,7 +4,7 @@
  * Source tables (confirmed against the live warehouse this session -- these are the tables the
  * Python ETL's CRM builders actually write, distinct from the aspirational snake_case
  * `data/warehouse/migrations/` design; see measures/customerGrowth.ts's header for the same lesson
- * applied to Dim_Customer):
+ * applied to dim_customer):
  *
  *   v_sales_leads        -- one row per CRM lead. Already pre-scoped to genuine CRM leads by the ETL's
  *                        own build-time filter (LeadType IN ('lead','systematic') OR

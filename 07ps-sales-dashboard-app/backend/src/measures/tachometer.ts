@@ -92,7 +92,7 @@ export async function fetchValueVolume(
       COALESCE(SUM(fsl.value), 0)  AS value,
       COALESCE(SUM(fsl.volume), 0) AS volume
     FROM v_sales_lines fsl
-    JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
+    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
     WHERE dd.Date BETWEEN ? AND ?
       AND ${clause}
   `;
@@ -481,7 +481,7 @@ async function fetchValueVolumeGrouped(
         COALESCE(SUM(fsl.value), 0)  AS value,
         COALESCE(SUM(fsl.volume), 0) AS volume
       FROM v_sales_lines fsl
-      JOIN Dim_Date dd ON fsl.DateKey = dd.DateKey
+      JOIN dim_date dd ON fsl.DateKey = dd.DateKey
       ${cfg.keyJoin('fsl')}
       WHERE dd.Date BETWEEN ? AND ?
         AND ${clause}

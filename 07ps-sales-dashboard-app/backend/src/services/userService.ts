@@ -49,7 +49,7 @@ export interface SalespersonOption {
   distribution_channel: string | null;
 }
 
-/** Options for the "Salesperson" dropdown on the Create/Edit User forms -- live Dim_Salesperson
+/** Options for the "Salesperson" dropdown on the Create/Edit User forms -- live dim_salesperson
  * data (no is_active column exists on it, see backend/src/routes/filters.ts's own query, so
  * there is nothing to grey out) with its team name resolved for a readable label. Deliberately a
  * dedicated admin_users-gated endpoint rather than reusing GET /filters/salespersons, which is
@@ -63,7 +63,7 @@ export async function getSalespersonOptions(): Promise<SalespersonOption[]> {
        ds.SalesTeamKey AS sales_team_key,
        dst.SalesTeam AS sales_team_name,
        ds.DistributionChannel AS distribution_channel
-     FROM Dim_Salesperson ds
+     FROM dim_salesperson ds
      LEFT JOIN dim_sales_team dst ON dst.SalesTeamKey = ds.SalesTeamKey
      ORDER BY ds.salesperson`,
   );
