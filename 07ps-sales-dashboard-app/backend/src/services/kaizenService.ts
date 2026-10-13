@@ -609,6 +609,11 @@ export interface KaizenCountByValue {
   count: number;
 }
 
+/** A department's cards in the period and in the same From/To range one year earlier. */
+export interface KaizenDepartmentCount extends KaizenCountByValue {
+  lastYearCount: number;
+}
+
 export interface KaizenDashboard {
   total: number;
   open: number;
@@ -620,7 +625,12 @@ export interface KaizenDashboard {
   topDepartment: KaizenCountByValue | null;
   topSubmitter: { name: string; count: number } | null;
   topType: KaizenCountByValue | null;
-  byDepartment: KaizenCountByValue[];
+  /** Every department with cards in the period OR in the last-year range (0 for the other). */
+  byDepartment: KaizenDepartmentCount[];
+  /** The From/To range moved back exactly one year (what lastYearTotal / lastYearCount count). */
+  lastYear: { dateFrom?: string; dateTo?: string };
+  /** Cards in the last-year range. */
+  lastYearTotal: number;
   byPriority: KaizenCountByValue[];
   byType: KaizenCountByValue[];
   /** Every Responsible Party, most cards first, split by status; name null = "(Not assigned)". */
@@ -640,8 +650,29 @@ async function countBy(column: string, where: string, params: unknown[]): Promis
   return (rows as KaizenCountByValue[]).map((r) => ({ value_id: Number(r.value_id), count: Number(r.count) }));
 }
 
+/**
+ * The same From/To range one year earlier (01 Jan 2026 - 13 Oct 2026 -> 01 Jan 2025 - 13 Oct 2025); 29 Feb becomes
+ * 28 Feb. No From stays open; no To means "up to today", so last year ends today one year ago.
+ */
+export function lastYearRange(filters: Pick<KaizenFilters, 'dateFrom' | 'dateTo'>): { dateFrom?: string; dateTo?: string } {
+  const back = (d: string | undefined) => (d && isValidIsoDate(d) ? DateTime.fromISO(d).minus({ years: 1 }).toISODate() ?? undefined : undefined);
+  const dateTo = filters.dateTo && isValidIsoDate(filters.dateTo) ? filters.dateTo : kaizenToday();
+  return { dateFrom: back(filters.dateFrom), dateTo: back(dateTo) };
+}
+
+/** This period's department counts (order kept) plus last year's; a department in only one gets 0 for the other. */
+export function mergeDepartmentCounts(current: KaizenCountByValue[], lastYear: KaizenCountByValue[]): KaizenDepartmentCount[] {
+  const previous = new Map(lastYear.map((r) => [r.value_id, r.count]));
+  const merged = current.map((r) => ({ ...r, lastYearCount: previous.get(r.value_id) ?? 0 }));
+  const seen = new Set(current.map((r) => r.value_id));
+  for (const r of lastYear) if (!seen.has(r.value_id)) merged.push({ value_id: r.value_id, count: 0, lastYearCount: r.count });
+  return merged;
+}
+
 export async function getDashboard(filters: Pick<KaizenFilters, 'dateFrom' | 'dateTo' | 'departmentIds'>): Promise<KaizenDashboard> {
   const { where, params } = buildCardWhere(filters);
+  const lastYear = lastYearRange(filters);
+  const lastYearWhere = buildCardWhere({ ...filters, ...lastYear });
   const [summaryRows] = await pool.query(
     `SELECT COUNT(*) AS total,
             SUM(c.status = 'OPEN') AS open_count,
@@ -653,8 +684,11 @@ export async function getDashboard(filters: Pick<KaizenFilters, 'dateFrom' | 'da
   );
   const s = (summaryRows as Record<string, unknown>[])[0] ?? {};
 
-  const [byDepartment, byPriority, byType] = await Promise.all([
+  const [lastYearRows] = await pool.query(`SELECT COUNT(*) AS total FROM kaizen_cards c ${lastYearWhere.where}`, lastYearWhere.params);
+
+  const [byDepartment, lastYearByDepartment, byPriority, byType] = await Promise.all([
     countBy('department_id', where, params),
+    countBy('department_id', lastYearWhere.where, lastYearWhere.params),
     countBy('priority_id', where, params),
     countBy('card_type_id', where, params),
   ]);
@@ -685,7 +719,9 @@ export async function getDashboard(filters: Pick<KaizenFilters, 'dateFrom' | 'da
     topDepartment: byDepartment[0] ?? null,
     topSubmitter: submitter ? { name: submitter.name, count: Number(submitter.count) } : null,
     topType: byType[0] ?? null,
-    byDepartment,
+    byDepartment: mergeDepartmentCounts(byDepartment, lastYearByDepartment),
+    lastYear,
+    lastYearTotal: Number((lastYearRows as { total: number }[])[0]?.total ?? 0),
     byPriority,
     byType,
     byResponsible: (responsibleRows as { name: string | null; count: number; open_count: number; closed_count: number }[]).map((r) => ({

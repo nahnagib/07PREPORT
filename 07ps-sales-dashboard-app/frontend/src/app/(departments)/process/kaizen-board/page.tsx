@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Download } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ChartPanel, DonutChart, ErrorState, GroupedBarChart } from '@07ps/ui';
+import { ChartPanel, DonutChart, ErrorState, GroupedBarChart, formatDate } from '@07ps/ui';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { KaizenShell, useKaizenListHref } from '../../../../components/kaizen/KaizenShell';
 import { KaizenFilterBar } from '../../../../components/kaizen/KaizenFilterBar';
@@ -82,11 +82,19 @@ function KaizenBoardBody() {
   const count = (n: number) => `${formatNumber(n)} ${n === 1 ? t('kaizen.unit.card') : cardsUnit}`;
 
   // Bars: every department value (active, or inactive but still counted), in the list's order.
-  const deptCounts = new Map(data.byDepartment.map((d) => [d.value_id, d.count]));
+  // byDepartment also lists departments with cards only last year (count 0): they are not "counted" this period.
+  const deptCounts = new Map(data.byDepartment.filter((d) => d.count > 0).map((d) => [d.value_id, d.count]));
+  const deptLastYear = new Map(data.byDepartment.map((d) => [d.value_id, d.lastYearCount]));
   const deptRows = options
     .listValues('department')
     .filter((d) => d.is_active || deptCounts.has(d.value_id))
-    .map((d) => ({ id: d.value_id, label: d.label, value: deptCounts.get(d.value_id) ?? 0, color: d.color }));
+    .map((d) => ({
+      id: d.value_id,
+      label: d.label,
+      value: deptCounts.get(d.value_id) ?? 0,
+      lastYear: deptLastYear.get(d.value_id) ?? 0,
+      color: d.color,
+    }));
 
   const segments = (rows: { value_id: number; count: number }[]) =>
     rows.map((r) => ({ id: String(r.value_id), label: options.labelOf(r.value_id), value: r.count, color: options.colorOf(r.value_id) }));
@@ -119,6 +127,15 @@ function KaizenBoardBody() {
       <div className="ps-kaizen-board">
         <section className="ps-kaizen-kpis" aria-label={t('kaizen.board')}>
           <KaizenKpi label={t('kaizen.kpi.total')} value={formatNumber(data.total)} unit={cardsUnit} onClick={() => drill({})} />
+          <KaizenKpi
+            label={t('kaizen.kpi.lastYear')}
+            value={formatNumber(data.lastYearTotal)}
+            unit={cardsUnit}
+            sub={`${formatDate(data.lastYear.dateFrom, 'UTC', '…')} – ${formatDate(data.lastYear.dateTo, 'UTC', '…')}`}
+            hint={t('kaizen.kpi.lastYearHint')}
+            onClick={() => router.push(`${listHref}?${filtersToQuery(data.lastYear)}`)}
+            accent="var(--ps-color-muted-text)"
+          />
           <KaizenKpi
             label={t('kaizen.kpi.avgDays')}
             value={data.avgDaysToClose === null ? '–' : formatNumber(data.avgDaysToClose, 1)}
@@ -187,11 +204,12 @@ function KaizenBoardBody() {
                       // Own content: theme text colours (the default tints the text with the bar colour,
                       // unreadable on the dark card) and "1 card" / "3 cards" instead of "Cards : 1 cards".
                       content={({ active, payload }) => {
-                        const row = active ? (payload?.[0]?.payload as { label: string; value: number } | undefined) : undefined;
+                        const row = active ? (payload?.[0]?.payload as { label: string; value: number; lastYear: number } | undefined) : undefined;
                         return row ? (
                           <div style={{ ...TOOLTIP_STYLE, padding: '6px 10px', boxShadow: 'var(--ps-card-shadow)' }}>
                             <div dir="auto" style={{ fontWeight: 700 }}>{row.label}</div>
                             <div>{count(row.value)}</div>
+                            <div style={{ color: 'var(--ps-color-muted-text)' }}>{t('kaizen.chart.lastYear')}: {formatNumber(row.lastYear)}</div>
                           </div>
                         ) : null;
                       }}

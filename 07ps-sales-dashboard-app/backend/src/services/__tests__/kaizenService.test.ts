@@ -2,7 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../db/pool', () => ({ pool: { query: vi.fn() } }));
 
-import { KaizenValidationError, buildCardWhere, validateCardValues, type CardInput } from '../kaizenService';
+import {
+  KaizenValidationError,
+  buildCardWhere,
+  lastYearRange,
+  mergeDepartmentCounts,
+  validateCardValues,
+  type CardInput,
+} from '../kaizenService';
 import { getRegistryEntry, normalizePageActions } from '../../config/permissionRegistry';
 
 const valid: CardInput = {
@@ -103,5 +110,37 @@ describe('Kaizen permission registry', () => {
 
   it('adds View to any other Kaizen Cards action', () => {
     expect(normalizePageActions('kaizen_cards', ['edit'])).toEqual(['view', 'edit']);
+  });
+});
+
+describe('lastYearRange', () => {
+  it('moves From and To back exactly one year', () => {
+    expect(lastYearRange({ dateFrom: '2026-01-01', dateTo: '2026-10-13' })).toEqual({ dateFrom: '2025-01-01', dateTo: '2025-10-13' });
+  });
+
+  it('turns 29 February into 28 February', () => {
+    expect(lastYearRange({ dateFrom: '2028-02-29', dateTo: '2028-02-29' })).toEqual({ dateFrom: '2027-02-28', dateTo: '2027-02-28' });
+  });
+
+  it('keeps an open From open and ends a missing To at today one year ago', () => {
+    const r = lastYearRange({});
+    expect(r.dateFrom).toBeUndefined();
+    expect(r.dateTo).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(Number(r.dateTo!.slice(0, 4))).toBeLessThan(new Date().getFullYear() + 1);
+  });
+});
+
+describe('mergeDepartmentCounts', () => {
+  it('pairs each department with last year and adds 0 for a department missing from one period', () => {
+    expect(
+      mergeDepartmentCounts(
+        [{ value_id: 1, count: 5 }, { value_id: 2, count: 2 }],
+        [{ value_id: 2, count: 3 }, { value_id: 9, count: 4 }],
+      ),
+    ).toEqual([
+      { value_id: 1, count: 5, lastYearCount: 0 },
+      { value_id: 2, count: 2, lastYearCount: 3 },
+      { value_id: 9, count: 0, lastYearCount: 4 },
+    ]);
   });
 });

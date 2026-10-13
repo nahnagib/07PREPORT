@@ -61,7 +61,12 @@ export interface KaizenDashboard {
   topDepartment: KaizenCountByValue | null;
   topSubmitter: { name: string; count: number } | null;
   topType: KaizenCountByValue | null;
-  byDepartment: KaizenCountByValue[];
+  /** Every department with cards in the period or in the same range one year earlier. */
+  byDepartment: (KaizenCountByValue & { lastYearCount: number })[];
+  /** The From/To range moved back exactly one year. */
+  lastYear: { dateFrom?: string; dateTo?: string };
+  /** Cards in that last-year range. */
+  lastYearTotal: number;
   byPriority: KaizenCountByValue[];
   byType: KaizenCountByValue[];
   byResponsible: { name: string | null; count: number; open: number; closed: number }[];
