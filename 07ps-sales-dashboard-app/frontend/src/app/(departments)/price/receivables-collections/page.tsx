@@ -69,11 +69,10 @@ import {
  *
  * Filters (2026-10-07): every filter is a dropdown (the shared Select), worded as on the other pages -- Company
  * (multi-select, every company of the snapshot; 2026-10-11), Branch = the sales team, Salesperson, Customer (searchable, name or Odoo id); Customer Category
- * is the Customer Growth category (lib/customerCategory.ts). "Reset filters" restores DEFAULT_DEBT_FILTERS and English
- * Odoo labels.
+ * is the Customer Growth category (lib/customerCategory.ts). "Reset filters" restores DEFAULT_DEBT_FILTERS.
  *
- * Every label comes from GET /debt-report/meta: Odoo's own labels (English or Arabic, the page's "Odoo labels" switch;
- * the app itself is English-only), our scope and aging-bucket names, and the size-tier thresholds from the backend
+ * Every label comes from GET /debt-report/meta: Odoo's own labels (English; the "Odoo labels" EN/AR
+ * switch was removed 2026-10-13), our scope and aging-bucket names, and the size-tier thresholds from the backend
  * config. The freshness strip shows the FINANCE refresh, never the sales one. Access and the salesperson scope are
  * enforced by the API (routes/debtReport.ts); this page only mirrors them.
  *
@@ -97,7 +96,8 @@ export default function ReceivablesCollectionsPage() {
   const allowed = canView('debt_report');
   const roleLabel = user?.role.label ?? user?.fullName;
   const [filters, setFilters] = useState<DebtPageFilters>(DEFAULT_DEBT_FILTERS);
-  const [lang, setLang] = useState<LabelLang>('en');
+  // Odoo labels in English (the "Odoo labels" EN/AR switch was removed from the filters 2026-10-13).
+  const lang: LabelLang = 'en';
   const [pickedCurrency, setPickedCurrency] = useState<string | null>(null);
   const [drill, setDrill] = useState<DebtDrillTarget | null>(null);
   const [showAllPeople, setShowAllPeople] = useState(false);
@@ -264,11 +264,8 @@ export default function ReceivablesCollectionsPage() {
         <AppHeader pageTitle="Receivables and Collections" anchorDate="" onAnchorDateChange={() => {}} roleLabel={roleLabel} onLogout={logout} showDateInput={false} />
 
         <FilterBar
-          onReset={() => {
-            setFilters(DEFAULT_DEBT_FILTERS);
-            setLang('en');
-          }}
-          isPristine={isDefaultFilters(filters) && lang === 'en'}
+          onReset={() => setFilters(DEFAULT_DEBT_FILTERS)}
+          isPristine={isDefaultFilters(filters)}
           showDateRange={false}
           showCompanyDimension={false}
           showTransactionDimensions={false}
@@ -354,17 +351,6 @@ export default function ReceivablesCollectionsPage() {
                   onChange={(v) => setFilters((f) => ({ ...f, ...fromIncludeValues(v) }))}
                   multiSelect
                   placeholder="None"
-                />
-              </Field>
-              <Field width={150}>
-                <Select
-                  label="Odoo labels"
-                  options={[
-                    { value: 'en', label: 'English' },
-                    { value: 'ar', label: 'العربية' },
-                  ]}
-                  value={[lang]}
-                  onChange={(v) => setLang((v[0] ?? 'en') as LabelLang)}
                 />
               </Field>
             </>
