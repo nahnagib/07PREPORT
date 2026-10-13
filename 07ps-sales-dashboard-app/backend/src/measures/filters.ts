@@ -452,9 +452,24 @@ function shiftOneYearBack(anchor: Date): Date {
   return dateOnlyUTC(y, m, d);
 }
 
+/**
+ * LMTD and LFM, from one shared helper so Value and Volume (and every page) use the same ranges. "Last month" here is
+ * the SAME month LAST YEAR, not the previous month. Anchor 13 Oct 2026:
+ *   LMTD = 01 Oct 2025 -> 13 Oct 2025 (29 Feb -> 28 Feb when last year has none)
+ *   LFM  = 01 Oct 2025 -> 31 Oct 2025 (the month's real last day: 28/29/30/31)
+ * Ends are dates; the queries use `Date BETWEEN start AND end` on a DATE column, so the end day counts in full.
+ */
+export function lastYearMonthWindows(anchor: Date): { lmtd: DateWindow; lfm: DateWindow } {
+  const sameDay = shiftOneYearBack(anchor);
+  const y = sameDay.getUTCFullYear();
+  const m = sameDay.getUTCMonth() + 1;
+  const start = dateOnlyUTC(y, m, 1);
+  return { lmtd: { start, end: sameDay }, lfm: { start, end: dateOnlyUTC(y, m, daysInMonth(y, m)) } };
+}
+
 /** Last-year MTD: same day-of-month/month window, one calendar year earlier. */
 export function lmtdWindow(anchor: Date): DateWindow {
-  return mtdWindow(shiftOneYearBack(anchor));
+  return lastYearMonthWindows(anchor).lmtd;
 }
 
 /** Last-year YTD: same year-to-date window, one calendar year earlier. */
@@ -468,21 +483,12 @@ export function flyWindow(anchor: Date): DateWindow {
   return { start: dateOnlyUTC(y, 1, 1), end: dateOnlyUTC(y, 12, 31) };
 }
 
-/** Full Last Month: the entire calendar month before the selected date's month. */
+/**
+ * Full Last Month (LFM): the whole SAME month LAST YEAR (13 Oct 2026 -> 01-31 Oct 2025). Until 2026-10-13 this was the
+ * previous calendar month (Sep 2026), which is not what the MTD card's LFM means.
+ */
 export function flmWindow(anchor: Date): DateWindow {
-  const anchorY = anchor.getUTCFullYear();
-  const anchorM = anchor.getUTCMonth() + 1;
-  let y: number;
-  let m: number;
-  if (anchorM === 1) {
-    y = anchorY - 1;
-    m = 12;
-  } else {
-    y = anchorY;
-    m = anchorM - 1;
-  }
-  const lastDay = daysInMonth(y, m);
-  return { start: dateOnlyUTC(y, m, 1), end: dateOnlyUTC(y, m, lastDay) };
+  return lastYearMonthWindows(anchor).lfm;
 }
 
 // ---------------------------------------------------------------------------

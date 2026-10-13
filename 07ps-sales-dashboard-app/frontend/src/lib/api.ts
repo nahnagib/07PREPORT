@@ -92,6 +92,9 @@ export interface TachometerCard {
   lastYearSamePeriod: number;
   fullLastPeriodActual: number;
   fullPeriodTarget: number;
+  /** Dates behind lastYearSamePeriod (LYTD / LMTD) and fullLastPeriodActual (LFY / LFM), YYYY-MM-DD, ends included. */
+  lastYearRange: { start: string; end: string };
+  fullLastPeriodRange: { start: string; end: string };
 }
 
 export interface AspCard {

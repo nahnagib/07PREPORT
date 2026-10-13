@@ -14,6 +14,7 @@ import {
   effectiveSegmentExpr,
   flmWindow,
   flyWindow,
+  lastYearMonthWindows,
   lmtdWindow,
   lytdWindow,
   monthElapsedFraction,
@@ -66,16 +67,46 @@ describe('date windows', () => {
     expect(iso(w.end)).toBe('2025-12-31');
   });
 
-  it('flmWindow is full prior calendar month', () => {
+  it('flmWindow is the full SAME month LAST YEAR (not the previous month)', () => {
     const w = flmWindow(dateOnlyUTC(2026, 7, 5));
-    expect(iso(w.start)).toBe('2026-06-01');
-    expect(iso(w.end)).toBe('2026-06-30');
+    expect(iso(w.start)).toBe('2025-07-01');
+    expect(iso(w.end)).toBe('2025-07-31');
   });
 
-  it('flmWindow handles january year wraparound', () => {
+  it('flmWindow in January is January last year', () => {
     const w = flmWindow(dateOnlyUTC(2026, 1, 15));
-    expect(iso(w.start)).toBe('2025-12-01');
-    expect(iso(w.end)).toBe('2025-12-31');
+    expect(iso(w.start)).toBe('2025-01-01');
+    expect(iso(w.end)).toBe('2025-01-31');
+  });
+});
+
+describe('lastYearMonthWindows (LMTD + LFM)', () => {
+  const ranges = (y: number, m: number, d: number) => {
+    const { lmtd, lfm } = lastYearMonthWindows(dateOnlyUTC(y, m, d));
+    return { lmtd: [iso(lmtd.start), iso(lmtd.end)], lfm: [iso(lfm.start), iso(lfm.end)] };
+  };
+
+  it('normal day: 13 Oct 2026', () => {
+    expect(ranges(2026, 10, 13)).toEqual({ lmtd: ['2025-10-01', '2025-10-13'], lfm: ['2025-10-01', '2025-10-31'] });
+  });
+
+  it('month end: 30 Apr 2026 and 31 Dec 2026 (real last day of the month)', () => {
+    expect(ranges(2026, 4, 30)).toEqual({ lmtd: ['2025-04-01', '2025-04-30'], lfm: ['2025-04-01', '2025-04-30'] });
+    expect(ranges(2026, 12, 31)).toEqual({ lmtd: ['2025-12-01', '2025-12-31'], lfm: ['2025-12-01', '2025-12-31'] });
+  });
+
+  it('29 Feb with no 29 Feb last year: LMTD ends 28 Feb, LFM is all of February', () => {
+    expect(ranges(2028, 2, 29)).toEqual({ lmtd: ['2027-02-01', '2027-02-28'], lfm: ['2027-02-01', '2027-02-28'] });
+  });
+
+  it('February into a leap year: LFM ends on 29 Feb', () => {
+    expect(ranges(2029, 2, 10)).toEqual({ lmtd: ['2028-02-01', '2028-02-10'], lfm: ['2028-02-01', '2028-02-29'] });
+  });
+
+  it('lmtdWindow and flmWindow are the shared helper', () => {
+    const a = dateOnlyUTC(2026, 10, 13);
+    expect(lmtdWindow(a)).toEqual(lastYearMonthWindows(a).lmtd);
+    expect(flmWindow(a)).toEqual(lastYearMonthWindows(a).lfm);
   });
 });
 

@@ -50,15 +50,20 @@ class TestDateWindows:
         assert w.start == date(2025, 1, 1)
         assert w.end == date(2025, 12, 31)
 
-    def test_flm_window_is_full_prior_calendar_month(self):
-        w = flm_window(date(2026, 7, 5))
-        assert w.start == date(2026, 6, 1)
-        assert w.end == date(2026, 6, 30)
+    def test_flm_window_is_full_same_month_last_year(self):
+        w = flm_window(date(2026, 10, 13))
+        assert w.start == date(2025, 10, 1)
+        assert w.end == date(2025, 10, 31)
 
-    def test_flm_window_handles_january_year_wraparound(self):
+    def test_flm_window_in_january_is_january_last_year(self):
         w = flm_window(date(2026, 1, 15))
-        assert w.start == date(2025, 12, 1)
-        assert w.end == date(2025, 12, 31)
+        assert w.start == date(2025, 1, 1)
+        assert w.end == date(2025, 1, 31)
+
+    def test_flm_window_leap_day_and_leap_february(self):
+        assert flm_window(date(2028, 2, 29)) == flm_window(date(2028, 2, 1))
+        assert flm_window(date(2028, 2, 29)).end == date(2027, 2, 28)
+        assert flm_window(date(2029, 2, 10)).end == date(2028, 2, 29)
 
 
 class TestProration:

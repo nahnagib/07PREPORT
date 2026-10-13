@@ -209,6 +209,10 @@ export interface TachometerCard {
   lastYearSamePeriod: number;
   fullLastPeriodActual: number;
   fullPeriodTarget: number;
+  /** The dates behind lastYearSamePeriod (LYTD / LMTD) and fullLastPeriodActual (LFY / LFM), YYYY-MM-DD, both ends
+   * included -- for the tiles' tooltips. */
+  lastYearRange: { start: string; end: string };
+  fullLastPeriodRange: { start: string; end: string };
 }
 
 async function mtdTargetToDate(
@@ -297,6 +301,8 @@ async function computeCard(
     lastYearSamePeriod: lastYearValue,
     fullLastPeriodActual: fullLastValue,
     fullPeriodTarget: fullTargetValue,
+    lastYearRange: { start: toDateOnlyString(lastYearWindow.start), end: toDateOnlyString(lastYearWindow.end) },
+    fullLastPeriodRange: { start: toDateOnlyString(fullLastPeriodWindow.start), end: toDateOnlyString(fullLastPeriodWindow.end) },
   };
 }
 

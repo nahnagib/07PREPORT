@@ -34,6 +34,7 @@ import {
   formatAsp,
   formatVariance,
   formatTimestamp,
+  formatDate,
 } from '../../../../lib/format';
 
 /* Cards now fill their grid cells without constraint. Grid proportions (1.5fr 260px 1.5fr)
@@ -59,9 +60,17 @@ function gaugeCardReferenceMetrics(card: TachometerCard, unit: 'value' | 'volume
   const fmt = unit === 'value' ? formatCompactCurrency : formatCompactVolume;
   const fmtFull = unit === 'value' ? formatCurrency : formatVolume;
   const labels = period === 'ytd' ? { ly: 'LYTD', full: 'LFY', target: 'FYT' } : { ly: 'LMTD', full: 'LFM', target: 'FMT' };
+  // MTD cards: LMTD / LFM tooltips also name their real dates ("LMTD: 01 Oct 2025 – 13 Oct 2025"), both from the
+  // backend's shared lastYearMonthWindows, so Value and Volume always show the same ranges.
+  const withRange = (label: string, full: string, range: TachometerCard['lastYearRange'] | undefined) =>
+    period === 'mtd' && range ? `${label}: ${formatDate(range.start, 'UTC')} – ${formatDate(range.end, 'UTC')}\n${full}` : full;
   return [
-    { label: labels.ly, value: fmt(card.lastYearSamePeriod), fullValue: fmtFull(card.lastYearSamePeriod) },
-    { label: labels.full, value: fmt(card.fullLastPeriodActual), fullValue: fmtFull(card.fullLastPeriodActual) },
+    { label: labels.ly, value: fmt(card.lastYearSamePeriod), fullValue: withRange(labels.ly, fmtFull(card.lastYearSamePeriod), card.lastYearRange) },
+    {
+      label: labels.full,
+      value: fmt(card.fullLastPeriodActual),
+      fullValue: withRange(labels.full, fmtFull(card.fullLastPeriodActual), card.fullLastPeriodRange),
+    },
     { label: labels.target, value: fmt(card.fullPeriodTarget), fullValue: fmtFull(card.fullPeriodTarget) },
     // Variance vs same-period-last-year (not vs Target -- the achievement progress bar above
     // already covers actual-vs-target).

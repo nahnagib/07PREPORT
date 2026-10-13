@@ -202,13 +202,11 @@ def fly_window(anchor: date) -> DateWindow:
 
 
 def flm_window(anchor: date) -> DateWindow:
-    """Full Last Month: the entire calendar month before the selected date's month."""
-    if anchor.month == 1:
-        y, m = anchor.year - 1, 12
-    else:
-        y, m = anchor.year, anchor.month - 1
-    last_day = calendar.monthrange(y, m)[1]
-    return DateWindow(start=date(y, m, 1), end=date(y, m, last_day))
+    """Full Last Month (LFM): the whole SAME month LAST YEAR (13 Oct 2026 -> 01-31 Oct 2025), not the
+    previous month (changed 2026-10-13, same as backend/src/measures/filters.ts flmWindow)."""
+    same_day = _shift_one_year_back(anchor)
+    last_day = calendar.monthrange(same_day.year, same_day.month)[1]
+    return DateWindow(start=date(same_day.year, same_day.month, 1), end=date(same_day.year, same_day.month, last_day))
 
 
 # ---------------------------------------------------------------------------
