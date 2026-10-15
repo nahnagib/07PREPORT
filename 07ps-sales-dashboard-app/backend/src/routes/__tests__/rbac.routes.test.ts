@@ -85,9 +85,10 @@ vi.mock('../../services/roleService', () => ({
 }));
 vi.mock('../../services/dataScopeService', () => ({
   DATA_SCOPE_DIMENSIONS: [],
-  addRoleDataScopeRule: vi.fn(),
   getAllRoleDataScopeRulesWithLabels: vi.fn(async () => ({})),
-  removeRoleDataScopeRule: vi.fn(),
+  getDimensionValues: vi.fn(async () => []),
+  setRoleScopeRule: vi.fn(async () => ({ dimension: 'companyKeys', operator: 'in', values: ['1'] })),
+  removeRoleScopeRule: vi.fn(),
 }));
 vi.mock('../../services/auditLogService', () => ({ writeAuditLog: vi.fn(async () => true) }));
 

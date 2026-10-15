@@ -1,3 +1,14 @@
+# Deploy notes: role data scope operators (2026-10-15) — migration 0044
+
+- **Migration:** `data/warehouse/migrations/0044_role_data_scope_operator.sql` adds `role_data_scope.operator`
+  (`in` / `not_in`, default `in`). It is idempotent. Existing rows become `in`, so every role sees exactly what it saw before.
+- **Order:** either order is safe. Before 0044 runs, the backend reads every rule as `in`, and only saving an
+  "is not" rule fails, with a clear message.
+- **Undo:** `down/0044_role_data_scope_operator_down.sql` refuses while any `not_in` rule exists. Dropping the column
+  would turn those exclusions into "only these values", so replace or remove them on the Roles page first.
+
+---
+
 # Deploy notes: table-name case fix (2026-10-13) — needs a MANUAL data step
 
 > **DEPLOY NOTE: must be deployed together with `deploy/live-remap/02_remap.sql` — see `deploy/live-remap/README.md`.**

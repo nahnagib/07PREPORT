@@ -350,9 +350,10 @@ export async function duplicateRole(sourceRoleId: number, actorId: number): Prom
     },
     actorId,
   );
+  // the operator (in / not_in, migration 0044) is copied with the values, so an exclusion stays an exclusion
   await pool.query(
-    `INSERT IGNORE INTO role_data_scope (role_id, dimension, value)
-     SELECT ?, dimension, value FROM role_data_scope WHERE role_id = ?`,
+    `INSERT IGNORE INTO role_data_scope (role_id, dimension, operator, value)
+     SELECT ?, dimension, operator, value FROM role_data_scope WHERE role_id = ?`,
     [created.role_id, sourceRoleId],
   );
   return created;

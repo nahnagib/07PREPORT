@@ -6,6 +6,27 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Roles: data scope rules with "is" / "is not" and several values, 2026-10-15)
+- **Rule shape:** a data scope rule is now `[Dimension] [is | is not] [values]`, one rule per dimension.
+  - "is" (`in`): users see ONLY the selected values.
+  - "is not" (`not_in`): users see everything EXCEPT them.
+  - Rules on different dimensions combine with AND, and a live summary says it in words
+    (e.g. "Users with this role see: Company is not X · Branch is A or B").
+- **Value picker:** searchable, with checkboxes, Select all / Clear, and chips ("+N more" after three).
+  It offers every value, Unknown / Unassigned included. A rule needs at least one value.
+- **Enforcement:** "is not" is resolved on the server on every request, against the dimension's current values.
+  - A company added later is visible without editing the role, and Unassigned stays visible unless it is excluded.
+  - Excluding everything shows nothing; it never falls back to "no restriction".
+  - It is applied at the one scope choke point, so it reaches every report, chart, drill-down, filter list and the data
+    behind exports. Asking for an excluded value is a 403.
+- **API:** `PUT/DELETE /admin/roles/:id/data-scope/:dimension` with `{ operator, values }`, validated server-side
+  (dimension, operator, at least one value, every value must exist). The old add/remove-by-row endpoints are gone.
+  The picker loads its options from `GET /admin/roles/dimension-values/:dimension` (all data, never the admin's own
+  scope) through `useDimensionValues`. It shows loading, a visible error with Retry, "No values available" and
+  "No matches" (only for a non-empty search), and its search ignores case and Arabic letter variants.
+- **Migration 0044:** `role_data_scope.operator`. Existing rules become "is", and several rows on one dimension merge
+  into one rule. Behaviour is unchanged.
+
 ### Changed (Receivables and Collections: page-wide currency filter, 2026-10-15)
 - The "Charts currency" toggle is gone. Default view = **All currencies (≈ LYD)**: Aging Map, every chart, both trends,
   drill-downs and the customer table add every currency up in LYD, using Odoo's own Amount Due at the rate booked on

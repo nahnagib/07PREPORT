@@ -311,8 +311,9 @@ export function applySalespersonLock(filters: Filters, user: UserContext): Filte
 // Generic role-based data scope (role_data_scope table)
 // ---------------------------------------------------------------------------
 
-/** One (dimension, value) row from role_data_scope. `value` is always the stringified filter key
- * -- e.g. `{ dimension: 'segmentKeys', value: '1' }` for Customer Group = B2B. */
+/** One RESOLVED allowed (dimension, value) pair: what applyRoleDataScope and the filter-option lists enforce. `value`
+ * is always the stringified filter key -- e.g. `{ dimension: 'segmentKeys', value: '1' }` for Customer Group = B2B.
+ * Built per request from the role's stored rules by resolveRoleScope below. */
 export interface DataScopeRule {
   dimension: keyof Filters;
   value: string;
@@ -323,6 +324,76 @@ export class DataScopeError extends Error {
     super(message);
     this.name = 'DataScopeError';
   }
+}
+
+/**
+ * Role data scope as an admin defines it (2026-10-15): one rule per dimension, stored in role_data_scope (one row per
+ * value, every row of a role + dimension carrying the same operator; migration 0044).
+ *   in      "is any of"  -- the role sees ONLY these values;
+ *   not_in  "is none of" -- the role sees everything EXCEPT these values.
+ * Rules on different dimensions combine with AND; a dimension without a rule is unrestricted.
+ */
+export type ScopeOperator = 'in' | 'not_in';
+export const SCOPE_OPERATORS: readonly ScopeOperator[] = ['in', 'not_in'];
+export type ScopeDimension = Exclude<keyof Filters, 'customerKeys'>;
+export const SCOPE_DIMENSIONS: readonly ScopeDimension[] = ['companyKeys', 'segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys'];
+
+export interface RoleScopeRule {
+  dimension: ScopeDimension;
+  operator: ScopeOperator;
+  values: string[];
+}
+
+/**
+ * A value no dimension key can have: the allowed set of a rule that leaves nothing (e.g. "is none of" every current
+ * value). Without it an empty allowed set would read as "no rule" -- unrestricted -- the opposite of what the admin
+ * asked for; with it every query matches nothing and every filter dropdown is empty.
+ */
+export function scopeNoMatchValue(dimension: keyof Filters): string {
+  return dimension === 'salesTeamKeys' ? '__no_scope_match__' : '-2147483648';
+}
+
+/** The stored role_data_scope rows of one role grouped into rules: one rule per dimension, its values in row order.
+ * Rows from before migration 0044 have no operator: they are "in" (exactly the old behaviour, several rows on one
+ * dimension = one "is any of" rule with all their values). */
+export function groupScopeRows(rows: { dimension: string; operator?: string | null; value: string }[]): RoleScopeRule[] {
+  const byDimension = new Map<ScopeDimension, RoleScopeRule>();
+  for (const r of rows) {
+    const dimension = r.dimension as ScopeDimension;
+    if (!SCOPE_DIMENSIONS.includes(dimension)) continue;
+    const operator: ScopeOperator = r.operator === 'not_in' ? 'not_in' : 'in';
+    const rule = byDimension.get(dimension);
+    if (!rule) byDimension.set(dimension, { dimension, operator, values: [String(r.value)] });
+    else {
+      // mixed operators on one dimension cannot be saved (setRoleScopeRule replaces the whole rule); if they ever
+      // exist, the exclusion wins -- the stricter reading for "not_in", and an "in" row still restricts below
+      if (operator === 'not_in') rule.operator = 'not_in';
+      if (!rule.values.includes(String(r.value))) rule.values.push(String(r.value));
+    }
+  }
+  return [...byDimension.values()];
+}
+
+/**
+ * The allowed values per dimension, resolved from the role's rules against `domain` -- every CURRENT key of each
+ * dimension that has a "not_in" rule (its dim_* table, the -1 Unknown / Unassigned member included). Resolved on
+ * every request, never at save time, so a value added later (a new company) is visible under "is none of"
+ * automatically. Unassigned rows carry the -1 member in every fact (no NULL keys: checked on the warehouse
+ * 2026-10-15), so they stay visible under "is none of" unless -1 itself is excluded.
+ */
+export function resolveRoleScope(rules: RoleScopeRule[], domain: Partial<Record<ScopeDimension, string[]>>): DataScopeRule[] {
+  const out: DataScopeRule[] = [];
+  for (const rule of rules) {
+    let allowed: string[];
+    if (rule.operator === 'in') allowed = [...new Set(rule.values)];
+    else {
+      const excluded = new Set(rule.values.map(String));
+      allowed = (domain[rule.dimension] ?? []).map(String).filter((v) => !excluded.has(v));
+    }
+    if (allowed.length === 0) allowed = [scopeNoMatchValue(rule.dimension)];
+    for (const value of allowed) out.push({ dimension: rule.dimension, value });
+  }
+  return out;
 }
 
 /** salesTeamKeys is the one Filters field that's string-typed; every other field is numeric. */

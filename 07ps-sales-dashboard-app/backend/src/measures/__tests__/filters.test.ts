@@ -14,6 +14,9 @@ import {
   effectiveSegmentExpr,
   flmWindow,
   flyWindow,
+  groupScopeRows,
+  resolveRoleScope,
+  scopeNoMatchValue,
   lastYearMonthWindows,
   lmtdWindow,
   lytdWindow,
@@ -24,6 +27,7 @@ import {
   ytdWindow,
   type DataScopeRule,
   type Filters,
+  type RoleScopeRule,
   type UserContext,
 } from '../filters';
 
@@ -383,5 +387,101 @@ describe('excludeCancelledDocumentsClause', () => {
   it('leaves cancelled sale orders out of pipeline series (a missing state counts as not cancelled)', () => {
     expect(excludeCancelledDocumentsClause('fs')).toBe("COALESCE(fs.OrderState, '') <> 'cancel'");
     expect(excludeCancelledDocumentsClause('')).toBe("COALESCE(OrderState, '') <> 'cancel'");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Role data scope operators (2026-10-15): "is any of" (in) / "is none of" (not_in), resolved per request
+// ---------------------------------------------------------------------------------------------------------------------
+describe('role data scope: in / not_in', () => {
+  // dim_company today: -1 Unknown, 1 Majaal, 3 Tika, 9 Athena, 12 X
+  const companies = ['-1', '1', '3', '9', '12'];
+  const allowed = (rules: DataScopeRule[], dimension: keyof Filters) => rules.filter((r) => r.dimension === dimension).map((r) => r.value);
+
+  it('"is any of" keeps exactly the listed values', () => {
+    const rules = resolveRoleScope([{ dimension: 'companyKeys', operator: 'in', values: ['1', '3'] }], {});
+    expect(allowed(rules, 'companyKeys')).toEqual(['1', '3']);
+    expect(applyRoleDataScope({}, rules).companyKeys).toEqual([1, 3]);
+  });
+
+  it('"is none of" = every current value except the excluded ones -- a company added later is visible automatically', () => {
+    const rule: RoleScopeRule = { dimension: 'companyKeys', operator: 'not_in', values: ['12'] };
+    expect(allowed(resolveRoleScope([rule], { companyKeys: companies }), 'companyKeys')).toEqual(['-1', '1', '3', '9']);
+    // new company 14 in dim_company, the stored rule unchanged
+    expect(allowed(resolveRoleScope([rule], { companyKeys: [...companies, '14'] }), 'companyKeys')).toEqual(['-1', '1', '3', '9', '14']);
+    expect(rule.values).toEqual(['12']); // never turned into an allow-list
+  });
+
+  it('a request for an excluded value is refused (403); one inside the scope narrows', () => {
+    const rules = resolveRoleScope([{ dimension: 'companyKeys', operator: 'not_in', values: ['12'] }], { companyKeys: companies });
+    expect(() => applyRoleDataScope({ companyKeys: [12] }, rules)).toThrow(DataScopeError);
+    expect(applyRoleDataScope({ companyKeys: [12, 3] }, rules).companyKeys).toEqual([3]);
+    expect(applyRoleDataScope({ companyKeys: [9] }, rules).companyKeys).toEqual([9]);
+  });
+
+  it('Unassigned / Unknown (-1) stays visible under "is none of" unless it is excluded itself', () => {
+    const people = ['-1', '49', '60'];
+    expect(allowed(resolveRoleScope([{ dimension: 'salespersonKeys', operator: 'not_in', values: ['60'] }], { salespersonKeys: people }), 'salespersonKeys')).toEqual(['-1', '49']);
+    expect(allowed(resolveRoleScope([{ dimension: 'salespersonKeys', operator: 'not_in', values: ['60', '-1'] }], { salespersonKeys: people }), 'salespersonKeys')).toEqual(['49']);
+    // and it can be the one value of an "is any of" rule
+    expect(applyRoleDataScope({}, resolveRoleScope([{ dimension: 'salespersonKeys', operator: 'in', values: ['-1'] }], {})).salespersonKeys).toEqual([-1]);
+  });
+
+  it('excluding every value leaves nothing visible -- never "no restriction"', () => {
+    const rules = resolveRoleScope([{ dimension: 'companyKeys', operator: 'not_in', values: companies }], { companyKeys: companies });
+    expect(allowed(rules, 'companyKeys')).toEqual([scopeNoMatchValue('companyKeys')]);
+    const scoped = applyRoleDataScope({}, rules);
+    expect(scoped.companyKeys).toEqual([Number(scopeNoMatchValue('companyKeys'))]);
+    expect(buildWhereClause(scoped).clause).toContain('CompanyKey IN (?)'); // a clause no row matches
+    expect(() => applyRoleDataScope({ companyKeys: [1] }, rules)).toThrow(DataScopeError);
+    // the branch dimension is string-typed: its own sentinel
+    const teams = applyRoleDataScope({}, resolveRoleScope([{ dimension: 'salesTeamKeys', operator: 'not_in', values: ['A'] }], { salesTeamKeys: ['A'] }));
+    expect(teams.salesTeamKeys).toEqual(['__no_scope_match__']);
+  });
+
+  it('rules on different dimensions combine with AND; values inside a rule with OR', () => {
+    const rules = resolveRoleScope(
+      [
+        { dimension: 'companyKeys', operator: 'not_in', values: ['12'] },
+        { dimension: 'salesTeamKeys', operator: 'in', values: ['MJ-A', 'MJ-B'] },
+      ],
+      { companyKeys: companies },
+    );
+    const scoped = applyRoleDataScope({}, rules);
+    expect(scoped.companyKeys).toEqual([-1, 1, 3, 9]);
+    expect(scoped.salesTeamKeys).toEqual(['MJ-A', 'MJ-B']);
+    expect(scoped.segmentKeys).toBeUndefined(); // no rule = unrestricted
+    const where = buildWhereClause(scoped);
+    expect(where.clause.startsWith('CompanyKey IN (?, ?, ?, ?) AND ')).toBe(true);
+    expect(where.clause.endsWith('IN (?, ?)')).toBe(true);
+    expect(where.params).toEqual([-1, 1, 3, 9, 'MJ-A', 'MJ-B']);
+  });
+
+  it('migration 0044: old single-value rows become one "is any of" rule per dimension (several rows merged)', () => {
+    expect(
+      groupScopeRows([
+        { dimension: 'companyKeys', value: '1' },
+        { dimension: 'segmentKeys', value: '1' },
+        { dimension: 'companyKeys', value: '3' },
+      ]),
+    ).toEqual([
+      { dimension: 'companyKeys', operator: 'in', values: ['1', '3'] },
+      { dimension: 'segmentKeys', operator: 'in', values: ['1'] },
+    ]);
+    // and they resolve to exactly what applyRoleDataScope enforced before the migration
+    const before: DataScopeRule[] = [{ dimension: 'companyKeys', value: '1' }, { dimension: 'companyKeys', value: '3' }];
+    const after = resolveRoleScope(groupScopeRows(before), {});
+    expect(applyRoleDataScope({}, after)).toEqual(applyRoleDataScope({}, before));
+    expect(applyRoleDataScope({ companyKeys: [3] }, after)).toEqual(applyRoleDataScope({ companyKeys: [3] }, before));
+  });
+
+  it('rows with the operator column read as saved; unknown dimensions are ignored', () => {
+    expect(
+      groupScopeRows([
+        { dimension: 'companyKeys', operator: 'not_in', value: '12' },
+        { dimension: 'companyKeys', operator: 'not_in', value: '9' },
+        { dimension: 'customerKeys', operator: 'in', value: '5' },
+      ]),
+    ).toEqual([{ dimension: 'companyKeys', operator: 'not_in', values: ['12', '9'] }]);
   });
 });

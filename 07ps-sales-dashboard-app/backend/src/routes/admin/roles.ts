@@ -16,9 +16,10 @@ import {
 } from '../../services/roleService';
 import {
   DATA_SCOPE_DIMENSIONS,
-  addRoleDataScopeRule,
   getAllRoleDataScopeRulesWithLabels,
-  removeRoleDataScopeRule,
+  getDimensionValues,
+  removeRoleScopeRule,
+  setRoleScopeRule,
 } from '../../services/dataScopeService';
 import { writeAuditLog } from '../../services/auditLogService';
 
@@ -50,7 +51,8 @@ function roleIdParam(req: Request): number {
 }
 
 /** Everything the Roles screen needs in one call: roles (with user counts), the permission
- * registry the matrix is built from, data-scope tiers, and every role's data-scope rules. */
+ * registry the matrix is built from, data-scope tiers and every role's data-scope rules
+ * ({ dimension, operator: 'in' | 'not_in', values }). The value picker loads its options per dimension below. */
 adminRolesRouter.get('/', async (_req, res, next) => {
   try {
     const [roles, tiers, dataScope] = await Promise.all([
@@ -61,6 +63,17 @@ adminRolesRouter.get('/', async (_req, res, next) => {
     res.json({ roles, registry: PERMISSION_REGISTRY, tiers, dataScope, dimensions: DATA_SCOPE_DIMENSIONS });
   } catch (err) {
     next(err);
+  }
+});
+
+/** Every value of one data-scope dimension for the Roles page's value picker: [{ value, label }], the whole dim
+ * table, Unknown / Unassigned included -- never narrowed by the signed-in admin's own data scope (this router has no
+ * scope middleware; services/dataScopeService.ts getDimensionValues reads the table directly). */
+adminRolesRouter.get('/dimension-values/:dimension', async (req, res, next) => {
+  try {
+    res.json({ dimension: req.params.dimension, values: await getDimensionValues(req.params.dimension) });
+  } catch (err) {
+    handleError(err, res, next);
   }
 });
 
@@ -117,21 +130,27 @@ adminRolesRouter.delete('/:roleId', requirePermission('admin_roles', 'delete'), 
   }
 });
 
-adminRolesRouter.post('/:roleId/data-scope', requirePermission('admin_roles', 'edit'), async (req, res, next) => {
+/**
+ * Sets the role's rule on one dimension: { operator: 'in' | 'not_in', values: [...] } (2026-10-15). One rule per
+ * dimension: saving replaces the dimension's previous rule. Validated server-side (services/dataScopeService.ts
+ * setRoleScopeRule): known dimension and operator, at least one value, every value an existing key.
+ */
+adminRolesRouter.put('/:roleId/data-scope/:dimension', requirePermission('admin_roles', 'edit'), async (req, res, next) => {
   try {
     const roleId = roleIdParam(req);
-    const { dimension, value } = req.body ?? {};
-    if (typeof dimension !== 'string' || typeof value !== 'string') {
-      res.status(400).json({ error: 'dimension and value are required.' });
+    if (!(await getRoleDetail(roleId))) {
+      res.status(404).json({ error: 'Role not found.' });
       return;
     }
-    await addRoleDataScopeRule(roleId, dimension, value);
+    const before = (await getAllRoleDataScopeRulesWithLabels())[roleId]?.find((r) => r.dimension === req.params.dimension) ?? null;
+    const rule = await setRoleScopeRule(roleId, { ...(req.body ?? {}), dimension: req.params.dimension });
     await writeAuditLog({
       entityType: ROLE_ENTITY,
       entityId: String(roleId),
       action: 'UPDATE',
       changedBy: req.user!.id,
-      after: { dataScopeRuleAdded: { dimension, value } },
+      before: before ? { dataScopeRule: { dimension: before.dimension, operator: before.operator, values: before.values.map((v) => v.value) } } : undefined,
+      after: { dataScopeRule: rule },
     });
     res.json({ dataScope: await getAllRoleDataScopeRulesWithLabels() });
   } catch (err) {
@@ -139,18 +158,18 @@ adminRolesRouter.post('/:roleId/data-scope', requirePermission('admin_roles', 'e
   }
 });
 
-adminRolesRouter.delete('/:roleId/data-scope/:scopeId', requirePermission('admin_roles', 'edit'), async (req, res, next) => {
+/** Removes the role's rule on one dimension (= no restriction on that dimension). */
+adminRolesRouter.delete('/:roleId/data-scope/:dimension', requirePermission('admin_roles', 'edit'), async (req, res, next) => {
   try {
     const roleId = roleIdParam(req);
-    const scopeId = Number(req.params.scopeId);
-    const before = (await getAllRoleDataScopeRulesWithLabels())[roleId]?.find((r) => r.scopeId === scopeId);
-    await removeRoleDataScopeRule(roleId, scopeId);
+    const before = (await getAllRoleDataScopeRulesWithLabels())[roleId]?.find((r) => r.dimension === req.params.dimension) ?? null;
+    await removeRoleScopeRule(roleId, req.params.dimension);
     await writeAuditLog({
       entityType: ROLE_ENTITY,
       entityId: String(roleId),
       action: 'UPDATE',
       changedBy: req.user!.id,
-      before: { dataScopeRuleRemoved: before ?? { scopeId } },
+      before: { dataScopeRuleRemoved: before ? { dimension: before.dimension, operator: before.operator, values: before.values.map((v) => v.value) } : { dimension: req.params.dimension } },
     });
     res.json({ dataScope: await getAllRoleDataScopeRulesWithLabels() });
   } catch (err) {

@@ -798,20 +798,28 @@ export const adminApi = {
       body: JSON.stringify({ replacementRoleId: replacementRoleId ?? null }),
     }),
 
-  addRoleDataScope: (
+  /** Saves the role's rule on one dimension (replaces that dimension's previous rule). */
+  saveRoleDataScope: (
     token: string,
     roleId: number,
     dimension: string,
-    value: string,
+    operator: DataScopeOperator,
+    values: string[],
   ): Promise<{ dataScope: Record<number, DataScopeRule[]> }> =>
-    request(`/admin/roles/${roleId}/data-scope`, token, {
-      method: 'POST',
+    request(`/admin/roles/${roleId}/data-scope/${encodeURIComponent(dimension)}`, token, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dimension, value }),
+      body: JSON.stringify({ operator, values }),
     }),
 
-  removeRoleDataScope: (token: string, roleId: number, scopeId: number): Promise<{ dataScope: Record<number, DataScopeRule[]> }> =>
-    request(`/admin/roles/${roleId}/data-scope/${scopeId}`, token, { method: 'DELETE' }),
+  /** Every value of one data-scope dimension for the value picker (all data, never the admin's own scope). The raw
+   * list -- use lib/useDimensionValues.ts, which normalises it to { value, label }. */
+  getDimensionValues: (token: string, dimension: string): Promise<{ dimension: string; values: unknown[] }> =>
+    request(`/admin/roles/dimension-values/${encodeURIComponent(dimension)}`, token),
+
+  /** Removes the role's rule on one dimension (= no restriction on it). */
+  removeRoleDataScope: (token: string, roleId: number, dimension: string): Promise<{ dataScope: Record<number, DataScopeRule[]> }> =>
+    request(`/admin/roles/${roleId}/data-scope/${encodeURIComponent(dimension)}`, token, { method: 'DELETE' }),
 
   listLoginHistory: (
     token: string,
@@ -1378,11 +1386,17 @@ export interface DataScopeDimension {
   key: string;
   label: string;
 }
-export interface DataScopeRule {
-  scopeId: number;
-  dimension: string;
+/** "in" = is any of (only these values); "not_in" = is none of (every value except these, new values included). */
+export type DataScopeOperator = 'in' | 'not_in';
+export interface DataScopeValue {
   value: string;
   label: string;
+}
+/** One rule per role + dimension (2026-10-15); rules on different dimensions combine with AND. */
+export interface DataScopeRule {
+  dimension: string;
+  operator: DataScopeOperator;
+  values: DataScopeValue[];
 }
 
 // ---------------------------------------------------------------------------
