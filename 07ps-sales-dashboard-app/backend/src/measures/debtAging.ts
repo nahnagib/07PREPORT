@@ -23,11 +23,15 @@
  *      age (cfg_finance_aging_zone, cfg_finance_aging_setting -- migration 0037).
  *
  * Invoice age = snapshot date - invoice date, in days (never below 0).
+ *
+ * All currencies (`allCurrencies`, 2026-10-15: the page's default view): one dot per CUSTOMER over every currency --
+ * the deciding invoice is its oldest open invoice in any currency, outstanding = its open invoices in the company
+ * currency (Odoo's Amount Due in LYD, Odoo's own rate). The response then reads currency LYD and allCurrencies true.
  */
 import type { Pool } from 'mysql2/promise';
 import { odooWebBaseUrl } from '../config/finance';
 import type { Filters } from './filters';
-import { DebtQueryError, isoOfKey, linesSource, parseDebtQuery, resolveSnapshot, type DebtQuery } from './debtReport';
+import { COMPANY_CURRENCY, DebtQueryError, isoOfKey, linesSource, parseDebtQuery, resolveSnapshot, type DebtQuery } from './debtReport';
 
 // ---- settings -------------------------------------------------------------------------------------------------------
 export interface AgingZoneSetting {
@@ -159,8 +163,10 @@ export function resolveTerm(x: { paymentTermKey: number; paymentTerm: string | n
 // ---- query ----------------------------------------------------------------------------------------------------------
 export interface AgingQuery {
   debt: DebtQuery;
-  /** 3-letter code; null = the currency with the most customers */
+  /** 3-letter code; null = the currency with the most customers (unless allCurrencies) */
   currency: string | null;
+  /** every currency together in LYD (one dot per customer); ignored when a currency is given */
+  allCurrencies: boolean;
   /** PaymentTermKey, 'due_date' or 'missing'; null = every term */
   term: string | null;
 }
@@ -175,6 +181,7 @@ export function parseAgingQuery(q: Record<string, unknown>): AgingQuery {
     // the line-level page filters would change which invoice is the oldest: never applied here
     debt: { ...debt, overdueStatus: 'all', agingBucketKeys: [], deliveryStatuses: [], paymentTermKeys: [], invoiceTiers: [] },
     currency,
+    allCurrencies: currency === null && (q.allCurrencies === 'true' || q.allCurrencies === '1' || q.allCurrencies === true),
     term,
   };
 }
@@ -194,13 +201,18 @@ type Row = Record<string, any>;
  * `source` is a FROM clause exposing alias `l` (linesSource in production; literal rows in the SQL tests) with
  * currency, CustomerKey, customer, CompanyKey, company, PaymentTermKey, payment_term, move_id, line_id, document,
  * InvoiceDateKey, due_date (YYYY-MM-DD), residual_doc_ccy, residual_company_ccy and line_kind.
+ *
+ * `allCurrencies`: every line gets the company currency as its "currency" and its company-currency residual as its
+ * amount, so the same query yields one row per customer over every currency, in LYD.
  */
-export function agingSql(source: Sql): Sql {
+export function agingSql(source: Sql, allCurrencies = false): Sql {
+  const currency = allCurrencies ? `'${COMPANY_CURRENCY}' AS currency` : 'l.currency';
+  const amount = allCurrencies ? 'l.residual_company_ccy AS residual_doc_ccy' : 'l.residual_doc_ccy';
   return {
     sql: `
       WITH src AS (
-        SELECT l.currency, l.CustomerKey, l.customer, l.CompanyKey, l.company, l.PaymentTermKey, l.payment_term, l.move_id, l.line_id,
-               l.document, l.InvoiceDateKey, l.due_date, l.residual_doc_ccy, l.residual_company_ccy, l.line_kind
+        SELECT ${currency}, l.CustomerKey, l.customer, l.CompanyKey, l.company, l.PaymentTermKey, l.payment_term, l.move_id, l.line_id,
+               l.document, l.InvoiceDateKey, l.due_date, ${amount}, l.residual_company_ccy, l.line_kind
         ${source.sql}
       ),
       ln AS (SELECT * FROM src WHERE line_kind = 'invoice'),
@@ -278,6 +290,8 @@ export interface DebtAgingTerm {
 export interface DebtAging {
   snapshotDate: string | null;
   currency: string | null;
+  /** true = every currency together, amounts in LYD (≈) */
+  allCurrencies: boolean;
   /** currencies with at least one customer on the map, most customers first */
   currencies: string[];
   settings: { minStep: number; escalationWindowDays: number; axisCap: number };
@@ -295,7 +309,7 @@ const fromMicro = (v: number): number => v / 1e6;
 /** Turns the query rows into the map (pure: the tests feed it rows directly). */
 export function buildAging(
   rows: Row[],
-  opts: { snapshotDate: string | null; currency: string | null; term: string | null; settings: AgingSettings },
+  opts: { snapshotDate: string | null; currency: string | null; term: string | null; settings: AgingSettings; allCurrencies?: boolean },
 ): DebtAging {
   const s = opts.settings;
   const finite = s.zones.filter((z) => z.upperMultiplier !== null).map((z) => z.upperMultiplier as number);
@@ -379,6 +393,7 @@ export function buildAging(
   return {
     snapshotDate: opts.snapshotDate,
     currency,
+    allCurrencies: Boolean(opts.allCurrencies),
     currencies,
     settings: { minStep: s.minStep, escalationWindowDays: s.escalationWindowDays, axisCap: lastFinite * 1.5 },
     zones: s.zones.map((z, i) => ({
@@ -399,8 +414,14 @@ export async function fetchDebtAging(pool: Pool, q: AgingQuery, f: Filters): Pro
   const snapshotKey = await resolveSnapshot(pool, q.debt);
   let rows: Row[] = [];
   if (snapshotKey !== null) {
-    const a = agingSql(linesSource(snapshotKey, q.debt, f));
+    const a = agingSql(linesSource(snapshotKey, q.debt, f), q.allCurrencies);
     [rows] = (await pool.query(a.sql, a.params)) as unknown as [Row[]];
   }
-  return buildAging(rows, { snapshotDate: isoOfKey(snapshotKey), currency: q.currency, term: q.term, settings });
+  return buildAging(rows, {
+    snapshotDate: isoOfKey(snapshotKey),
+    currency: q.allCurrencies ? COMPANY_CURRENCY : q.currency,
+    term: q.term,
+    settings,
+    allCurrencies: q.allCurrencies,
+  });
 }

@@ -28,7 +28,7 @@ function customer(i: number, position: number, outstanding: number): DebtAgingCu
 
 function aging(customers: DebtAgingCustomer[], currency = 'LYD'): DebtAging {
   return {
-    snapshotDate: '2026-10-04', currency, currencies: customers.length ? [currency] : [],
+    snapshotDate: '2026-10-04', currency, allCurrencies: false, currencies: customers.length ? [currency] : [],
     settings: { minStep: 7, escalationWindowDays: 7, axisCap: 4.5 },
     zones: ZONES,
     terms: customers.length ? [{ key: '4', label: '30 Days', termDays: 30, customers: customers.length, ranges: null }] : [],

@@ -17,7 +17,9 @@
  *      invoice / customer size tier).
  *
  * Amounts are PER CURRENCY: residual_doc_ccy (Odoo amount_residual_currency) in the line's own currency (CurrencyKey),
- * never added across currencies and never converted.
+ * never added across currencies and never converted. The one exception is the "All currencies" view (2026-10-15: the
+ * page's default when no currency is picked): it adds residual_company_ccy -- Odoo's own Amount Due in LYD, at the rate
+ * Odoo booked on each invoice's date, never a rate of ours -- exactly like the header's grand total.
  *
  * Every line has ONE kind (line_kind, LINE_KIND_SQL; decisions of 2026-10-06, so the report matches Odoo's Invoices list):
  *   invoice       customer invoices (move_type out_invoice) -- the ONLY lines behind "Open invoices", Overdue, Not yet
@@ -231,6 +233,7 @@ export function linesSource(snap: SnapshotSelector, q: DebtQuery, f: Filters): S
                sg.Segment AS segment, f.PaymentTermKey, pt.payment_term, f.AgingBucketKey, f.days_past_due,
                f.CurrencyKey, cur.currency, f.residual_doc_ccy,
                CASE WHEN f.residual_doc_ccy < 0 THEN -i.amount_total ELSE i.amount_total END AS invoice_total_signed,
+               CASE WHEN f.residual_doc_ccy < 0 THEN -ABS(i.amount_total_signed) ELSE ABS(i.amount_total_signed) END AS invoice_total_company,
                f.residual_company_ccy, f.delivery_status, f.is_intercompany, f.receivable_scope, rs.is_default AS receivable_scope_is_default,
                CASE WHEN f.PaymentKey <> -1 THEN CONCAT('payment:', COALESCE(p.payment_type, '?'), ':', COALESCE(p.partner_type, '?'))
                     ELSE CONCAT('move:', COALESCE(i.move_type, '?')) END AS document_type_key,
@@ -271,13 +274,16 @@ function orderCurrencies(counts: Map<string, number>): string[] {
 }
 
 /** Sum of the documents' original amounts, each document once (a document with several open lines -- instalments --
- * carries the same amount on each; the lowest line id counts). */
+ * carries the same amount on each; the lowest line id counts); `total` in the document currency, `totalCompany` in LYD
+ * (Odoo's amount_total_signed). */
 class DocumentAmounts {
-  private readonly docs = new Map<number, { lineId: number; amount: number }>();
+  private readonly docs = new Map<number, { lineId: number; amount: number; amountCompany: number }>();
   add(l: Row): void {
     const id = num(l.move_id);
     const cur = this.docs.get(id);
-    if (!cur || num(l.line_id) < cur.lineId) this.docs.set(id, { lineId: num(l.line_id), amount: num(l.invoice_total_signed) });
+    if (!cur || num(l.line_id) < cur.lineId) {
+      this.docs.set(id, { lineId: num(l.line_id), amount: num(l.invoice_total_signed), amountCompany: num(l.invoice_total_company) });
+    }
   }
   get count(): number {
     return this.docs.size;
@@ -285,6 +291,11 @@ class DocumentAmounts {
   get total(): number {
     let t = 0;
     for (const d of this.docs.values()) t += d.amount;
+    return t;
+  }
+  get totalCompany(): number {
+    let t = 0;
+    for (const d of this.docs.values()) t += d.amountCompany;
     return t;
   }
 }
@@ -528,6 +539,9 @@ export interface DebtOverview {
   lineCount: number;
   /** one entry per currency with an open line, in display order */
   currencies: DebtCurrencyOverview[];
+  /** every currency together, every amount in the company currency (Odoo's Amount Due in LYD): the charts of the
+   * "All currencies (≈ LYD)" view */
+  all: DebtCurrencyOverview;
   allCurrencies: DebtAllCurrencies;
 }
 
@@ -549,19 +563,23 @@ function addTo(m: Map<string, GroupAcc>, key: string, label: string, open: numbe
   m.set(key, g);
 }
 
-/** A sum and its distinct documents. */
+/** A sum and its distinct documents; `company` = `amount` is the company-currency (LYD) amount too (the all-currencies
+ * view). */
 class KindAcc {
   amount = 0;
   amountCompany = 0;
   readonly docs = new Set<number>();
+  constructor(private readonly company = false) {}
   add(l: Row): void {
-    this.amount += num(l.residual_doc_ccy);
+    this.amount += num(this.company ? l.residual_company_ccy : l.residual_doc_ccy);
     this.amountCompany += num(l.residual_company_ccy);
     this.docs.add(num(l.move_id));
   }
 }
 
 interface CurrencyAcc {
+  /** true = every amount is the company-currency (LYD) one: the all-currencies view */
+  company: boolean;
   invoices: KindAcc;
   overdue: number;
   overdueCompany: number;
@@ -576,11 +594,102 @@ interface CurrencyAcc {
   byTeam: Map<string, GroupAcc>;
 }
 
+function newCurrencyAcc(company: boolean): CurrencyAcc {
+  return {
+    company, invoices: new KindAcc(company), overdue: 0, overdueCompany: 0, invoiceCustomers: new Set(), allCustomers: new Set(),
+    kinds: { credit_note: new KindAcc(company), payment: new KindAcc(company), other: new KindAcc(company), intercompany: new KindAcc(company) },
+    net: 0, n: 0, buckets: new Map(), byCustomer: new Map(), bySalesperson: new Map(), byTeam: new Map(),
+  };
+}
+
+/** Adds one line to a currency's (or the all-currencies') KPIs and charts. */
+function addLine(c: CurrencyAcc, l: Row): void {
+  const amount = num(c.company ? l.residual_company_ccy : l.residual_doc_ccy);
+  c.net += amount;
+  c.n += 1;
+  c.allCustomers.add(num(l.CustomerKey));
+  const kind = String(l.line_kind) as DebtLineKind;
+  if (kind !== 'invoice') {
+    c.kinds[kind].add(l);
+    return;
+  }
+  const isOverdue = num(l.days_past_due) > 0;
+  const od = isOverdue ? amount : 0;
+  c.invoices.add(l);
+  c.overdue += od;
+  c.overdueCompany += isOverdue ? num(l.residual_company_ccy) : 0;
+  c.invoiceCustomers.add(num(l.CustomerKey));
+  const b = c.buckets.get(num(l.AgingBucketKey)) ?? { amount: 0, n: 0 };
+  b.amount += amount;
+  b.n += 1;
+  c.buckets.set(num(l.AgingBucketKey), b);
+  addTo(c.byCustomer, String(l.CustomerKey), String(l.customer), amount, od, String(l.company));
+  addTo(c.bySalesperson, String(l.SalespersonKey), String(l.salesperson), amount, od);
+  addTo(c.byTeam, String(l.SalesTeamKey), String(l.sales_team), amount, od);
+}
+
+function currencyOverview(currency: string, c: CurrencyAcc, bucketRows: Row[]): DebtCurrencyOverview {
+  const open = c.invoices.amount;
+  const notDue = open - c.overdue;
+  const points = (m: Map<string, GroupAcc>, limit: number | null, withDetail = false): DebtGroupPoint[] =>
+    [...m]
+      .filter(([, g]) => Math.abs(g.overdue) >= 0.005)
+      .sort((a, b) => b[1].overdue - a[1].overdue)
+      .slice(0, limit ?? undefined)
+      .map(([key, g]) => ({
+        key,
+        label: g.label,
+        ...(withDetail ? { detail: [...g.details].sort().join(', ') || null } : {}),
+        overdue: g.overdue,
+        open: g.open,
+        pctOfOverdue: pct(g.overdue, c.overdue),
+      }));
+  const k = c.kinds;
+  return {
+    currency,
+    kpis: {
+      openAmount: open,
+      openDocuments: c.invoices.docs.size,
+      customers: c.invoiceCustomers.size,
+      overdueAmount: c.overdue,
+      overduePctOfOpen: pct(c.overdue, open),
+      notDueAmount: notDue,
+      notDuePctOfOpen: pct(notDue, open),
+      openAmountCompany: c.invoices.amountCompany,
+      overdueAmountCompany: c.overdueCompany,
+      notDueAmountCompany: c.invoices.amountCompany - c.overdueCompany,
+      unappliedCredits: k.credit_note.amount + k.payment.amount,
+      creditNotes: k.credit_note.amount,
+      creditNoteDocuments: k.credit_note.docs.size,
+      payments: k.payment.amount,
+      paymentDocuments: k.payment.docs.size,
+      otherEntries: k.other.amount,
+      otherDocuments: k.other.docs.size,
+      intercompany: k.intercompany.amount,
+      intercompanyDocuments: k.intercompany.docs.size,
+      netBalance: c.net,
+      creditOnlyCustomers: [...c.allCustomers].filter((x) => !c.invoiceCustomers.has(x)).length,
+      lineCount: c.n,
+    },
+    aging: bucketRows.map((b) => ({
+      agingBucketKey: num(b.k),
+      label: String(b.label),
+      isOverdue: Boolean(Number(b.is_overdue)),
+      amount: c.buckets.get(num(b.k))?.amount ?? 0,
+      lineCount: c.buckets.get(num(b.k))?.n ?? 0,
+    })),
+    topCustomers: points(c.byCustomer, DEBT_TOP_CUSTOMERS, true),
+    bySalesperson: points(c.bySalesperson, null),
+    byTeam: points(c.byTeam, null),
+  };
+}
+
 /**
  * KPIs and charts of one snapshot, per currency. The filtered lines are read ONCE (a few thousand rows per snapshot)
  * and aggregated here. Total debt (open invoices), overdue, not due, the customer count and every chart use invoice
  * lines only, in the invoice currency and (cards) in the company currency; allCurrencies adds the company-currency
- * amounts of every currency;
+ * amounts of every currency, and `all` is the same KPIs and charts over every currency in the company currency (the
+ * page's "All currencies (≈ LYD)" view, so all.kpis.openAmount = allCurrencies.openAmount);
  * credit notes and payments make up Unapplied credits; every line adds to the Net balance. Each chart point is the sum
  * the drill-down of that point lists (fetchDebtDrilldown): the customer / salesperson / team bars are the overdue
  * invoice lines of the group, an aging bar the invoice lines of the bucket.
@@ -600,113 +709,33 @@ export async function fetchDebtOverview(pool: Pool, q: DebtQuery, f: Filters): P
     );
   }
   const byCurrency = new Map<string, CurrencyAcc>();
-  const all = { invoices: new KindAcc(), overdue: 0, customers: new Set<number>() };
+  const all = newCurrencyAcc(true);
   for (const l of lines) {
     const ccy = String(l.currency);
     let c = byCurrency.get(ccy);
     if (!c) {
-      c = {
-        invoices: new KindAcc(), overdue: 0, overdueCompany: 0, invoiceCustomers: new Set(), allCustomers: new Set(),
-        kinds: { credit_note: new KindAcc(), payment: new KindAcc(), other: new KindAcc(), intercompany: new KindAcc() },
-        net: 0, n: 0, buckets: new Map(), byCustomer: new Map(), bySalesperson: new Map(), byTeam: new Map(),
-      };
+      c = newCurrencyAcc(false);
       byCurrency.set(ccy, c);
     }
-    const amount = num(l.residual_doc_ccy);
-    c.net += amount;
-    c.n += 1;
-    c.allCustomers.add(num(l.CustomerKey));
-    const kind = String(l.line_kind) as DebtLineKind;
-    if (kind !== 'invoice') {
-      c.kinds[kind].add(l);
-      continue;
-    }
-    const od = overdueOf(l);
-    const odCompany = num(l.days_past_due) > 0 ? num(l.residual_company_ccy) : 0;
-    c.invoices.add(l);
-    c.overdue += od;
-    c.overdueCompany += odCompany;
-    c.invoiceCustomers.add(num(l.CustomerKey));
-    all.invoices.add(l);
-    all.overdue += odCompany;
-    all.customers.add(num(l.CustomerKey));
-    const b = c.buckets.get(num(l.AgingBucketKey)) ?? { amount: 0, n: 0 };
-    b.amount += amount;
-    b.n += 1;
-    c.buckets.set(num(l.AgingBucketKey), b);
-    addTo(c.byCustomer, String(l.CustomerKey), String(l.customer), amount, od, String(l.company));
-    addTo(c.bySalesperson, String(l.SalespersonKey), String(l.salesperson), amount, od);
-    addTo(c.byTeam, String(l.SalesTeamKey), String(l.sales_team), amount, od);
+    addLine(c, l);
+    addLine(all, l);
   }
   const order = orderCurrencies(new Map([...byCurrency].map(([k, v]) => [k, v.n])));
+  const total = all.invoices.amountCompany;
   return {
     snapshotDate: isoOfKey(snapshotKey),
     lineCount: lines.length,
-    currencies: order.map((currency) => {
-      const c = byCurrency.get(currency) as CurrencyAcc;
-      const open = c.invoices.amount;
-      const notDue = open - c.overdue;
-      const points = (m: Map<string, GroupAcc>, limit: number | null, withDetail = false): DebtGroupPoint[] =>
-        [...m]
-          .filter(([, g]) => Math.abs(g.overdue) >= 0.005)
-          .sort((a, b) => b[1].overdue - a[1].overdue)
-          .slice(0, limit ?? undefined)
-          .map(([key, g]) => ({
-            key,
-            label: g.label,
-            ...(withDetail ? { detail: [...g.details].sort().join(', ') || null } : {}),
-            overdue: g.overdue,
-            open: g.open,
-            pctOfOverdue: pct(g.overdue, c.overdue),
-          }));
-      const k = c.kinds;
-      return {
-        currency,
-        kpis: {
-          openAmount: open,
-          openDocuments: c.invoices.docs.size,
-          customers: c.invoiceCustomers.size,
-          overdueAmount: c.overdue,
-          overduePctOfOpen: pct(c.overdue, open),
-          notDueAmount: notDue,
-          notDuePctOfOpen: pct(notDue, open),
-          openAmountCompany: c.invoices.amountCompany,
-          overdueAmountCompany: c.overdueCompany,
-          notDueAmountCompany: c.invoices.amountCompany - c.overdueCompany,
-          unappliedCredits: k.credit_note.amount + k.payment.amount,
-          creditNotes: k.credit_note.amount,
-          creditNoteDocuments: k.credit_note.docs.size,
-          payments: k.payment.amount,
-          paymentDocuments: k.payment.docs.size,
-          otherEntries: k.other.amount,
-          otherDocuments: k.other.docs.size,
-          intercompany: k.intercompany.amount,
-          intercompanyDocuments: k.intercompany.docs.size,
-          netBalance: c.net,
-          creditOnlyCustomers: [...c.allCustomers].filter((x) => !c.invoiceCustomers.has(x)).length,
-          lineCount: c.n,
-        },
-        aging: bucketRows.map((b) => ({
-          agingBucketKey: num(b.k),
-          label: String(b.label),
-          isOverdue: Boolean(Number(b.is_overdue)),
-          amount: c.buckets.get(num(b.k))?.amount ?? 0,
-          lineCount: c.buckets.get(num(b.k))?.n ?? 0,
-        })),
-        topCustomers: points(c.byCustomer, DEBT_TOP_CUSTOMERS, true),
-        bySalesperson: points(c.bySalesperson, null),
-        byTeam: points(c.byTeam, null),
-      };
-    }),
+    currencies: order.map((currency) => currencyOverview(currency, byCurrency.get(currency) as CurrencyAcc, bucketRows)),
+    all: currencyOverview(COMPANY_CURRENCY, all, bucketRows),
     allCurrencies: {
       currency: COMPANY_CURRENCY,
-      openAmount: all.invoices.amountCompany,
+      openAmount: total,
       openDocuments: all.invoices.docs.size,
-      customers: all.customers.size,
-      overdueAmount: all.overdue,
-      overduePctOfOpen: pct(all.overdue, all.invoices.amountCompany),
-      notDueAmount: all.invoices.amountCompany - all.overdue,
-      notDuePctOfOpen: pct(all.invoices.amountCompany - all.overdue, all.invoices.amountCompany),
+      customers: all.invoiceCustomers.size,
+      overdueAmount: all.overdueCompany,
+      overduePctOfOpen: pct(all.overdueCompany, total),
+      notDueAmount: total - all.overdueCompany,
+      notDuePctOfOpen: pct(total - all.overdueCompany, total),
     },
   };
 }
@@ -763,15 +792,20 @@ export interface DebtTrendPoint {
 
 /** Open invoices, overdue and not due (invoice lines) plus the net balance per snapshot date and currency (every
  * snapshot), the same filters; tiers are recomputed per snapshot (the window sums partition by snapshot). One grouped
- * query. A currency without lines on a snapshot gets a zero point, so every currency has one point per snapshot. */
-export async function fetchDebtTrend(pool: Pool, q: DebtQuery, f: Filters): Promise<{ points: DebtTrendPoint[]; currencies: string[]; snapshotCount: number }> {
+ * query. A currency without lines on a snapshot gets a zero point, so every currency has one point per snapshot.
+ * `all` = every currency together in the company currency (LYD, Odoo's Amount Due), one point per snapshot: the trend
+ * of the "All currencies (≈ LYD)" view. */
+export async function fetchDebtTrend(pool: Pool, q: DebtQuery, f: Filters): Promise<{ points: DebtTrendPoint[]; all: DebtTrendPoint[]; currencies: string[]; snapshotCount: number }> {
   const s = linesSource({ from: 0 }, q, f);
   const r = await rows(
     pool,
     `SELECT l.SnapshotDateKey AS k, l.currency, COUNT(*) AS n,
             SUM(CASE WHEN l.line_kind = 'invoice' THEN l.residual_doc_ccy ELSE 0 END) AS open_amount,
             SUM(CASE WHEN l.line_kind = 'invoice' AND l.days_past_due > 0 THEN l.residual_doc_ccy ELSE 0 END) AS overdue,
-            SUM(l.residual_doc_ccy) AS net
+            SUM(l.residual_doc_ccy) AS net,
+            SUM(CASE WHEN l.line_kind = 'invoice' THEN l.residual_company_ccy ELSE 0 END) AS open_company,
+            SUM(CASE WHEN l.line_kind = 'invoice' AND l.days_past_due > 0 THEN l.residual_company_ccy ELSE 0 END) AS overdue_company,
+            SUM(l.residual_company_ccy) AS net_company
      ${s.sql}
      GROUP BY l.SnapshotDateKey, l.currency`,
     s.params,
@@ -783,9 +817,23 @@ export async function fetchDebtTrend(pool: Pool, q: DebtQuery, f: Filters): Prom
   // a snapshot with no line for these filters (any currency) is a gap; one with lines in other currencies only is a 0
   const withRows = new Set(r.map((x) => num(x.k)));
   const snaps = await fetchSnapshots(pool);
+  const allBySnapshot = new Map<number, { open: number; overdue: number; net: number }>();
+  for (const x of r) {
+    const t = allBySnapshot.get(num(x.k)) ?? { open: 0, overdue: 0, net: 0 };
+    t.open += num(x.open_company);
+    t.overdue += num(x.overdue_company);
+    t.net += num(x.net_company);
+    allBySnapshot.set(num(x.k), t);
+  }
   return {
     snapshotCount: snaps.length,
     currencies,
+    all: snaps.map((sn) => {
+      const t = allBySnapshot.get(dateKeyOf(sn.date));
+      return t
+        ? { snapshotDate: sn.date, currency: COMPANY_CURRENCY, open: t.open, overdue: t.overdue, notDue: t.open - t.overdue, net: t.net }
+        : { snapshotDate: sn.date, currency: COMPANY_CURRENCY, open: null, overdue: null, notDue: null, net: null };
+    }),
     points: currencies.flatMap((currency) =>
       snaps.map((sn) => {
         const k = dateKeyOf(sn.date);
@@ -822,6 +870,13 @@ export interface DebtCustomerRow {
   otherEntries: number;
   /** every line */
   net: number;
+  /** invoiceAmount, open, overdue, notDue, credits, otherEntries and net in the company currency (LYD): Odoo's own
+   * amount_total_signed / amount_residual, for the "All currencies (≈ LYD)" view */
+  lyd: { invoiceAmount: number; open: number; overdue: number; notDue: number; credits: number; otherEntries: number; net: number };
+  /** days past due of the row's oldest open overdue invoice line (the most days past due); null = nothing overdue */
+  oldestOverdueDays: number | null;
+  /** that line's aging bucket (dim_finance_aging_bucket, the Distribution chart's buckets); null = nothing overdue */
+  oldestOverdueBucketKey: number | null;
   salespersons: string[];
   salesTeams: string[];
   segments: string[];
@@ -838,7 +893,8 @@ export async function fetchDebtCustomers(pool: Pool, q: DebtQuery, f: Filters): 
   const lines = await rows(
     pool,
     `SELECT l.line_id, l.move_id, l.CompanyKey, l.company, l.CustomerKey, l.customer, l.customer_category, l.currency, l.days_past_due, l.residual_doc_ccy,
-            l.invoice_total_signed, l.salesperson, l.sales_team, l.segment, l.line_kind
+            l.invoice_total_signed, l.invoice_total_company, l.residual_company_ccy, l.AgingBucketKey, l.salesperson, l.sales_team,
+            l.segment, l.line_kind
      ${s.sql}`,
     s.params,
   );
@@ -858,22 +914,40 @@ export async function fetchDebtCustomers(pool: Pool, q: DebtQuery, f: Filters): 
         companyKey: num(l.CompanyKey), company: String(l.company), customerKey: num(l.CustomerKey), customer: String(l.customer),
         customerCategory: customerCategoryLabel(l.customer_category),
         currency: String(l.currency), open: 0, overdue: 0, notDue: 0, credits: 0, otherEntries: 0, net: 0, lineCount: 0,
+        lyd: { invoiceAmount: 0, open: 0, overdue: 0, notDue: 0, credits: 0, otherEntries: 0, net: 0 },
+        oldestOverdueDays: null, oldestOverdueBucketKey: null,
         docs: new DocumentAmounts(), sp: new Set(), tm: new Set(), sg: new Set(),
       };
       groups.set(id, g);
     }
     const amount = num(l.residual_doc_ccy);
+    const amountCompany = num(l.residual_company_ccy);
     const kind = String(l.line_kind) as DebtLineKind;
     g.net += amount;
+    g.lyd.net += amountCompany;
     g.lineCount += 1;
     if (kind === 'invoice') {
+      const days = num(l.days_past_due);
       const od = overdueOf(l);
+      const odCompany = days > 0 ? amountCompany : 0;
       g.open += amount;
       g.overdue += od;
       g.notDue += amount - od;
+      g.lyd.open += amountCompany;
+      g.lyd.overdue += odCompany;
+      g.lyd.notDue += amountCompany - odCompany;
       g.docs.add(l);
-    } else if (CREDIT_KINDS.includes(kind)) g.credits += amount;
-    else g.otherEntries += amount;
+      if (days > 0 && amount > 0 && (g.oldestOverdueDays === null || days > g.oldestOverdueDays)) {
+        g.oldestOverdueDays = days;
+        g.oldestOverdueBucketKey = num(l.AgingBucketKey);
+      }
+    } else if (CREDIT_KINDS.includes(kind)) {
+      g.credits += amount;
+      g.lyd.credits += amountCompany;
+    } else {
+      g.otherEntries += amount;
+      g.lyd.otherEntries += amountCompany;
+    }
     if (l.salesperson) g.sp.add(String(l.salesperson));
     if (l.sales_team) g.tm.add(String(l.sales_team));
     if (l.segment) g.sg.add(String(l.segment));
@@ -889,6 +963,7 @@ export async function fetchDebtCustomers(pool: Pool, q: DebtQuery, f: Filters): 
       .sort((a, b) => (rank.get(a.currency) ?? 0) - (rank.get(b.currency) ?? 0) || b.overdue - a.overdue || b.open - a.open || a.net - b.net)
       .map(({ docs, sp, tm, sg, ...g }) => ({
         ...g,
+        lyd: { ...g.lyd, invoiceAmount: docs.totalCompany },
         openDocuments: docs.count,
         invoiceAmount: docs.total,
         salespersons: sorted(sp),
@@ -912,7 +987,8 @@ export type DebtDrillKind = 'customer' | 'aging' | 'salesperson' | 'team' | 'acc
 export interface DebtDrill {
   kind: DebtDrillKind;
   key: string;
-  currency: string;
+  /** null = every currency (the "All currencies (≈ LYD)" view): the lines of every currency, reconciled in LYD */
+  currency: string | null;
 }
 
 const DRILL_KINDS: readonly DebtDrillKind[] = ['customer', 'aging', 'salesperson', 'team', 'account'];
@@ -925,8 +1001,8 @@ export function parseDrill(q: Record<string, unknown>): DebtDrill {
     kind === 'team' ? /^[A-Za-z0-9_-]{1,64}$/.test(key) : kind === 'account' ? /^-?\d+:-?\d+$/.test(key) : /^-?\d+$/.test(key);
   if (!valid) throw new DebtQueryError(`key is invalid for kind ${kind}`);
   const currency = typeof q.currency === 'string' ? q.currency.trim().toUpperCase() : '';
-  if (!/^[A-Z]{3}$/.test(currency)) throw new DebtQueryError('currency must be a 3-letter code');
-  return { kind, key, currency };
+  if (currency !== '' && !/^[A-Z]{3}$/.test(currency)) throw new DebtQueryError('currency must be a 3-letter code');
+  return { kind, key, currency: currency || null };
 }
 
 function drillCondition(d: DebtDrill): Sql {
@@ -964,6 +1040,10 @@ export interface DebtDrillRow {
   invoiceAmount: number;
   openBalance: number;
   overdueAmount: number;
+  /** the same three in the company currency (LYD): Odoo's amount_total_signed / amount_residual */
+  invoiceAmountCompany: number;
+  openBalanceCompany: number;
+  overdueAmountCompany: number;
   salesperson: string;
   salesTeamKey: string;
   salesTeam: string;
@@ -975,11 +1055,12 @@ export interface DebtDrilldown {
   snapshotDate: string | null;
   drill: DebtDrill;
   rows: DebtDrillRow[];
+  /** in the drill's currency; with every currency (currency null), in the company currency (LYD) */
   totals: { lines: number; openDocuments: number; invoiceAmount: number; openBalance: number; overdueAmount: number };
 }
 
 /** The open lines behind one chart point (or customer-table row), every page filter and the exclusions applied, in
- * one currency. Overdue drill-downs sum to the bar's overdue, the aging one to the bucket's open invoices, the account
+ * one currency, or in every currency (currency null) with LYD totals, like the "All currencies" charts. Overdue drill-downs sum to the bar's overdue, the aging one to the bucket's open invoices, the account
  * one to the row's net balance. The due date is the line's own (an instalment's maturity). */
 export async function fetchDebtDrilldown(pool: Pool, q: DebtQuery, f: Filters, d: DebtDrill): Promise<DebtDrilldown> {
   const snapshotKey = await resolveSnapshot(pool, q);
@@ -990,11 +1071,12 @@ export async function fetchDebtDrilldown(pool: Pool, q: DebtQuery, f: Filters, d
   const r = await rows(
     pool,
     `SELECT d.line_id, d.move_id, d.company, d.document, d.document_type_key, d.line_kind, d.invoice_date, d.due_date, d.days_past_due,
-            d.CustomerKey, d.customer, d.currency, d.invoice_total_signed, d.residual_doc_ccy, d.salesperson, d.SalesTeamKey, d.sales_team, d.segment
+            d.CustomerKey, d.customer, d.currency, d.invoice_total_signed, d.invoice_total_company, d.residual_doc_ccy, d.residual_company_ccy,
+            d.salesperson, d.SalesTeamKey, d.sales_team, d.segment
      FROM (SELECT l.* ${s.sql}) d
-     WHERE d.currency = ? AND ${c.sql}
+     WHERE ${d.currency ? 'd.currency = ? AND ' : ''}${c.sql}
      ORDER BY d.days_past_due DESC, d.due_date, d.line_id`,
-    [...s.params, d.currency, ...c.params],
+    [...s.params, ...(d.currency ? [d.currency] : []), ...c.params],
   );
   const base = odooWebBaseUrl();
   const docs = new DocumentAmounts();
@@ -1002,6 +1084,7 @@ export async function fetchDebtDrilldown(pool: Pool, q: DebtQuery, f: Filters, d
     docs.add(x);
     const days = num(x.days_past_due);
     const open = num(x.residual_doc_ccy);
+    const openCompany = num(x.residual_company_ccy);
     return {
       lineId: num(x.line_id),
       moveId: num(x.move_id),
@@ -1018,6 +1101,9 @@ export async function fetchDebtDrilldown(pool: Pool, q: DebtQuery, f: Filters, d
       invoiceAmount: num(x.invoice_total_signed),
       openBalance: open,
       overdueAmount: days > 0 ? open : 0,
+      invoiceAmountCompany: num(x.invoice_total_company),
+      openBalanceCompany: openCompany,
+      overdueAmountCompany: days > 0 ? openCompany : 0,
       salesperson: String(x.salesperson),
       salesTeamKey: String(x.SalesTeamKey),
       salesTeam: String(x.sales_team),
@@ -1032,9 +1118,9 @@ export async function fetchDebtDrilldown(pool: Pool, q: DebtQuery, f: Filters, d
     totals: {
       lines: out.length,
       openDocuments: docs.count,
-      invoiceAmount: docs.total,
-      openBalance: out.reduce((t, x) => t + x.openBalance, 0),
-      overdueAmount: out.reduce((t, x) => t + x.overdueAmount, 0),
+      invoiceAmount: d.currency ? docs.total : docs.totalCompany,
+      openBalance: out.reduce((t, x) => t + (d.currency ? x.openBalance : x.openBalanceCompany), 0),
+      overdueAmount: out.reduce((t, x) => t + (d.currency ? x.overdueAmount : x.overdueAmountCompany), 0),
     },
   };
 }

@@ -11,7 +11,8 @@ export interface DebtDrillTarget {
   key: string;
   /** what was clicked: the customer / bucket / salesperson / team name, or "customer · company" for a table row */
   label: string;
-  currency: string;
+  /** null = every currency (the page's "All currencies (≈ LYD)" view): the expected figure is in LYD */
+  currency: string | null;
   /** the clicked figure, which the listed lines must add up to */
   expected: number;
 }
@@ -19,8 +20,9 @@ export interface DebtDrillTarget {
 type DrillGridRow = DebtDrillRow & { id: string } & Record<string, unknown>;
 
 /**
- * The open lines behind one chart bar or customer-table row (GET /debt-report/drilldown), in that bar's currency,
- * with the page's filters and the report exclusions. The footer shows the lines' total next to the clicked figure, so
+ * The open lines behind one chart bar or customer-table row (GET /debt-report/drilldown), in that bar's currency --
+ * or, from the "All currencies (≈ LYD)" view, the lines of every currency, each in its own currency with its LYD
+ * amounts beside it, reconciled in LYD -- with the page's filters and the report exclusions. The footer shows the lines' total next to the clicked figure, so
  * a reader sees they reconcile. Sortable, searchable, CSV / Excel export (DataGrid).
  */
 export function DebtDrilldownModal({
@@ -46,9 +48,17 @@ export function DebtDrilldownModal({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const ccy = target.currency;
+  const all = target.currency === null;
+  const ccy = target.currency ?? LYD;
+  const approx = all ? '≈ ' : '';
+  /** a total / the clicked figure: in the drill's currency, or ≈ LYD for every currency */
+  const totalMoney = (v: number) => `${approx}${formatMoney(ccy, v)}`;
+  // every line is shown in its own currency (one currency per drill-down unless `all`)
   const money = (key: keyof DebtDrillRow & string, header: string): DataGridColumn<DrillGridRow> => ({
-    key, header, align: 'right', width: 150, rawValue: (r) => Number(r[key] ?? 0), render: (r) => formatMoney(ccy, Number(r[key] ?? 0)),
+    key, header, align: 'right', width: 150, rawValue: (r) => Number(r[key] ?? 0), render: (r) => formatMoney(r.currency, Number(r[key] ?? 0)),
+  });
+  const lydMoney = (key: 'openBalanceCompany' | 'overdueAmountCompany', header: string): DataGridColumn<DrillGridRow> => ({
+    key, header, align: 'right', width: 150, rawValue: (r) => r[key], render: (r) => `${r.currency === LYD ? '' : '≈ '}${formatMoney(LYD, r[key])}`,
   });
   const columns: DataGridColumn<DrillGridRow>[] = [
     { key: 'company', header: 'Company', width: 90 },
@@ -61,6 +71,7 @@ export function DebtDrilldownModal({
     money('invoiceAmount', 'Invoice amount'),
     money('openBalance', 'Open balance'),
     money('overdueAmount', 'Overdue amount'),
+    ...(all ? [lydMoney('openBalanceCompany', 'Open balance (≈ LYD)'), lydMoney('overdueAmountCompany', 'Overdue (≈ LYD)')] : []),
     { key: 'salesperson', header: 'Salesperson', width: 150, render: (r) => <span dir="auto">{r.salesperson}</span> },
     { key: 'salesTeam', header: 'Team', width: 160, render: (r) => <span dir="auto">{r.salesTeam}</span> },
     { key: 'segment', header: 'Segment', width: 100, rawValue: (r) => r.segment ?? '' },
@@ -83,11 +94,11 @@ export function DebtDrilldownModal({
 
   return (
     <div role="presentation" onClick={onClose} style={overlay}>
-      <div role="dialog" aria-modal="true" aria-label={drillTitle(target.kind, target.label, ccy)} onClick={(e) => e.stopPropagation()} style={panel}>
+      <div role="dialog" aria-modal="true" aria-label={drillTitle(target.kind, target.label, target.currency)} onClick={(e) => e.stopPropagation()} style={panel}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--ps-color-text)' }} dir="auto">
-              {drillTitle(target.kind, target.label, ccy)}
+              {drillTitle(target.kind, target.label, target.currency)}
             </h2>
             <p style={note}>
               Snapshot {formatDate(snapshotDate)}. Each line is aged by its own due date (an instalment’s own maturity); due today is not
@@ -110,17 +121,17 @@ export function DebtDrilldownModal({
                 {formatNumber(data?.totals.lines ?? 0)} lines · {formatNumber(data?.totals.openDocuments ?? 0)} documents
               </span>
               <span>
-                Total {measure === 'overdueAmount' ? 'overdue' : 'open balance'} <strong>{formatMoney(ccy, total ?? 0)}</strong>
+                Total {measure === 'overdueAmount' ? 'overdue' : 'open balance'} <strong>{totalMoney(total ?? 0)}</strong>
               </span>
               <span style={{ color: reconciled ? 'var(--ps-color-muted-text)' : 'var(--ps-color-alert)' }}>
-                {reconciled ? `= the figure clicked (${formatMoney(ccy, target.expected)})` : `≠ the figure clicked (${formatMoney(ccy, target.expected)})`}
+                {reconciled ? `= the figure clicked (${totalMoney(target.expected)})` : `≠ the figure clicked (${totalMoney(target.expected)})`}
               </span>
             </div>
             <DataGrid<DrillGridRow>
               columns={columns}
               rows={rows}
               getRowId={(r) => r.id}
-              fileName={`receivables-collections-${target.kind}-${target.key}-${ccy}-${snapshotDate ?? 'latest'}`}
+              fileName={`receivables-collections-${target.kind}-${target.key}-${target.currency ?? 'all-currencies'}-${snapshotDate ?? 'latest'}`}
               pageSize={25}
               maxBodyHeight={460}
             />
@@ -131,6 +142,7 @@ export function DebtDrilldownModal({
   );
 }
 
+const LYD = 'LYD';
 const overlay: React.CSSProperties = {
   position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0, 0, 0, 0.45)', display: 'flex', alignItems: 'center',
   justifyContent: 'center', padding: 'var(--ps-space-3, 16px)',

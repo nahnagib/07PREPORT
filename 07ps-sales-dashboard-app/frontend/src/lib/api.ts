@@ -2465,12 +2465,16 @@ export interface DebtOverview {
   snapshotDate: string | null;
   lineCount: number;
   currencies: DebtCurrencyOverview[];
+  /** every currency together, every amount in LYD (Odoo's Amount Due): the charts of the "All currencies (≈ LYD)" view */
+  all: DebtCurrencyOverview;
   allCurrencies: DebtAllCurrencies;
 }
 
 export interface DebtTrend {
   /** null amounts = the snapshot has no line for the filters (e.g. a company not extracted yet then): a gap, not 0 */
   points: { snapshotDate: string; currency: string; open: number | null; overdue: number | null; notDue: number | null; net: number | null }[];
+  /** every currency together in LYD, one point per snapshot (the "All currencies (≈ LYD)" trend) */
+  all: { snapshotDate: string; currency: string; open: number | null; overdue: number | null; notDue: number | null; net: number | null }[];
   currencies: string[];
   snapshotCount: number;
 }
@@ -2495,6 +2499,12 @@ export interface DebtCustomerRow {
   otherEntries: number;
   /** every line */
   net: number;
+  /** the same amounts in LYD (Odoo's own amount_total_signed / amount_residual): the "All currencies (≈ LYD)" view */
+  lyd: { invoiceAmount: number; open: number; overdue: number; notDue: number; credits: number; otherEntries: number; net: number };
+  /** days past due of the oldest open overdue invoice line; null = nothing overdue */
+  oldestOverdueDays: number | null;
+  /** that line's aging bucket (meta.options.agingBuckets); null = nothing overdue */
+  oldestOverdueBucketKey: number | null;
   salespersons: string[];
   salesTeams: string[];
   segments: string[];
@@ -2525,6 +2535,10 @@ export interface DebtDrillRow {
   invoiceAmount: number;
   openBalance: number;
   overdueAmount: number;
+  /** the same three in LYD (Odoo's own amounts) */
+  invoiceAmountCompany: number;
+  openBalanceCompany: number;
+  overdueAmountCompany: number;
   salesperson: string;
   salesTeamKey: string;
   salesTeam: string;
@@ -2534,7 +2548,8 @@ export interface DebtDrillRow {
 
 export interface DebtDrilldown {
   snapshotDate: string | null;
-  drill: { kind: DebtDrillKind; key: string; currency: string };
+  /** currency null = every currency; the totals are then in LYD */
+  drill: { kind: DebtDrillKind; key: string; currency: string | null };
   rows: DebtDrillRow[];
   totals: { lines: number; openDocuments: number; invoiceAmount: number; openBalance: number; overdueAmount: number };
 }
@@ -2591,6 +2606,8 @@ export interface DebtAgingZone {
 export interface DebtAging {
   snapshotDate: string | null;
   currency: string | null;
+  /** true = every currency together, one dot per customer, amounts in LYD (≈) */
+  allCurrencies: boolean;
   currencies: string[];
   settings: { minStep: number; escalationWindowDays: number; axisCap: number };
   zones: DebtAgingZone[];
@@ -2634,6 +2651,8 @@ export interface CollectionPoint {
 }
 export interface CollectionsTrend {
   currency: string | null;
+  /** true = every currency together, amounts in LYD (≈) */
+  allCurrencies: boolean;
   currencies: string[];
   grain: CollectionGrain;
   from: string;
@@ -2647,6 +2666,10 @@ export interface CollectionPaymentRow {
   payment: string;
   paymentDate: string;
   company: string;
+  /** the payment currency (the amounts below are in it) */
+  currency: string;
+  /** the payment's amount in LYD (Odoo's own): what an all-currencies bar adds up */
+  amountCompany: number;
   customer: string;
   salesperson: string;
   salesTeam: string;
@@ -2661,6 +2684,7 @@ export interface CollectionPaymentRow {
 }
 export interface CollectionsDrilldown {
   currency: string | null;
+  allCurrencies: boolean;
   period: { start: string; end: string };
   truncated: boolean;
   rows: CollectionPaymentRow[];

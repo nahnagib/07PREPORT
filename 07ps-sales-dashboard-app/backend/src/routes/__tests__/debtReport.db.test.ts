@@ -264,6 +264,46 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
     expect(checked).toBeGreaterThan(20);
   });
 
+  it('All currencies (≈ LYD): KPIs = the header grand total = the rows in LYD; every bar = its drill-down without a currency', async () => {
+    const o = (await get('/debt-report/overview')).body;
+    const sum = (f: (c: Json) => number) => o.currencies.reduce((t: number, c: Json) => t + f(c), 0);
+    close(o.all.kpis.openAmount, o.allCurrencies.openAmount);
+    close(o.all.kpis.overdueAmount, o.allCurrencies.overdueAmount);
+    close(o.all.kpis.openAmount, sum((c) => c.kpis.openAmountCompany));
+    close(o.all.kpis.overdueAmount, sum((c) => c.kpis.overdueAmountCompany));
+    expect(o.all.kpis.customers).toBe(o.allCurrencies.customers);
+    expect(o.all.kpis.openDocuments).toBe(o.allCurrencies.openDocuments);
+    close(o.all.aging.reduce((t: number, a: Json) => t + a.amount, 0), o.all.kpis.openAmount);
+    const drills: [string, string, number][] = [
+      ...o.all.topCustomers.map((p: Json) => ['customer', p.key, p.overdue] as [string, string, number]),
+      ...o.all.bySalesperson.slice(0, 15).map((p: Json) => ['salesperson', p.key, p.overdue] as [string, string, number]),
+      ...o.all.byTeam.slice(0, 15).map((p: Json) => ['team', p.key, p.overdue] as [string, string, number]),
+      ...o.all.aging.filter((a: Json) => a.lineCount > 0).map((a: Json) => ['aging', String(a.agingBucketKey), a.amount] as [string, string, number]),
+    ];
+    const currencies = new Set<string>();
+    for (const [kind, key, value] of drills) {
+      const d = (await get(`/debt-report/drilldown?kind=${kind}&key=${encodeURIComponent(key)}`)).body;
+      const total = kind === 'aging' ? d.totals.openBalance : d.totals.overdueAmount;
+      expect(Math.abs(total - value), `all ${kind} ${key}`).toBeLessThan(0.005);
+      close(d.rows.reduce((s: number, r: Json) => s + (kind === 'aging' ? r.openBalanceCompany : r.overdueAmountCompany), 0), value);
+      for (const r of d.rows) currencies.add(r.currency);
+    }
+    expect(currencies.size).toBe(o.currencies.length); // the all-currencies drill-downs list every currency
+    // trend: the latest all-currencies point = the KPIs; the customer rows' LYD amounts add up to them too
+    const t = (await get('/debt-report/trend')).body;
+    const last = t.all[t.all.length - 1];
+    close(last.open, o.all.kpis.openAmount);
+    close(last.overdue, o.all.kpis.overdueAmount);
+    const rows = (await get('/debt-report/customers')).body.rows as Json[];
+    close(rows.reduce((s, r) => s + r.lyd.open, 0), o.all.kpis.openAmount);
+    close(rows.reduce((s, r) => s + r.lyd.overdue, 0), o.all.kpis.overdueAmount);
+    // a row with an overdue amount has an overdue oldest bucket; one without has none
+    for (const r of rows) {
+      if (r.overdue > 0.005) expect(r.oldestOverdueDays, `${r.customer} ${r.currency}`).toBeGreaterThan(0);
+      if (r.overdue === 0) expect(r.oldestOverdueBucketKey, `${r.customer} ${r.currency}`).toBeNull();
+    }
+  });
+
   it('(c) customer-table rows equal their drill-down (net, open invoices, due debt, credits, open invoices count, invoice amount)', async () => {
     const rows = (await get('/debt-report/customers')).body.rows as Json[];
     const creditOnly = rows.filter((x) => x.openDocuments === 0).slice(0, 3);

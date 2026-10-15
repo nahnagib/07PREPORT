@@ -6,6 +6,19 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Receivables and Collections: page-wide currency filter, 2026-10-15)
+- The "Charts currency" toggle is gone. Default view = **All currencies (≈ LYD)**: Aging Map, every chart, both trends,
+  drill-downs and the customer table add every currency up in LYD, using Odoo's own Amount Due at the rate booked on
+  each invoice's date. That is the same basis as the header total, which keeps showing all currencies.
+- Clicking a currency row of cards (a toggle button, `aria-pressed`) filters the whole page to that currency, in its own
+  units. Click it again to go back to all currencies. The filter is kept in the URL as `?currency=USD`. The rows show a
+  selected / dimmed / hover state, and a "Showing: …" line with a Clear link sits above the charts.
+- Customer table: follows the page filter (its Currency dropdown was removed; the column stays). Exports name the
+  currency. New **Aging bucket** column: the bucket of the oldest overdue invoice (Not due / — for credits only),
+  shown as a coloured badge, sortable by real age and filterable.
+- API: `overview.all`, `trend.all`, customer rows `lyd` + `oldestOverdueDays` / `oldestOverdueBucketKey`; drill-down
+  without `currency` = every currency, with LYD totals; `aging` and `collections-*` accept `allCurrencies=true`. No migration.
+
 ### Fixed (live: legacy tables read because of table-name case, 2026-10-13)
 - **DEPLOY NOTE: must be deployed together with `deploy/live-remap/02_remap.sql` — see `deploy/live-remap/README.md`.**
 - Live MySQL runs with `lower_case_table_names=0`, so `Dim_Company` and `dim_company` are two tables there. Migration 0029

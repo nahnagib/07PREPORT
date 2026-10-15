@@ -5,8 +5,11 @@
  *
  * A collection = a POSTED inbound customer payment that is not an internal transfer, dated by the payment's own date
  * (account.payment.date). Credit notes, write-offs and exchange differences are never collections. Every payment has
- * full history (not limited to the receivable snapshot dates). Amounts are in the PAYMENT currency, never converted;
- * one currency at a time (the page's "Charts currency").
+ * full history (not limited to the receivable snapshot dates). Amounts are in the PAYMENT currency, never converted,
+ * one currency at a time -- or, with `allCurrencies` (the page's default "All currencies (≈ LYD)" view, 2026-10-15),
+ * every currency in LYD: the payment's amount_company_ccy (Odoo's amount_company_currency_signed, Odoo's own rate), its
+ * split scaled by that same payment's LYD / payment-currency ratio, and the collection rate on the receivable lines'
+ * LYD residuals (applied amounts at each invoice line's own LYD / invoice-currency ratio).
  *
  * Per period: collected (the payments' amounts) = applied to invoices overdue on the payment date + applied to invoices
  * not yet due + applied to other receivable debits + not matched yet (as of the last load); the payment count; and the
@@ -29,7 +32,7 @@
 import type { Pool } from 'mysql2/promise';
 import { odooWebBaseUrl } from '../config/finance';
 import { customerCategoryCondition } from '../lib/customerCategory';
-import { DebtQueryError, linesSource, parseDebtQuery, type DebtQuery } from './debtReport';
+import { COMPANY_CURRENCY, DebtQueryError, linesSource, parseDebtQuery, type DebtQuery } from './debtReport';
 import type { Filters } from './filters';
 
 export type CollectionGrain = 'day' | 'week' | 'month';
@@ -42,6 +45,8 @@ export const BUSINESS_TIME_ZONE = 'Africa/Tripoli';
 
 export interface CollectionsQuery {
   currency: string | null;
+  /** every currency in LYD; only when no currency is given */
+  allCurrencies: boolean;
   grain: CollectionGrain;
   from: string;
   to: string;
@@ -115,7 +120,8 @@ export function parseCollectionsQuery(q: Record<string, unknown>, today = todayI
   periodsBetween(from, to, grain); // 400 at most
   const currency = typeof q.currency === 'string' && q.currency ? q.currency : null;
   if (currency && !/^[A-Z]{3}$/.test(currency)) throw new DebtQueryError('currency must be a 3-letter code');
-  return { currency, grain, from, to, debt: parseDebtQuery(q) };
+  const allCurrencies = !currency && (q.allCurrencies === 'true' || q.allCurrencies === '1' || q.allCurrencies === true);
+  return { currency, allCurrencies, grain, from, to, debt: parseDebtQuery(q) };
 }
 
 // ---- SQL --------------------------------------------------------------------------------------------------------------
@@ -160,6 +166,14 @@ export function collectionSource(cq: CollectionsQuery, f: Filters, currency: str
 
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
 type Row = Record<string, any>;
+
+/** One payment column in the payment currency, or in LYD (all currencies): the payment's Odoo LYD amount, its split at
+ * that payment's own LYD / payment-currency ratio (so the parts still add up to the LYD amount). */
+function amountSql(column: 'amount' | 'applied_overdue' | 'applied_not_due' | 'applied_other' | 'unapplied', allCurrencies: boolean): string {
+  if (!allCurrencies) return `v.${column}_doc_ccy`;
+  if (column === 'amount') return 'v.amount_company_ccy';
+  return `COALESCE(v.${column}_doc_ccy * v.amount_company_ccy / NULLIF(v.amount_doc_ccy, 0), 0)`;
+}
 async function rows(pool: Pool, sql: string, params: unknown[]): Promise<Row[]> {
   const [r] = await pool.query(sql, params);
   return r as Row[];
@@ -185,6 +199,8 @@ export interface CollectionPoint {
 
 export interface CollectionsTrend {
   currency: string | null;
+  /** true = every currency together, amounts in LYD (≈) */
+  allCurrencies: boolean;
   currencies: string[];
   grain: CollectionGrain;
   from: string;
@@ -196,30 +212,32 @@ export interface CollectionsTrend {
 }
 
 export async function fetchCollectionsTrend(pool: Pool, cq: CollectionsQuery, f: Filters): Promise<CollectionsTrend> {
-  const all = collectionSource(cq, f, null);
-  const byCcy = await rows(pool, `SELECT v.currency, COUNT(DISTINCT v.payment_id) AS n ${all.sql} GROUP BY v.currency ORDER BY n DESC, v.currency`, all.params);
+  const every = collectionSource(cq, f, null);
+  const byCcy = await rows(pool, `SELECT v.currency, COUNT(DISTINCT v.payment_id) AS n ${every.sql} GROUP BY v.currency ORDER BY n DESC, v.currency`, every.params);
   const currencies = byCcy.map((r) => String(r.currency));
-  const currency = cq.currency ?? currencies[0] ?? null;
+  const all = cq.allCurrencies;
+  const currency = all ? COMPANY_CURRENCY : (cq.currency ?? currencies[0] ?? null);
   const periods = periodsBetween(cq.from, cq.to, cq.grain);
   const meta = (await rows(pool, "SELECT DATE_FORMAT(MIN(payment_date), '%Y-%m-%d') AS first, DATE_FORMAT(MAX(loaded_at_utc), '%Y-%m-%dT%H:%i:%sZ') AS loaded FROM fact_finance_collection", []))[0] ?? {};
   const empty = (p: Period): CollectionPoint => ({
     periodStart: p.start, periodEnd: p.end, collected: 0, appliedOverdue: 0, appliedNotDue: 0, appliedOther: 0, unapplied: 0, payments: 0,
     startOverdue: null, collectedOnStartOverdue: null, collectionRate: null,
   });
-  if (!currency) return { currency, currencies, grain: cq.grain, from: cq.from, to: cq.to, points: periods.map(empty), firstPaymentDate: meta.first ?? null, loadedAt: meta.loaded ?? null };
-  const s = collectionSource(cq, f, currency);
+  if (!currency) return { currency, allCurrencies: all, currencies, grain: cq.grain, from: cq.from, to: cq.to, points: periods.map(empty), firstPaymentDate: meta.first ?? null, loadedAt: meta.loaded ?? null };
+  const s = collectionSource(cq, f, all ? null : currency);
   const r = await rows(
     pool,
-    `SELECT DATE_FORMAT(${PERIOD_SQL[cq.grain]}, '%Y-%m-%d') AS p, SUM(v.amount_doc_ccy) AS collected,
-            SUM(v.applied_overdue_doc_ccy) AS overdue, SUM(v.applied_not_due_doc_ccy) AS not_due,
-            SUM(v.applied_other_doc_ccy) AS other, SUM(v.unapplied_doc_ccy) AS unapplied, COUNT(DISTINCT v.payment_id) AS payments
+    `SELECT DATE_FORMAT(${PERIOD_SQL[cq.grain]}, '%Y-%m-%d') AS p, SUM(${amountSql('amount', all)}) AS collected,
+            SUM(${amountSql('applied_overdue', all)}) AS overdue, SUM(${amountSql('applied_not_due', all)}) AS not_due,
+            SUM(${amountSql('applied_other', all)}) AS other, SUM(${amountSql('unapplied', all)}) AS unapplied, COUNT(DISTINCT v.payment_id) AS payments
      ${s.sql} GROUP BY p`,
     s.params,
   );
   const byPeriod = new Map(r.map((x) => [String(x.p), x]));
-  const rates = await startOverdueRates(pool, cq, f, currency, periods);
+  const rates = await startOverdueRates(pool, cq, f, all ? null : currency, periods);
   return {
     currency,
+    allCurrencies: all,
     currencies,
     grain: cq.grain,
     from: cq.from,
@@ -246,8 +264,9 @@ export async function fetchCollectionsTrend(pool: Pool, cq: CollectionsQuery, f:
 }
 
 /** Per period with a receivable snapshot on the day before it: the overdue open when the period starts (same filters)
- * and the money applied to those very invoice lines by payments dated in the period. */
-async function startOverdueRates(pool: Pool, cq: CollectionsQuery, f: Filters, currency: string, periods: Period[]): Promise<Map<string, { start: number; collected: number }>> {
+ * and the money applied to those very invoice lines by payments dated in the period. currency null = every currency in
+ * LYD (each applied amount at its invoice line's own LYD / invoice-currency ratio). */
+async function startOverdueRates(pool: Pool, cq: CollectionsQuery, f: Filters, currency: string | null, periods: Period[]): Promise<Map<string, { start: number; collected: number }>> {
   const snaps = new Set(
     (await rows(pool, "SELECT DISTINCT DATE_FORMAT(STR_TO_DATE(SnapshotDateKey, '%Y%m%d'), '%Y-%m-%d') AS d FROM fact_finance_receivable_snapshot", [])).map((x) => String(x.d)),
   );
@@ -257,16 +276,27 @@ async function startOverdueRates(pool: Pool, cq: CollectionsQuery, f: Filters, c
     const s = linesSource(Number(addDays(p.start, -1).replace(/-/g, '')), q, f);
     // aged as of the day before: due on or before it (days_past_due >= 0) = overdue on the period's first day
     const outerWhere = /\)\s*l\s*WHERE/.test(s.sql); // linesSource adds the outer WHERE only for page filters
-    const cond = `${outerWhere ? ' AND' : ' WHERE'} l.line_kind = 'invoice' AND l.currency = ? AND l.days_past_due >= 0`;
-    const [x] = await rows(
-      pool,
-      `SELECT (SELECT SUM(l.residual_doc_ccy) ${s.sql}${cond}) AS start_overdue,
-              (SELECT SUM(m.applied_invoice_ccy) FROM fact_finance_collection_invoice m
-                 JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
-                WHERE c.payment_date BETWEEN ? AND ? AND c.is_intercompany = 0
-                  AND m.debit_line_id IN (SELECT l.line_id ${s.sql}${cond})) AS collected`,
-      [...s.params, currency, p.start, p.end, ...s.params, currency],
-    );
+    const cond = `${outerWhere ? ' AND' : ' WHERE'} l.line_kind = 'invoice'${currency ? ' AND l.currency = ?' : ''} AND l.days_past_due >= 0`;
+    const [x] = currency
+      ? await rows(
+          pool,
+          `SELECT (SELECT SUM(l.residual_doc_ccy) ${s.sql}${cond}) AS start_overdue,
+                  (SELECT SUM(m.applied_invoice_ccy) FROM fact_finance_collection_invoice m
+                     JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
+                    WHERE c.payment_date BETWEEN ? AND ? AND c.is_intercompany = 0
+                      AND m.debit_line_id IN (SELECT l.line_id ${s.sql}${cond})) AS collected`,
+          [...s.params, currency, p.start, p.end, ...s.params, currency],
+        )
+      : await rows(
+          pool,
+          `SELECT (SELECT SUM(l.residual_company_ccy) ${s.sql}${cond}) AS start_overdue,
+                  (SELECT SUM(COALESCE(m.applied_invoice_ccy * o.residual_company_ccy / NULLIF(o.residual_doc_ccy, 0), 0))
+                     FROM fact_finance_collection_invoice m
+                     JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
+                     JOIN (SELECT l.line_id, l.residual_doc_ccy, l.residual_company_ccy ${s.sql}${cond}) o ON o.line_id = m.debit_line_id
+                    WHERE c.payment_date BETWEEN ? AND ? AND c.is_intercompany = 0) AS collected`,
+          [...s.params, ...s.params, p.start, p.end],
+        );
     out.set(p.start, { start: num(x?.start_overdue), collected: num(x?.collected) });
   }
   return out;
@@ -278,6 +308,10 @@ export interface CollectionPaymentRow {
   payment: string;
   paymentDate: string;
   company: string;
+  /** the payment currency (the amounts below are in it) */
+  currency: string;
+  /** the payment's amount in LYD (Odoo's own): what an all-currencies bar adds up */
+  amountCompany: number;
   customer: string;
   salesperson: string;
   salesTeam: string;
@@ -292,16 +326,16 @@ export interface CollectionPaymentRow {
   odooUrl: string;
 }
 
-export async function fetchCollectionsDrilldown(pool: Pool, cq: CollectionsQuery, f: Filters, period: string): Promise<{ rows: CollectionPaymentRow[]; truncated: boolean; currency: string | null; period: Period }> {
+export async function fetchCollectionsDrilldown(pool: Pool, cq: CollectionsQuery, f: Filters, period: string): Promise<{ rows: CollectionPaymentRow[]; truncated: boolean; currency: string | null; allCurrencies: boolean; period: Period }> {
   if (!ISO.test(period)) throw new DebtQueryError('period must be YYYY-MM-DD (the first day of the period)');
   const p = { start: periodStart(period, cq.grain), end: periodEnd(periodStart(period, cq.grain), cq.grain) };
   const currency = cq.currency;
-  if (!currency) throw new DebtQueryError('currency is required');
+  if (!currency && !cq.allCurrencies) throw new DebtQueryError('currency (or allCurrencies) is required');
   const s = collectionSource({ ...cq, from: p.start, to: p.end }, f, currency);
   const r = await rows(
     pool,
     `SELECT v.payment_id, v.allocation_no, v.payment_name, DATE_FORMAT(v.payment_date, '%Y-%m-%d') AS payment_date, v.company, v.customer,
-            v.salesperson, v.sales_team, v.attribution, v.amount_doc_ccy, v.applied_overdue_doc_ccy, v.applied_not_due_doc_ccy,
+            v.currency, v.amount_company_ccy, v.salesperson, v.sales_team, v.attribution, v.amount_doc_ccy, v.applied_overdue_doc_ccy, v.applied_not_due_doc_ccy,
             v.applied_other_doc_ccy, v.unapplied_doc_ccy
      ${s.sql} ORDER BY v.payment_date, v.amount_doc_ccy DESC, v.payment_id, v.allocation_no LIMIT ${DRILL_LIMIT + 1}`,
     s.params,
@@ -326,7 +360,8 @@ export async function fetchCollectionsDrilldown(pool: Pool, cq: CollectionsQuery
   }
   const base = odooWebBaseUrl();
   return {
-    currency,
+    currency: currency ?? COMPANY_CURRENCY,
+    allCurrencies: !currency,
     period: p,
     truncated,
     rows: page.map((x) => ({
@@ -334,6 +369,8 @@ export async function fetchCollectionsDrilldown(pool: Pool, cq: CollectionsQuery
       payment: String(x.payment_name ?? ''),
       paymentDate: String(x.payment_date),
       company: String(x.company ?? ''),
+      currency: String(x.currency ?? ''),
+      amountCompany: num(x.amount_company_ccy),
       customer: String(x.customer ?? ''),
       salesperson: String(x.salesperson ?? ''),
       salesTeam: String(x.sales_team ?? ''),

@@ -172,13 +172,17 @@ describe('parseDrill', () => {
     expect(parseDrill({ kind: 'account', key: '1:3575', currency: 'LYD' }).key).toBe('1:3575');
   });
 
+  it('no currency = every currency (the All currencies view)', () => {
+    expect(parseDrill({ kind: 'aging', key: '5' })).toEqual({ kind: 'aging', key: '5', currency: null });
+    expect(parseDrill({ kind: 'team', key: 'MJ-EST-BB', currency: '' }).currency).toBeNull();
+  });
+
   it.each([
     [{ key: '1', currency: 'LYD' }],
     [{ kind: 'invoice', key: '1', currency: 'LYD' }],
     [{ kind: 'customer', key: 'x', currency: 'LYD' }],
     [{ kind: 'account', key: '1', currency: 'LYD' }],
     [{ kind: 'team', key: "x' OR 1=1", currency: 'LYD' }],
-    [{ kind: 'aging', key: '5' }],
     [{ kind: 'aging', key: '5', currency: 'DOLLARS' }],
   ])('rejects %j', (raw) => {
     expect(() => parseDrill(raw)).toThrow(DebtQueryError);

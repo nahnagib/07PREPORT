@@ -16,6 +16,9 @@ import {
   OVERDUE_STATUS_OPTIONS,
   SIZE_TIER_HINT,
   agingColors,
+  customerAgingBucket,
+  customerBucketColor,
+  customerBucketOptions,
   dailyTrendPoints,
   fromIncludeValues,
   includeValues,
@@ -24,9 +27,12 @@ import {
   pctLabel,
   tierLabel,
   toScope,
+  toggleCurrency,
+  type CustomerBucket,
   type DebtPageFilters,
   type LabelLang,
 } from '../../../../lib/debt/view';
+import { useUrlCurrency } from '../../../../lib/debt/useUrlCurrency';
 import { CUSTOMER_CATEGORY_DEFINITION } from '../../../../lib/customerCategory';
 import {
   Button,
@@ -52,18 +58,24 @@ import {
  * add the other receivable entries and the inter-company balances.
  *
  * The whole page leaves out the excluded segments and sales teams (warehouse table cfg_finance_report_exclusion,
- * applied by the API to every number; listed in the strip from GET /debt-report/meta). Every amount is in its own
- * currency -- never added across currencies, never converted: the KPI cards show one group per currency, the charts
- * and the trend show the currency picked in the selector, the customer table one row per company + customer +
- * currency. Clicking a chart bar or a table row opens the lines behind it (GET /debt-report/drilldown), which add up to
- * the figure clicked.
+ * applied by the API to every number; listed in the strip from GET /debt-report/meta). The KPI cards show one group
+ * per currency, the customer table one row per company + customer + currency. Clicking a chart bar or a table row
+ * opens the lines behind it (GET /debt-report/drilldown), which add up to the figure clicked.
+ *
+ * Currency filter (2026-10-15; replaces the "Charts currency" toggle): one page-wide filter, kept in the URL
+ * (?currency=USD, lib/debt/useUrlCurrency.ts) so a view can be shared and survives a refresh. Default (no currency):
+ * "All currencies (≈ LYD)" -- the Aging Map, every chart, both trends, the drill-downs and the customer table add up
+ * every currency in LYD, exactly as the header's grand total does: Odoo's own Amount Due in LYD, at the rate Odoo
+ * booked on each invoice's date (never a rate of ours), always marked "≈". Clicking a currency row of cards (a button,
+ * aria-pressed) shows that currency alone, in its own units; clicking it again goes back to all currencies. The header
+ * band (DebtTotalBand) always shows every currency, whatever the filter.
  *
  * Definitions (decisions of 2026-10-06, so the page matches Odoo's Invoices list): "Total debt" = the open amount
  * of customer invoices only (Odoo's Amount Due), counted like Odoo; Overdue + Not yet due split it (each 0-100%); the
  * customer count is customers with an open invoice. Credit notes, unreconciled payments and the two toggles' lines
  * never reach the cards, the charts or the Aging Map: they only show in the customer table (Unapplied credits, Net
  * balance) and its drill-down. The Aging Map (components/debt/DebtAgingMap.tsx, GET /debt-report/aging) places every customer of
- * the charts currency by its oldest open invoice against that invoice's term; it ignores the line-level filters
+ * the page's currency (all currencies: every customer once) by its oldest open invoice against that invoice's term; it ignores the line-level filters
  * (overdue status, aging bucket, delivery status, payment term, invoice size), which would change which invoice is the
  * oldest, and has its own term filter.
  *
@@ -98,7 +110,8 @@ export default function ReceivablesCollectionsPage() {
   const [filters, setFilters] = useState<DebtPageFilters>(DEFAULT_DEBT_FILTERS);
   // Odoo labels in English (the "Odoo labels" EN/AR switch was removed from the filters 2026-10-13).
   const lang: LabelLang = 'en';
-  const [pickedCurrency, setPickedCurrency] = useState<string | null>(null);
+  // the page-wide currency filter (?currency=USD); null = every currency in LYD
+  const { currency, setCurrency, ready: currencyReady } = useUrlCurrency();
   const [drill, setDrill] = useState<DebtDrillTarget | null>(null);
   const [showAllPeople, setShowAllPeople] = useState(false);
   const [agingTerm, setAgingTerm] = useState<string | null>(null);
@@ -118,7 +131,7 @@ export default function ReceivablesCollectionsPage() {
   const drillExtra = useMemo<Record<string, string | number>>(
     () => {
       const extra: Record<string, string | number> = {};
-      if (drill) Object.assign(extra, { kind: drill.kind, key: drill.key, currency: drill.currency });
+      if (drill) Object.assign(extra, { kind: drill.kind, key: drill.key }, drill.currency ? { currency: drill.currency } : {});
       return extra;
     },
     [drill],
@@ -144,41 +157,45 @@ export default function ReceivablesCollectionsPage() {
 
   const snapshotDate = overview.data?.snapshotDate ?? meta.data?.snapshotDate ?? null;
   const currencies = overview.data?.currencies ?? [];
-  // the charts' currency: the one picked, else the first (most lines -- LYD); a pick that has no line any more falls back
-  const currency = currencies.find((c) => c.currency === pickedCurrency)?.currency ?? currencies[0]?.currency ?? null;
-  const cur: DebtCurrencyOverview | undefined = currencies.find((c) => c.currency === currency);
+  // what the charts show: the picked currency in its own units, else every currency in LYD (≈, Odoo's own amounts)
+  const cur: DebtCurrencyOverview | undefined = currency ? currencies.find((c) => c.currency === currency) : overview.data?.all;
+  const ccy = currency ?? LYD;
+  const approx = currency ? '' : '≈ ';
+  const viewLabel = currency ?? 'All currencies (≈ LYD)';
   const colors = useMemo(() => agingColors(cur?.aging ?? []), [cur?.aging]);
-  const compact = (v: number) => formatCompactMoney(currency ?? '', v);
-  const full = (v: number) => formatMoney(currency ?? '', v);
+  // axis ticks and bar labels stay short ("LYD 4.0M"; the titles say ≈ LYD); tooltips and tables carry the ≈
+  const compact = (v: number) => formatCompactMoney(ccy, v);
+  const full = (v: number) => `${approx}${formatMoney(ccy, v)}`;
+  const currencyParam = useMemo<Record<string, string>>(() => (currency ? { currency } : { allCurrencies: 'true' }) as Record<string, string>, [currency]);
 
-  // Aging Map: the charts currency; the line-level filters are left out (the server ignores them), so changing one does
+  // Aging Map: the page's currency (or all); the line-level filters are left out (the server ignores them), so changing one does
   // not reload the map
   const agingScope = useMemo(
     () => ({ ...scope, overdueStatus: 'all' as const, agingBucketKeys: [], deliveryStatuses: [], paymentTermKeys: [], invoiceTiers: [] }),
     [scope],
   );
   const agingExtra = useMemo<Record<string, string | number>>(() => {
-    const extra: Record<string, string | number> = {};
-    if (currency) extra.currency = currency;
+    const extra: Record<string, string | number> = { ...currencyParam };
     if (agingTerm) extra.term = agingTerm;
     return extra;
-  }, [currency, agingTerm]);
-  const aging = useDebtReport<DebtAging>(token, authError, retryAuth, 'aging', agingScope, agingExtra, allowed && currency !== null);
+  }, [currencyParam, agingTerm]);
+  const aging = useDebtReport<DebtAging>(token, authError, retryAuth, 'aging', agingScope, agingExtra, allowed && currencyReady);
   // Collections trend: payments carry their own date, so no snapshot date here -- full history, same filters
   const collectionScope = useMemo(() => ({ ...scope, snapshotDate: null }), [scope]);
-  const collectionExtra = useMemo<Record<string, string | number>>(() => ({ grain: collectionGrain, ...(currency ? { currency } : {}) }) as Record<string, string | number>, [currency, collectionGrain]);
-  const collections = useDebtReport<CollectionsTrend>(token, authError, retryAuth, 'collections-trend', collectionScope, collectionExtra, allowed && currency !== null);
+  const collectionExtra = useMemo<Record<string, string | number>>(() => ({ grain: collectionGrain, ...currencyParam }), [currencyParam, collectionGrain]);
+  const collections = useDebtReport<CollectionsTrend>(token, authError, retryAuth, 'collections-trend', collectionScope, collectionExtra, allowed && currencyReady);
   const collectionDrillExtra = useMemo<Record<string, string | number>>(
-    () => (collectionPoint && currency ? { currency, grain: collectionGrain, period: collectionPoint.periodStart } : {}) as Record<string, string | number>,
-    [collectionPoint, currency, collectionGrain],
+    () => (collectionPoint ? { ...currencyParam, grain: collectionGrain, period: collectionPoint.periodStart } : {}),
+    [collectionPoint, currencyParam, collectionGrain],
   );
   const collectionDrill = useDebtReport<CollectionsDrilldown>(token, authError, retryAuth, 'collections-drilldown', collectionScope, collectionDrillExtra, allowed && collectionPoint !== null);
   useEffect(() => setCollectionPoint(null), [collectionScope, currency, collectionGrain]);
   const closeCollectionDrill = useCallback(() => setCollectionPoint(null), []);
 
-  const openDrill = (kind: DebtDrillKind, key: string, label: string, expected: number) => {
-    if (currency) setDrill({ kind, key, label, currency, expected });
-  };
+  // a drill-down lists the lines of the page's currency, or of every currency (reconciled in LYD)
+  const openDrill = (kind: DebtDrillKind, key: string, label: string, expected: number) => setDrill({ kind, key, label, currency, expected });
+  // a new currency closes an open drill-down (it belonged to the previous view)
+  useEffect(() => setDrill(null), [currency]);
 
   // bar labels are what a click returns: made unique (two customers with the same name), mapped back to the point
   const groupPoints = (list: DebtCurrencyOverview['topCustomers'] | undefined, limit?: number): GroupedBarChartPoint[] => {
@@ -211,29 +228,58 @@ export default function ReceivablesCollectionsPage() {
     _key: a.agingBucketKey,
     _n: a.lineCount,
   }));
-  const trendPoints = dailyTrendPoints((trend.data?.points ?? []).filter((p) => p.currency === currency));
+  const trendPoints = dailyTrendPoints(currency ? (trend.data?.points ?? []).filter((p) => p.currency === currency) : (trend.data?.all ?? []));
 
   // ---- customer table ------------------------------------------------------------------------------------------------
-  const customerRows: CustomerGridRow[] = (customers.data?.rows ?? []).map((r) => ({
-    ...r,
-    id: `${r.companyKey}:${r.customerKey}:${r.currency}`,
-    salespersonList: r.salespersons.join(', '),
-    teamList: r.salesTeams.join(', '),
-    segmentList: r.segments.join(', '),
-  }));
+  // the page's currency filter decides the rows (the table has no currency filter of its own any more)
+  const agingBucketOptions = useMemo(() => o?.agingBuckets ?? [], [o?.agingBuckets]);
+  const customerRows: CustomerGridRow[] = useMemo(
+    () =>
+      (customers.data?.rows ?? [])
+        .filter((r) => !currency || r.currency === currency)
+        // all currencies: one ranking by overdue in LYD (the server sorts within each currency)
+        .sort((a, b) => (currency ? 0 : b.lyd.overdue - a.lyd.overdue || b.lyd.open - a.lyd.open || a.lyd.net - b.lyd.net))
+        .map((r) => {
+          const bucket = customerAgingBucket(r, agingBucketOptions);
+          return {
+            ...r,
+            id: `${r.companyKey}:${r.customerKey}:${r.currency}`,
+            salespersonList: r.salespersons.join(', '),
+            teamList: r.salesTeams.join(', '),
+            segmentList: r.segments.join(', '),
+            agingBucket: bucket.label,
+            bucket,
+          };
+        }),
+    [customers.data, currency, agingBucketOptions],
+  );
   const distinctOptions = (values: string[]) => [...new Set(values)].sort((a, b) => a.localeCompare(b)).map((v) => ({ value: v, label: v }));
-  const rowMoney = (key: 'invoiceAmount' | 'open' | 'overdue' | 'credits' | 'net', header: string): DataGridColumn<CustomerGridRow> => ({
-    key, header, align: 'right', width: 160, rawValue: (r) => r[key], render: (r) => formatMoney(r.currency, r[key]),
-  });
+  // one currency: each row in its own units; all currencies: every row in LYD (≈ unless the row already is in LYD)
+  const rowMoney = (key: 'invoiceAmount' | 'open' | 'overdue' | 'credits' | 'net', header: string): DataGridColumn<CustomerGridRow> =>
+    currency
+      ? { key, header, align: 'right', width: 160, rawValue: (r) => r[key], render: (r) => formatMoney(r.currency, r[key]) }
+      : {
+          key, header: `${header} (≈ LYD)`, align: 'right', width: 170, rawValue: (r) => r.lyd[key],
+          render: (r) => `${r.currency === LYD ? '' : '≈ '}${formatMoney(LYD, r.lyd[key])}`,
+        };
   const customerColumns: DataGridColumn<CustomerGridRow>[] = [
     { key: 'company', header: 'Company', width: 90, filterOptions: distinctOptions(customerRows.map((r) => r.company)) },
     { key: 'customer', header: 'Customer', width: 230, render: (r) => <span dir="auto">{r.customer}</span> },
     { key: 'customerCategory', header: 'Customer Category', width: 130, filterOptions: distinctOptions(customerRows.map((r) => r.customerCategory)) },
-    { key: 'currency', header: 'Currency', width: 90, filterOptions: distinctOptions(customerRows.map((r) => r.currency)) },
+    { key: 'currency', header: 'Currency', width: 90 },
     { key: 'openDocuments', header: 'Open invoices', align: 'right', width: 110, render: (r) => formatNumber(r.openDocuments) },
     rowMoney('invoiceAmount', 'Invoices amount'),
     rowMoney('open', 'Open invoices amount'),
     rowMoney('overdue', 'Overdue'),
+    {
+      key: 'agingBucket',
+      header: 'Aging bucket',
+      width: 140,
+      // by actual age: credits only (—) < Not due < days past due of the oldest overdue invoice
+      sortValue: (r) => (r.oldestOverdueDays ?? (r.openDocuments > 0 ? 0 : -1)),
+      filterOptions: customerBucketOptions(agingBucketOptions),
+      render: (r) => <BucketBadge bucket={r.bucket} days={r.oldestOverdueDays} />,
+    },
     rowMoney('credits', 'Unapplied credits'),
     rowMoney('net', 'Net balance'),
     listColumn('salespersonList', 'Salesperson', 180, distinctOptions(customerRows.flatMap((r) => r.salespersons)), (r) => r.salespersons),
@@ -392,7 +438,10 @@ export default function ReceivablesCollectionsPage() {
           ) : (
             <>
               {overview.data ? <DebtTotalBand all={overview.data.allCurrencies} currencies={currencies} snapshotDate={overview.data.snapshotDate} /> : null}
-              <h2 style={{ ...h2, margin: '4px 0 -8px', fontSize: 15, color: 'var(--ps-color-muted-text)' }}>By currency</h2>
+              <h2 style={{ ...h2, margin: '4px 0 -8px', fontSize: 15, color: 'var(--ps-color-muted-text)' }}>
+                By currency <span style={{ fontWeight: 400, fontSize: 12.5 }}>· click a currency to show it alone on the whole page</span>
+              </h2>
+              <style>{CURRENCY_ROW_CSS}</style>
               {currencies.map((c) => (
                 <DebtCards
                   key={c.currency}
@@ -400,19 +449,30 @@ export default function ReceivablesCollectionsPage() {
                   totals={c.kpis}
                   lyd={{ open: c.kpis.openAmountCompany, overdue: c.kpis.overdueAmountCompany, notDue: c.kpis.notDueAmountCompany }}
                   shareOfTotal={overview.data?.allCurrencies.openAmount ? c.kpis.openAmountCompany / overview.data.allCurrencies.openAmount : null}
+                  selected={currency === c.currency}
+                  dimmed={currency !== null && currency !== c.currency}
+                  onToggle={() => setCurrency(toggleCurrency(currency, c.currency))}
                 />
               ))}
               <p style={{ ...note, margin: 0 }}>{OPEN_INVOICES_NOTE}.</p>
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
-                <PillField label="Charts currency">
-                  {currencies.map((c) => (
-                    <Button key={c.currency} variant={c.currency === currency ? 'primary' : 'secondary'} style={pill} onClick={() => setPickedCurrency(c.currency)}>
-                      {c.currency}
-                    </Button>
-                  ))}
-                </PillField>
-                <p style={{ ...note, margin: 0 }}>The Aging Map, the charts and the trend below show {currency ?? '—'} only. Click a bar to see the invoices behind it.</p>
+              <div role="status" aria-live="polite" style={viewBar}>
+                <span>
+                  Showing: <strong style={{ color: 'var(--ps-color-text)' }}>{currency ? `${currency} only` : 'All currencies (≈ LYD)'}</strong>
+                </span>
+                {currency ? (
+                  <button type="button" onClick={() => setCurrency(null)} style={linkButton}>
+                    Clear
+                  </button>
+                ) : null}
+                <span>
+                  {currency
+                    ? currencies.some((c) => c.currency === currency)
+                      ? `Amounts in ${currency}.`
+                      : `No open ${currency} invoice for these filters.`
+                    : "Amounts are LYD equivalents: Odoo's Amount Due at the rate booked on each invoice's date."}{' '}
+                  Click a bar to see the invoices behind it.
+                </span>
               </div>
 
               <DebtAgingMap
@@ -425,7 +485,7 @@ export default function ReceivablesCollectionsPage() {
               />
 
               <div style={grid2}>
-              <ChartPanel title={`Receivables trend · ${currency ?? ''}`} infoText="Open invoices per snapshot date (line), split into overdue and not yet due (stacked bars), with the same filters">
+              <ChartPanel title={`Receivables trend · ${viewLabel}`} infoText="Open invoices per snapshot date (line), split into overdue and not yet due (stacked bars), with the same filters">
                 {trend.error ? (
                   <ErrorState message={trend.error} onRetry={trend.retry} />
                 ) : (
@@ -465,7 +525,7 @@ export default function ReceivablesCollectionsPage() {
                   const points = groupPoints(cur?.topCustomers);
                   return (
                     <ChartPanel
-                      title={`Overdue by customer · ${currency ?? ''}`}
+                      title={`Overdue by customer · ${viewLabel}`}
                       infoText={`Top ${meta.data?.topCustomers ?? 15} customers by overdue amount; % of the total overdue. Click a bar for its overdue invoices`}
                       tableColumns={[{ key: 'label', header: 'Customer' }, { key: 'overdueLabel', header: 'Overdue', align: 'right' }, { key: 'pctLabel', header: '% of total', align: 'right' }]}
                       tableRows={(cur?.topCustomers ?? []).map((g) => ({ ...g, overdueLabel: full(g.overdue), pctLabel: pctLabel(g.pctOfOverdue) }))}
@@ -490,7 +550,7 @@ export default function ReceivablesCollectionsPage() {
                 })()}
 
                 <ChartPanel
-                  title={`Distribution · ${currency ?? ''}`}
+                  title={`Distribution · ${viewLabel}`}
                   infoText="Open amount per aging bucket (days past the line's own due date). Not due in blue, overdue in red; due today is not overdue. Click a bar for its invoices"
                   tableColumns={[{ key: 'label', header: 'Bucket' }, { key: 'amountLabel', header: 'Open amount', align: 'right' }, { key: 'lineCount', header: 'Lines', align: 'right' }]}
                   tableRows={(cur?.aging ?? []).map((a) => ({ ...a, id: String(a.agingBucketKey), amountLabel: full(a.amount) }))}
@@ -530,7 +590,7 @@ export default function ReceivablesCollectionsPage() {
                   return (
                     <ChartPanel
                       key={kind}
-                      title={`${title} · ${currency ?? ''}`}
+                      title={`${title} · ${viewLabel}`}
                       infoText={info}
                       tableColumns={[{ key: 'label', header: 'Name' }, { key: 'overdueLabel', header: 'Overdue', align: 'right' }, { key: 'pctLabel', header: '% of total', align: 'right' }]}
                       tableRows={(list ?? []).map((g) => ({ ...g, overdueLabel: full(g.overdue), pctLabel: pctLabel(g.pctOfOverdue) }))}
@@ -565,12 +625,13 @@ export default function ReceivablesCollectionsPage() {
           )}
 
           <section style={{ minWidth: 0 }}>
-            <h2 style={h2}>Customers</h2>
+            <h2 style={h2}>Customers · {viewLabel}</h2>
             <p style={note}>
-              One row per company, customer and currency, sorted by overdue. Open invoices, their amounts and Overdue count customer invoices
-              only; Unapplied credits = credit notes + unreconciled payments; Net balance = every line (customers with credits only are listed
-              too). Salesperson, team and segment list every value on the customer’s lines. Click a row for every open document behind its net
-              balance.
+              One row per company, customer and currency, sorted by overdue{currency ? `; ${currency} rows only` : '; amounts in LYD (≈ = converted at Odoo’s booked rate)'}. Open
+              invoices, their amounts and Overdue count customer invoices only; Unapplied credits = credit notes + unreconciled payments; Net
+              balance = every line (customers with credits only are listed too). Aging bucket = the bucket of the oldest overdue invoice
+              (Not due when nothing is overdue, — with credits only). Salesperson, team and segment list every value on the customer’s lines.
+              Click a row for every open document behind its net balance.
             </p>
             {customers.error ? (
               <ErrorState message={customers.error} onRetry={customers.retry} />
@@ -581,7 +642,8 @@ export default function ReceivablesCollectionsPage() {
                 columns={customerColumns}
                 rows={customerRows}
                 getRowId={(r) => r.id}
-                fileName={`receivables-collections-customers-${snapshotDate ?? 'latest'}`}
+                fileName={`receivables-collections-customers-${currency ?? 'all-currencies'}-${snapshotDate ?? 'latest'}`}
+                extraFilterParts={[`Currency: ${currency ?? 'All currencies (≈ LYD)'}`]}
                 pageSize={15}
                 maxBodyHeight={520}
                 onRowClick={(r) => setDrill({ kind: 'account', key: `${r.companyKey}:${r.customerKey}`, label: `${r.customer} · ${r.company}`, currency: r.currency, expected: r.net })}
@@ -602,7 +664,7 @@ export default function ReceivablesCollectionsPage() {
           />
         ) : null}
 
-        {collectionPoint && currency ? (
+        {collectionPoint ? (
           <CollectionsDrilldownModal
             point={collectionPoint}
             grain={collectionGrain}
@@ -621,7 +683,34 @@ export default function ReceivablesCollectionsPage() {
   );
 }
 
-type CustomerGridRow = DebtCustomerRow & { id: string; salespersonList: string; teamList: string; segmentList: string } & Record<string, unknown>;
+type CustomerGridRow = DebtCustomerRow & {
+  id: string;
+  salespersonList: string;
+  teamList: string;
+  segmentList: string;
+  /** the Aging bucket column (lib/debt/view.ts customerAgingBucket) */
+  agingBucket: string;
+  bucket: CustomerBucket;
+} & Record<string, unknown>;
+
+/** The Aging bucket cell: a coloured badge, green for Not due, amber to red as the oldest overdue invoice ages. */
+function BucketBadge({ bucket, days }: { bucket: CustomerBucket; days: number | null }) {
+  if (bucket.rank < 0) return <span style={{ color: 'var(--ps-color-muted-text)' }}>{bucket.label}</span>;
+  const tone = customerBucketColor(bucket);
+  return (
+    <span
+      title={days !== null ? `Oldest overdue invoice: ${formatNumber(days)} days past due` : 'No overdue invoice'}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, padding: '1px 9px 1px 7px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+        whiteSpace: 'nowrap', color: 'var(--ps-color-text)', border: `1px solid color-mix(in srgb, ${tone} 60%, transparent)`,
+        background: `color-mix(in srgb, ${tone} 18%, transparent)`,
+      }}
+    >
+      <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, background: tone }} />
+      {bucket.label}
+    </span>
+  );
+}
 
 /** A column listing several names; its dropdown filter keeps the rows where any of them matches. */
 function listColumn(
@@ -634,7 +723,23 @@ function listColumn(
   return { key, header, width, filterOptions, filterMatch: (r, v) => values(r).includes(v), render: (r) => <span dir="auto">{r[key]}</span> };
 }
 
-const pill: React.CSSProperties = { padding: '6px 12px', fontSize: 12.5 };
+const viewBar: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 12px', fontSize: 12.5, color: 'var(--ps-color-muted-text)' };
+const linkButton: React.CSSProperties = {
+  background: 'none', border: 'none', padding: 0, font: 'inherit', fontWeight: 600, color: 'var(--ps-color-accent)', textDecoration: 'underline', cursor: 'pointer',
+};
+/** A currency row of cards is the page's currency filter: hover lifts it, the selected row glows in its currency's
+ * colour (--ccy-tone, tokens.css --ps-ccy-*), the others dim while one is selected. */
+const CURRENCY_ROW_CSS = `
+.ps-ccy-row { min-width: 0; margin: 0 -12px; padding: 10px; border-radius: 14px; border: 2px solid transparent; cursor: pointer; outline: none;
+  transition: opacity .15s, border-color .15s, box-shadow .15s, transform .15s; }
+.ps-ccy-row:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--ccy-tone) 45%, transparent); }
+.ps-ccy-row:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ccy-tone) 50%, transparent); }
+.ps-ccy-row[aria-pressed="true"] { border-color: var(--ccy-tone);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ccy-tone) 20%, transparent), 0 6px 18px color-mix(in srgb, var(--ccy-tone) 22%, transparent); }
+.ps-ccy-row[data-dimmed="true"] { opacity: .5; }
+.ps-ccy-row[data-dimmed="true"]:hover { opacity: .8; }
+@media (prefers-reduced-motion: reduce) { .ps-ccy-row { transition: none; } .ps-ccy-row:hover { transform: none; } }
+`;
 const grid2: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 440px), 1fr))', gap: 'var(--ps-space-3, 16px)' };
 const strip: React.CSSProperties = {
   display: 'flex', flexWrap: 'wrap', gap: '4px 20px', padding: '6px clamp(16px, 3vw, 24px)', fontSize: 12,
@@ -755,14 +860,46 @@ function DebtTotalBand({ all, currencies, snapshotDate }: { all: CardTotals & { 
 /**
  * One row of exactly five cards: Total debt, Customers, Invoices, Overdue, Not yet due. `lyd` = the same three amounts
  * in LYD (Odoo's own company-currency amounts), shown under each amount; null when the row already is in LYD.
- * `shareOfTotal` = the row's share of the grand total (its segment of the band's mix bar).
+ * `shareOfTotal` = the row's share of the grand total (its segment of the band's mix bar). The whole row is one
+ * toggle button (2026-10-15): it sets / clears the page's currency filter.
  */
-function DebtCards({ currency, totals: t, lyd, shareOfTotal }: { currency: string; totals: CardTotals; lyd: { open: number; overdue: number; notDue: number } | null; shareOfTotal: number | null }) {
+function DebtCards({
+  currency,
+  totals: t,
+  lyd,
+  shareOfTotal,
+  selected,
+  dimmed,
+  onToggle,
+}: {
+  currency: string;
+  totals: CardTotals;
+  lyd: { open: number; overdue: number; notDue: number } | null;
+  shareOfTotal: number | null;
+  selected: boolean;
+  dimmed: boolean;
+  onToggle: () => void;
+}) {
   // the second line is always the exact LYD figure: "≈ LYD ..." for a foreign currency, the exact amount otherwise
   const lydLine = (own: number, inLyd: number | undefined) =>
     lyd && currency !== LYD ? `≈ ${formatMoney(LYD, inLyd ?? 0)}` : formatMoney(currency, own);
   return (
-    <section aria-label={`${currency} totals`} style={{ minWidth: 0 }}>
+    <section
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={`${currency} totals: ${selected ? `showing ${currency} only, press to show all currencies` : `press to show ${currency} only`}`}
+      className="ps-ccy-row"
+      data-dimmed={dimmed}
+      style={{ '--ccy-tone': currencyTone(currency) } as React.CSSProperties}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 8px' }}>
         <CurrencyBadge currency={currency} />
         {shareOfTotal !== null ? <span style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)' }}>{pctLabel(shareOfTotal)} of total debt</span> : null}
@@ -812,15 +949,6 @@ function Field({ children, width = 160, title }: { children: React.ReactNode; wi
   return (
     <div title={title} style={{ width, flexShrink: 0, maxWidth: '100%' }}>
       {children}
-    </div>
-  );
-}
-
-function PillField({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '100%' }}>
-      <span style={{ display: 'block', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--ps-color-muted-text)', marginBottom: 4 }}>{label}</span>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minHeight: 38, alignItems: 'center' }}>{children}</div>
     </div>
   );
 }

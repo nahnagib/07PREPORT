@@ -162,7 +162,7 @@ describe('Debt Report access', () => {
   it('400 on a bad parameter, 400 on an incomplete drill-down', async () => {
     expect((await get('/debt-report/overview?overdueStatus=late', 'gcfo')).status).toBe(400);
     expect((await get('/debt-report/drilldown', 'gcfo')).status).toBe(400);
-    expect((await get('/debt-report/drilldown?kind=aging&key=5', 'gcfo')).status).toBe(400); // no currency
+    expect((await get('/debt-report/drilldown?kind=aging&key=5&currency=DOLLARS', 'gcfo')).status).toBe(400);
     expect((await get('/debt-report/drilldown?kind=team&key=a%27b&currency=LYD', 'gcfo')).status).toBe(400);
     expect((await get('/debt-report/aging?currency=LYDX', 'gcfo')).status).toBe(400);
     expect((await get('/debt-report/aging?term=x', 'gcfo')).status).toBe(400);

@@ -8,7 +8,8 @@ import { safeOdooUrl } from '../../lib/debt/view';
 
 /**
  * Collections trend (GET /debt-report/collections-trend, backend measures/debtCollections.ts): posted customer payments
- * per day / week (Sunday..Saturday) / month, in the page's chart currency, split by what they paid -- invoices overdue on
+ * per day / week (Sunday..Saturday) / month, in the page's currency (or every currency in LYD, "≈ LYD", when the page
+ * shows all currencies -- each payment at Odoo's own LYD amount), split by what they paid -- invoices overdue on
  * the payment date, invoices not yet due, other receivables, and money not matched to anything yet -- with the total
  * collected (line) and the collection rate against the overdue open at the start of the period (right axis, only where
  * a receivable snapshot exists on the period's first day). Click a period for its payments.
@@ -55,8 +56,11 @@ export function CollectionsTrendPanel({
   onPeriodClick: (p: CollectionPoint) => void;
 }) {
   const ccy = data?.currency ?? currency ?? '';
+  const approx = data?.allCurrencies ? '≈ ' : '';
+  const viewLabel = data?.allCurrencies ? 'All currencies (≈ LYD)' : ccy;
+  // axis ticks and bar labels stay short ("LYD 4.0M"; the titles say ≈ LYD); tooltips and tables carry the ≈
   const compact = (v: number) => formatCompactMoney(ccy, v);
-  const full = (v: number) => formatMoney(ccy, v);
+  const full = (v: number) => `${approx}${formatMoney(ccy, v)}`;
   const list = data?.points ?? [];
   const byLabel = new Map(list.map((p) => [periodLabel(p, grain), p]));
   const hasRate = list.some((p) => p.collectionRate !== null);
@@ -80,7 +84,7 @@ export function CollectionsTrendPanel({
     </div>
   );
   return (
-    <ChartPanel title={`Collections trend · ${ccy}`} infoText={COLLECTIONS_INFO} headerActions={header}>
+    <ChartPanel title={`Collections trend · ${viewLabel}`} infoText={COLLECTIONS_INFO} headerActions={header}>
       {error ? (
         <ErrorState message={error} onRetry={onRetry} />
       ) : loading && !data ? (
@@ -88,7 +92,7 @@ export function CollectionsTrendPanel({
       ) : !data || data.points.every((p) => p.payments === 0) ? (
         <>
           <p style={note}>{COLLECTIONS_NOTE}</p>
-          <EmptyState message={`No ${ccy} customer payment in this range for these filters.`} />
+          <EmptyState message={data?.allCurrencies ? 'No customer payment in this range for these filters.' : `No ${ccy} customer payment in this range for these filters.`} />
         </>
       ) : (
         <>
@@ -96,7 +100,7 @@ export function CollectionsTrendPanel({
             {COLLECTIONS_NOTE} History from {formatDate(data.firstPaymentDate)}; {hasRate ? 'collection rate where a snapshot exists at the period start.' : 'no collection rate in this range (it needs a receivable snapshot on the day before a period starts).'}
           </p>
           <ComboChart
-            title={`Collections trend ${ccy}`}
+            title={`Collections trend ${viewLabel}`}
             showTitle={false}
             points={points}
             bars={[
@@ -145,7 +149,8 @@ export function CollectionsDrilldownModal({
 }: {
   point: CollectionPoint;
   grain: CollectionGrain;
-  currency: string;
+  /** null = every currency: each payment in its own currency, reconciled on its LYD amount */
+  currency: string | null;
   data: CollectionsDrilldown | null;
   loading: boolean;
   error: string | null;
@@ -157,8 +162,10 @@ export function CollectionsDrilldownModal({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+  const all = currency === null;
+  const total$ = (v: number) => (all ? `≈ ${formatMoney('LYD', v)}` : formatMoney(currency, v));
   const money = (key: keyof CollectionPaymentRow & string, header: string): DataGridColumn<PayGridRow> => ({
-    key, header, align: 'right', width: 140, rawValue: (r) => Number(r[key] ?? 0), render: (r) => formatMoney(currency, Number(r[key] ?? 0)),
+    key, header, align: 'right', width: 140, rawValue: (r) => Number(r[key] ?? 0), render: (r) => formatMoney(r.currency || (currency ?? ''), Number(r[key] ?? 0)),
   });
   const columns: DataGridColumn<PayGridRow>[] = [
     { key: 'payment', header: 'Payment', width: 160 },
@@ -168,6 +175,9 @@ export function CollectionsDrilldownModal({
     { key: 'salesperson', header: 'Salesperson', width: 150, render: (r) => <span dir="auto">{r.salesperson}</span> },
     { key: 'salesTeam', header: 'Branch', width: 150, render: (r) => <span dir="auto">{r.salesTeam}</span> },
     money('amount', 'Amount'),
+    ...(all
+      ? [{ key: 'amountCompany', header: 'Amount (≈ LYD)', align: 'right', width: 140, rawValue: (r) => r.amountCompany, render: (r) => `${r.currency === 'LYD' ? '' : '≈ '}${formatMoney('LYD', r.amountCompany)}` } as DataGridColumn<PayGridRow>]
+      : []),
     money('appliedOverdue', 'Overdue invoices'),
     money('appliedNotDue', 'Not yet due'),
     money('appliedOther', 'Other'),
@@ -186,9 +196,9 @@ export function CollectionsDrilldownModal({
     },
   ];
   const rows: PayGridRow[] = (data?.rows ?? []).map((r, i) => ({ ...r, id: `${r.paymentId}:${i}` }));
-  const total = rows.reduce((s, r) => s + r.amount, 0);
+  const total = rows.reduce((s, r) => s + (all ? r.amountCompany : r.amount), 0);
   const reconciled = data && !data.truncated && Math.abs(total - point.collected) < 0.01;
-  const title = `Payments · ${periodTitle(point, grain)} · ${currency}`;
+  const title = `Payments · ${periodTitle(point, grain)} · ${currency ?? 'All currencies (≈ LYD)'}`;
   return (
     <div role="presentation" onClick={onClose} style={overlay}>
       <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()} style={panel}>
@@ -210,13 +220,13 @@ export function CollectionsDrilldownModal({
             <div role="status" style={summary}>
               <span>{formatNumber(new Set(rows.map((r) => r.paymentId)).size)} payments</span>
               <span>
-                Total <strong>{formatMoney(currency, total)}</strong>
+                Total <strong>{total$(total)}</strong>
               </span>
               <span style={{ color: reconciled ? 'var(--ps-color-muted-text)' : 'var(--ps-color-alert)' }}>
-                {data?.truncated ? 'First 1,000 rows only' : reconciled ? `= the bar clicked (${formatMoney(currency, point.collected)})` : `≠ the bar clicked (${formatMoney(currency, point.collected)})`}
+                {data?.truncated ? 'First 1,000 rows only' : reconciled ? `= the bar clicked (${total$(point.collected)})` : `≠ the bar clicked (${total$(point.collected)})`}
               </span>
             </div>
-            <DataGrid<PayGridRow> columns={columns} rows={rows} getRowId={(r) => r.id} fileName={`collections-${currency}-${point.periodStart}`} pageSize={25} maxBodyHeight={460} />
+            <DataGrid<PayGridRow> columns={columns} rows={rows} getRowId={(r) => r.id} fileName={`collections-${currency ?? 'all-currencies'}-${point.periodStart}`} pageSize={25} maxBodyHeight={460} />
           </>
         )}
       </div>

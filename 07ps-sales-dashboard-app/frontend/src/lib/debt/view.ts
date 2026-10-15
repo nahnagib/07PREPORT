@@ -56,10 +56,10 @@ export function pctLabel(p: number | null | undefined): string {
 }
 
 /** What a drill-down lists: an overdue bar its overdue lines, an aging bar / a table row every open line. */
-export function drillTitle(kind: DebtDrillKind, label: string, currency: string): string {
+export function drillTitle(kind: DebtDrillKind, label: string, currency: string | null): string {
   const what =
     kind === 'aging' ? 'Open documents in' : kind === 'account' ? 'Open documents of' : 'Overdue documents of';
-  return `${what} ${label} · ${currency}`;
+  return `${what} ${label} · ${currency ?? 'All currencies (≈ LYD)'}`;
 }
 
 /** The figure a drill-down must reconcile to: the overdue amount, or the open balance for an aging bar / table row. */
@@ -174,4 +174,64 @@ export function dailyTrendPoints(points: DebtTrend['points']): { label: string; 
     d = next.toISOString().slice(0, 10);
   }
   return out;
+}
+
+// ---- page currency filter (2026-10-15) ------------------------------------------------------------------------------
+/** The page-wide currency filter lives in the URL (?currency=USD) so a view can be shared and survives a refresh;
+ * absent / invalid = null = "All currencies (≈ LYD)". */
+export function currencyFromSearch(search: string): string | null {
+  const v = new URLSearchParams(search).get('currency')?.trim().toUpperCase() ?? '';
+  return /^[A-Z]{3}$/.test(v) ? v : null;
+}
+
+/** The same URL with the currency set (or removed for null), every other parameter kept. */
+export function searchWithCurrency(search: string, currency: string | null): string {
+  const params = new URLSearchParams(search);
+  if (currency) params.set('currency', currency);
+  else params.delete('currency');
+  const q = params.toString();
+  return q ? `?${q}` : '';
+}
+
+/** Clicking a currency row: the same row again clears the filter, another row switches to it. */
+export function toggleCurrency(current: string | null, clicked: string): string | null {
+  return current === clicked ? null : clicked;
+}
+
+// ---- customer table "Aging bucket" (2026-10-15) ---------------------------------------------------------------------
+/** A customer row's bucket: its oldest open overdue invoice's aging bucket (the Distribution chart's buckets,
+ * dim_finance_aging_bucket), "Not due" when it has open invoices but none overdue, "—" with no open invoice (credits
+ * only). `rank` sorts by age: -1 for "—", 0 for Not due, then 1.. for the overdue buckets in key order. */
+export const NO_BUCKET = '—';
+export const NOT_DUE_BUCKET = 'Not due';
+export interface CustomerBucket {
+  label: string;
+  rank: number;
+  /** 0..1 within the overdue buckets (1 = the oldest), null for Not due / — */
+  severity: number | null;
+}
+
+export function customerAgingBucket(
+  row: { openDocuments: number; oldestOverdueBucketKey: number | null },
+  buckets: { value: string; labelEn: string; isOverdue: boolean }[],
+): CustomerBucket {
+  if (row.openDocuments === 0) return { label: NO_BUCKET, rank: -1, severity: null };
+  if (row.oldestOverdueBucketKey === null) return { label: NOT_DUE_BUCKET, rank: 0, severity: null };
+  const overdue = buckets.filter((b) => b.isOverdue).sort((a, b) => Number(a.value) - Number(b.value));
+  const i = overdue.findIndex((b) => Number(b.value) === row.oldestOverdueBucketKey);
+  if (i < 0) return { label: `Bucket ${row.oldestOverdueBucketKey}`, rank: 1, severity: 1 };
+  return { label: overdue[i].labelEn, rank: i + 1, severity: overdue.length <= 1 ? 1 : i / (overdue.length - 1) };
+}
+
+/** The bucket filter's options, youngest first: Not due, every overdue bucket, then —. */
+export function customerBucketOptions(buckets: { value: string; labelEn: string; isOverdue: boolean }[]): { value: string; label: string }[] {
+  const overdue = buckets.filter((b) => b.isOverdue).sort((a, b) => Number(a.value) - Number(b.value));
+  return [NOT_DUE_BUCKET, ...overdue.map((b) => b.labelEn), NO_BUCKET].map((v) => ({ value: v, label: v }));
+}
+
+/** Badge colour: green for Not due, then from amber (youngest overdue bucket) to red (the oldest). */
+export function customerBucketColor(b: CustomerBucket): string {
+  if (b.rank === 0) return 'var(--ps-color-success)';
+  if (b.severity === null) return 'var(--ps-color-muted-text)';
+  return `color-mix(in srgb, var(--ps-color-alert) ${Math.round(25 + 75 * b.severity)}%, var(--ps-color-watch))`;
 }

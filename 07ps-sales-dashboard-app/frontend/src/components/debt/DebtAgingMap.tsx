@@ -77,13 +77,20 @@ interface Selection {
   anchor: Element;
 }
 
+/** An amount in the map's currency; "≈ LYD" (the all-currencies view) keeps LYD's own decimals. */
+function mapMoney(currency: string, value: number): string {
+  return currency.startsWith('≈ ') ? `≈ ${formatMoney(currency.slice(2), value)}` : formatMoney(currency, value);
+}
+
 export function DebtAgingMap(props: DebtAgingMapProps) {
   const { data, loading, error, onRetry, term, onTermChange } = props;
   const [selected, setSelected] = useState<Selection | null>(null);
 
   const customers = useMemo(() => data?.customers ?? [], [data]);
   const zones = useMemo(() => data?.zones ?? [], [data]);
-  const currency = data?.currency ?? '';
+  // the all-currencies view (2026-10-15): one dot per customer, amounts in LYD at Odoo's booked rates -> "≈ LYD"
+  const currency = data?.allCurrencies ? `≈ ${data.currency ?? COMPANY_CURRENCY}` : (data?.currency ?? '');
+  const viewLabel = data?.allCurrencies ? 'All currencies (≈ LYD)' : currency;
   const zoneByKey = useMemo(() => new Map(zones.map((z) => [z.key, z])), [zones]);
   const pickedTerm = data?.terms.find((t) => t.key === term) ?? null;
   const ranges = pickedTerm?.ranges ?? null;
@@ -110,7 +117,7 @@ export function DebtAgingMap(props: DebtAgingMapProps) {
     <section aria-label="Aging Map" style={{ ...panel, opacity: loading ? 0.65 : 1, transition: 'opacity .15s' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, marginBottom: 8 }}>
         <div style={{ minWidth: 0 }}>
-          <h3 style={h3}>Where every customer stands · {currency || '—'}</h3>
+          <h3 style={h3}>Where every customer stands · {viewLabel || '—'}</h3>
           <p style={note}>
             Each dot is a customer, placed by the age of its oldest unpaid invoice against that invoice&apos;s own payment term. Click a dot for
             its details.
@@ -122,7 +129,7 @@ export function DebtAgingMap(props: DebtAgingMapProps) {
       </div>
 
       {customers.length === 0 ? (
-        <EmptyState message={`No customer owes ${currency || 'anything'} with these filters.`} />
+        <EmptyState message={data.allCurrencies ? 'No customer owes anything with these filters.' : `No customer owes ${currency || 'anything'} with these filters.`} />
       ) : (
         <AgingTrack customers={customers} zones={zones} cap={data.settings.axisCap} ranges={ranges} selected={selected?.key ?? null} onSelect={select} currency={currency} />
       )}
@@ -252,7 +259,7 @@ export function AgingTrack({ customers, zones, cap, ranges, selected, onSelect, 
 
 function Dot({ p, c, mid, selected, onSelect, currency }: { p: PlacedDot; c: DebtAgingCustomer; mid: number; selected: boolean; onSelect: (k: number, anchor: Element) => void; currency: string }) {
   const cy = mid + p.y;
-  const label = `${c.customer} · ${c.termLabel} · invoice age ${days(c.invoiceAge)} · ${formatMoney(currency, c.outstanding)}`;
+  const label = `${c.customer} · ${c.termLabel} · invoice age ${days(c.invoiceAge)} · ${mapMoney(currency, c.outstanding)}`;
   return (
     <g
       role="button"
@@ -364,7 +371,7 @@ function DotPopup({ c, anchor, zoneByKey, currency, onClose }: {
   const zone = zoneByKey.get(c.zone);
   const next = c.nextZone ? zoneByKey.get(c.nextZone) : undefined;
   const odoo = safeOdooUrl(c.odooUrl);
-  const foreign = currency !== '' && currency !== COMPANY_CURRENCY;
+  const foreign = currency !== '' && currency !== COMPANY_CURRENCY && !currency.startsWith('≈');
 
   return createPortal(
     <div
@@ -422,7 +429,7 @@ function DotPopup({ c, anchor, zoneByKey, currency, onClose }: {
           k="Outstanding"
           v={
             <>
-              <span style={{ ...mono, fontWeight: 600 }}>{formatMoney(currency, c.outstanding)}</span>
+              <span style={{ ...mono, fontWeight: 600 }}>{mapMoney(currency, c.outstanding)}</span>
               {foreign ? <div style={{ ...sub, ...mono }}>≈ {formatMoney(COMPANY_CURRENCY, c.outstandingCompany)}</div> : null}
             </>
           }

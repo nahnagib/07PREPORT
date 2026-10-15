@@ -304,6 +304,11 @@ describe.skipIf(!RUN)('Debt Report invariants on the real warehouse (read-only)'
     }
     const all = overview.body.allCurrencies;
     close(all.overdueAmount + all.notDueAmount, all.openAmount, `${label} all currencies: overdue + not due = total debt`);
+    // the all-currencies map: one dot per customer (any currency), its outstanding in LYD; total = the grand total
+    const allMap = await get(`/debt-report/aging?allCurrencies=true${qs ? `&${qs}` : ''}`);
+    expect(allMap.body.allCurrencies).toBe(true);
+    close(allMap.body.customers.reduce((t: number, x: Json) => t + x.outstanding, 0), all.openAmount, `${label}: all-currencies map total = grand total`);
+    expect(allMap.body.customers.length, `${label}: one dot per customer`).toBe(all.customers);
     close(all.openAmount, overview.body.currencies.reduce((t: number, c: Json) => t + c.kpis.openAmountCompany, 0), `${label} all currencies = sum of LYD`);
     expect(all.openDocuments).toBe(overview.body.currencies.reduce((t: number, c: Json) => t + c.kpis.openDocuments, 0));
     expect(all.customers).toBeLessThanOrEqual(overview.body.currencies.reduce((t: number, c: Json) => t + c.kpis.customers, 0));

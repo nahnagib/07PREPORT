@@ -137,6 +137,31 @@ describe.skipIf(!RUN)('Collections on the real warehouse (read-only)', () => {
     expect(Math.abs(parts.reduce((s, v) => s + v, 0) - all)).toBeLessThan(0.01);
   });
 
+  it('all currencies (≈ LYD): collected = the payments\' Odoo LYD amounts, the split adds up, the drill-down = the bar', async () => {
+    const from = '2026-08-30';
+    const to = '2026-10-10';
+    const t = (await get(`/debt-report/collections-trend?allCurrencies=true&grain=week&from=${from}&to=${to}`)).body;
+    expect(t.allCurrencies).toBe(true);
+    expect(t.currency).toBe('LYD');
+    const direct = await qa(
+      `SELECT DATE_FORMAT(DATE_SUB(payment_date, INTERVAL (DAYOFWEEK(payment_date) - 1) DAY), '%Y-%m-%d') AS w, SUM(amount_company_ccy) AS s,
+              COUNT(DISTINCT payment_id) AS k FROM v_finance_collection_trend WHERE payment_date BETWEEN ? AND ? GROUP BY w`,
+      [from, to],
+    );
+    for (const p of t.points) {
+      const d = direct.find((x) => x.w === p.periodStart);
+      expect(Math.abs(p.collected - n(d?.s))).toBeLessThan(0.01);
+      expect(p.payments).toBe(n(d?.k));
+      expect(Math.abs(p.appliedOverdue + p.appliedNotDue + p.appliedOther + p.unapplied - p.collected)).toBeLessThan(0.05);
+      if (p.collectionRate !== null) expect(p.collectionRate).toBeGreaterThanOrEqual(0);
+    }
+    const busiest = t.points.reduce((a: Json, b: Json) => (b.collected > a.collected ? b : a));
+    const dd = (await get(`/debt-report/collections-drilldown?allCurrencies=true&grain=week&period=${busiest.periodStart}`)).body;
+    expect(dd.allCurrencies).toBe(true);
+    if (!dd.truncated) expect(Math.abs(dd.rows.reduce((s: number, r: Json) => s + r.amountCompany, 0) - busiest.collected)).toBeLessThan(0.01);
+    expect((await get(`/debt-report/collections-drilldown?grain=week&period=${busiest.periodStart}`)).status).toBe(400);
+  });
+
   it('bad parameters are a 400', async () => {
     expect((await get('/debt-report/collections-trend?grain=year')).status).toBe(400);
     expect((await get('/debt-report/collections-drilldown?currency=LYD&period=x')).status).toBe(400);
