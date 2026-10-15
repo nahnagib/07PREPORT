@@ -1,164 +1,43 @@
 /**
- * Debt Report "Aging Map" (Finance / Price department): where every customer stands against its own payment term.
- * The ONE place the zone rules live -- the page only renders what GET /debt-report/aging returns.
+ * "Credit Policy Escalation" (Receivables and Collections; GET /debt-report/aging, 2026-10-15): where every customer
+ * stands in the credit policy. Replaces the term-multiple "Aging Map": no payment-term multiples any more -- a
+ * customer is placed by DAYS PAST DUE, in the zones of config/creditPolicy.ts (the one definition of the policy).
  *
- * Per customer and currency (amounts are never added across currencies, like the rest of the Debt Report):
- *   1. lines: the Debt Report's own source (linesSource) -- snapshot, report exclusions, scope toggles, the caller's
- *      scoped filters (salesperson lock), customer search and customer size. The line-level page filters (overdue
- *      status, aging bucket, delivery status, document type, payment term, invoice size) are NOT applied: they would
- *      change which invoice is the oldest. The map has its own term filter, on the deciding invoice.
- *   2. the SAME base as the Debt Report's "Total debt" card (line_kind = 'invoice', debtReport.ts): only customer
- *      invoices, as Odoo matched them (amount_residual). Credit notes and unreconciled payments never settle an
- *      invoice here and never lower the outstanding amount; other receivable entries and inter-company lines are
- *      never on the map, whatever the toggles. So the map total = the Total debt card (same filters + currency).
- *   3. outstanding = the customer's open invoices in the invoice currency; outstandingCompany = the same in the
- *      company currency (LYD: Odoo's own amount_residual, never a rate of ours).
- *   4. the deciding invoice = the customer's OLDEST open invoice (invoice date, else the line date; then due date,
- *      then line id). A partial payment lowers outstanding but keeps the zone; settling the oldest invoice in full
- *      hands the decision to the next-oldest.
- *   5. its term (resolveTerm): the invoice's payment term (the ETL already falls back to the customer's default term)
- *      with term_days from cfg_finance_payment_term_days; else the invoice's own due date - invoice date; else
- *      "Missing term" with 0 days.
- *   6. its zone (classify): W = max(term_days, min_step); zone i runs up to upper_multiplier(i) x W days of invoice
- *      age (cfg_finance_aging_zone, cfg_finance_aging_setting -- migration 0037).
+ * Per customer (and per currency, or over every currency in LYD with `allCurrencies`):
+ *   1. lines: the report's own source (linesSource) -- snapshot, report exclusions, scope toggles, the caller's
+ *      scoped filters (role data scope, salesperson lock), customer search and customer category. The line-level page
+ *      filters (overdue status, aging bucket, delivery status, payment term, invoice size) are NOT applied: they would
+ *      change which invoice decides. Only customer invoices (line_kind 'invoice'), the base of the "Total debt" card,
+ *      with future-due customers excluded from the chart.
+ *   2. unpaid invoices: posted customer invoices whose open amount is above 0.
+ *   3. each unpaid invoice's due date: the due date of its unpaid instalment (Odoo date_maturity of the open
+ *      receivable line -- what Odoo's aged receivables uses; = invoice_date_due for a single-instalment invoice), else
+ *      the invoice's invoice_date_due, else invoice date + the payment term's days (cfg_finance_payment_term_days).
+ *      Never the invoice date alone, unless nothing else exists.
+ *   4. the deciding invoice: the unpaid invoice with the EARLIEST due date (= the most days past due); ties: the older
+ *      invoice date, then the lower move id. It can differ from the invoice with the oldest invoice date.
+ *   5. days past due = as-of date - its due date, in calendar days (as-of = the snapshot date, i.e. today for the
+ *      latest snapshot). Negative = "Not yet due" (never day 0 / GREEN); 0 = due that day.
+ *   6. zone, owner and action: config/creditPolicy.ts. Dot size = the customer's total outstanding (every invoice).
  *
- * Invoice age = snapshot date - invoice date, in days (never below 0).
- *
- * All currencies (`allCurrencies`, 2026-10-15: the page's default view): one dot per CUSTOMER over every currency --
- * the deciding invoice is its oldest open invoice in any currency, outstanding = its open invoices in the company
- * currency (Odoo's Amount Due in LYD, Odoo's own rate). The response then reads currency LYD and allCurrencies true.
+ * The same placement feeds the Customers table's "Aging bucket" (attachCreditZones), so a customer's bucket there is
+ * the same policy status (future-due customers are omitted from the chart). The payment-term filter only chooses which customers are shown; it never moves a boundary.
  */
 import type { Pool } from 'mysql2/promise';
 import { odooWebBaseUrl } from '../config/finance';
+import {
+  CREDIT_POLICY_ZONES,
+  ESCALATION_WINDOW_DAYS,
+  NOT_YET_DUE,
+  approachingNextZone,
+  creditZoneForDays,
+  creditActionForDays,
+  nextCreditZone,
+  type CreditPolicyZone,
+  type CreditZoneKey,
+} from '../config/creditPolicy';
 import type { Filters } from './filters';
-import { COMPANY_CURRENCY, DebtQueryError, isoOfKey, linesSource, parseDebtQuery, resolveSnapshot, type DebtQuery } from './debtReport';
-
-// ---- settings -------------------------------------------------------------------------------------------------------
-export interface AgingZoneSetting {
-  key: string;
-  label: string;
-  /** the zone ends at this x W days of invoice age; null = the last zone */
-  upperMultiplier: number | null;
-  owner: string;
-}
-
-export interface AgingSettings {
-  zones: AgingZoneSetting[];
-  minStep: number;
-  escalationWindowDays: number;
-}
-
-/** Throws when the configured zones / settings cannot form a ladder (so a bad edit fails loudly, not silently). */
-export function validateSettings(s: AgingSettings): AgingSettings {
-  const z = s.zones;
-  if (z.length < 2) throw new Error('cfg_finance_aging_zone needs at least 2 zones');
-  z.forEach((zone, i) => {
-    const last = i === z.length - 1;
-    if (last !== (zone.upperMultiplier === null)) throw new Error('cfg_finance_aging_zone: only the last zone has no upper_multiplier');
-    if (!last && i > 0 && !((zone.upperMultiplier as number) > (z[i - 1].upperMultiplier as number))) {
-      throw new Error('cfg_finance_aging_zone: upper_multiplier must increase zone by zone');
-    }
-    if (!last && !((zone.upperMultiplier as number) > 0)) throw new Error('cfg_finance_aging_zone: upper_multiplier must be above 0');
-  });
-  if (!(s.minStep >= 1)) throw new Error('cfg_finance_aging_setting: min_step must be at least 1');
-  if (!(s.escalationWindowDays >= 0)) throw new Error('cfg_finance_aging_setting: escalation_window_days must not be negative');
-  return s;
-}
-
-export async function fetchAgingSettings(pool: Pool): Promise<AgingSettings> {
-  const [zones] = await pool.query('SELECT zone_key, label_en, upper_multiplier, owner_en FROM cfg_finance_aging_zone ORDER BY sort_order', []);
-  const [settings] = await pool.query('SELECT setting_key, value_num FROM cfg_finance_aging_setting', []);
-  const value = (key: string, fallback: number) => {
-    const r = (settings as Row[]).find((x) => x.setting_key === key);
-    return r ? Number(r.value_num) : fallback;
-  };
-  return validateSettings({
-    zones: (zones as Row[]).map((z) => ({
-      key: String(z.zone_key),
-      label: String(z.label_en),
-      upperMultiplier: z.upper_multiplier === null ? null : Number(z.upper_multiplier),
-      owner: String(z.owner_en),
-    })),
-    minStep: value('min_step', 7),
-    escalationWindowDays: value('escalation_window_days', 7),
-  });
-}
-
-// ---- the zone rules (pure) ------------------------------------------------------------------------------------------
-export interface Placement {
-  /** W = max(term_days, min_step) */
-  termWidth: number;
-  zoneIndex: number;
-  invoiceAge: number;
-  daysPastDue: number;
-  /** invoice age / W: the x position on the all-terms track (zone i spans the multipliers before and at it) */
-  position: number;
-  /** days until the first day of the next zone; null in the last zone */
-  daysToNextZone: number | null;
-  escalatingSoon: boolean;
-}
-
-export function classify(termDays: number, invoiceAge: number, s: AgingSettings): Placement {
-  const w = Math.max(termDays, s.minStep);
-  const age = Math.max(0, invoiceAge);
-  const last = s.zones.length - 1;
-  const found = s.zones.findIndex((z) => z.upperMultiplier !== null && age <= z.upperMultiplier * w);
-  const zoneIndex = found < 0 ? last : found;
-  const upper = s.zones[zoneIndex].upperMultiplier;
-  const daysToNextZone = upper === null ? null : Math.floor(upper * w) + 1 - age;
-  return {
-    termWidth: w,
-    zoneIndex,
-    invoiceAge: age,
-    daysPastDue: Math.max(0, age - termDays),
-    position: age / w,
-    daysToNextZone,
-    escalatingSoon: daysToNextZone !== null && daysToNextZone <= s.escalationWindowDays,
-  };
-}
-
-/** Day range of every zone for one term: [from, to], `to` null for the last zone. */
-export function zoneRanges(termDays: number, s: AgingSettings): { zone: string; from: number; to: number | null }[] {
-  const w = Math.max(termDays, s.minStep);
-  let from = 0;
-  return s.zones.map((z) => {
-    const to = z.upperMultiplier === null ? null : Math.floor(z.upperMultiplier * w);
-    const r = { zone: z.key, from, to };
-    if (to !== null) from = to + 1;
-    return r;
-  });
-}
-
-export type TermSource = 'payment_term' | 'due_date' | 'missing';
-
-export interface ResolvedTerm {
-  /** the term filter value: PaymentTermKey, 'due_date' or 'missing' */
-  key: string;
-  label: string;
-  termDays: number;
-  source: TermSource;
-}
-
-export const DUE_DATE_TERM = 'due_date';
-export const MISSING_TERM = 'missing';
-
-const DAY_MS = 86_400_000;
-const isoDay = (iso: string) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
-/** Whole days from `a` to `b` (ISO dates). */
-export const daysBetween = (a: string, b: string): number => Math.round((isoDay(b) - isoDay(a)) / DAY_MS);
-export const addDays = (iso: string, days: number): string => new Date(isoDay(iso) + days * DAY_MS).toISOString().slice(0, 10);
-
-/** The term of the deciding invoice: its payment term's configured days, else its own due date, else missing (0). */
-export function resolveTerm(x: { paymentTermKey: number; paymentTerm: string | null; termDays: number | null; invoiceDate: string | null; dueDate: string | null }): ResolvedTerm {
-  if (x.paymentTermKey !== -1 && x.termDays !== null) {
-    return { key: String(x.paymentTermKey), label: x.paymentTerm ?? String(x.paymentTermKey), termDays: x.termDays, source: 'payment_term' };
-  }
-  if (x.invoiceDate && x.dueDate) {
-    const days = Math.max(0, daysBetween(x.invoiceDate, x.dueDate));
-    return { key: DUE_DATE_TERM, label: `By due date (${days} day${days === 1 ? '' : 's'})`, termDays: days, source: 'due_date' };
-  }
-  return { key: MISSING_TERM, label: 'Missing term', termDays: 0, source: 'missing' };
-}
+import { COMPANY_CURRENCY, DebtQueryError, isoOfKey, linesSource, parseDebtQuery, resolveSnapshot, withoutLineFilters, type DebtQuery } from './debtReport';
 
 // ---- query ----------------------------------------------------------------------------------------------------------
 export interface AgingQuery {
@@ -167,7 +46,7 @@ export interface AgingQuery {
   currency: string | null;
   /** every currency together in LYD (one dot per customer); ignored when a currency is given */
   allCurrencies: boolean;
-  /** PaymentTermKey, 'due_date' or 'missing'; null = every term */
+  /** PaymentTermKey of the deciding invoice (-1 = no payment term); null = every term. Filters customers only. */
   term: string | null;
 }
 
@@ -176,252 +55,342 @@ export function parseAgingQuery(q: Record<string, unknown>): AgingQuery {
   const currency = typeof q.currency === 'string' && q.currency.trim() ? q.currency.trim().toUpperCase() : null;
   if (currency !== null && !/^[A-Z]{3}$/.test(currency)) throw new DebtQueryError('currency must be a 3-letter code');
   const term = typeof q.term === 'string' && q.term.trim() ? q.term.trim() : null;
-  if (term !== null && !/^(-?\d+|due_date|missing)$/.test(term)) throw new DebtQueryError('term must be a payment term key, due_date or missing');
+  if (term !== null && !/^-?\d+$/.test(term)) throw new DebtQueryError('term must be a payment term key');
   return {
-    // the line-level page filters would change which invoice is the oldest: never applied here
-    debt: { ...debt, overdueStatus: 'all', agingBucketKeys: [], deliveryStatuses: [], paymentTermKeys: [], invoiceTiers: [] },
+    debt: withoutLineFilters(debt),
     currency,
     allCurrencies: currency === null && (q.allCurrencies === 'true' || q.allCurrencies === '1' || q.allCurrencies === true),
     term,
   };
 }
 
-interface Sql {
-  sql: string;
-  params: unknown[];
-}
-type Row = Record<string, any>;
-
-/**
- * One row per customer + currency with an open invoice: its open invoices (sum in the invoice currency and in the
- * company currency, count) and its deciding (oldest) invoice line with the configured days of that invoice's term.
- * One pass: a CTE over the source, ROW_NUMBER for the oldest invoice, GROUP BY for the sums. Only invoice lines are
- * read: credit notes, payments, other entries and inter-company lines never reach the map, whatever the toggles.
- *
- * `source` is a FROM clause exposing alias `l` (linesSource in production; literal rows in the SQL tests) with
- * currency, CustomerKey, customer, CompanyKey, company, PaymentTermKey, payment_term, move_id, line_id, document,
- * InvoiceDateKey, due_date (YYYY-MM-DD), residual_doc_ccy, residual_company_ccy and line_kind.
- *
- * `allCurrencies`: every line gets the company currency as its "currency" and its company-currency residual as its
- * amount, so the same query yields one row per customer over every currency, in LYD.
- */
-export function agingSql(source: Sql, allCurrencies = false): Sql {
-  const currency = allCurrencies ? `'${COMPANY_CURRENCY}' AS currency` : 'l.currency';
-  const amount = allCurrencies ? 'l.residual_company_ccy AS residual_doc_ccy' : 'l.residual_doc_ccy';
-  return {
-    sql: `
-      WITH src AS (
-        SELECT ${currency}, l.CustomerKey, l.customer, l.CompanyKey, l.company, l.PaymentTermKey, l.payment_term, l.move_id, l.line_id,
-               l.document, l.InvoiceDateKey, l.due_date, ${amount}, l.residual_company_ccy, l.line_kind
-        ${source.sql}
-      ),
-      ln AS (SELECT * FROM src WHERE line_kind = 'invoice'),
-      balance AS (
-        SELECT CustomerKey, currency, SUM(residual_doc_ccy) AS outstanding, SUM(residual_company_ccy) AS outstanding_company,
-               COUNT(DISTINCT CASE WHEN residual_doc_ccy > 0 THEN move_id END) AS open_invoices
-        FROM ln
-        GROUP BY CustomerKey, currency
-      ),
-      oldest AS (
-        SELECT ln.*, ROW_NUMBER() OVER (PARTITION BY ln.CustomerKey, ln.currency ORDER BY ln.InvoiceDateKey, ln.due_date, ln.line_id) AS rn
-        FROM ln
-        WHERE ln.residual_doc_ccy > 0
-      )
-      SELECT b.currency, b.CustomerKey, o.customer, o.CompanyKey, o.company, o.PaymentTermKey, o.payment_term, td.term_days, o.move_id,
-             o.document, o.InvoiceDateKey, o.due_date, b.outstanding, b.outstanding_company, b.open_invoices
-      FROM balance b
-      JOIN oldest o ON o.CustomerKey = b.CustomerKey AND o.currency = b.currency AND o.rn = 1
-      LEFT JOIN cfg_finance_payment_term_days td ON td.PaymentTermKey = o.PaymentTermKey`,
-    params: [...source.params],
-  };
-}
-
-// ---- response -------------------------------------------------------------------------------------------------------
-export interface DebtAgingCustomer {
-  customerKey: number;
+/** One customer-invoice line with what the placement needs (fetchCreditLines; literal rows in the tests). */
+export interface CreditLine {
+  currency: string;
+  CustomerKey: number;
   customer: string;
-  /** company of the deciding invoice */
-  companyKey: number;
+  customer_ref?: string | null;
+  CompanyKey: number;
   company: string;
-  termKey: string;
-  termLabel: string;
-  termDays: number;
-  termSource: TermSource;
-  oldestOpenMoveId: number;
-  oldestOpenDocument: string | null;
-  odooUrl: string;
-  invoiceDate: string;
-  dueDate: string | null;
-  invoiceAge: number;
-  daysPastDue: number;
-  termWidth: number;
-  position: number;
-  zone: string;
-  zoneIndex: number;
-  owner: string;
-  nextZone: string | null;
-  daysToNextZone: number | null;
-  escalatingSoon: boolean;
-  /** open invoices in the invoice currency */
-  outstanding: number;
-  /** the same in the company currency (LYD): Odoo's own amount_residual, the "Amount Due" column */
-  outstandingCompany: number;
-  openInvoices: number;
+  PaymentTermKey: number;
+  payment_term: string | null;
+  term_days?: number | null;
+  move_id: number;
+  line_id: number;
+  document: string | null;
+  /** YYYY-MM-DD */
+  invoice_date: string | null;
+  /** the line's own due date (Odoo date_maturity), YYYY-MM-DD */
+  due_date: string | null;
+  /** the invoice's invoice_date_due, YYYY-MM-DD */
+  invoice_due_date?: string | null;
+  residual_doc_ccy: number;
+  residual_company_ccy: number;
 }
 
-export interface DebtAgingZone {
-  key: string;
-  label: string;
-  owner: string;
-  lowerMultiplier: number;
-  upperMultiplier: number | null;
+/** The customer-invoice lines of one snapshot, line-level page filters cleared. */
+export async function fetchCreditLines(pool: Pool, snapshotKey: number, debt: DebtQuery, f: Filters): Promise<CreditLine[]> {
+  const s = linesSource(snapshotKey, withoutLineFilters(debt), f);
+  const [rows] = await pool.query(
+    `SELECT x.currency, x.CustomerKey, x.customer, cu.ref AS customer_ref, x.CompanyKey, x.company, x.PaymentTermKey, x.payment_term,
+            td.term_days, x.move_id, x.line_id, x.document, x.invoice_date, x.due_date,
+            DATE_FORMAT(i.invoice_final_due_date, '%Y-%m-%d') AS invoice_due_date, x.residual_doc_ccy, x.residual_company_ccy
+     FROM (SELECT l.* ${s.sql}) x
+     JOIN dim_finance_invoice i ON i.move_id = x.move_id
+     JOIN dim_customer cu ON cu.CustomerKey = x.CustomerKey
+     LEFT JOIN cfg_finance_payment_term_days td ON td.PaymentTermKey = x.PaymentTermKey
+     WHERE x.line_kind = 'invoice'`,
+    s.params,
+  );
+  return rows as CreditLine[];
 }
 
-export interface DebtAgingTerm {
-  key: string;
-  label: string;
-  /** null for the due-date group (each customer has its own days) */
-  termDays: number | null;
-  customers: number;
-  /** day range per zone when the term has fixed days (the axis in real days) */
-  ranges: { zone: string; from: number; to: number | null }[] | null;
-}
-
-export interface DebtAging {
-  snapshotDate: string | null;
-  currency: string | null;
-  /** true = every currency together, amounts in LYD (≈) */
-  allCurrencies: boolean;
-  /** currencies with at least one customer on the map, most customers first */
-  currencies: string[];
-  settings: { minStep: number; escalationWindowDays: number; axisCap: number };
-  zones: DebtAgingZone[];
-  /** term filter options in the chosen currency, before the term filter */
-  terms: DebtAgingTerm[];
-  /** sorted by position, worst first */
-  customers: DebtAgingCustomer[];
-}
+// ---- dates (pure) -----------------------------------------------------------------------------------------------------
+const DAY_MS = 86_400_000;
+const isoDay = (iso: string) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+/** Whole calendar days from `a` to `b` (ISO dates). */
+export const daysBetween = (a: string, b: string): number => Math.round((isoDay(b) - isoDay(a)) / DAY_MS);
+export const addDays = (iso: string, days: number): string => new Date(isoDay(iso) + days * DAY_MS).toISOString().slice(0, 10);
 
 /** Money adds up in millionths (the DECIMAL(20,6) scale) so the sums are exact. */
 const micro = (v: unknown): number => Math.round(Number(v ?? 0) * 1e6);
 const fromMicro = (v: number): number => v / 1e6;
 
-/** Turns the query rows into the map (pure: the tests feed it rows directly). */
-export function buildAging(
-  rows: Row[],
-  opts: { snapshotDate: string | null; currency: string | null; term: string | null; settings: AgingSettings; allCurrencies?: boolean },
-): DebtAging {
-  const s = opts.settings;
-  const finite = s.zones.filter((z) => z.upperMultiplier !== null).map((z) => z.upperMultiplier as number);
-  const lastFinite = finite[finite.length - 1];
+// ---- placement (pure) --------------------------------------------------------------------------------------------------
+export type DueDateSource = 'instalment' | 'invoice' | 'payment_term' | 'invoice_date';
 
-  const customersPerCurrency = new Map<string, number>();
-  for (const r of rows) customersPerCurrency.set(String(r.currency), (customersPerCurrency.get(String(r.currency)) ?? 0) + 1);
-  const currencies = [...customersPerCurrency].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([c]) => c);
-  const currency = opts.currency ?? currencies[0] ?? null;
+export interface CreditCustomer {
+  customerKey: number;
+  /** Odoo partner reference, else the Odoo id */
+  customerCode: string;
+  customer: string;
+  /** company of the deciding invoice */
+  companyKey: number;
+  company: string;
+  /** payment term of the deciding invoice */
+  paymentTermKey: number;
+  paymentTerm: string;
+  /** every invoice line of the customer (the dot's size), in the view's currency (LYD for all currencies) */
+  totalOutstanding: number;
+  /** the same in LYD (Odoo's own amount_residual) */
+  totalOutstandingCompany: number;
+  unpaidInvoiceCount: number;
+  oldestInvoiceMoveId: number;
+  oldestInvoiceNumber: string | null;
+  oldestInvoiceDate: string | null;
+  oldestDueDate: string;
+  dueDateSource: DueDateSource;
+  /** as-of date - oldestDueDate; negative customers are excluded from the chart */
+  daysPastDue: number;
+  notYetDue: boolean;
+  /** days until the earliest due date when not yet due, else 0 */
+  daysUntilDue: number;
+  zone: CreditZoneKey;
+  responsibleRole: string;
+  requiredAction: string;
+  actionDetails?: string;
+  nextZone: CreditPolicyZone['key'] | null;
+  daysToNextZone: number | null;
+  approachingNextZone: boolean;
+  odooUrl: string;
+}
 
-  const base = odooWebBaseUrl();
-  const all: DebtAgingCustomer[] = rows
-    .filter((r) => String(r.currency) === currency)
-    .map((r) => {
-      const invoiceDate = isoOfKey(Number(r.InvoiceDateKey)) as string;
-      const dueDate = r.due_date ? String(r.due_date) : null;
-      const term = resolveTerm({
-        paymentTermKey: Number(r.PaymentTermKey),
-        paymentTerm: r.payment_term ?? null,
-        termDays: r.term_days === null || r.term_days === undefined ? null : Number(r.term_days),
-        invoiceDate,
-        dueDate,
-      });
-      const p = classify(term.termDays, opts.snapshotDate ? daysBetween(invoiceDate, opts.snapshotDate) : 0, s);
-      const zone = s.zones[p.zoneIndex];
-      return {
-        customerKey: Number(r.CustomerKey),
-        customer: String(r.customer),
-        companyKey: Number(r.CompanyKey),
-        company: String(r.company),
-        termKey: term.key,
-        termLabel: term.label,
-        termDays: term.termDays,
-        termSource: term.source,
-        oldestOpenMoveId: Number(r.move_id),
-        oldestOpenDocument: r.document ?? null,
-        odooUrl: `${base}/web#id=${Number(r.move_id)}&model=account.move&view_type=form`,
-        invoiceDate,
-        dueDate,
-        invoiceAge: p.invoiceAge,
-        daysPastDue: p.daysPastDue,
-        termWidth: p.termWidth,
-        position: p.position,
-        zone: zone.key,
-        zoneIndex: p.zoneIndex,
-        owner: zone.owner,
-        nextZone: s.zones[p.zoneIndex + 1]?.key ?? null,
-        daysToNextZone: p.daysToNextZone,
-        escalatingSoon: p.escalatingSoon,
-        outstanding: fromMicro(micro(r.outstanding)),
-        outstandingCompany: fromMicro(micro(r.outstanding_company)),
-        openInvoices: Number(r.open_invoices),
-      };
-    });
+interface InvoiceAcc {
+  moveId: number;
+  residual: number;
+  openDue: string | null;
+  invoiceDue: string | null;
+  invoiceDate: string | null;
+  document: string | null;
+  termDays: number | null;
+  companyKey: number;
+  company: string;
+  paymentTermKey: number;
+  paymentTerm: string | null;
+}
 
-  // term options (before the term filter)
-  const termMap = new Map<string, DebtAgingTerm>();
-  for (const c of all) {
-    const t = termMap.get(c.termKey);
-    if (t) t.customers += 1;
-    else {
-      const fixed = c.termSource !== 'due_date';
-      termMap.set(c.termKey, {
-        key: c.termKey,
-        label: c.termSource === 'due_date' ? 'No term · by due date' : c.termLabel,
-        termDays: fixed ? c.termDays : null,
-        customers: 1,
-        ranges: fixed ? zoneRanges(c.termDays, s) : null,
-      });
-    }
+/** An unpaid invoice's due date and where it came from (module doc, step 3). */
+export function invoiceDueDate(inv: Pick<InvoiceAcc, 'openDue' | 'invoiceDue' | 'invoiceDate' | 'termDays'>): { date: string; source: DueDateSource } | null {
+  if (inv.openDue) return { date: inv.openDue, source: 'instalment' };
+  if (inv.invoiceDue) return { date: inv.invoiceDue, source: 'invoice' };
+  if (inv.invoiceDate && inv.termDays !== null) return { date: addDays(inv.invoiceDate, inv.termDays), source: 'payment_term' };
+  if (inv.invoiceDate) return { date: inv.invoiceDate, source: 'invoice_date' };
+  return null;
+}
+
+export type PlacedCustomer = CreditCustomer & { currency: string };
+
+/**
+ * Every customer's placement, one entry per group: per customer + currency (amounts in the invoice currency), or with
+ * `allCurrencies` per customer over every currency (amounts in LYD). Customers without an unpaid invoice are left out.
+ * Map key: "<CustomerKey>|<currency>" or "<CustomerKey>|*".
+ */
+export function placeCustomers(lines: CreditLine[], asOf: string, allCurrencies: boolean): Map<string, PlacedCustomer> {
+  const groups = new Map<string, { currency: string; lines: CreditLine[] }>();
+  for (const l of lines) {
+    const key = `${l.CustomerKey}|${allCurrencies ? '*' : l.currency}`;
+    const g = groups.get(key) ?? { currency: allCurrencies ? COMPANY_CURRENCY : String(l.currency), lines: [] };
+    g.lines.push(l);
+    groups.set(key, g);
   }
-  const sourceRank = (k: string) => (k === DUE_DATE_TERM ? 1 : k === MISSING_TERM ? 2 : 0);
-  const terms = [...termMap.values()].sort(
-    (a, b) => sourceRank(a.key) - sourceRank(b.key) || (a.termDays ?? 0) - (b.termDays ?? 0) || a.label.localeCompare(b.label),
-  );
+  const base = odooWebBaseUrl();
+  const out = new Map<string, PlacedCustomer>();
+  for (const [key, g] of groups) {
+    let total = 0;
+    let totalCompany = 0;
+    const invoices = new Map<number, InvoiceAcc>();
+    for (const l of g.lines) {
+      const amount = micro(allCurrencies ? l.residual_company_ccy : l.residual_doc_ccy);
+      total += amount;
+      totalCompany += micro(l.residual_company_ccy);
+      const inv = invoices.get(Number(l.move_id)) ?? {
+        moveId: Number(l.move_id), residual: 0, openDue: null, invoiceDue: l.invoice_due_date ?? null, invoiceDate: l.invoice_date ?? null,
+        document: l.document ?? null, termDays: l.term_days === null || l.term_days === undefined ? null : Number(l.term_days),
+        companyKey: Number(l.CompanyKey), company: String(l.company), paymentTermKey: Number(l.PaymentTermKey), paymentTerm: l.payment_term ?? null,
+      };
+      inv.residual += amount;
+      // the unpaid instalment's own due date: the earliest among the invoice's lines still open
+      if (amount > 0 && l.due_date && (inv.openDue === null || l.due_date < inv.openDue)) inv.openDue = l.due_date;
+      invoices.set(inv.moveId, inv);
+    }
+    const unpaid = [...invoices.values()]
+      .filter((i) => i.residual > 0)
+      .map((i) => ({ inv: i, due: invoiceDueDate(i) }))
+      .filter((x): x is { inv: InvoiceAcc; due: { date: string; source: DueDateSource } } => x.due !== null);
+    if (unpaid.length === 0) continue;
+    // the deciding invoice: earliest due date, then the older invoice, then the lower move id
+    unpaid.sort(
+      (a, b) =>
+        a.due.date.localeCompare(b.due.date) || (a.inv.invoiceDate ?? '').localeCompare(b.inv.invoiceDate ?? '') || a.inv.moveId - b.inv.moveId,
+    );
+    const { inv, due } = unpaid[0];
+    const raw = daysBetween(due.date, asOf);
+    const notYetDue = raw < 0;
+    const days = raw;
+    const zone = notYetDue ? null : creditZoneForDays(days);
+    const next = notYetDue ? null : nextCreditZone(days);
+    const first = g.lines[0];
+    out.set(key, {
+      currency: g.currency,
+      customerKey: Number(first.CustomerKey),
+      customerCode: first.customer_ref ? String(first.customer_ref) : String(first.CustomerKey),
+      customer: String(first.customer),
+      companyKey: inv.companyKey,
+      company: inv.company,
+      paymentTermKey: inv.paymentTermKey,
+      paymentTerm: inv.paymentTermKey === -1 || !inv.paymentTerm ? 'No payment term' : inv.paymentTerm,
+      totalOutstanding: fromMicro(total),
+      totalOutstandingCompany: fromMicro(totalCompany),
+      unpaidInvoiceCount: unpaid.length,
+      oldestInvoiceMoveId: inv.moveId,
+      oldestInvoiceNumber: inv.document,
+      oldestInvoiceDate: inv.invoiceDate,
+      oldestDueDate: due.date,
+      dueDateSource: due.source,
+      daysPastDue: days,
+      notYetDue,
+      daysUntilDue: notYetDue ? -raw : 0,
+      zone: zone ? zone.key : NOT_YET_DUE.key,
+      responsibleRole: zone ? zone.owner : '—',
+      requiredAction: zone ? creditActionForDays(days)?.action ?? zone.action : 'None until the due date',
+      actionDetails: creditActionForDays(days)?.details,
+      nextZone: next ? next.zone.key : null,
+      daysToNextZone: next ? next.inDays : null,
+      approachingNextZone: !notYetDue && approachingNextZone(days),
+      odooUrl: `${base}/web#id=${inv.moveId}&model=account.move&view_type=form`,
+    });
+  }
+  return out;
+}
 
-  const customers = (opts.term ? all.filter((c) => c.termKey === opts.term) : all).sort(
-    (a, b) => b.position - a.position || b.outstanding - a.outstanding || a.customerKey - b.customerKey,
+// ---- response -----------------------------------------------------------------------------------------------------------
+export interface CreditZoneSummary {
+  key: CreditZoneKey;
+  customers: number;
+  amount: number;
+  /** The same outstanding amount in LYD, for the policy zone headers. */
+  amountCompany: number;
+}
+
+export interface CreditPolicyView {
+  snapshotDate: string | null;
+  /** the date days past due are counted to (the snapshot date) */
+  asOf: string | null;
+  currency: string | null;
+  /** true = every currency together, amounts in LYD (≈) */
+  allCurrencies: boolean;
+  /** currencies with at least one customer, most customers first */
+  currencies: string[];
+  /** config/creditPolicy.ts, as is: the page draws every zone from this */
+  zones: readonly CreditPolicyZone[];
+  escalationWindowDays: number;
+  /** payment-term filter options (deciding invoice's term), before the term filter */
+  terms: { key: string; label: string; customers: number }[];
+  /** Four main zones, due customers only, after the term filter. */
+  summary: { zones: CreditZoneSummary[]; total: { customers: number; amount: number } };
+  /** Due customers after the term filter, most days past due first. */
+  customers: CreditCustomer[];
+}
+
+/** Turns the lines into the chart (pure: the tests feed it rows directly). */
+export function buildCreditPolicy(
+  lines: CreditLine[],
+  opts: { snapshotDate: string | null; currency: string | null; allCurrencies: boolean; term: string | null },
+): CreditPolicyView {
+  const asOf = opts.snapshotDate;
+  const perCurrency = new Map<string, number>();
+  for (const k of new Set(lines.map((l) => `${l.CustomerKey}|${l.currency}`))) {
+    const c = k.split('|')[1];
+    perCurrency.set(c, (perCurrency.get(c) ?? 0) + 1);
+  }
+  const currencies = [...perCurrency].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([c]) => c);
+  const currency = opts.allCurrencies ? COMPANY_CURRENCY : (opts.currency ?? currencies[0] ?? null);
+  const placed = asOf
+    ? [...placeCustomers(opts.allCurrencies ? lines : lines.filter((l) => l.currency === currency), asOf, opts.allCurrencies).values()].filter((c) => !c.notYetDue && c.daysPastDue >= 0)
+    : [];
+
+  const termMap = new Map<string, { key: string; label: string; customers: number }>();
+  for (const c of placed) {
+    const key = String(c.paymentTermKey);
+    const t = termMap.get(key) ?? { key, label: c.paymentTerm, customers: 0 };
+    t.customers += 1;
+    termMap.set(key, t);
+  }
+  const terms = [...termMap.values()].sort((a, b) => Number(a.key === '-1') - Number(b.key === '-1') || a.label.localeCompare(b.label));
+
+  const shown = (opts.term === null ? placed : placed.filter((c) => String(c.paymentTermKey) === opts.term)).sort(
+    (a, b) =>
+      Number(a.notYetDue) - Number(b.notYetDue) ||
+      b.daysPastDue - a.daysPastDue ||
+      a.daysUntilDue - b.daysUntilDue ||
+      b.totalOutstanding - a.totalOutstanding ||
+      a.customerKey - b.customerKey,
   );
+  const sum = (key: CreditZoneKey): CreditZoneSummary => {
+    const list = shown.filter((c) => c.zone === key);
+    return { key, customers: list.length, amount: fromMicro(list.reduce((t, c) => t + micro(c.totalOutstanding), 0)),
+      amountCompany: fromMicro(list.reduce((t, c) => t + micro(c.totalOutstandingCompany), 0)) };
+  };
 
   return {
     snapshotDate: opts.snapshotDate,
+    asOf,
     currency,
-    allCurrencies: Boolean(opts.allCurrencies),
+    allCurrencies: opts.allCurrencies,
     currencies,
-    settings: { minStep: s.minStep, escalationWindowDays: s.escalationWindowDays, axisCap: lastFinite * 1.5 },
-    zones: s.zones.map((z, i) => ({
-      key: z.key,
-      label: z.label,
-      owner: z.owner,
-      lowerMultiplier: i === 0 ? 0 : (s.zones[i - 1].upperMultiplier as number),
-      upperMultiplier: z.upperMultiplier,
-    })),
+    zones: CREDIT_POLICY_ZONES,
+    escalationWindowDays: ESCALATION_WINDOW_DAYS,
     terms,
-    customers,
+    summary: {
+      zones: CREDIT_POLICY_ZONES.map((z) => sum(z.key)),
+      total: { customers: shown.length, amount: fromMicro(shown.reduce((t, c) => t + micro(c.totalOutstanding), 0)) },
+    },
+    customers: shown.map((c) => {
+      const { currency: _currency, ...rest } = c;
+      void _currency;
+      return rest;
+    }),
   };
 }
 
 /** GET /debt-report/aging. */
-export async function fetchDebtAging(pool: Pool, q: AgingQuery, f: Filters): Promise<DebtAging> {
-  const settings = await fetchAgingSettings(pool);
+export async function fetchDebtAging(pool: Pool, q: AgingQuery, f: Filters): Promise<CreditPolicyView> {
   const snapshotKey = await resolveSnapshot(pool, q.debt);
-  let rows: Row[] = [];
-  if (snapshotKey !== null) {
-    const a = agingSql(linesSource(snapshotKey, q.debt, f), q.allCurrencies);
-    [rows] = (await pool.query(a.sql, a.params)) as unknown as [Row[]];
-  }
-  return buildAging(rows, {
-    snapshotDate: isoOfKey(snapshotKey),
-    currency: q.allCurrencies ? COMPANY_CURRENCY : q.currency,
-    term: q.term,
-    settings,
-    allCurrencies: q.allCurrencies,
-  });
+  const lines = snapshotKey === null ? [] : await fetchCreditLines(pool, snapshotKey, q.debt, f);
+  return buildCreditPolicy(lines, { snapshotDate: isoOfKey(snapshotKey), currency: q.currency, allCurrencies: q.allCurrencies, term: q.term });
+}
+
+// ---- Customers table: the same placement -----------------------------------------------------------------------------
+/** A table row's credit-policy bucket. */
+export interface RowCreditZone {
+  zone: CreditZoneKey;
+  daysPastDue: number;
+  daysUntilDue: number;
+}
+
+/**
+ * Adds `creditZone: { currency, all }` to every Customers-table row: its customer's zone in the row's currency, and
+ * over every currency (the all-currencies view) -- from the same lines and placement as the chart (line-level page
+ * filters cleared), so a customer's bucket in the table is always its zone on the chart. null when the customer has
+ * no unpaid invoice (credits only).
+ */
+export async function attachCreditZones<T extends { customerKey: number; currency: string }>(
+  pool: Pool,
+  debt: DebtQuery,
+  f: Filters,
+  result: { snapshotDate: string | null; currencies: string[]; rows: T[] },
+): Promise<{ snapshotDate: string | null; currencies: string[]; rows: (T & { creditZone: { currency: RowCreditZone | null; all: RowCreditZone | null } })[] }> {
+  const snapshotKey = await resolveSnapshot(pool, debt);
+  const asOf = result.snapshotDate;
+  const lines = snapshotKey === null || !asOf ? [] : await fetchCreditLines(pool, snapshotKey, debt, f);
+  const byCurrency = asOf ? placeCustomers(lines, asOf, false) : new Map<string, PlacedCustomer>();
+  const byCustomer = asOf ? placeCustomers(lines, asOf, true) : new Map<string, PlacedCustomer>();
+  const pick = (c: PlacedCustomer | undefined): RowCreditZone | null => (c ? { zone: c.zone, daysPastDue: c.daysPastDue, daysUntilDue: c.daysUntilDue } : null);
+  return {
+    ...result,
+    rows: result.rows.map((r) => ({
+      ...r,
+      creditZone: { currency: pick(byCurrency.get(`${r.customerKey}|${r.currency}`)), all: pick(byCustomer.get(`${r.customerKey}|*`)) },
+    })),
+  };
 }

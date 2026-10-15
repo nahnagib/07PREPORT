@@ -55,6 +55,7 @@ from etl_platform.sources.odoo import m2o_id
 RAW = "raw_odoo_customer_payment"
 FACT = "fact_finance_collection"
 MATCHES = "fact_finance_collection_invoice"
+INVOICE_DATES = "dim_finance_collection_invoice_date"
 INVOICE_MOVE_TYPES = ("out_invoice", "out_receipt")
 OVERLAP = _dt.timedelta(hours=1)
 EPS = 0.005
@@ -64,7 +65,7 @@ PAYMENT_FIELDS = ["id", "move_id", "name", "date", "state", "partner_id", "compa
 PAY_LINE_FIELDS = ["id", "payment_id", "move_id", "account_type", "amount_residual_currency", "amount_currency", "parent_state"]
 PARTIAL_FIELDS = ["id", "debit_move_id", "credit_move_id", "amount", "debit_amount_currency", "credit_amount_currency", "max_date"]
 DEBIT_LINE_FIELDS = ["id", "move_id", "date", "date_maturity", "account_type"]
-DEBIT_MOVE_FIELDS = ["id", "name", "move_type", "invoice_user_id", "team_id", "invoice_date_due"]
+DEBIT_MOVE_FIELDS = ["id", "name", "move_type", "invoice_user_id", "team_id", "invoice_date", "invoice_date_due"]
 KEY_DIMS = {"CustomerKey": ("dim_customer", "CustomerKey"), "CompanyKey": ("dim_company", "CompanyKey"),
             "SalespersonKey": ("dim_salesperson", "SalespersonKey"), "SalesTeamKey": ("dim_sales_team", "SalesTeamKey"),
             "CurrencyKey": ("dim_currency", "CurrencyKey"), "PaymentDateKey": ("dim_date", "DateKey")}
@@ -349,6 +350,9 @@ def load_collections(ctx: RunContext) -> TaskResult:
                           for r in conn.execute(text("SELECT id, name, company_id FROM raw_odoo_crm_team"))}
             upsert(conn, "dim_sales_team", tf.own_team_members(own_teams, odoo_teams, maps.company_keys).assign(updated_at_utc=now))
         upsert(conn, RAW, raw)
+        # These dates outlive payment allocation replacements, including full collection reloads.
+        invoice_dates = collection_invoice_dates(ctx.state["collection_debit_moves"])
+        upsert(conn, INVOICE_DATES, invoice_dates.assign(updated_at_utc=now))
         if ctx.state.get("collection_full"):
             deleted = conn.execute(text(f"DELETE FROM {FACT}")).rowcount or 0
             conn.execute(text(f"DELETE FROM {MATCHES}"))
@@ -367,9 +371,18 @@ def load_collections(ctx: RunContext) -> TaskResult:
     return TaskResult(rows_loaded=inserted, details=details)
 
 
+def collection_invoice_dates(moves: dict[int, dict[str, Any]]) -> pd.DataFrame:
+    """Actual invoice dates, including fully paid invoices absent from the receivables snapshot."""
+    return pd.DataFrame([
+        {"move_id": int(m["id"]), "invoice_date": _date(m.get("invoice_date"))}
+        for m in moves.values() if m.get("move_type") in INVOICE_MOVE_TYPES
+    ], columns=["move_id", "invoice_date"])
+
+
 # -- registration ------------------------------------------------------------------------------------------------------
 REGISTRY.dataset(DatasetSpec(RAW, fin.DEPARTMENT, "raw", "odoo", RAW, "upsert", ("id",), model="account.payment"))
 REGISTRY.dataset(DatasetSpec(FACT, fin.DEPARTMENT, "mart", "sql", FACT, "upsert", ("payment_id", "allocation_no")))
 REGISTRY.dataset(DatasetSpec(MATCHES, fin.DEPARTMENT, "mart", "sql", MATCHES, "upsert", ("partial_id",)))
+REGISTRY.dataset(DatasetSpec(INVOICE_DATES, fin.DEPARTMENT, "conform", "odoo", INVOICE_DATES, "upsert", ("move_id",), model="account.move"))
 REGISTRY.task(TaskSpec("extract_collections", extract_collections, depends_on=("load_receivables",)))
 REGISTRY.task(TaskSpec("load_collections", load_collections, depends_on=("extract_collections",)))

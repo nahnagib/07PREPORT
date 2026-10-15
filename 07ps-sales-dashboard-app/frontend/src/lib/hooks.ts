@@ -707,7 +707,7 @@ export function useDebtReport<T>(
 ) {
   const dataVersion = useDataVersion();
   const latest = useLatestRequest();
-  const [state, setState] = useState<AsyncState<T>>({ data: null, loading: enabled, error: null });
+  const [state, setState] = useState<AsyncState<T> & { scopeKey?: string }>({ data: null, loading: enabled, error: null });
 
   const load = useCallback(() => {
     if (!enabled) {
@@ -718,7 +718,7 @@ export function useDebtReport<T>(
     setState((s) => ({ ...s, loading: true, error: null }));
     const isCurrent = latest.begin();
     fetchDebtReport<T>(token as string, endpoint, scope, extra)
-      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null, scopeKey: JSON.stringify(scope) }))
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataVersion, token, authError, endpoint, JSON.stringify(scope), JSON.stringify(extra), enabled]);

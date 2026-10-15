@@ -1844,6 +1844,8 @@ export interface CustomerTableRow {
   customerKey: number;
   name: string;
   ytdValue: number;
+  /** All recorded sales value within the authorized filters, independent of the selected year. */
+  lifetimeValue: number;
   firstPurchaseDate: string | null;
   lastPurchaseDate: string | null;
   customerSegment: string | null;
@@ -2358,6 +2360,8 @@ export interface DebtReportScope {
   includeOther?: boolean;
   includeIntercompany?: boolean;
   companyKeys?: number[];
+  segmentKeys?: number[];
+  channelKeys?: number[];
   salespersonKeys?: number[];
   salesTeamKeys?: string[];
   customerKeys?: number[];
@@ -2397,8 +2401,11 @@ export interface DebtExclusions {
 export interface DebtMeta {
   snapshots: { date: string; lineCount: number }[];
   snapshotDate: string | null;
+  filters: Record<'companyKeys' | 'segmentKeys' | 'channelKeys' | 'salesTeamKeys' | 'salespersonKeys' | 'customerKeys', string[]>;
   options: {
     companies: DebtOption[];
+    customerGroups: DebtOption[];
+    distributionChannels: DebtOption[];
     salespersons: DebtOption[];
     salesTeams: DebtOption[];
     currencies: DebtOption[];
@@ -2415,6 +2422,8 @@ export interface DebtMeta {
   exclusions: DebtExclusions;
   odooBaseUrl: string;
   topCustomers: number;
+  /** the credit policy (backend config/creditPolicy.ts): zones of the escalation chart and the table's Aging bucket */
+  creditPolicy: { zones: CreditPolicyZone[]; notYetDue: { key: 'NOT_YET_DUE'; label: string } };
   freshness: DebtFreshness;
 }
 
@@ -2515,10 +2524,9 @@ export interface DebtCustomerRow {
   net: number;
   /** the same amounts in LYD (Odoo's own amount_total_signed / amount_residual): the "All currencies (≈ LYD)" view */
   lyd: { invoiceAmount: number; open: number; overdue: number; notDue: number; credits: number; otherEntries: number; net: number };
-  /** days past due of the oldest open overdue invoice line; null = nothing overdue */
-  oldestOverdueDays: number | null;
-  /** that line's aging bucket (meta.options.agingBuckets); null = nothing overdue */
-  oldestOverdueBucketKey: number | null;
+  /** its customer's credit-policy zone, exactly as the escalation chart places it: in the row's currency, and over every
+   * currency (the all-currencies view); null when the customer has no unpaid invoice (credits only) */
+  creditZone: { currency: RowCreditZone | null; all: RowCreditZone | null };
   salespersons: string[];
   salesTeams: string[];
   segments: string[];
@@ -2531,7 +2539,8 @@ export interface DebtCustomers {
   rows: DebtCustomerRow[];
 }
 
-export type DebtDrillKind = 'customer' | 'aging' | 'salesperson' | 'team' | 'account';
+/** customer_open = every open invoice of one customer (the escalation chart's dot) */
+export type DebtDrillKind = 'customer' | 'aging' | 'salesperson' | 'team' | 'account' | 'customer_open';
 
 export interface DebtDrillRow {
   lineId: number;
@@ -2568,65 +2577,88 @@ export interface DebtDrilldown {
   totals: { lines: number; openDocuments: number; invoiceAmount: number; openBalance: number; overdueAmount: number };
 }
 
-/** GET /debt-report/aging (backend measures/debtAging.ts): the Aging Map of one currency. Every zone, position and
- * day count is computed by the server; the page only renders it. */
-export type DebtAgingTermSource = 'payment_term' | 'due_date' | 'missing';
+/** GET /debt-report/aging (backend measures/debtAging.ts): Credit Policy Escalation. Every zone, day count and
+ * placement comes from the server (zones: backend config/creditPolicy.ts); the page only draws them. */
+export type CreditZoneKey = 'GREEN' | 'YELLOW' | 'RED' | 'BLOCK' | 'NOT_YET_DUE';
 
-export interface DebtAgingCustomer {
+export interface CreditPolicyActionArea {
+  minDays: number;
+  maxDays: number | null;
+  action: string;
+  details?: string;
+  edgeLabel: string | null;
+}
+
+export interface CreditPolicyZone {
+  key: Exclude<CreditZoneKey, 'NOT_YET_DUE'>;
+  label: string;
+  minDays: number;
+  /** null = no upper bound (the last zone) */
+  maxDays: number | null;
+  /** colour token: tokens.css --ps-credit-<tone> */
+  tone: 'green' | 'amber' | 'red' | 'block';
+  owner: string;
+  action: string;
+  /** the axis label of the zone's right-hand boundary; null for the last zone */
+  edgeLabel: string | null;
+  actionAreas?: CreditPolicyActionArea[];
+}
+
+export interface RowCreditZone {
+  zone: CreditZoneKey;
+  daysPastDue: number;
+  daysUntilDue: number;
+}
+
+export interface CreditCustomer {
   customerKey: number;
+  customerCode: string;
   customer: string;
   companyKey: number;
   company: string;
-  termKey: string;
-  termLabel: string;
-  termDays: number;
-  termSource: DebtAgingTermSource;
-  oldestOpenMoveId: number;
-  oldestOpenDocument: string | null;
-  odooUrl: string;
-  invoiceDate: string;
-  dueDate: string | null;
-  invoiceAge: number;
+  paymentTermKey: number;
+  paymentTerm: string;
+  /** every unpaid invoice, in the view's currency (LYD for all currencies) */
+  totalOutstanding: number;
+  totalOutstandingCompany: number;
+  unpaidInvoiceCount: number;
+  oldestInvoiceMoveId: number;
+  oldestInvoiceNumber: string | null;
+  oldestInvoiceDate: string | null;
+  oldestDueDate: string;
+  dueDateSource: 'instalment' | 'invoice' | 'payment_term' | 'invoice_date';
   daysPastDue: number;
-  termWidth: number;
-  position: number;
-  zone: string;
-  zoneIndex: number;
-  owner: string;
-  nextZone: string | null;
+  notYetDue: boolean;
+  daysUntilDue: number;
+  zone: CreditZoneKey;
+  responsibleRole: string;
+  requiredAction: string;
+  actionDetails?: string;
+  nextZone: CreditPolicyZone['key'] | null;
   daysToNextZone: number | null;
-  escalatingSoon: boolean;
-  /** open invoices in the invoice currency */
-  outstanding: number;
-  /** the same in LYD (Odoo's Amount Due column) */
-  outstandingCompany: number;
-  openInvoices: number;
+  approachingNextZone: boolean;
+  odooUrl: string;
 }
 
-export interface DebtAgingRange {
-  zone: string;
-  from: number;
-  to: number | null;
-}
-
-export interface DebtAgingZone {
-  key: string;
-  label: string;
-  owner: string;
-  lowerMultiplier: number;
-  upperMultiplier: number | null;
+export interface CreditZoneSummary {
+  key: CreditZoneKey;
+  customers: number;
+  amount: number;
+  amountCompany: number;
 }
 
 export interface DebtAging {
   snapshotDate: string | null;
+  asOf: string | null;
   currency: string | null;
-  /** true = every currency together, one dot per customer, amounts in LYD (≈) */
+  /** true = every currency together, amounts in LYD (≈) */
   allCurrencies: boolean;
   currencies: string[];
-  settings: { minStep: number; escalationWindowDays: number; axisCap: number };
-  zones: DebtAgingZone[];
-  terms: { key: string; label: string; termDays: number | null; customers: number; ranges: DebtAgingRange[] | null }[];
-  customers: DebtAgingCustomer[];
+  zones: CreditPolicyZone[];
+  escalationWindowDays: number;
+  terms: { key: string; label: string; customers: number }[];
+  summary: { zones: CreditZoneSummary[]; total: { customers: number; amount: number } };
+  customers: CreditCustomer[];
 }
 
 /** Query string of a Debt Report request. Lists go as repeated keys (the server's scoped filters read arrays). */
@@ -2640,7 +2672,7 @@ export function buildDebtReportQuery(scope: DebtReportScope, extra: Record<strin
   if (scope.includeOther) params.set('includeOther', 'true');
   if (scope.includeIntercompany) params.set('includeIntercompany', 'true');
   if (scope.overdueStatus && scope.overdueStatus !== 'all') params.set('overdueStatus', scope.overdueStatus);
-  for (const key of ['companyKeys', 'salespersonKeys', 'salesTeamKeys', 'customerKeys', 'agingBucketKeys', 'deliveryStatuses', 'paymentTermKeys', 'invoiceTiers', 'customerCategories'] as const) list(key);
+  for (const key of ['companyKeys', 'segmentKeys', 'channelKeys', 'salespersonKeys', 'salesTeamKeys', 'customerKeys', 'agingBucketKeys', 'deliveryStatuses', 'paymentTermKeys', 'invoiceTiers', 'customerCategories'] as const) list(key);
   for (const [k, v] of Object.entries(extra)) params.set(k, String(v));
   return params.toString();
 }
@@ -2652,7 +2684,7 @@ export type CollectionGrain = 'day' | 'week' | 'month';
 export interface CollectionPoint {
   periodStart: string;
   periodEnd: string;
-  /** posted customer payments dated in the period (payment currency) = the four parts below */
+  /** Payment portions applied to invoices issued before payment day = overdue + not due. */
   collected: number;
   appliedOverdue: number;
   appliedNotDue: number;

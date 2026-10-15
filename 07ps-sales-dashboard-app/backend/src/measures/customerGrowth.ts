@@ -75,13 +75,15 @@ function buildCategorySqlClause(category: string | undefined, alias: string): { 
 
 // ---------------------------------------------------------------------------
 // Per-customer activity snapshot -- one pass over v_sales_lines, grouped by CustomerKey. Backs
-// every status classification below and the Customers Table's YTD Value column. Computed once per
+// every status classification below and the Customers Table's value columns. Computed once per
 // request and reused (see computeCustomerGrowthOverview) rather than re-queried per consumer.
 // ---------------------------------------------------------------------------
 
 export interface CustomerActivity {
   customerKey: number;
   ytdValue: number;
+  /** All recorded sales value within the authorized filters, independent of the selected year. */
+  lifetimeValue: number;
   hasYtd: boolean;
   hasLytd: boolean;
   /** Has at least one sale strictly before the LYTD window's start -- "purchase history prior to
@@ -103,6 +105,7 @@ export async function fetchCustomerActivitySnapshot(
     SELECT
       fsl.CustomerKey AS customerKey,
       COALESCE(SUM(CASE WHEN dd.Date BETWEEN ? AND ? THEN fsl.Value ELSE 0 END), 0) AS ytdValue,
+      COALESCE(SUM(fsl.Value), 0) AS lifetimeValue,
       MAX(CASE WHEN dd.Date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS hasYtd,
       MAX(CASE WHEN dd.Date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS hasLytd,
       MAX(CASE WHEN dd.Date < ? THEN 1 ELSE 0 END) AS hasBeforeLytd
@@ -125,6 +128,7 @@ export async function fetchCustomerActivitySnapshot(
     map.set(Number(r.customerKey), {
       customerKey: Number(r.customerKey),
       ytdValue: Number(r.ytdValue),
+      lifetimeValue: Number(r.lifetimeValue),
       hasYtd: Number(r.hasYtd) === 1,
       hasLytd: Number(r.hasLytd) === 1,
       hasBeforeLytd: Number(r.hasBeforeLytd) === 1,
@@ -194,6 +198,7 @@ export interface CustomerRow {
   customerKey: number;
   name: string;
   ytdValue: number;
+  lifetimeValue: number;
   firstPurchaseDate: string | null;
   lastPurchaseDate: string | null;
   customerSegment: string | null;
@@ -224,6 +229,7 @@ export async function fetchCustomerRows(
       customerKey,
       name: dim?.name ?? `Customer ${customerKey}`,
       ytdValue: activity.ytdValue,
+      lifetimeValue: activity.lifetimeValue,
       firstPurchaseDate: dim?.firstPurchaseDate ?? null,
       lastPurchaseDate: dim?.lastPurchaseDate ?? null,
       customerSegment: dim?.customerSegment ?? null,

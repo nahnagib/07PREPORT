@@ -98,20 +98,29 @@
      that need a soft fill rather than a hard line. */
   --ps-color-accent-bg: rgba(27, 42, 73, 0.08);
 
-  /* Debt Report Aging Map zones (components/debt/DebtAgingMap.tsx): green = sales rep, yellow = sales director,
-     red = management, black = legal. Their own tokens rather than success/watch/alert: the four steps are an
-     escalation ladder with agreed colours, and black has no semantic equivalent. -soft = the zone's band behind the
-     dots; -edge = the outline that keeps a black dot visible (needed in dark mode). */
-  --ps-zone-green: #2e9a58;
-  --ps-zone-green-soft: #e3f3e9;
-  --ps-zone-yellow: #d99a14;
-  --ps-zone-yellow-soft: #fbf1d9;
-  --ps-zone-red: #cf3a2f;
-  --ps-zone-red-soft: #fbe4e1;
-  --ps-zone-black: #16171b;
-  --ps-zone-black-soft: #e4e5e8;
-  --ps-zone-black-edge: #16171b;
-  --ps-zone-ink: #ffffff;
+  /* Credit Policy Escalation zones (backend config/creditPolicy.ts "tone"): dot / band colour, soft background, dot edge */
+  --ps-credit-green: #008a38;
+  --ps-credit-green-soft: #70db88;
+  --ps-credit-amber: #facc15;
+  --ps-credit-amber-soft: #ffe55b;
+  --ps-credit-red: #c8102e;
+  --ps-credit-red-soft: #f36b72;
+  --ps-credit-block: #08090b;
+  --ps-credit-block-soft: #111214;
+  --ps-credit-green-band: #dcf5e4;
+  --ps-credit-amber-band: #fff2ac;
+  --ps-credit-red-band: #ffdddd;
+  --ps-credit-block-band: #111214;
+  --ps-credit-green-header: #07883d;
+  --ps-credit-amber-header: #facc15;
+  --ps-credit-red-header: #cf2436;
+  --ps-credit-block-header: #08090b;
+  --ps-credit-zone-ink: #17221b;
+  --ps-credit-main-line: #ffffffcc;
+  --ps-credit-notdue: #9aa1ad;
+  --ps-credit-notdue-soft: #eef0f3;
+  --ps-credit-edge: #ffffff;
+  --ps-credit-ink: #ffffff;
 
   /* Receivables currency identity (price/receivables-collections): the currency badge of each per-currency row and
      its segment in the "All currencies" mix bar share one colour, so the total reads as the sum of the rows. Never
@@ -169,15 +178,24 @@
   --ps-color-alert-border: rgba(255, 92, 122, 0.34);
   --ps-color-accent-bg: rgba(111, 156, 235, 0.14);
 
-  --ps-zone-green: #3fb46d;
-  --ps-zone-green-soft: #173323;
-  --ps-zone-yellow: #e8ad2c;
-  --ps-zone-yellow-soft: #3a2e12;
-  --ps-zone-red: #e5574b;
-  --ps-zone-red-soft: #3d1c1a;
-  --ps-zone-black: #050506;
-  --ps-zone-black-soft: #26282e;
-  --ps-zone-black-edge: #6b707c;
+  --ps-credit-green: #27ce75;
+  --ps-credit-green-soft: #70db88;
+  --ps-credit-amber: #facc15;
+  --ps-credit-amber-soft: #ffe55b;
+  --ps-credit-red: #ff5265;
+  --ps-credit-red-soft: #f36b72;
+  --ps-credit-block: #08090b;
+  --ps-credit-block-soft: #111214;
+  --ps-credit-green-band: #0c3522;
+  --ps-credit-amber-band: #302c0e;
+  --ps-credit-red-band: #431a22;
+  --ps-credit-block-band: #101113;
+  --ps-credit-zone-ink: #f3f4f6;
+  --ps-credit-main-line: #e5e7eb99;
+  --ps-credit-notdue: #6b7280;
+  --ps-credit-notdue-soft: #1d2026;
+  --ps-credit-edge: #0f1115;
+  --ps-credit-ink: #ffffff;
 
   --ps-ccy-lyd: #6f9ceb;
   --ps-ccy-usd: #d4a94a;

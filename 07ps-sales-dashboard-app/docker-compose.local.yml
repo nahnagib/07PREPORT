@@ -11,8 +11,8 @@ services:
 
   backend:
     environment:
-      # CORS: the browser calls the backend from this stack's frontend port, not 3000
-      FRONTEND_ORIGIN: http://localhost:13000
+      # This workspace's built preview and the development frontend use the same current API.
+      FRONTEND_ORIGIN: http://localhost:13000,http://localhost:3100
     ports: !override
       - '127.0.0.1:14000:4000'
     networks:

@@ -121,7 +121,7 @@ class FinanceFakeOdoo(FakeOdooSource):
 def fin(platform_engine, platform_config, tmp_path, monkeypatch):
     for m in ("0029_core_dimensions.sql", "0030_core_team_map.sql", "0031_sales_mart.sql", "0032_core_odoo_labels.sql",
               "0033_finance_receivables.sql", "0034_finance_receivable_scope.sql",
-              "0040_finance_collections.sql", "0042_finance_collection_split.sql"):
+              "0040_finance_collections.sql", "0042_finance_collection_split.sql", "0045_collection_invoice_dates.sql"):
         apply_migration_sqlite(platform_engine, m)
     load_definitions()
     for var in ("ODOO_DEBT_LOGIN", "ODOO_DEBT_API_KEY", "ODOO_DEBT_KEY_EXPIRES"):
@@ -154,13 +154,14 @@ def test_snapshot_rows_follow_the_receivable_rules(fin):
     assert f.loc[2, ["days_past_due", "AgingBucketKey"]].tolist() == [-27, 3]
     assert f.loc[1, ["CustomerKey", "SalespersonKey", "SalesTeamKey", "PaymentTermKey", "delivery_status"]].tolist() == \
         [100, 60, "MJ-EST-BB", 8, "partial"]  # contact 101 -> ACME 100; user 12 -> Sara (60); team 9 -> MJ-EST-BB; Odoo value
-    # credit note due today: not overdue, negative, salesperson from the customer of record (no invoice user)
+    # credit note due today: not overdue, negative, no invoice user -> Unassigned (Odoo's Salesperson filter)
     assert f.loc[3, ["days_past_due", "AgingBucketKey", "residual_company_ccy", "salesperson_source", "PaymentKey"]].tolist() == \
-        [0, 4, -200.0, "customer", -1]
-    assert f.loc[3, "SalespersonKey"] == 49 and f.loc[3, "SalesTeamKey"] == "-1"  # no team -> Unknown, as Odoo's Sales Team filter sees it (never the salesperson's team)
+        [0, 4, -200.0, "none", -1]
+    assert f.loc[3, "SalespersonKey"] == -1 and f.loc[3, "SalesTeamKey"] == "-1"  # no team -> Unknown, as Odoo's Sales Team filter sees it (never the salesperson's team)
     # foreign-currency unapplied payment: no maturity -> line date; both currencies kept
     assert f.loc[4, ["PaymentKey", "DueDateKey", "residual_company_ccy", "residual_doc_ccy", "CurrencyKey"]].tolist() == \
         [77, 20260920, -1000.0, -200.0, 2]
+    assert f.loc[4, ["SalespersonKey", "salesperson_source"]].tolist() == [49, "customer"]
     # invoice without a sales order; Odoo user 13 is not in OdooUsers -> -1; unknown term 99 -> customer default (-1)
     assert f.loc[5, ["SalespersonKey", "PaymentTermKey", "AgingBucketKey"]].tolist() == [-1, -1, 8] and pd.isna(f.loc[5, "delivery_status"])
     # inter-company: the customer is Majaal's own partner

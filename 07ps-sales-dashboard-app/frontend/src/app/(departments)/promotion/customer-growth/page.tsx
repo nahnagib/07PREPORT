@@ -500,6 +500,7 @@ export default function CustomerGrowthPage() {
       customerKey: r.customerKey,
       name: r.name,
       ytdValue: r.ytdValue,
+      lifetimeValue: r.lifetimeValue,
       lastPurchaseDate: r.lastPurchaseDate ?? '—',
       firstPurchaseDate: r.firstPurchaseDate ?? '—',
       groupClass: `${r.customerSegment ?? '—'} / ${r.customerClass ?? '—'}`,
@@ -838,7 +839,11 @@ export default function CustomerGrowthPage() {
             </div>
           ) : (
             <div className="ps-invoices-zone">
-              <ChartPanel title="Customers Table" style={{ minHeight: 480 }}>
+              <ChartPanel
+                title="Customers Table"
+                infoText="Lifetime Value is the customer's total recorded sales value across all years within the active business and access filters."
+                style={{ minHeight: 480 }}
+              >
                 {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
                 ) : overview.error ? (
@@ -899,7 +904,7 @@ export default function CustomerGrowthPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Customers Table columns (Details view) -- YTD Value sorts/exports on the raw number, displays
+// Customers Table columns (Details view) -- value columns sort/export on the raw number, display
 // formatted currency, same convention as every other DataGrid numeric column in this app.
 // ---------------------------------------------------------------------------
 
@@ -907,6 +912,7 @@ interface CustomerTableGridRow extends Record<string, unknown> {
   customerKey: number;
   name: string;
   ytdValue: number;
+  lifetimeValue: number;
   lastPurchaseDate: string;
   firstPurchaseDate: string;
   groupClass: string;
@@ -915,6 +921,7 @@ interface CustomerTableGridRow extends Record<string, unknown> {
 const customerTableColumns: DataGridColumn<CustomerTableGridRow>[] = [
   { key: 'name', header: 'Customer Name', width: 220 },
   { key: 'ytdValue', header: 'YTD Value', align: 'right', width: 140, render: (r) => formatCurrency(r.ytdValue), rawValue: (r) => r.ytdValue },
+  { key: 'lifetimeValue', header: 'Lifetime Value', align: 'right', width: 150, render: (r) => formatCurrency(r.lifetimeValue), rawValue: (r) => r.lifetimeValue },
   { key: 'lastPurchaseDate', header: 'Last Purchase Date', width: 150 },
   { key: 'firstPurchaseDate', header: 'First Purchase Date', width: 150 },
   { key: 'groupClass', header: 'Customer Group / Class', width: 180 },

@@ -168,10 +168,10 @@ describe('Debt Report access', () => {
     expect((await get('/debt-report/aging?term=x', 'gcfo')).status).toBe(400);
   });
 
-  it('aging ignores the line-level page filters (they would change which invoice is the oldest)', async () => {
+  it('the escalation chart ignores the line-level page filters (they would change which invoice decides)', async () => {
     const res = await get('/debt-report/aging?overdueStatus=overdue&agingBucketKeys=3&deliveryStatuses=full&paymentTermKeys=4&customerCategories=B', 'gcfo');
     expect(res.status).toBe(200);
-    const q = queries.find((x) => x.sql.includes('ROW_NUMBER() OVER'));
+    const q = queries.find((x) => x.sql.includes("WHERE x.line_kind = 'invoice'"));
     expect(q).toBeTruthy();
     expect(q!.sql).not.toMatch(/l\.days_past_due > 0|l\.AgingBucketKey IN|l\.delivery_status IN|l\.PaymentTermKey IN/);
     expect(q!.sql).toContain('l.customer_category IN (?)'); // a customer-level filter still applies

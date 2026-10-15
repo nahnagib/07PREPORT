@@ -142,6 +142,24 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
     await pool?.end();
   });
 
+  it('cross-filters finance options by company, group and channel using the receivables snapshot', async () => {
+    const sample = await q1(`SELECT CompanyKey AS co, SegmentKey AS sg, ChannelKey AS ch
+      FROM v_finance_receivable_line WHERE SnapshotDateKey = ? AND ${DEFAULT}
+      AND SegmentKey IS NOT NULL AND ChannelKey IS NOT NULL LIMIT 1`, [snap]);
+    expect(sample).toBeTruthy();
+    const params = new URLSearchParams({ companyKeys: String(sample.co), segmentKeys: String(sample.sg), channelKeys: String(sample.ch) });
+    const res = await get(`/debt-report/meta?${params}`);
+    expect(res.status).toBe(200);
+    const expected = await qa(`SELECT DISTINCT SalesTeamKey, SalespersonKey, CustomerKey
+      FROM v_finance_receivable_line WHERE SnapshotDateKey = ? AND ${DEFAULT}
+      AND CompanyKey = ? AND SegmentKey = ? AND ChannelKey = ?`, [snap, sample.co, sample.sg, sample.ch]);
+    for (const [key, column] of [['salesTeams', 'SalesTeamKey'], ['salespersons', 'SalespersonKey'], ['customers', 'CustomerKey']]) {
+      expect(new Set(res.body.options[key].map((o: { value: string }) => o.value))).toEqual(new Set(expected.map((r) => String(r[column]))));
+    }
+    expect(res.body.options.customerGroups.length).toBeGreaterThan(0);
+    expect(res.body.options.distributionChannels.length).toBeGreaterThan(0);
+  });
+
   // ---- the exclusion config --------------------------------------------------------------------------------------
   it('every configured segment exists in dim_segment and every configured team name in dim_sales_team (exact bytes)', async () => {
     const cfg = await qa('SELECT rule_type, name FROM cfg_finance_report_exclusion');
@@ -297,10 +315,13 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
     const rows = (await get('/debt-report/customers')).body.rows as Json[];
     close(rows.reduce((s, r) => s + r.lyd.open, 0), o.all.kpis.openAmount);
     close(rows.reduce((s, r) => s + r.lyd.overdue, 0), o.all.kpis.overdueAmount);
-    // a row with an overdue amount has an overdue oldest bucket; one without has none
+    // every row with an open invoice carries its customer's credit-policy zone (both views); an overdue row is past due
     for (const r of rows) {
-      if (r.overdue > 0.005) expect(r.oldestOverdueDays, `${r.customer} ${r.currency}`).toBeGreaterThan(0);
-      if (r.overdue === 0) expect(r.oldestOverdueBucketKey, `${r.customer} ${r.currency}`).toBeNull();
+      if (r.open > 0.005) {
+        expect(r.creditZone.currency, `${r.customer} ${r.currency}`).not.toBeNull();
+        expect(r.creditZone.all, `${r.customer} all`).not.toBeNull();
+      }
+      if (r.overdue > 0.005) expect(r.creditZone.currency.zone, `${r.customer} ${r.currency}`).not.toBe('NOT_YET_DUE');
     }
   });
 

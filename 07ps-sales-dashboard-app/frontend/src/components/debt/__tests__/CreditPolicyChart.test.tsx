@@ -1,0 +1,104 @@
+import React from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { CreditPolicyChart } from '../CreditPolicyChart';
+import type { CreditCustomer, DebtAging } from '../../../lib/api';
+import { ZONES } from '../../../lib/__tests__/fixtures/creditZones';
+
+function customer(p: Partial<CreditCustomer> & { customerKey: number; zone: CreditCustomer['zone']; daysPastDue: number; totalOutstanding: number }): CreditCustomer {
+  return {
+    customerCode: `C${p.customerKey}`, customer: `Customer ${p.customerKey}`, companyKey: 1, company: 'Majaal', paymentTermKey: 4, paymentTerm: '30 Days',
+    totalOutstandingCompany: p.totalOutstanding, unpaidInvoiceCount: 2, oldestInvoiceMoveId: 10, oldestInvoiceNumber: 'INV/2026/0001',
+    oldestInvoiceDate: '2026-08-01', oldestDueDate: '2026-08-31', dueDateSource: 'instalment', notYetDue: p.zone === 'NOT_YET_DUE', daysUntilDue: 0,
+    responsibleRole: 'GCEO + CFO', requiredAction: 'Management Escalation', nextZone: null, daysToNextZone: null, approachingNextZone: false,
+    odooUrl: 'https://x/web#id=10', ...p,
+  };
+}
+
+const data: DebtAging = {
+  snapshotDate: '2026-10-20', asOf: '2026-10-20', currency: 'LYD', allCurrencies: true, currencies: ['LYD', 'USD'], zones: ZONES, escalationWindowDays: 7,
+  terms: [{ key: '4', label: '30 Days', customers: 3 }],
+  summary: {
+    zones: ZONES.map((z) => ({ key: z.key, customers: z.key === 'BLOCK' ? 2 : z.key === 'GREEN' ? 1 : 0,
+      amount: z.key === 'BLOCK' ? 700 : z.key === 'GREEN' ? 200 : 0, amountCompany: z.key === 'BLOCK' ? 700 : z.key === 'GREEN' ? 200 : 0 })),
+    total: { customers: 3, amount: 900 },
+  },
+  customers: [
+    customer({ customerKey: 4, zone: 'BLOCK', daysPastDue: 419, totalOutstanding: 400, responsibleRole: 'GCEO + CFO', requiredAction: 'Legal Action' }),
+    customer({ customerKey: 3, zone: 'BLOCK', daysPastDue: 49, totalOutstanding: 300 }),
+    customer({ customerKey: 2, zone: 'GREEN', daysPastDue: 10, totalOutstanding: 200, approachingNextZone: true, nextZone: 'YELLOW', daysToNextZone: 6 }),
+    customer({ customerKey: 1, zone: 'NOT_YET_DUE', daysPastDue: 0, daysUntilDue: 5, totalOutstanding: 100 }),
+  ],
+};
+
+afterEach(cleanup);
+
+describe('CreditPolicyChart', () => {
+  const props = { data, loading: false, error: null, onRetry: () => undefined, term: null, onTermChange: () => undefined, viewLabel: 'All currencies (≈ LYD)' };
+
+  it('title follows the currency view; zone headers show range, owner, action and live counts', () => {
+    render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
+    expect(screen.getByText('Credit Policy Escalation · All currencies (≈ LYD)')).toBeTruthy();
+    for (const t of ['GREEN', 'YELLOW', 'RED', 'BLOCK', '0 – 15 Days', '16 – 30 Days', '31 – 44 Days', '45+ Days', '45 – 60 Days', '61 – 65 Days', '>65 Days', 'Final Warning + Stop Supply', 'GCEO + CFO']) {
+      expect(screen.getAllByText(t).length, t).toBeGreaterThan(0);
+    }
+    expect(document.querySelector('svg')?.textContent ?? document.body.textContent).toBeDefined();
+    expect(document.body.textContent).toContain('Due Date');
+    expect(document.body.textContent).toContain('(Day 0)');
+    expect(screen.getAllByText('>65 Days')).toHaveLength(2);
+    expect(screen.getByText('PAYMENT TERM (FILTER)')).toBeTruthy();
+    // Counts combine BLOCK ranges; future-due customers have no visible content.
+    expect(document.body.textContent).toContain('≈ LYD 700');
+    expect(document.body.textContent?.toLowerCase()).not.toContain('not yet due');
+    expect(document.querySelectorAll('[data-status]')).toHaveLength(4);
+    expect(document.querySelectorAll('[data-zone=BLOCK]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-block-action]')).toHaveLength(3);
+    for (const day of [0, 15, 30, 45, 60, 65]) expect(document.querySelector(`[data-boundary="${day}"]`)).toBeTruthy();
+    for (const day of [60, 65]) expect(document.querySelector(`[data-boundary="${day}"]`)?.getAttribute('data-internal')).toBe('true');
+    expect(document.querySelectorAll('[data-customer]')).toHaveLength(3);
+  });
+
+  it('a dot within 7 days of the next zone has a dashed ring; LEGAL never', () => {
+    render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
+    const ringed = (key: number) => document.querySelector(`[data-customer="${key}"] circle[stroke-dasharray]`) !== null;
+    expect(ringed(2)).toBe(true);
+    expect(ringed(3)).toBe(false);
+    expect(ringed(4)).toBe(false);
+    expect(document.querySelector('[data-customer="2"]')?.getAttribute('aria-label')).toContain('Moves to YELLOW (Sales Director) in 6 days if unpaid.');
+  });
+
+  it('hover shows the details; a click opens the customer', () => {
+    const onClick = vi.fn();
+    render(<CreditPolicyChart {...props} onCustomerClick={onClick} />);
+    const dot = document.querySelector('[data-customer="3"]') as Element;
+    fireEvent.pointerEnter(dot);
+    const tip = screen.getByRole('tooltip');
+    for (const t of ['Customer 3', 'Code C3', 'INV/2026/0001', '49', '30 Days', 'Management Escalation', '2']) expect(tip.textContent, t).toContain(t);
+    fireEvent.click(dot);
+    expect(onClick).toHaveBeenCalledWith(expect.objectContaining({ customerKey: 3 }));
+    fireEvent.keyDown(dot, { key: 'Enter' });
+    expect(onClick).toHaveBeenCalledTimes(2);
+  });
+
+  it('all BLOCK dots are black with a light outline, including >65 days', () => {
+    render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
+    for (const id of [3, 4]) {
+      const dot = document.querySelector(`[data-customer="${id}"] circle`)!;
+      expect(dot.getAttribute('fill')).toBe('var(--ps-credit-block)');
+      expect(dot.getAttribute('stroke')).toBe('#f3f4f6');
+    }
+  });
+
+  it('shows an empty state when only future-due customers are returned', () => {
+    render(<CreditPolicyChart {...props} data={{ ...data, customers: data.customers.filter((c) => c.notYetDue) }} onCustomerClick={() => undefined} />);
+    expect(screen.getByText('No customer is due or overdue with these filters.')).toBeTruthy();
+    expect(document.querySelectorAll('[data-customer]')).toHaveLength(0);
+  });
+
+  it('the legend', () => {
+    render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
+    for (const t of ['Dot size = amount outstanding', 'Position = days past due of the oldest unpaid invoice (based on due date)', 'Each customer appears once']) {
+      expect(screen.getByText(t)).toBeTruthy();
+    }
+  });
+});

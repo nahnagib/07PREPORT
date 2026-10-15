@@ -37,6 +37,7 @@
  */
 import type { Pool } from 'mysql2/promise';
 import { DEBT_TOP_CUSTOMERS, odooWebBaseUrl, sizeTiers, tierCaseSql, type SizeTier } from '../config/finance';
+import { CREDIT_POLICY_ZONES, NOT_YET_DUE, type CreditPolicyZone } from '../config/creditPolicy';
 import {
   CUSTOMER_CATEGORIES,
   CUSTOMER_CATEGORY_COLUMN,
@@ -47,6 +48,7 @@ import {
   type CustomerCategoryFilterValue,
 } from '../lib/customerCategory';
 import type { Filters } from './filters';
+import { computeCascade, DIMENSIONS, emptySelection, type Selection } from '../filters/cascade';
 
 export class DebtQueryError extends Error {}
 
@@ -70,8 +72,7 @@ export interface DebtQuery {
 const TIERS: readonly SizeTier[] = ['large', 'medium', 'small'];
 const NONE_DELIVERY = 'none';
 
-/** The query with its page filters cleared (snapshot and scope toggles kept): filter options never disappear because
- * of another selection. */
+/** Keep snapshot and scope toggles while clearing line-level filters; dimension options use the cascade below. */
 function withoutPageFilters(q: DebtQuery): DebtQuery {
   return { ...q, overdueStatus: 'all', agingBucketKeys: [], deliveryStatuses: [], paymentTermKeys: [], invoiceTiers: [], customerCategories: [] };
 }
@@ -343,8 +344,11 @@ export interface DebtExclusions {
 export interface DebtMeta {
   snapshots: SnapshotInfo[];
   snapshotDate: string | null;
+  filters: Selection;
   options: {
     companies: DebtOption[];
+    customerGroups: DebtOption[];
+    distributionChannels: DebtOption[];
     salespersons: DebtOption[];
     salesTeams: DebtOption[];
     currencies: DebtOption[];
@@ -361,6 +365,8 @@ export interface DebtMeta {
   exclusions: DebtExclusions;
   odooBaseUrl: string;
   topCustomers: number;
+  /** the credit policy (config/creditPolicy.ts): the Customers table's "Aging bucket" and the escalation chart */
+  creditPolicy: { zones: readonly CreditPolicyZone[]; notYetDue: typeof NOT_YET_DUE };
 }
 
 export async function fetchDebtExclusions(pool: Pool): Promise<DebtExclusions> {
@@ -385,9 +391,9 @@ export async function fetchDebtExclusions(pool: Pool): Promise<DebtExclusions> {
   };
 }
 
-/** Filter options for one snapshot, within the caller's scope (role data scope / salesperson lock), the exclusions
- * and the scope toggles -- never the page filters, so an option never disappears because of another selection. */
-export async function fetchDebtMeta(pool: Pool, q: DebtQuery, f: Filters): Promise<DebtMeta> {
+/** Cross-filter the snapshot's dimensions with the same cascade as Promotion. Access restrictions stay in the SQL;
+ * selections can narrow options and be pruned without ever widening the caller's access. */
+export async function fetchDebtMeta(pool: Pool, q: DebtQuery, f: Filters, accessScope: Filters = f): Promise<DebtMeta> {
   const snapshots = await fetchSnapshots(pool);
   const snapshotKey = await resolveSnapshot(pool, q);
   const labels = (rowsIn: Row[]): DebtOption[] =>
@@ -403,41 +409,57 @@ export async function fetchDebtMeta(pool: Pool, q: DebtQuery, f: Filters): Promi
     "SELECT value AS v, label_en AS en, label_ar AS ar FROM dim_odoo_selection_label WHERE model = 'sale.order' AND field = 'delivery_status' ORDER BY value",
     [],
   );
-  const empty = { companies: [], salespersons: [], salesTeams: [], currencies: [], paymentTerms: [], customers: [] };
+  const channels = labels(await rows(pool, 'SELECT ChannelKey AS v, DistributionChannel AS en FROM dim_channel ORDER BY ChannelKey', []));
+  const empty = { companies: [], customerGroups: [], distributionChannels: [], salespersons: [], salesTeams: [], currencies: [], paymentTerms: [], customers: [] };
   let dims: Record<keyof typeof empty, DebtOption[]> = empty;
+  let filters = emptySelection();
   if (snapshotKey !== null) {
-    const src = linesSource(snapshotKey, withoutPageFilters(q), f);
+    const src = linesSource(snapshotKey, withoutPageFilters(q), accessScope);
     const combos = await rows(
       pool,
       `SELECT l.CompanyKey, MAX(l.company) AS company, l.SalespersonKey, MAX(l.salesperson) AS salesperson, l.SalesTeamKey,
               MAX(l.sales_team) AS sales_team, l.PaymentTermKey, MAX(l.payment_term) AS payment_term,
+              l.SegmentKey, MAX(l.segment) AS segment, l.ChannelKey, l.CustomerKey, MAX(l.customer) AS customer,
               l.currency, COUNT(*) AS n
        ${src.sql}
-       GROUP BY l.CompanyKey, l.SalespersonKey, l.SalesTeamKey, l.PaymentTermKey, l.currency`,
+       GROUP BY l.CompanyKey, l.SalespersonKey, l.SalesTeamKey, l.PaymentTermKey, l.SegmentKey, l.ChannelKey, l.CustomerKey, l.currency`,
       src.params,
     );
-    const customerRows = await rows(pool, `SELECT l.CustomerKey AS v, MAX(l.customer) AS name ${src.sql} GROUP BY l.CustomerKey`, src.params);
-    const distinct = (key: string, label: string): DebtOption[] => {
+    const columns = { companyKeys: 'CompanyKey', segmentKeys: 'SegmentKey', channelKeys: 'ChannelKey', salesTeamKeys: 'SalesTeamKey', salespersonKeys: 'SalespersonKey', customerKeys: 'CustomerKey' } as const;
+    const selection = emptySelection();
+    for (const d of DIMENSIONS) selection[d] = (f[d] ?? []).map(String);
+    const cascade = computeCascade(combos.map((r) => {
+      const combo = {} as Record<(typeof DIMENSIONS)[number], string | null>;
+      for (const d of DIMENSIONS) combo[d] = r[columns[d]] == null ? null : String(r[columns[d]]);
+      return combo;
+    }), selection);
+    filters = cascade.selection;
+    const selectedCombos = combos.filter((r) => DIMENSIONS.every((d) => !filters[d].length || filters[d].includes(String(r[columns[d]]))));
+    const distinct = (key: string, label: string, valid?: Set<string>): DebtOption[] => {
       const m = new Map<string, string>();
-      for (const c of combos) m.set(String(c[key]), String(c[label] ?? c[key]));
+      for (const c of valid ? combos : selectedCombos) {
+        if (c[key] != null && (!valid || valid.has(String(c[key])))) m.set(String(c[key]), String(c[label] ?? c[key]));
+      }
       return [...m].map(([value, labelEn]) => ({ value, labelEn, labelAr: null })).sort((a, b) => a.labelEn.localeCompare(b.labelEn));
     };
     const currencyCounts = new Map<string, number>();
-    for (const c of combos) currencyCounts.set(String(c.currency), (currencyCounts.get(String(c.currency)) ?? 0) + num(c.n));
+    for (const c of selectedCombos) currencyCounts.set(String(c.currency), (currencyCounts.get(String(c.currency)) ?? 0) + num(c.n));
     dims = {
-      companies: distinct('CompanyKey', 'company'),
-      salespersons: distinct('SalespersonKey', 'salesperson'),
-      salesTeams: distinct('SalesTeamKey', 'sales_team'),
+      companies: distinct('CompanyKey', 'company', cascade.options.companyKeys),
+      customerGroups: distinct('SegmentKey', 'segment', cascade.options.segmentKeys),
+      distributionChannels: channels.filter((c) => cascade.options.channelKeys.has(c.value)),
+      salespersons: distinct('SalespersonKey', 'salesperson', cascade.options.salespersonKeys),
+      salesTeams: distinct('SalesTeamKey', 'sales_team', cascade.options.salesTeamKeys),
       currencies: orderCurrencies(currencyCounts).map((c) => ({ value: c, labelEn: c, labelAr: null })),
       paymentTerms: distinct('PaymentTermKey', 'payment_term'),
-      customers: customerRows
-        .map((c) => ({ value: String(c.v), labelEn: `${String(c.name ?? c.v)} (${c.v})`, labelAr: null }))
-        .sort((a, b) => a.labelEn.localeCompare(b.labelEn)),
+      customers: distinct('CustomerKey', 'customer', cascade.options.customerKeys)
+        .map((c) => ({ ...c, labelEn: `${c.labelEn} (${c.value})` })),
     };
   }
   return {
     snapshots,
     snapshotDate: isoOfKey(snapshotKey),
+    filters,
     options: {
       ...dims,
       agingBuckets: buckets.map((r) => ({ value: String(r.v), labelEn: String(r.en), labelAr: null, isOverdue: Boolean(Number(r.is_overdue)) })),
@@ -455,6 +477,7 @@ export async function fetchDebtMeta(pool: Pool, q: DebtQuery, f: Filters): Promi
     exclusions: await fetchDebtExclusions(pool),
     odooBaseUrl: odooWebBaseUrl(),
     topCustomers: DEBT_TOP_CUSTOMERS,
+    creditPolicy: { zones: CREDIT_POLICY_ZONES, notYetDue: NOT_YET_DUE },
   };
 }
 
@@ -873,10 +896,6 @@ export interface DebtCustomerRow {
   /** invoiceAmount, open, overdue, notDue, credits, otherEntries and net in the company currency (LYD): Odoo's own
    * amount_total_signed / amount_residual, for the "All currencies (≈ LYD)" view */
   lyd: { invoiceAmount: number; open: number; overdue: number; notDue: number; credits: number; otherEntries: number; net: number };
-  /** days past due of the row's oldest open overdue invoice line (the most days past due); null = nothing overdue */
-  oldestOverdueDays: number | null;
-  /** that line's aging bucket (dim_finance_aging_bucket, the Distribution chart's buckets); null = nothing overdue */
-  oldestOverdueBucketKey: number | null;
   salespersons: string[];
   salesTeams: string[];
   segments: string[];
@@ -893,7 +912,7 @@ export async function fetchDebtCustomers(pool: Pool, q: DebtQuery, f: Filters): 
   const lines = await rows(
     pool,
     `SELECT l.line_id, l.move_id, l.CompanyKey, l.company, l.CustomerKey, l.customer, l.customer_category, l.currency, l.days_past_due, l.residual_doc_ccy,
-            l.invoice_total_signed, l.invoice_total_company, l.residual_company_ccy, l.AgingBucketKey, l.salesperson, l.sales_team,
+            l.invoice_total_signed, l.invoice_total_company, l.residual_company_ccy, l.salesperson, l.sales_team,
             l.segment, l.line_kind
      ${s.sql}`,
     s.params,
@@ -915,7 +934,6 @@ export async function fetchDebtCustomers(pool: Pool, q: DebtQuery, f: Filters): 
         customerCategory: customerCategoryLabel(l.customer_category),
         currency: String(l.currency), open: 0, overdue: 0, notDue: 0, credits: 0, otherEntries: 0, net: 0, lineCount: 0,
         lyd: { invoiceAmount: 0, open: 0, overdue: 0, notDue: 0, credits: 0, otherEntries: 0, net: 0 },
-        oldestOverdueDays: null, oldestOverdueBucketKey: null,
         docs: new DocumentAmounts(), sp: new Set(), tm: new Set(), sg: new Set(),
       };
       groups.set(id, g);
@@ -937,10 +955,6 @@ export async function fetchDebtCustomers(pool: Pool, q: DebtQuery, f: Filters): 
       g.lyd.overdue += odCompany;
       g.lyd.notDue += amountCompany - odCompany;
       g.docs.add(l);
-      if (days > 0 && amount > 0 && (g.oldestOverdueDays === null || days > g.oldestOverdueDays)) {
-        g.oldestOverdueDays = days;
-        g.oldestOverdueBucketKey = num(l.AgingBucketKey);
-      }
     } else if (CREDIT_KINDS.includes(kind)) {
       g.credits += amount;
       g.lyd.credits += amountCompany;
@@ -981,8 +995,10 @@ export async function fetchDebtCustomers(pool: Pool, q: DebtQuery, f: Filters): 
  *   salesperson  the overdue invoice lines of a salesperson               = its bar in "Overdue by salesperson"
  *   team         the overdue invoice lines of a sales team                = its bar in "Overdue by team"
  *   account      every line of one company + customer (key "co:cu")       = its row in the customer table (net)
+ *   customer_open every invoice line of a customer (every company), the line-level page filters cleared
+ *                = its dot on the Credit Policy Escalation chart (total outstanding)
  */
-export type DebtDrillKind = 'customer' | 'aging' | 'salesperson' | 'team' | 'account';
+export type DebtDrillKind = 'customer' | 'aging' | 'salesperson' | 'team' | 'account' | 'customer_open';
 
 export interface DebtDrill {
   kind: DebtDrillKind;
@@ -991,7 +1007,13 @@ export interface DebtDrill {
   currency: string | null;
 }
 
-const DRILL_KINDS: readonly DebtDrillKind[] = ['customer', 'aging', 'salesperson', 'team', 'account'];
+const DRILL_KINDS: readonly DebtDrillKind[] = ['customer', 'aging', 'salesperson', 'team', 'account', 'customer_open'];
+
+/** The query with the line-level page filters cleared (overdue status, aging bucket, delivery status, payment term,
+ * invoice size): they would change which invoice decides a customer's place on the escalation chart. */
+export function withoutLineFilters(q: DebtQuery): DebtQuery {
+  return { ...q, overdueStatus: 'all', agingBucketKeys: [], deliveryStatuses: [], paymentTermKeys: [], invoiceTiers: [] };
+}
 
 export function parseDrill(q: Record<string, unknown>): DebtDrill {
   const kind = String(q.kind ?? '') as DebtDrillKind;
@@ -1009,6 +1031,8 @@ function drillCondition(d: DebtDrill): Sql {
   switch (d.kind) {
     case 'customer':
       return { sql: "d.CustomerKey = ? AND d.days_past_due > 0 AND d.line_kind = 'invoice'", params: [Number(d.key)] };
+    case 'customer_open':
+      return { sql: "d.CustomerKey = ? AND d.line_kind = 'invoice'", params: [Number(d.key)] };
     case 'aging':
       return { sql: "d.AgingBucketKey = ? AND d.line_kind = 'invoice'", params: [Number(d.key)] };
     case 'salesperson':
@@ -1066,7 +1090,8 @@ export async function fetchDebtDrilldown(pool: Pool, q: DebtQuery, f: Filters, d
   const snapshotKey = await resolveSnapshot(pool, q);
   const empty = { lines: 0, openDocuments: 0, invoiceAmount: 0, openBalance: 0, overdueAmount: 0 };
   if (snapshotKey === null) return { snapshotDate: null, drill: d, rows: [], totals: empty };
-  const s = linesSource(snapshotKey, q, f);
+  // the escalation chart ignores the line-level page filters: so does the drill-down of one of its dots
+  const s = linesSource(snapshotKey, d.kind === 'customer_open' ? withoutLineFilters(q) : q, f);
   const c = drillCondition(d);
   const r = await rows(
     pool,

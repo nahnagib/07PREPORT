@@ -1,210 +1,218 @@
 import { describe, expect, it } from 'vitest';
-import { DebtQueryError } from '../debtReport';
 import {
-  addDays,
-  agingSql,
-  buildAging,
-  classify,
-  daysBetween,
-  parseAgingQuery,
-  resolveTerm,
-  validateSettings,
-  zoneRanges,
-  type AgingSettings,
-} from '../debtAging';
+  CREDIT_POLICY_ZONES,
+  approachingNextZone,
+  creditZoneForDays,
+  creditActionForDays,
+  nextCreditZone,
+  validateCreditPolicy,
+  type CreditPolicyZone,
+} from '../../config/creditPolicy';
+import { buildCreditPolicy, daysBetween, invoiceDueDate, parseAgingQuery, placeCustomers, type CreditLine } from '../debtAging';
 
-/** The seeded settings of migration 0037. */
-const SETTINGS: AgingSettings = {
-  zones: [
-    { key: 'green', label: 'Green', upperMultiplier: 1, owner: 'Sales rep' },
-    { key: 'yellow', label: 'Yellow', upperMultiplier: 2, owner: 'Sales director' },
-    { key: 'red', label: 'Red', upperMultiplier: 3, owner: 'Management' },
-    { key: 'black', label: 'Black', upperMultiplier: null, owner: 'Legal' },
-  ],
-  minStep: 7,
-  escalationWindowDays: 7,
-};
-const zoneOf = (term: number, age: number) => SETTINGS.zones[classify(term, age, SETTINGS).zoneIndex].key;
+/** Credit Policy Escalation (2026-10-15): zones by days past due of the unpaid invoice with the earliest due date. */
 
-describe('classify: zones scale with the term', () => {
+let lineId = 0;
+function line(p: Partial<CreditLine> & { CustomerKey: number; move_id: number; due_date: string | null; residual: number }): CreditLine {
+  lineId += 1;
+  const { residual, ...rest } = p;
+  return {
+    currency: 'LYD', customer: `Customer ${p.CustomerKey}`, customer_ref: null, CompanyKey: 1, company: 'Majaal', PaymentTermKey: 4,
+    payment_term: '30 Days', term_days: 30, line_id: lineId, document: `INV/${p.move_id}`, invoice_date: '2026-08-01', invoice_due_date: p.due_date,
+    residual_doc_ccy: residual, residual_company_ccy: residual, ...rest,
+  } as CreditLine;
+}
+
+describe('the zones (config/creditPolicy.ts)', () => {
   it.each([
-    [90, 90, 'green'],
-    [90, 91, 'yellow'],
-    [90, 180, 'yellow'],
-    [90, 181, 'red'],
-    [90, 270, 'red'],
-    [90, 271, 'black'],
-    [15, 15, 'green'],
-    [15, 16, 'yellow'],
-    [15, 46, 'black'],
-    [0, 7, 'green'], // Immediate Payment: W = min_step = 7
-    [0, 8, 'yellow'],
-  ])('term %i, invoice age %i -> %s', (term, age, zone) => {
-    expect(zoneOf(term, age)).toBe(zone);
+    [0, 'GREEN'], [15, 'GREEN'], [16, 'YELLOW'], [30, 'YELLOW'], [31, 'RED'], [44, 'RED'], [45, 'BLOCK'], [60, 'BLOCK'],
+    [61, 'BLOCK'], [65, 'BLOCK'], [66, 'BLOCK'], [419, 'BLOCK'],
+  ])('%i days past due -> %s', (days, zone) => {
+    expect(creditZoneForDays(days)?.key).toBe(zone);
   });
 
-  it('days to next zone: term 90 at age 90 -> 1; null once Black', () => {
-    expect(classify(90, 90, SETTINGS).daysToNextZone).toBe(1);
-    expect(classify(90, 271, SETTINGS).daysToNextZone).toBeNull();
-    expect(classify(90, 271, SETTINGS).escalatingSoon).toBe(false);
+  it('negative days = not yet due, never GREEN', () => {
+    expect(creditZoneForDays(-1)).toBeNull();
   });
 
-  it('derives days past due, position and escalating-soon', () => {
-    const p = classify(30, 57, SETTINGS);
-    expect(p).toEqual({ termWidth: 30, zoneIndex: 1, invoiceAge: 57, daysPastDue: 27, position: 1.9, daysToNextZone: 4, escalatingSoon: true });
-    expect(classify(30, 52, SETTINGS).escalatingSoon).toBe(false); // 9 days to go
-    expect(classify(0, 3, SETTINGS)).toMatchObject({ termWidth: 7, daysPastDue: 3, position: 3 / 7 });
-  });
-
-  it('an invoice dated after the as-of date counts as age 0 (green)', () => {
-    expect(classify(30, -5, SETTINGS)).toMatchObject({ invoiceAge: 0, zoneIndex: 0, daysToNextZone: 31 });
-  });
-
-  it('follows changed settings: multipliers and min step are data, not code', () => {
-    const wide: AgingSettings = {
-      ...SETTINGS,
-      minStep: 10,
-      zones: SETTINGS.zones.map((z, i) => ({ ...z, upperMultiplier: [1.5, 3, 4, null][i] })),
-    };
-    expect(classify(0, 15, wide).zoneIndex).toBe(0); // W = 10, green to 15
-    expect(classify(0, 16, wide).zoneIndex).toBe(1);
-    expect(classify(20, 81, wide)).toMatchObject({ zoneIndex: 3, daysToNextZone: null });
-  });
-
-  it('zone ranges per term (the axis in real days)', () => {
-    expect(zoneRanges(90, SETTINGS)).toEqual([
-      { zone: 'green', from: 0, to: 90 },
-      { zone: 'yellow', from: 91, to: 180 },
-      { zone: 'red', from: 181, to: 270 },
-      { zone: 'black', from: 271, to: null },
+  it('owners follow the policy', () => {
+    expect(CREDIT_POLICY_ZONES.map((z) => [z.key, z.minDays, z.maxDays, z.owner])).toEqual([
+      ['GREEN', 0, 15, 'Sales Manager'],
+      ['YELLOW', 16, 30, 'Sales Director'],
+      ['RED', 31, 44, 'CEO'],
+      ['BLOCK', 45, null, 'GCEO + CFO'],
     ]);
-    expect(zoneRanges(0, SETTINGS).map((r) => r.to)).toEqual([7, 14, 21, null]);
+  });
+
+  it('a gap, an overlap or a closed last zone fails at load', () => {
+    const z = CREDIT_POLICY_ZONES.map((x) => ({ ...x }));
+    expect(() => validateCreditPolicy(z)).not.toThrow();
+    expect(() => validateCreditPolicy([{ ...z[0], maxDays: 14 }, ...z.slice(1)] as CreditPolicyZone[])).toThrow(/gap or overlap/);
+    expect(() => validateCreditPolicy([...z.slice(0, -1), { ...z[3], maxDays: 999 }] as CreditPolicyZone[])).toThrow(/open-ended/);
+  });
+
+  it('the dashed ring: within 7 days of the next zone (days >= upper - 6); never within BLOCK', () => {
+    expect(approachingNextZone(8)).toBe(false);
+    expect(approachingNextZone(9)).toBe(true); // GREEN ends at 15: moves in 7 days
+    expect(nextCreditZone(9)).toEqual({ zone: expect.objectContaining({ key: 'YELLOW' }), inDays: 7 });
+    expect(approachingNextZone(38)).toBe(true); // RED ends at 44
+    expect(approachingNextZone(61)).toBe(false); // internal action changes keep the customer in BLOCK
+    expect(approachingNextZone(66)).toBe(false);
+    expect(approachingNextZone(419)).toBe(false);
+    expect(nextCreditZone(500)).toBeNull();
   });
 });
 
-describe('validateSettings', () => {
-  it('accepts the seeded ladder and refuses broken ones', () => {
-    expect(validateSettings(SETTINGS)).toBe(SETTINGS);
-    const z = SETTINGS.zones;
-    expect(() => validateSettings({ ...SETTINGS, zones: [z[0], z[2], z[1], z[3]] })).toThrow(/increase/);
-    expect(() => validateSettings({ ...SETTINGS, zones: [z[0], z[1], z[2]] })).toThrow(/last zone/);
-    expect(() => validateSettings({ ...SETTINGS, minStep: 0 })).toThrow(/min_step/);
-  });
-});
-
-describe('resolveTerm', () => {
-  const base = { paymentTermKey: 14, paymentTerm: '90 days', termDays: 90, invoiceDate: '2026-08-03', dueDate: '2026-11-01' };
-  it('uses the payment term with its configured days', () => {
-    expect(resolveTerm(base)).toEqual({ key: '14', label: '90 days', termDays: 90, source: 'payment_term' });
-  });
-  it('no term (or a term without configured days) -> the invoice due date', () => {
-    expect(resolveTerm({ ...base, paymentTermKey: -1, paymentTerm: '(none)', termDays: null, dueDate: '2026-08-24' })).toEqual({
-      key: 'due_date', label: 'By due date (21 days)', termDays: 21, source: 'due_date',
-    });
-    expect(resolveTerm({ ...base, termDays: null }).source).toBe('due_date');
-  });
-  it('no term and no due date -> Missing term, 0 days', () => {
-    expect(resolveTerm({ ...base, paymentTermKey: -1, termDays: null, dueDate: null })).toEqual({ key: 'missing', label: 'Missing term', termDays: 0, source: 'missing' });
-  });
-});
-
-describe('dates', () => {
-  it('counts whole days across months and years', () => {
-    expect(daysBetween('2026-08-03', '2026-10-06')).toBe(64);
-    expect(daysBetween('2025-12-31', '2026-01-01')).toBe(1);
-    expect(addDays('2026-10-04', 30)).toBe('2026-11-03');
-  });
-});
-
-describe('parseAgingQuery', () => {
-  it('drops the line-level page filters and keeps the customer-level ones', () => {
-    const q = parseAgingQuery({
-      overdueStatus: 'overdue', agingBucketKeys: '1,2', deliveryStatuses: 'full', ignoredDocumentType: 'move:out_invoice',
-      paymentTermKeys: '4', invoiceTiers: 'large', customerCategories: 'B', includeOther: 'true',
-      currency: 'usd', term: 'due_date',
-    });
-    expect(q.debt).toMatchObject({
-      overdueStatus: 'all', agingBucketKeys: [], deliveryStatuses: [], paymentTermKeys: [], invoiceTiers: [],
-      customerCategories: ['B'], includeOther: true,
-    });
-    expect(q).toMatchObject({ currency: 'USD', term: 'due_date' });
-    expect(q).not.toHaveProperty('lookAheadDays');
-  });
-  it('400s on a bad currency or term', () => {
-    expect(() => parseAgingQuery({ currency: 'LYDX' })).toThrow(DebtQueryError);
-    expect(() => parseAgingQuery({ term: "1' OR 1=1" })).toThrow(DebtQueryError);
-  });
-});
-
-describe('agingSql', () => {
-  it('one statement: invoice lines only, oldest open line by ROW_NUMBER, balance by GROUP BY, term days joined', () => {
-    const a = agingSql({ sql: 'FROM x l WHERE l.a = ?', params: [5] });
-    expect(a.params).toEqual([5]);
-    expect(a.sql).toContain('ROW_NUMBER() OVER (PARTITION BY ln.CustomerKey, ln.currency ORDER BY ln.InvoiceDateKey, ln.due_date, ln.line_id)');
-    expect(a.sql).toContain("ln AS (SELECT * FROM src WHERE line_kind = 'invoice')"); // never credits / other entries / inter-company
-    expect(a.sql).toContain('SUM(residual_company_ccy) AS outstanding_company');
-    expect(a.sql).toContain('LEFT JOIN cfg_finance_payment_term_days td');
-  });
-});
-
-/** A row as the aging query returns it. */
-const row = (o: Record<string, unknown>) => ({
-  currency: 'LYD', CustomerKey: 1, customer: 'A', CompanyKey: 1, company: 'MJ', PaymentTermKey: 4, payment_term: '30 Days', term_days: 30,
-  move_id: 100, document: 'INV/1', InvoiceDateKey: 20260901, due_date: '2026-10-01', outstanding: '1000.000000',
-  outstanding_company: '1000.000000', open_invoices: 1, ...o,
-});
-const build = (rows: Record<string, unknown>[], over: Partial<Parameters<typeof buildAging>[1]> = {}) =>
-  buildAging(rows, { snapshotDate: '2026-10-04', currency: null, term: null, settings: SETTINGS, ...over });
-
-describe('buildAging', () => {
-  it('places customers and sorts them worst first', () => {
-    const r = build([
-      row({ CustomerKey: 1, InvoiceDateKey: 20260901, outstanding: '0.100000' }), // 33 days on 30 -> yellow
-      row({ CustomerKey: 2, InvoiceDateKey: 20260920, outstanding: '0.200000' }), // 14 days -> green
-      row({ CustomerKey: 3, InvoiceDateKey: 20260601, outstanding: '0.300000' }), // 125 days -> black
-    ]);
-    expect(r.customers.map((c) => [c.customerKey, c.zone])).toEqual([[3, 'black'], [1, 'yellow'], [2, 'green']]);
-    expect(r.customers.map((c) => c.outstanding)).toEqual([0.3, 0.1, 0.2]);
-    expect(r.zones[0]).toEqual({ key: 'green', label: 'Green', owner: 'Sales rep', lowerMultiplier: 0, upperMultiplier: 1 });
-    expect(r.settings).toEqual({ minStep: 7, escalationWindowDays: 7, axisCap: 4.5 });
+describe('placement: days past due of the earliest unpaid due date', () => {
+  it('payment term 30, due 1 Sep, as of 20 Oct = 49 days -> BLOCK (never "1.63x term")', () => {
+    const c = [...placeCustomers([line({ CustomerKey: 1, move_id: 10, due_date: '2026-09-01', residual: 100 })], '2026-10-20', false).values()][0];
+    expect(c.daysPastDue).toBe(49);
+    expect(c.zone).toBe('BLOCK');
+    expect(c.responsibleRole).toBe('GCEO + CFO');
+    expect(c.requiredAction).toBe('Management Escalation');
+    expect(c).not.toHaveProperty('position');
   });
 
-  it('the invoice age runs to the snapshot date; the dashed ring flags the last week of a zone', () => {
-    const r = build([row({ InvoiceDateKey: 20260904 })]); // 30 days: last green day
-    expect(r.customers[0]).toMatchObject({ invoiceAge: 30, zone: 'green', nextZone: 'yellow', daysToNextZone: 1, escalatingSoon: true });
+  it('due tomorrow = NOT YET DUE (not 0 / GREEN); due today = day 0, GREEN', () => {
+    const tomorrow = [...placeCustomers([line({ CustomerKey: 1, move_id: 10, due_date: '2026-10-21', residual: 100 })], '2026-10-20', false).values()][0];
+    expect(tomorrow).toMatchObject({ zone: 'NOT_YET_DUE', notYetDue: true, daysPastDue: -1, daysUntilDue: 1, approachingNextZone: false });
+    const today = [...placeCustomers([line({ CustomerKey: 1, move_id: 10, due_date: '2026-10-20', residual: 100 })], '2026-10-20', false).values()][0];
+    expect(today).toMatchObject({ zone: 'GREEN', notYetDue: false, daysPastDue: 0 });
   });
 
-  it('carries the LYD amount (company currency) next to the invoice-currency amount', () => {
-    const r = build([row({ currency: 'USD', outstanding: '1000.000000', outstanding_company: '9800.500000', open_invoices: 3 })]);
-    expect(r.customers[0]).toMatchObject({ outstanding: 1000, outstandingCompany: 9800.5, openInvoices: 3, oldestOpenDocument: 'INV/1' });
+  it('the invoice with the EARLIEST due date decides, even when another invoice is older', () => {
+    const c = [
+      ...placeCustomers(
+        [
+          // older invoice (1 Jul) with a 90-day term: due 29 Sep
+          line({ CustomerKey: 7, move_id: 1, invoice_date: '2026-07-01', due_date: '2026-09-29', residual: 500 }),
+          // newer invoice (1 Aug), cash: due 1 Aug -> the earliest due date
+          line({ CustomerKey: 7, move_id: 2, invoice_date: '2026-08-01', due_date: '2026-08-01', residual: 200 }),
+        ],
+        '2026-10-20',
+        false,
+      ).values(),
+    ][0];
+    expect(c.oldestInvoiceMoveId).toBe(2);
+    expect(c.oldestDueDate).toBe('2026-08-01');
+    expect(c.daysPastDue).toBe(80);
+    expect(c.zone).toBe('BLOCK');
+    // one dot per customer, sized by every unpaid invoice
+    expect(c.totalOutstanding).toBe(700);
+    expect(c.unpaidInvoiceCount).toBe(2);
   });
 
-  it('missing / due-date terms, term options and the term filter', () => {
-    const rows = [
-      row({ CustomerKey: 1 }),
-      row({ CustomerKey: 2, PaymentTermKey: -1, payment_term: '(none)', term_days: null, due_date: '2026-09-15' }), // 14 days by due date
-      row({ CustomerKey: 3, PaymentTermKey: -1, payment_term: '(none)', term_days: null, due_date: null }),
+  it('a paid-off invoice never decides; a negative line on an invoice lowers the outstanding', () => {
+    const c = [
+      ...placeCustomers(
+        [
+          line({ CustomerKey: 3, move_id: 1, due_date: '2026-06-01', residual: 0 }),
+          line({ CustomerKey: 3, move_id: 2, due_date: '2026-10-10', residual: 300 }),
+          line({ CustomerKey: 3, move_id: 2, due_date: '2026-10-10', residual: -50 }),
+        ],
+        '2026-10-20',
+        false,
+      ).values(),
+    ][0];
+    expect(c.oldestInvoiceMoveId).toBe(2);
+    expect(c.daysPastDue).toBe(10);
+    expect(c.totalOutstanding).toBe(250);
+  });
+
+  it('due date: the unpaid instalment, else invoice_date_due, else invoice date + term', () => {
+    expect(invoiceDueDate({ openDue: '2026-08-14', invoiceDue: '2026-10-13', invoiceDate: '2026-04-16', termDays: 30 })).toEqual({ date: '2026-08-14', source: 'instalment' });
+    expect(invoiceDueDate({ openDue: null, invoiceDue: '2026-10-13', invoiceDate: '2026-04-16', termDays: 30 })).toEqual({ date: '2026-10-13', source: 'invoice' });
+    expect(invoiceDueDate({ openDue: null, invoiceDue: null, invoiceDate: '2026-09-01', termDays: 30 })).toEqual({ date: '2026-10-01', source: 'payment_term' });
+  });
+
+  it('all currencies: one dot per customer over every currency, amounts in LYD', () => {
+    const lines = [
+      line({ CustomerKey: 5, move_id: 1, currency: 'LYD', due_date: '2026-10-01', residual: 1000 }),
+      { ...line({ CustomerKey: 5, move_id: 2, currency: 'USD', due_date: '2026-07-01', residual: 100 }), residual_company_ccy: 900 },
     ];
-    const r = build(rows);
-    expect(r.customers.find((c) => c.customerKey === 2)).toMatchObject({ termSource: 'due_date', termDays: 14, termLabel: 'By due date (14 days)' });
-    expect(r.customers.find((c) => c.customerKey === 3)).toMatchObject({ termSource: 'missing', termDays: 0, termLabel: 'Missing term' });
-    expect(r.terms.map((t) => [t.key, t.termDays, t.customers])).toEqual([['4', 30, 1], ['due_date', null, 1], ['missing', 0, 1]]);
-    const only30 = build(rows, { term: '4' });
-    expect(only30.customers.map((c) => c.customerKey)).toEqual([1]);
-    expect(only30.terms).toHaveLength(3); // options never disappear because of the filter
+    expect(placeCustomers(lines, '2026-10-20', false).size).toBe(2);
+    const all = [...placeCustomers(lines, '2026-10-20', true).values()];
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ totalOutstanding: 1900, oldestDueDate: '2026-07-01', zone: 'BLOCK' });
   });
 
-  it('one currency at a time; default = most customers', () => {
-    const rows = [row({ CustomerKey: 1 }), row({ CustomerKey: 2 }), row({ CustomerKey: 1, currency: 'USD', outstanding: '50' })];
-    const lyd = build(rows);
-    expect(lyd).toMatchObject({ currency: 'LYD', currencies: ['LYD', 'USD'] });
-    expect(lyd.customers).toHaveLength(2);
-    const usd = build(rows, { currency: 'USD' });
-    expect(usd.currency).toBe('USD');
-    expect(usd.customers.map((c) => c.outstanding)).toEqual([50]);
+  it('calendar days', () => {
+    expect(daysBetween('2026-09-01', '2026-10-20')).toBe(49);
+    expect(daysBetween('2026-02-28', '2026-03-01')).toBe(1);
+  });
+});
+
+describe('the chart dataset', () => {
+  const lines = [
+    line({ CustomerKey: 1, move_id: 1, due_date: '2026-10-25', residual: 100 }), // not yet due
+    line({ CustomerKey: 2, move_id: 2, due_date: '2026-10-10', residual: 200 }), // 10 days, GREEN
+    line({ CustomerKey: 3, move_id: 3, due_date: '2026-09-01', residual: 300, PaymentTermKey: 9, payment_term: '60 Days' }), // 49, BLOCK
+    line({ CustomerKey: 4, move_id: 4, due_date: '2025-08-27', residual: 400 }), // 419, BLOCK
+  ];
+  const view = (term: string | null = null) => buildCreditPolicy(lines, { snapshotDate: '2026-10-20', currency: 'LYD', allCurrencies: false, term });
+
+  it('four zone summaries include only due customers and combine all BLOCK actions', () => {
+    const v = view();
+    const zones = Object.fromEntries(v.summary.zones.map((z) => [z.key, [z.customers, z.amount]]));
+    expect(zones).toMatchObject({ GREEN: [1, 200], YELLOW: [0, 0], RED: [0, 0], BLOCK: [2, 700] });
+    expect(v.summary).not.toHaveProperty('notYetDue');
+    expect(v.customers.every((c) => c.daysPastDue >= 0 && !c.notYetDue)).toBe(true);
+    expect(v.summary.zones.reduce((t, z) => t + z.amount, 0)).toBe(900);
+    expect(v.summary.total).toEqual({ customers: 3, amount: 900 });
+    expect(v.customers.map((c) => c.daysPastDue)).toEqual([419, 49, 10]); // most past due first, future-due excluded
   });
 
-  it('renders an empty map without a snapshot', () => {
-    expect(build([], { snapshotDate: null })).toMatchObject({ snapshotDate: null, currency: null, currencies: [], customers: [] });
+  it('the payment-term filter only chooses customers: zones and boundaries never move', () => {
+    const v = view('9');
+    expect(v.customers.map((c) => [c.customerKey, c.zone, c.daysPastDue])).toEqual([[3, 'BLOCK', 49]]);
+    expect(v.zones).toBe(CREDIT_POLICY_ZONES);
+    expect(v.terms.map((t) => [t.key, t.customers])).toEqual([['4', 2], ['9', 1]]);
+  });
+
+  it('carries every customer-level field the chart needs', () => {
+    const c = view().customers[0];
+    for (const k of ['customerKey', 'customerCode', 'customer', 'paymentTerm', 'totalOutstanding', 'unpaidInvoiceCount', 'oldestInvoiceNumber',
+      'oldestInvoiceDate', 'oldestDueDate', 'daysPastDue', 'zone', 'responsibleRole', 'requiredAction']) {
+      expect(c, k).toHaveProperty(k);
+    }
+  });
+
+  it('parses the query: term is a payment term key', () => {
+    expect(parseAgingQuery({ term: '4' }).term).toBe('4');
+    expect(() => parseAgingQuery({ term: 'due_date' })).toThrow();
+  });
+});
+
+
+describe('status, owner and action at every policy edge', () => {
+  it.each([
+    [0, 'GREEN', 'Sales Manager', 'Payment Reminder'],
+    [15, 'GREEN', 'Sales Manager', 'Payment Reminder'],
+    [16, 'YELLOW', 'Sales Director', 'Follow-up / Customer Visit'],
+    [30, 'YELLOW', 'Sales Director', 'Follow-up / Customer Visit'],
+    [31, 'RED', 'CEO', 'CEO Intervention'],
+    [44, 'RED', 'CEO', 'CEO Intervention'],
+    [45, 'BLOCK', 'GCEO + CFO', 'Management Escalation'],
+    [60, 'BLOCK', 'GCEO + CFO', 'Management Escalation'],
+    [61, 'BLOCK', 'GCEO + CFO', 'Final Warning + Stop Supply'],
+    [65, 'BLOCK', 'GCEO + CFO', 'Final Warning + Stop Supply'],
+    [66, 'BLOCK', 'GCEO + CFO', 'Legal Action'],
+    [156, 'BLOCK', 'GCEO + CFO', 'Legal Action'],
+  ])('%i days -> %s / %s / %s', (days, zone, owner, action) => {
+    const c = [...placeCustomers([line({ CustomerKey: 1, move_id: 1, due_date: '2026-01-01', residual: 100 })],
+      new Date(Date.UTC(2026, 0, 1 + Number(days))).toISOString().slice(0, 10), false).values()][0];
+    expect(c).toMatchObject({ zone, responsibleRole: owner, requiredAction: action });
+  });
+
+  it('supplies the additional BLOCK instructions', () => {
+    expect(creditActionForDays(63)?.details).toContain('registered mail');
+    expect(creditActionForDays(156)?.details).toContain('consultation with GCEO');
+  });
+
+  it('keeps LYD summaries while preserving the currency-based dot amounts', () => {
+    const v = buildCreditPolicy([{ ...line({ CustomerKey: 1, move_id: 1, currency: 'USD', due_date: '2026-01-01', residual: 100 }), residual_company_ccy: 650 }],
+      { snapshotDate: '2026-10-15', currency: 'USD', allCurrencies: false, term: null });
+    expect(v.customers[0].totalOutstanding).toBe(100);
+    expect(v.summary.zones.find((z) => z.key === 'BLOCK')).toMatchObject({ customers: 1, amount: 100, amountCompany: 650 });
   });
 });

@@ -4,17 +4,17 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 /**
- * Debt Report Aging Map against a REAL MySQL (read-only: SELECT only). Opt-in, with the Debt Report DB tests:
+ * Credit Policy Escalation (GET /debt-report/aging) against a REAL MySQL (read-only: SELECT only). Opt-in, with the
+ * Debt Report DB tests:
  *
  *   DEBT_TEST_DB=1 DB_HOST=... DB_USER=... DB_PASSWORD=... DB_NAME=powerBI_Data npx vitest run -c vitest.debt-db.config.ts
  *
- * Needs migrations 0036 and 0037.
- *   1. The oldest-open-invoice rules, on the production SQL (agingSql) fed with literal rows -- MySQL evaluates the
- *      real CTE / ROW_NUMBER / LEFT JOIN on cfg_finance_payment_term_days, no table is written.
- *   2. GET /debt-report/aging on the real snapshot, every expectation computed with its own SQL on the fact table.
- *   3. The Debt Report invariants, per currency and for All currencies (LYD), with the defaults, one company (Majaal)
+ *   1. GET /debt-report/aging on the real snapshot, every expectation computed with its own SQL on the fact table:
+ *      the unpaid invoice with the earliest due date decides, days past due = snapshot date - that due date, zones as in
+ *      config/creditPolicy.ts; the Customers table's bucket = the chart's zone for every customer.
+ *   2. The Debt Report invariants, per currency and for All currencies (LYD), with the defaults, one company (Majaal)
  *      and both toggles on: Overdue + Not yet due = Total debt (in the invoice currency and in LYD); both shares
- *      between 0% and 100%; the Aging Map total = Total debt; the toggles never change Total debt, Overdue or the map.
+ *      between 0% and 100%; the chart's four zone totals = due-customer outstanding; the toggles never change them.
  */
 const RUN = process.env.DEBT_TEST_DB === '1';
 
@@ -58,130 +58,20 @@ vi.mock('../../services/permissionService', async () => {
 let server: Server;
 let base = '';
 let pool: typeof import('../../db/pool').pool;
-let aging: typeof import('../../measures/debtAging');
 let snap = 0;
-type Json = any;
+type Json = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 const get = async (path: string, who = 'admin'): Promise<{ status: number; body: Json }> => {
   const res = await fetch(`${base}${path}`, { headers: { 'x-test-user': who } });
   return { status: res.status, body: await res.json() };
 };
 const qa = async (sql: string, params: unknown[] = []): Promise<Json[]> => (await pool.query(sql, params))[0] as Json[];
 const n = (v: unknown) => Number(v ?? 0);
+const isoOf = (k: number) => `${String(k).slice(0, 4)}-${String(k).slice(4, 6)}-${String(k).slice(6, 8)}`;
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+const ZONES: [string, number, number][] = [['GREEN', 0, 15], ['YELLOW', 16, 30], ['RED', 31, 44], ['BLOCK', 45, Infinity]];
+const zoneOf = (d: number) => (d < 0 ? 'NOT_YET_DUE' : ZONES.find(([, lo, hi]) => d >= lo && d <= hi)![0]);
 
-/** One literal receivable line (the columns agingSql reads from its source). */
-interface Line {
-  customer: number;
-  move: number;
-  line?: number;
-  invoiceDate: string;
-  dueDate?: string | null;
-  residual: number;
-  term?: number;
-  currency?: string;
-  /** default: invoice for a positive residual, payment otherwise */
-  kind?: string;
-}
-/** A FROM clause of literal rows, alias l, as linesSource exposes it. */
-function fixture(lines: Line[]): { sql: string; params: unknown[] } {
-  const params: unknown[] = [];
-  const selects = lines.map((x, i) => {
-    params.push(
-      x.currency ?? 'LYD', x.customer, `Customer ${x.customer}`, x.term ?? 4, `term ${x.term ?? 4}`, x.move, x.line ?? i + 1,
-      `INV/${x.move}`, Number(x.invoiceDate.replace(/-/g, '')), x.dueDate === undefined ? x.invoiceDate : x.dueDate, x.residual,
-      x.residual * (x.currency && x.currency !== 'LYD' ? 10 : 1), x.kind ?? (x.residual >= 0 ? 'invoice' : 'payment'),
-    );
-    return `SELECT ? AS currency, ? AS CustomerKey, ? AS customer, 1 AS CompanyKey, 'MJ' AS company, ? AS PaymentTermKey,
-                   ? AS payment_term, ? AS move_id, ? AS line_id, ? AS document, ? AS InvoiceDateKey, ? AS due_date,
-                   CAST(? AS DECIMAL(20,6)) AS residual_doc_ccy, CAST(? AS DECIMAL(20,6)) AS residual_company_ccy, ? AS line_kind`;
-  });
-  return { sql: `FROM (${selects.join(' UNION ALL ')}) l`, params };
-}
-async function mapOf(lines: Line[], snapshotDate = '2026-10-04') {
-  const a = aging.agingSql(fixture(lines));
-  const rows = await qa(a.sql, a.params);
-  const settings = await aging.fetchAgingSettings(pool);
-  return aging.buildAging(rows, { snapshotDate, currency: null, term: null, settings });
-}
-
-describe.skipIf(!RUN)('Aging Map: oldest open invoice (production SQL on literal rows)', () => {
-  beforeAll(async () => {
-    ({ pool } = await import('../../db/pool'));
-    aging = await import('../../measures/debtAging');
-  });
-
-  it('3 invoices, the oldest fully paid -> the second-oldest decides the zone', async () => {
-    // term 4 = 30 days. A fully paid invoice has no open line in Odoo; a zero residual must be ignored too.
-    const lines: Line[] = [
-      { customer: 1, move: 11, invoiceDate: '2026-05-01', residual: 0 },
-      { customer: 1, move: 12, invoiceDate: '2026-08-20', residual: 300 }, // 45 days -> yellow
-      { customer: 1, move: 13, invoiceDate: '2026-09-25', residual: 700 },
-    ];
-    const m = await mapOf(lines);
-    expect(m.customers).toHaveLength(1);
-    expect(m.customers[0]).toMatchObject({ oldestOpenMoveId: 12, invoiceAge: 45, zone: 'yellow', outstanding: 1000, openInvoices: 2 });
-    // without the fully paid one, nothing changes
-    expect((await mapOf(lines.slice(1))).customers[0]).toMatchObject({ oldestOpenMoveId: 12, zone: 'yellow' });
-  });
-
-  it('a partial payment on the oldest invoice keeps the zone and lowers outstanding', async () => {
-    const full: Line[] = [
-      { customer: 2, move: 21, invoiceDate: '2026-06-01', residual: 1000 }, // 125 days on 30 -> black
-      { customer: 2, move: 22, invoiceDate: '2026-09-30', residual: 500 },
-    ];
-    const partial = [{ ...full[0], residual: 250 }, full[1]];
-    const a = (await mapOf(full)).customers[0];
-    const b = (await mapOf(partial)).customers[0];
-    expect(a).toMatchObject({ oldestOpenMoveId: 21, zone: 'black', outstanding: 1500 });
-    expect(b).toMatchObject({ oldestOpenMoveId: 21, zone: 'black', outstanding: 750 });
-  });
-
-  it('credits never lower the outstanding amount or settle an invoice; credit-only customers are not placed', async () => {
-    const lines: Line[] = [
-      { customer: 3, move: 31, invoiceDate: '2026-07-01', residual: 800 },
-      { customer: 3, move: 32, invoiceDate: '2026-09-01', dueDate: null, residual: -300, term: -1 }, // unreconciled receipt
-      { customer: 3, move: 33, invoiceDate: '2026-09-02', dueDate: null, residual: -900, term: -1, kind: 'credit_note' },
-      { customer: 9, move: 91, invoiceDate: '2026-09-01', dueDate: null, residual: -120, term: -1, kind: 'credit_note' },
-      { customer: 9, move: 92, invoiceDate: '2026-09-03', dueDate: null, residual: -30, term: -1 },
-      // other receivable entries / inter-company never reach the map, even with their toggles on
-      { customer: 10, move: 101, invoiceDate: '2026-01-01', residual: 5000, kind: 'other' },
-      { customer: 11, move: 111, invoiceDate: '2026-01-01', residual: 7000, kind: 'intercompany' },
-    ];
-    const m = await mapOf(lines);
-    expect(m.customers.map((c) => c.customerKey)).toEqual([3]);
-    expect(m.customers[0]).toMatchObject({ oldestOpenMoveId: 31, outstanding: 800, outstandingCompany: 800, openInvoices: 1 });
-  });
-
-  it('term from cfg_finance_payment_term_days; no term -> due date; no due date -> Missing term', async () => {
-    const m = await mapOf([
-      { customer: 4, move: 41, invoiceDate: '2026-07-06', residual: 10, term: 14 }, // 90 days configured
-      { customer: 5, move: 51, invoiceDate: '2026-09-01', dueDate: '2026-09-22', residual: 10, term: -1 },
-      { customer: 6, move: 61, invoiceDate: '2026-09-01', dueDate: null, residual: 10, term: -1 },
-      { customer: 7, move: 71, invoiceDate: '2026-09-01', dueDate: '2026-09-11', residual: 10, term: 999999 }, // term without days
-    ]);
-    const by = (k: number) => m.customers.find((c) => c.customerKey === k);
-    expect(by(4)).toMatchObject({ termSource: 'payment_term', termDays: 90, zone: 'green' });
-    expect(by(5)).toMatchObject({ termSource: 'due_date', termDays: 21 });
-    expect(by(6)).toMatchObject({ termSource: 'missing', termDays: 0, termLabel: 'Missing term' });
-    expect(by(7)).toMatchObject({ termSource: 'due_date', termDays: 10 });
-  });
-
-  it('ties on the invoice date go to the earlier due date, then the lower line id; currencies stay apart', async () => {
-    const m = await mapOf([
-      { customer: 8, move: 81, line: 5, invoiceDate: '2026-08-01', dueDate: '2026-09-15', residual: 10 },
-      { customer: 8, move: 82, line: 9, invoiceDate: '2026-08-01', dueDate: '2026-08-31', residual: 10 },
-      { customer: 8, move: 83, invoiceDate: '2026-01-01', residual: 10, currency: 'USD' },
-    ]);
-    expect(m.customers[0]).toMatchObject({ oldestOpenMoveId: 82, outstanding: 20 });
-    expect(m.currencies).toEqual(['LYD', 'USD']);
-    const usd = aging.buildAging(await qa(aging.agingSql(fixture([{ customer: 8, move: 83, invoiceDate: '2026-01-01', residual: 10, currency: 'USD' }])).sql,
-      fixture([{ customer: 8, move: 83, invoiceDate: '2026-01-01', residual: 10, currency: 'USD' }]).params), {
-      snapshotDate: '2026-10-04', currency: 'USD', term: null, settings: await aging.fetchAgingSettings(pool),
-    });
-    expect(usd.customers[0]).toMatchObject({ outstanding: 10, outstandingCompany: 100 }); // the LYD residual as given, never a rate
-  });
-});
-
-describe.skipIf(!RUN)('Aging Map on the real warehouse (read-only)', () => {
+describe.skipIf(!RUN)('Credit Policy Escalation on the real warehouse (read-only)', () => {
   let spKey = 0;
   beforeAll(async () => {
     ({ pool } = await import('../../db/pool'));
@@ -202,58 +92,102 @@ describe.skipIf(!RUN)('Aging Map on the real warehouse (read-only)', () => {
   });
   afterAll(() => server?.close());
 
-  /** Independently: latest snapshot, customer invoices only (out_invoice, customer debt, no inter-company, no excluded
-   * team); per customer + currency. */
-  const independent = (extra = '', params: unknown[] = []) =>
-    qa(
-      `SELECT cur.currency, f.CustomerKey, SUM(f.residual_doc_ccy) AS net, SUM(f.residual_company_ccy) AS net_company,
-              SUBSTRING_INDEX(GROUP_CONCAT(f.move_id ORDER BY f.InvoiceDateKey, f.due_date, f.line_id), ',', 1) AS oldest
+  /** Independently, per customer + currency: customer invoices only (out_invoice, customer debt, no inter-company, no
+   * excluded team); every invoice line's residual adds to the outstanding; the unpaid invoices' due date = the
+   * earliest due date of their open lines; the earliest of those decides. */
+  const independent = async (extra = '', params: unknown[] = []) => {
+    const invoices = await qa(
+      `SELECT cur.currency, f.CustomerKey, f.move_id, SUM(f.residual_doc_ccy) AS residual, SUM(f.residual_company_ccy) AS residual_company,
+              DATE_FORMAT(MIN(CASE WHEN f.residual_doc_ccy > 0 THEN f.due_date END), '%Y-%m-%d') AS due
        FROM fact_finance_receivable_snapshot f
        JOIN dim_currency cur ON cur.CurrencyKey = f.CurrencyKey
        JOIN dim_finance_invoice i ON i.move_id = f.move_id
        WHERE f.SnapshotDateKey = ? AND f.receivable_scope = 'customer_debt' AND f.is_intercompany = 0 AND f.PaymentKey = -1
-         AND i.move_type = 'out_invoice' AND f.residual_doc_ccy > 0
-         AND f.SalesTeamKey NOT IN (SELECT SalesTeamKey FROM v_finance_excluded_sales_team) ${extra}
-       GROUP BY cur.currency, f.CustomerKey`,
+         AND i.move_type = 'out_invoice'
+         AND NOT EXISTS (SELECT 1 FROM v_finance_excluded_sales_team x WHERE x.SalesTeamKey = f.SalesTeamKey) ${extra}
+       GROUP BY cur.currency, f.CustomerKey, f.move_id`,
       [snap, ...params],
     );
+    const by = new Map<string, { currency: string; customer: number; total: number; totalCompany: number; due: string | null; unpaid: number }>();
+    for (const r of invoices) {
+      const k = `${r.CustomerKey}|${r.currency}`;
+      const g = by.get(k) ?? { currency: String(r.currency), customer: n(r.CustomerKey), total: 0, totalCompany: 0, due: null, unpaid: 0 };
+      g.total += n(r.residual);
+      g.totalCompany += n(r.residual_company);
+      if (n(r.residual) > 0 && r.due) {
+        g.unpaid += 1;
+        if (g.due === null || r.due < g.due) g.due = String(r.due);
+      }
+      by.set(k, g);
+    }
+    return [...by.values()].filter((g) => g.unpaid > 0);
+  };
 
-  it('every currency: same customers, same deciding invoice, same outstanding (invoice currency and LYD)', async () => {
+  it('every currency: same customers, same earliest due date, same days past due, zone and outstanding', async () => {
     const want = await independent();
-    const currencies = [...new Set(want.map((w) => String(w.currency)))];
-    const first = await get('/debt-report/aging');
-    expect(first.status).toBe(200);
-    expect([...first.body.currencies].sort()).toEqual(currencies.sort());
+    const asOf = isoOf(snap);
+    const currencies = [...new Set(want.map((w) => w.currency))];
     for (const c of currencies) {
-      const { body } = await get(`/debt-report/aging?currency=${c}`);
-      const mine = want.filter((w) => w.currency === c);
+      const { status, body } = await get(`/debt-report/aging?currency=${c}`);
+      expect(status).toBe(200);
+      expect(body.asOf).toBe(asOf);
+      const mine = want.filter((w) => w.currency === c && w.due !== null && daysBetween(w.due, asOf) >= 0);
       expect(body.customers.length, c).toBe(mine.length);
       const got = new Map(body.customers.map((x: Json) => [x.customerKey, x]));
       for (const w of mine) {
-        const g = got.get(n(w.CustomerKey)) as Json;
-        expect(g, `${c} customer ${w.CustomerKey}`).toBeTruthy();
-        expect(g.oldestOpenMoveId).toBe(n(w.oldest));
-        expect(Math.abs(g.outstanding - n(w.net))).toBeLessThan(0.000001);
-        expect(Math.abs(g.outstandingCompany - n(w.net_company))).toBeLessThan(0.000001);
+        const g = got.get(w.customer) as Json;
+        expect(g, `${c} customer ${w.customer}`).toBeTruthy();
+        const days = daysBetween(w.due as string, asOf);
+        expect(g.oldestDueDate, `${c} ${w.customer}`).toBe(w.due);
+        expect(g.daysPastDue).toBe(days);
+        expect(g.zone).toBe(zoneOf(days));
+        expect(Math.abs(g.totalOutstanding - w.total)).toBeLessThan(0.000001);
+        expect(Math.abs(g.totalOutstandingCompany - w.totalCompany)).toBeLessThan(0.000001);
+        expect(g.unpaidInvoiceCount).toBe(w.unpaid);
       }
     }
   });
 
-  it('the term filter keeps only that term', async () => {
+  it('the Customers table bucket = the chart zone, in each currency and over all currencies', async () => {
+    const rows = (await get('/debt-report/customers')).body.rows as Json[];
+    const allDots = new Map((await get('/debt-report/aging?allCurrencies=true')).body.customers.map((c: Json) => [c.customerKey, c.zone]));
+    const perCurrency = new Map<string, Map<number, string>>();
+    for (const ccy of [...new Set(rows.map((r) => String(r.currency)))]) {
+      perCurrency.set(ccy, new Map((await get(`/debt-report/aging?currency=${ccy}`)).body.customers.map((c: Json) => [c.customerKey, c.zone])));
+    }
+    let checked = 0;
+    for (const r of rows) {
+      expect(r.creditZone?.currency?.zone === 'NOT_YET_DUE' ? null : r.creditZone?.currency?.zone ?? null, `${r.customer} ${r.currency}`).toBe(perCurrency.get(r.currency)!.get(r.customerKey) ?? null);
+      expect(r.creditZone?.all?.zone === 'NOT_YET_DUE' ? null : r.creditZone?.all?.zone ?? null, `${r.customer} all`).toBe(allDots.get(r.customerKey) ?? null);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it('a dot drills down to exactly its total outstanding', async () => {
+    const dots = (await get('/debt-report/aging?allCurrencies=true')).body.customers.slice(0, 8) as Json[];
+    for (const d of dots) {
+      const dd = (await get(`/debt-report/drilldown?kind=customer_open&key=${d.customerKey}`)).body;
+      expect(Math.abs(dd.totals.openBalance - d.totalOutstanding), d.customer).toBeLessThan(0.005);
+    }
+  });
+
+  it('the payment-term filter keeps only that term and never changes a zone', async () => {
     const now = (await get('/debt-report/aging')).body;
     const term = now.terms[0].key;
     const only = (await get(`/debt-report/aging?term=${term}`)).body;
-    expect(only.customers.every((c: Json) => c.termKey === term)).toBe(true);
+    expect(only.customers.every((c: Json) => String(c.paymentTermKey) === term)).toBe(true);
     expect(only.customers.length).toBe(now.terms[0].customers);
+    const zoneBefore = new Map(now.customers.map((c: Json) => [c.customerKey, c.zone]));
+    for (const c of only.customers) expect(c.zone).toBe(zoneBefore.get(c.customerKey));
   });
 
-  it("a salesperson's map is built from their own lines only; 403 while the role is not enabled", async () => {
+  it("a salesperson's chart is built from their own lines only; 403 while the role is not enabled", async () => {
     expect((await get('/debt-report/aging', 'salesperson')).status).toBe(403);
     const r = await get('/debt-report/aging', 'salespersonEnabled');
     expect(r.status).toBe(200);
-    const want = await independent('AND f.SalespersonKey = ?', [spKey]);
-    const mine = want.filter((w) => w.currency === r.body.currency);
-    expect(r.body.customers.map((c: Json) => c.customerKey).sort()).toEqual(mine.map((w) => n(w.CustomerKey)).sort());
+    const want = (await independent('AND f.SalespersonKey = ?', [spKey])).filter((w) => w.currency === r.body.currency && w.due !== null && daysBetween(w.due, isoOf(snap)) >= 0);
+    expect(r.body.customers.map((c: Json) => c.customerKey).sort()).toEqual(want.map((w) => w.customer).sort());
     expect((await get('/debt-report/aging?salespersonKeys=999999', 'salespersonEnabled')).status).toBe(403);
   });
 });
@@ -277,7 +211,7 @@ describe.skipIf(!RUN)('Debt Report invariants on the real warehouse (read-only)'
     ['both toggles on', 'includeOther=true&includeIntercompany=true'],
   ];
 
-  it.each(SCOPES)('%s: Overdue + Not yet due = Total debt (invoice currency and LYD), both shares in [0%%, 100%%], map total = Total debt', async (label, qs) => {
+  it.each(SCOPES)('%s: Overdue + Not yet due = Total debt (invoice currency and LYD), both shares in [0%%, 100%%], escalation zones = due-customer outstanding', async (label, qs) => {
     const sep = qs ? `?${qs}` : '';
     const overview = await get(`/debt-report/overview${sep}`);
     expect(overview.status).toBe(200);
@@ -298,17 +232,24 @@ describe.skipIf(!RUN)('Debt Report invariants on the real warehouse (read-only)'
       close(k.openAmount + k.unappliedCredits + k.otherEntries + k.intercompany, k.netBalance, `${tag}: net balance`);
       const map = await get(`/debt-report/aging?currency=${c.currency}${qs ? `&${qs}` : ''}`);
       expect(map.status).toBe(200);
-      close(map.body.customers.reduce((t: number, x: Json) => t + x.outstanding, 0), k.openAmount, `${tag}: map total = total debt`);
-      close(map.body.customers.reduce((t: number, x: Json) => t + x.outstandingCompany, 0), k.openAmountCompany, `${tag}: map total in LYD`);
-      expect(map.body.customers.length, `${tag}: map customers = customers with an open invoice`).toBe(k.customers);
+      const s = map.body.summary;
+      const dots = map.body.customers;
+      expect(dots.every((x: Json) => x.daysPastDue >= 0 && !x.notYetDue)).toBe(true);
+      close(s.zones.reduce((t: number, z: Json) => t + z.amount, 0), dots.reduce((t: number, x: Json) => t + x.totalOutstanding, 0), `${tag}: zones = due-customer outstanding`);
+      close(s.zones.reduce((t: number, z: Json) => t + z.amountCompany, 0), dots.reduce((t: number, x: Json) => t + x.totalOutstandingCompany, 0), `${tag}: zones in LYD`);
+      expect(new Set(dots.map((x: Json) => x.customerKey)).size).toBe(dots.length);
+      expect(dots.length).toBeLessThanOrEqual(k.customers);
+      expect(s.zones.reduce((t: number, z: Json) => t + z.customers, 0)).toBe(dots.length);
     }
     const all = overview.body.allCurrencies;
     close(all.overdueAmount + all.notDueAmount, all.openAmount, `${label} all currencies: overdue + not due = total debt`);
-    // the all-currencies map: one dot per customer (any currency), its outstanding in LYD; total = the grand total
+    // the all-currencies chart: one dot per due customer (any currency), its outstanding in LYD
     const allMap = await get(`/debt-report/aging?allCurrencies=true${qs ? `&${qs}` : ''}`);
     expect(allMap.body.allCurrencies).toBe(true);
-    close(allMap.body.customers.reduce((t: number, x: Json) => t + x.outstanding, 0), all.openAmount, `${label}: all-currencies map total = grand total`);
-    expect(allMap.body.customers.length, `${label}: one dot per customer`).toBe(all.customers);
+    const as = allMap.body.summary;
+    close(as.zones.reduce((t: number, z: Json) => t + z.amount, 0), allMap.body.customers.reduce((t: number, x: Json) => t + x.totalOutstanding, 0), `${label}: all-currencies zones = due-customer outstanding`);
+    expect(allMap.body.customers.every((x: Json) => x.daysPastDue >= 0 && !x.notYetDue)).toBe(true);
+    expect(allMap.body.customers.length, `${label}: one dot per customer`).toBeLessThanOrEqual(all.customers);
     close(all.openAmount, overview.body.currencies.reduce((t: number, c: Json) => t + c.kpis.openAmountCompany, 0), `${label} all currencies = sum of LYD`);
     expect(all.openDocuments).toBe(overview.body.currencies.reduce((t: number, c: Json) => t + c.kpis.openDocuments, 0));
     expect(all.customers).toBeLessThanOrEqual(overview.body.currencies.reduce((t: number, c: Json) => t + c.kpis.customers, 0));

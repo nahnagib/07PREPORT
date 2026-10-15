@@ -55,6 +55,9 @@ describe('collectionSource', () => {
     for (const c of ['v.payment_date BETWEEN ? AND ?', 'v.currency = ?', 'v.CompanyKey IN (?)', 'v.SalespersonKey IN (?)', 'v.SalesTeamKey IN (?)',
       'v.SegmentKey IN (?)', 'v.ChannelKey IN (?)', 'v.CustomerKey IN (?)', 'cu.']) expect(s.sql).toContain(c);
     expect(s.sql).not.toContain('days_past_due');
+    expect(s.sql).toContain('i.invoice_date < c.payment_date');
+    expect(s.sql).toContain("m.move_type IN ('out_invoice', 'out_receipt')");
+    expect(s.sql).toContain('SUM(m.applied_doc_ccy)');
     expect(s.params.slice(0, 3)).toEqual(['2026-09-01', '2026-09-30', 'LYD']);
   });
 });
@@ -71,11 +74,11 @@ function fakePool(o: { periods?: Record<string, unknown>[]; snapshots?: string[]
       if (sql.includes('GROUP BY p')) return [o.periods ?? [], []];
       if (sql.includes('SELECT DISTINCT DATE_FORMAT(STR_TO_DATE(SnapshotDateKey')) return [(o.snapshots ?? []).map((d) => ({ d })), []];
       if (sql.includes('AS start_overdue')) return [[o.rate ?? { start_overdue: 0, collected: 0 }], []];
-      if (sql.includes('FROM fact_finance_collection_invoice')) return [[{ payment_id: 1, allocation_no: 1, document: 'INV/1', applied_doc_ccy: 600 }], []];
       if (sql.includes('ORDER BY v.payment_date')) {
         return [[{ payment_id: 1, allocation_no: 1, payment_name: 'BNK1/1', payment_date: '2026-10-05', company: 'Majaal', customer: 'A', salesperson: 'S1',
           sales_team: 'T1', attribution: 'invoice', amount_doc_ccy: 600, applied_overdue_doc_ccy: 600, applied_not_due_doc_ccy: 0, applied_other_doc_ccy: 0, unapplied_doc_ccy: 0 }], []];
       }
+      if (sql.includes('SELECT m.payment_id, m.allocation_no, m.document')) return [[{ payment_id: 1, allocation_no: 1, document: 'INV/1', applied_doc_ccy: 600 }], []];
       return [[], []];
     },
   } as unknown as Pool & { sqls: string[] };
@@ -85,10 +88,10 @@ describe('fetchCollectionsTrend', () => {
   const q = parseCollectionsQuery({ from: '2026-09-27', to: '2026-10-17' });
 
   it('one point per period (zeros where nothing was collected), the most used currency by default', async () => {
-    const t = await fetchCollectionsTrend(fakePool({ periods: [{ p: '2026-10-04', collected: 1000, overdue: 600, not_due: 300, other: 0, unapplied: 100, payments: 3 }] }), q, {});
+    const t = await fetchCollectionsTrend(fakePool({ periods: [{ p: '2026-10-04', collected: 900, overdue: 600, not_due: 300, other: 0, unapplied: 0, payments: 3 }] }), q, {});
     expect(t.currency).toBe('LYD');
     expect(t.currencies).toEqual(['LYD', 'USD']);
-    expect(t.points.map((p) => [p.periodStart, p.collected, p.payments])).toEqual([['2026-09-27', 0, 0], ['2026-10-04', 1000, 3], ['2026-10-11', 0, 0]]);
+    expect(t.points.map((p) => [p.periodStart, p.collected, p.payments])).toEqual([['2026-09-27', 0, 0], ['2026-10-04', 900, 3], ['2026-10-11', 0, 0]]);
     const p = t.points[1];
     expect(p.appliedOverdue + p.appliedNotDue + p.appliedOther + p.unapplied).toBe(p.collected);
     expect(t.firstPaymentDate).toBe('2021-01-03');
@@ -113,7 +116,11 @@ describe('fetchCollectionsTrend', () => {
 describe('fetchCollectionsDrilldown', () => {
   it('lists the payments of the period with the invoices they were applied to and an Odoo link', async () => {
     const q = parseCollectionsQuery({ currency: 'LYD' });
-    const d = await fetchCollectionsDrilldown(fakePool({}), q, {}, '2026-10-06');
+    const pool = fakePool({});
+    const d = await fetchCollectionsDrilldown(pool, q, {}, '2026-10-06');
+    const invoiceList = pool.sqls.find((sql) => sql.includes('SELECT m.payment_id, m.allocation_no, m.document'))!;
+    expect(invoiceList).toContain('i.invoice_date < c.payment_date');
+    expect(pool.sqls.find((sql) => sql.includes('ORDER BY v.payment_date'))).toContain('e.amount_doc_ccy');
     expect(d.period).toEqual({ start: '2026-10-04', end: '2026-10-10' });
     expect(d.rows[0]).toMatchObject({ payment: 'BNK1/1', amount: 600, appliedOverdue: 600, invoices: 'INV/1 (600.00)' });
     expect(d.rows[0].odooUrl).toMatch(/model=account\.payment/);

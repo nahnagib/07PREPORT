@@ -6,17 +6,11 @@ import type { CollectionGrain, CollectionPaymentRow, CollectionPoint, Collection
 import { formatCompactMoney, formatDate, formatMoney, formatNumber } from '../../lib/format';
 import { safeOdooUrl } from '../../lib/debt/view';
 
-/**
- * Collections trend (GET /debt-report/collections-trend, backend measures/debtCollections.ts): posted customer payments
- * per day / week (Sunday..Saturday) / month, in the page's currency (or every currency in LYD, "≈ LYD", when the page
- * shows all currencies -- each payment at Odoo's own LYD amount), split by what they paid -- invoices overdue on
- * the payment date, invoices not yet due, other receivables, and money not matched to anything yet -- with the total
- * collected (line) and the collection rate against the overdue open at the start of the period (right axis, only where
- * a receivable snapshot exists on the period's first day). Click a period for its payments.
- */
+/** Collections are the qualifying invoice portions of payments, dated by payment day.
+ * Invoice date must be before payment date; due status only splits the eligible amount. */
 export const COLLECTIONS_INFO =
-  'Posted customer payments by payment date (Odoo), split by what they were applied to; credit notes, write-offs and exchange differences are not collections. Collection rate = paid against invoices overdue at the start of the period / that overdue (needs a receivable snapshot on the day before).';
-export const COLLECTIONS_NOTE = 'A collection = a posted customer payment, by its payment date. Credit notes are not collections.';
+  'Collections against invoices issued before the payment day, whether overdue or not yet due. Same-day sales, advance payments not matched to an earlier invoice, and other receipts are excluded. Mixed payments count only the portion applied to earlier invoices. Credit notes, write-offs and exchange differences are excluded. Collection rate = paid against invoices overdue at the start of the period / that overdue (requires a snapshot on the day before).';
+export const COLLECTIONS_NOTE = 'Earlier invoices only: invoice date before payment date. Includes overdue and not-yet-due invoices; excludes same-day sales and unmatched advances.';
 const GRAIN_LABELS: Record<CollectionGrain, string> = { day: 'Day', week: 'Week', month: 'Month' };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -68,12 +62,9 @@ export function CollectionsTrendPanel({
     label: periodLabel(p, grain),
     overdue: p.appliedOverdue,
     notDue: p.appliedNotDue,
-    other: p.appliedOther,
-    unapplied: p.unapplied,
     total: p.collected,
     rate: p.collectionRate,
   }));
-  const hasOther = list.some((p) => Math.abs(p.appliedOther) > 0.005);
   const header = (
     <div role="group" aria-label="Period" style={{ display: 'inline-flex', gap: 4 }}>
       {(Object.keys(GRAIN_LABELS) as CollectionGrain[]).map((g) => (
@@ -92,7 +83,7 @@ export function CollectionsTrendPanel({
       ) : !data || data.points.every((p) => p.payments === 0) ? (
         <>
           <p style={note}>{COLLECTIONS_NOTE}</p>
-          <EmptyState message={data?.allCurrencies ? 'No customer payment in this range for these filters.' : `No ${ccy} customer payment in this range for these filters.`} />
+          <EmptyState message={data?.allCurrencies ? 'No collection against an earlier invoice in this range for these filters.' : `No ${ccy} collection against an earlier invoice in this range for these filters.`} />
         </>
       ) : (
         <>
@@ -104,10 +95,8 @@ export function CollectionsTrendPanel({
             showTitle={false}
             points={points}
             bars={[
-              { key: 'overdue', name: 'Collected - overdue invoices', color: 'var(--ps-color-success)', stackId: 'paid' },
-              { key: 'notDue', name: 'Collected - not yet due', color: 'var(--ps-color-accent)', stackId: 'paid' },
-              ...(hasOther ? [{ key: 'other', name: 'Other receivables', color: 'var(--ps-color-gold)', stackId: 'paid' }] : []),
-              { key: 'unapplied', name: 'Not matched yet', color: 'var(--ps-color-muted-text)', stackId: 'paid' },
+              { key: 'overdue', name: 'Earlier invoices — overdue', color: 'var(--ps-color-success)', stackId: 'paid' },
+              { key: 'notDue', name: 'Earlier invoices — not overdue', color: 'var(--ps-color-accent)', stackId: 'paid' },
             ]}
             lines={[
               { key: 'total', name: 'Total collected', color: 'var(--ps-color-text)', yAxisId: 'left', labelFormatter: points.length <= 8 ? compact : undefined },
@@ -115,7 +104,7 @@ export function CollectionsTrendPanel({
             ]}
             leftAxisFormatter={compact}
             rightAxisFormatter={pct}
-            tooltipFormatters={{ total: full, overdue: full, notDue: full, other: full, unapplied: full, rate: pct }}
+            tooltipFormatters={{ total: full, overdue: full, notDue: full, rate: pct }}
             tooltipLabelFormatter={(label) => {
               const p = byLabel.get(label);
               return p ? `${periodTitle(p, grain)} · ${formatNumber(p.payments)} payment${p.payments === 1 ? '' : 's'}` : label;
@@ -174,14 +163,12 @@ export function CollectionsDrilldownModal({
     { key: 'customer', header: 'Customer', width: 220, render: (r) => <span dir="auto">{r.customer}</span> },
     { key: 'salesperson', header: 'Salesperson', width: 150, render: (r) => <span dir="auto">{r.salesperson}</span> },
     { key: 'salesTeam', header: 'Branch', width: 150, render: (r) => <span dir="auto">{r.salesTeam}</span> },
-    money('amount', 'Amount'),
+    money('amount', 'Collected'),
     ...(all
       ? [{ key: 'amountCompany', header: 'Amount (≈ LYD)', align: 'right', width: 140, rawValue: (r) => r.amountCompany, render: (r) => `${r.currency === 'LYD' ? '' : '≈ '}${formatMoney('LYD', r.amountCompany)}` } as DataGridColumn<PayGridRow>]
       : []),
     money('appliedOverdue', 'Overdue invoices'),
-    money('appliedNotDue', 'Not yet due'),
-    money('appliedOther', 'Other'),
-    money('unapplied', 'Not matched'),
+    money('appliedNotDue', 'Not overdue'),
     { key: 'invoices', header: 'Applied to', width: 280, render: (r) => <span dir="auto">{r.invoices || '—'}</span> },
     {
       key: 'odooUrl', header: 'Odoo', width: 80, rawValue: (r) => r.odooUrl,
@@ -205,7 +192,7 @@ export function CollectionsDrilldownModal({
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ minWidth: 0 }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</h2>
-            <p style={note}>Posted customer payments dated in this period, one row per salesperson + branch they were applied to. &quot;Not matched&quot; is as of the last refresh.</p>
+            <p style={note}>Amounts applied to invoices issued before the payment day, one row per payment + salesperson + branch. Same-day sales and other portions of mixed payments are excluded.</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" style={closeButton}>
             <X size={18} aria-hidden />

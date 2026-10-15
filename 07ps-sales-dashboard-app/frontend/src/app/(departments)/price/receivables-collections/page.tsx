@@ -4,7 +4,7 @@ import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { DebtAgingMap } from '../../../../components/debt/DebtAgingMap';
+import { CreditPolicyChart } from '../../../../components/debt/CreditPolicyChart';
 import { DebtDrilldownModal, type DebtDrillTarget } from '../../../../components/debt/DebtDrilldownModal';
 import { CollectionsDrilldownModal, CollectionsTrendPanel } from '../../../../components/debt/CollectionsTrend';
 import { useAuth } from '../../../../lib/AuthProvider';
@@ -16,9 +16,6 @@ import {
   OVERDUE_STATUS_OPTIONS,
   SIZE_TIER_HINT,
   agingColors,
-  customerAgingBucket,
-  customerBucketColor,
-  customerBucketOptions,
   dailyTrendPoints,
   fromIncludeValues,
   includeValues,
@@ -28,11 +25,11 @@ import {
   tierLabel,
   toScope,
   toggleCurrency,
-  type CustomerBucket,
   type DebtPageFilters,
   type LabelLang,
 } from '../../../../lib/debt/view';
 import { useUrlCurrency } from '../../../../lib/debt/useUrlCurrency';
+import { creditBucket, creditBucketOptions, creditColor, creditSoft, type CreditBucket } from '../../../../lib/debt/creditPolicy';
 import { CUSTOMER_CATEGORY_DEFINITION } from '../../../../lib/customerCategory';
 import {
   Button,
@@ -74,13 +71,16 @@ import {
  * of customer invoices only (Odoo's Amount Due), counted like Odoo; Overdue + Not yet due split it (each 0-100%); the
  * customer count is customers with an open invoice. Credit notes, unreconciled payments and the two toggles' lines
  * never reach the cards, the charts or the Aging Map: they only show in the customer table (Unapplied credits, Net
- * balance) and its drill-down. The Aging Map (components/debt/DebtAgingMap.tsx, GET /debt-report/aging) places every customer of
- * the page's currency (all currencies: every customer once) by its oldest open invoice against that invoice's term; it ignores the line-level filters
- * (overdue status, aging bucket, delivery status, payment term, invoice size), which would change which invoice is the
- * oldest, and has its own term filter.
+ * balance) and its drill-down. Credit Policy Escalation (components/debt/CreditPolicyChart.tsx, GET /debt-report/aging; replaced the
+ * term-multiple Aging Map 2026-10-15) places every customer by the days past due of its unpaid invoice with the earliest due date,
+ * in the credit policy's zones (backend config/creditPolicy.ts), in the page's currency (all currencies: every customer once). It
+ * ignores the line-level filters (overdue status, aging bucket, delivery status, payment term, invoice size), which would change
+ * which invoice decides, and has its own payment-term filter (it only chooses customers). A dot opens the customer's open
+ * invoices; the Customers table's Aging bucket is the same zone.
  *
  * Filters (2026-10-07): every filter is a dropdown (the shared Select), worded as on the other pages -- Company
- * (multi-select, every company of the snapshot; 2026-10-11), Branch = the sales team, Salesperson, Customer (searchable, name or Odoo id); Customer Category
+ * (multi-select), Customer group, Distribution Channel, Branch = the sales team, Salesperson, Customer (searchable,
+ * name or Odoo id). These dimensions cross-filter one another using the same cascade as Promotion. Customer Category
  * is the Customer Growth category (lib/customerCategory.ts). "Reset filters" restores DEFAULT_DEBT_FILTERS.
  *
  * Every label comes from GET /debt-report/meta: Odoo's own labels (English; the "Odoo labels" EN/AR
@@ -119,12 +119,26 @@ export default function ReceivablesCollectionsPage() {
   const [collectionPoint, setCollectionPoint] = useState<CollectionPoint | null>(null);
 
   const scope = useMemo(() => toScope(filters, isSalesperson), [filters, isSalesperson]);
-  // filter options depend on the snapshot and the scope toggles only
+  // Cross-filter the finance snapshot with the same dimension cascade as Promotion.
   const metaScope = useMemo(
-    () => ({ snapshotDate: filters.snapshotDate, includeOther: filters.includeOther, includeIntercompany: filters.includeIntercompany }),
-    [filters.snapshotDate, filters.includeOther, filters.includeIntercompany],
+    () => ({ snapshotDate: scope.snapshotDate, includeOther: scope.includeOther, includeIntercompany: scope.includeIntercompany,
+      companyKeys: scope.companyKeys, segmentKeys: scope.segmentKeys, channelKeys: scope.channelKeys,
+      salesTeamKeys: scope.salesTeamKeys, salespersonKeys: scope.salespersonKeys, customerKeys: scope.customerKeys }),
+    [scope.snapshotDate, scope.includeOther, scope.includeIntercompany, scope.companyKeys, scope.segmentKeys, scope.channelKeys, scope.salesTeamKeys, scope.salespersonKeys, scope.customerKeys],
   );
   const meta = useDebtReport<DebtMeta>(token, authError, retryAuth, 'meta', metaScope, undefined, allowed);
+  // Only adopt a response for the current selection; retained options from an earlier request must never prune it.
+  useEffect(() => {
+    if (meta.loading || !meta.data || meta.scopeKey !== JSON.stringify(metaScope) || isSalesperson) return;
+    const selected = meta.data.filters;
+    setFilters((previous) => {
+      const next = { ...previous, companyKeys: selected.companyKeys.map(Number), segmentKeys: selected.segmentKeys.map(Number),
+        channelKeys: selected.channelKeys.map(Number), salesTeamKeys: selected.salesTeamKeys,
+        salespersonKeys: selected.salespersonKeys.map(Number), customerKeys: selected.customerKeys.map(Number),
+        paymentTermKeys: previous.paymentTermKeys.filter((k) => meta.data!.options.paymentTerms.some((t) => t.value === String(k))) };
+      return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
+    });
+  }, [meta.loading, meta.data, meta.scopeKey, metaScope, isSalesperson]);
   const overview = useDebtReport<DebtOverview>(token, authError, retryAuth, 'overview', scope, undefined, allowed);
   const trend = useDebtReport<DebtTrend>(token, authError, retryAuth, 'trend', scope, undefined, allowed);
   const customers = useDebtReport<DebtCustomers>(token, authError, retryAuth, 'customers', scope, undefined, allowed);
@@ -232,7 +246,8 @@ export default function ReceivablesCollectionsPage() {
 
   // ---- customer table ------------------------------------------------------------------------------------------------
   // the page's currency filter decides the rows (the table has no currency filter of its own any more)
-  const agingBucketOptions = useMemo(() => o?.agingBuckets ?? [], [o?.agingBuckets]);
+  // the Aging bucket = the customer's credit-policy zone, exactly as the escalation chart places it (same API code)
+  const creditZones = useMemo(() => meta.data?.creditPolicy?.zones ?? [], [meta.data]);
   const customerRows: CustomerGridRow[] = useMemo(
     () =>
       (customers.data?.rows ?? [])
@@ -240,18 +255,18 @@ export default function ReceivablesCollectionsPage() {
         // all currencies: one ranking by overdue in LYD (the server sorts within each currency)
         .sort((a, b) => (currency ? 0 : b.lyd.overdue - a.lyd.overdue || b.lyd.open - a.lyd.open || a.lyd.net - b.lyd.net))
         .map((r) => {
-          const bucket = customerAgingBucket(r, agingBucketOptions);
+          const bucket = creditBucket(currency ? r.creditZone?.currency ?? null : r.creditZone?.all ?? null, creditZones);
           return {
             ...r,
             id: `${r.companyKey}:${r.customerKey}:${r.currency}`,
             salespersonList: r.salespersons.join(', '),
             teamList: r.salesTeams.join(', '),
             segmentList: r.segments.join(', '),
-            agingBucket: bucket.label,
+            agingBucket: bucket.filterValue,
             bucket,
           };
         }),
-    [customers.data, currency, agingBucketOptions],
+    [customers.data, currency, creditZones],
   );
   const distinctOptions = (values: string[]) => [...new Set(values)].sort((a, b) => a.localeCompare(b)).map((v) => ({ value: v, label: v }));
   // one currency: each row in its own units; all currencies: every row in LYD (≈ unless the row already is in LYD)
@@ -274,11 +289,11 @@ export default function ReceivablesCollectionsPage() {
     {
       key: 'agingBucket',
       header: 'Aging bucket',
-      width: 140,
-      // by actual age: credits only (—) < Not due < days past due of the oldest overdue invoice
-      sortValue: (r) => (r.oldestOverdueDays ?? (r.openDocuments > 0 ? 0 : -1)),
-      filterOptions: customerBucketOptions(agingBucketOptions),
-      render: (r) => <BucketBadge bucket={r.bucket} days={r.oldestOverdueDays} />,
+      width: 170,
+      // by actual age: credits only (—) < not yet due < days past due of the earliest unpaid due date
+      sortValue: (r) => r.bucket.sortValue,
+      filterOptions: creditBucketOptions(creditZones),
+      render: (r) => <BucketBadge bucket={r.bucket} />,
     },
     rowMoney('credits', 'Unapplied credits'),
     rowMoney('net', 'Net balance'),
@@ -318,6 +333,15 @@ export default function ReceivablesCollectionsPage() {
           showLastOrderInfo={false}
           extraFields={
             <>
+              <Field width={170}>
+                <Select
+                  label="Date"
+                  options={[...(meta.data?.snapshots ?? [])].reverse().map((s) => ({ value: s.date, label: formatDate(s.date) }))}
+                  value={[filters.snapshotDate ?? meta.data?.snapshotDate ?? ''].filter(Boolean)}
+                  onChange={(v) => set('snapshotDate', v[0] && v[0] !== meta.data?.snapshots[meta.data.snapshots.length - 1]?.date ? v[0] : null)}
+                  loading={meta.loading}
+                />
+              </Field>
               <Field width={150}>
                 {/* the shared Select brings its own "All" row (= no company filter): no 'all' option here */}
                 <Select
@@ -326,25 +350,23 @@ export default function ReceivablesCollectionsPage() {
                   value={filters.companyKeys.map(String)}
                   onChange={(v) => set('companyKeys', v.map(Number))}
                   multiSelect
+                  loading={meta.loading}
                   disabled={isSalesperson}
                   lockedReason={lockedReason}
                   placeholder="All"
                 />
               </Field>
-              <Field width={170}>
-                <Select
-                  label="Snapshot date"
-                  options={[...(meta.data?.snapshots ?? [])].reverse().map((s) => ({ value: s.date, label: formatDate(s.date) }))}
-                  value={[filters.snapshotDate ?? meta.data?.snapshotDate ?? ''].filter(Boolean)}
-                  onChange={(v) => set('snapshotDate', v[0] && v[0] !== meta.data?.snapshots[meta.data.snapshots.length - 1]?.date ? v[0] : null)}
-                  loading={meta.loading}
-                />
+              <Field>
+                <Select label="Customer group" options={opts(o?.customerGroups)} value={filters.segmentKeys.map(String)} onChange={(v) => set('segmentKeys', v.map(Number))} multiSelect searchable loading={meta.loading} disabled={isSalesperson} lockedReason={lockedReason} placeholder="All" />
               </Field>
               <Field>
-                <Select label="Salesperson" options={opts(o?.salespersons)} value={filters.salespersonKeys.map(String)} onChange={(v) => set('salespersonKeys', v.map(Number))} multiSelect searchable disabled={isSalesperson} lockedReason={lockedReason} placeholder="All" />
+                <Select label="Distribution Channel" options={opts(o?.distributionChannels)} value={filters.channelKeys.map(String)} onChange={(v) => set('channelKeys', v.map(Number))} multiSelect searchable loading={meta.loading} disabled={isSalesperson} lockedReason={lockedReason} placeholder="All" />
               </Field>
               <Field>
-                <Select label="Branch" options={opts(o?.salesTeams)} value={filters.salesTeamKeys} onChange={(v) => set('salesTeamKeys', v)} multiSelect searchable disabled={isSalesperson} lockedReason={lockedReason} placeholder="All" />
+                <Select label="Branch" options={opts(o?.salesTeams)} value={filters.salesTeamKeys} onChange={(v) => set('salesTeamKeys', v)} multiSelect searchable loading={meta.loading} disabled={isSalesperson} lockedReason={lockedReason} placeholder="All" />
+              </Field>
+              <Field>
+                <Select label="Salesperson" options={opts(o?.salespersons)} value={filters.salespersonKeys.map(String)} onChange={(v) => set('salespersonKeys', v.map(Number))} multiSelect searchable loading={meta.loading} disabled={isSalesperson} lockedReason={lockedReason} placeholder="All" />
               </Field>
               <Field width={220} title="Search by name or Odoo id">
                 <Select label="Customer" options={opts(o?.customers)} value={filters.customerKeys.map(String)} onChange={(v) => set('customerKeys', v.map(Number))} multiSelect searchable loading={meta.loading} placeholder="All" />
@@ -402,6 +424,8 @@ export default function ReceivablesCollectionsPage() {
             </>
           }
         />
+
+        {meta.error ? <ErrorState message={meta.error} onRetry={meta.retry} /> : null}
 
         <div style={strip} role="status">
           <span>
@@ -475,13 +499,15 @@ export default function ReceivablesCollectionsPage() {
                 </span>
               </div>
 
-              <DebtAgingMap
+              <CreditPolicyChart
                 data={aging.data}
                 loading={aging.loading}
                 error={aging.error}
                 onRetry={aging.retry}
                 term={agingTerm}
                 onTermChange={setAgingTerm}
+                viewLabel={viewLabel}
+                onCustomerClick={(c) => openDrill('customer_open', String(c.customerKey), c.customer, c.totalOutstanding)}
               />
 
               <div style={grid2}>
@@ -550,7 +576,7 @@ export default function ReceivablesCollectionsPage() {
                 })()}
 
                 <ChartPanel
-                  title={`Distribution · ${viewLabel}`}
+                  title={`Ageing · ${viewLabel}`}
                   infoText="Open amount per aging bucket (days past the line's own due date). Not due in blue, overdue in red; due today is not overdue. Click a bar for its invoices"
                   tableColumns={[{ key: 'label', header: 'Bucket' }, { key: 'amountLabel', header: 'Open amount', align: 'right' }, { key: 'lineCount', header: 'Lines', align: 'right' }]}
                   tableRows={(cur?.aging ?? []).map((a) => ({ ...a, id: String(a.agingBucketKey), amountLabel: full(a.amount) }))}
@@ -629,8 +655,8 @@ export default function ReceivablesCollectionsPage() {
             <p style={note}>
               One row per company, customer and currency, sorted by overdue{currency ? `; ${currency} rows only` : '; amounts in LYD (≈ = converted at Odoo’s booked rate)'}. Open
               invoices, their amounts and Overdue count customer invoices only; Unapplied credits = credit notes + unreconciled payments; Net
-              balance = every line (customers with credits only are listed too). Aging bucket = the bucket of the oldest overdue invoice
-              (Not due when nothing is overdue, — with credits only). Salesperson, team and segment list every value on the customer’s lines.
+              balance = every line (customers with credits only are listed too). Aging bucket = the customer&apos;s credit-policy zone, as on the
+              escalation chart (days past due of the earliest unpaid due date; Not yet due before it, — with credits only). Salesperson, team and segment list every value on the customer’s lines.
               Click a row for every open document behind its net balance.
             </p>
             {customers.error ? (
@@ -641,6 +667,7 @@ export default function ReceivablesCollectionsPage() {
               <DataGrid<CustomerGridRow>
                 columns={customerColumns}
                 rows={customerRows}
+                enableFiltering={false}
                 getRowId={(r) => r.id}
                 fileName={`receivables-collections-customers-${currency ?? 'all-currencies'}-${snapshotDate ?? 'latest'}`}
                 extraFilterParts={[`Currency: ${currency ?? 'All currencies (≈ LYD)'}`]}
@@ -688,25 +715,23 @@ type CustomerGridRow = DebtCustomerRow & {
   salespersonList: string;
   teamList: string;
   segmentList: string;
-  /** the Aging bucket column (lib/debt/view.ts customerAgingBucket) */
+  /** the Aging bucket column's filter value (zone label / Not yet due / —) and badge (lib/debt/creditPolicy.ts) */
   agingBucket: string;
-  bucket: CustomerBucket;
+  bucket: CreditBucket;
 } & Record<string, unknown>;
 
-/** The Aging bucket cell: a coloured badge, green for Not due, amber to red as the oldest overdue invoice ages. */
-function BucketBadge({ bucket, days }: { bucket: CustomerBucket; days: number | null }) {
-  if (bucket.rank < 0) return <span style={{ color: 'var(--ps-color-muted-text)' }}>{bucket.label}</span>;
-  const tone = customerBucketColor(bucket);
+/** The Aging bucket cell: the credit-policy zone as a badge in the zone's colour ("Green · 0 – 15 Days"), grey for Not
+ * yet due, plain "—" for credits only. */
+function BucketBadge({ bucket }: { bucket: CreditBucket }) {
+  if (!bucket.tone) return <span style={{ color: 'var(--ps-color-muted-text)' }}>{bucket.label}</span>;
   return (
     <span
-      title={days !== null ? `Oldest overdue invoice: ${formatNumber(days)} days past due` : 'No overdue invoice'}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6, padding: '1px 9px 1px 7px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-        whiteSpace: 'nowrap', color: 'var(--ps-color-text)', border: `1px solid color-mix(in srgb, ${tone} 60%, transparent)`,
-        background: `color-mix(in srgb, ${tone} 18%, transparent)`,
+        whiteSpace: 'nowrap', color: bucket.tone === 'block' ? '#fff' : bucket.tone === 'notdue' ? 'var(--ps-color-text)' : '#111827', border: `1px solid ${creditColor(bucket.tone)}`, background: creditSoft(bucket.tone),
       }}
     >
-      <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, background: tone }} />
+      <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, background: creditColor(bucket.tone), outline: bucket.tone === 'block' ? '1px solid #f3f4f6' : undefined }} />
       {bucket.label}
     </span>
   );

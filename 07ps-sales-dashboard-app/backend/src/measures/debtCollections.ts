@@ -3,25 +3,17 @@
  * per day / week / month, from fact_finance_collection through v_finance_collection_trend (migrations 0040 + 0042,
  * loaded by the finance ETL, departments/finance/collections.py).
  *
- * A collection = a POSTED inbound customer payment that is not an internal transfer, dated by the payment's own date
- * (account.payment.date). Credit notes, write-offs and exchange differences are never collections. Every payment has
- * full history (not limited to the receivable snapshot dates). Amounts are in the PAYMENT currency, never converted,
- * one currency at a time -- or, with `allCurrencies` (the page's default "All currencies (≈ LYD)" view, 2026-10-15),
- * every currency in LYD: the payment's amount_company_ccy (Odoo's amount_company_currency_signed, Odoo's own rate), its
- * split scaled by that same payment's LYD / payment-currency ratio, and the collection rate on the receivable lines'
- * LYD residuals (applied amounts at each invoice line's own LYD / invoice-currency ratio).
+ * A collection is the portion of a posted inbound customer payment applied to a customer invoice
+ * issued BEFORE the payment day. Both overdue and not-yet-due invoices qualify. Same-day sales,
+ * payments made before the invoice date, unmatched advances and other receivable entries do not.
+ * Mixed payments contribute only their qualifying invoice allocations, never the full payment.
+ * Dates of paid invoices are retained in dim_finance_collection_invoice_date (migration 0045).
+ * Credit notes, write-offs and exchange differences are not cash collections.
  *
- * Per period: collected (the payments' amounts) = applied to invoices overdue on the payment date + applied to invoices
- * not yet due + applied to other receivable debits + not matched yet (as of the last load); the payment count; and the
- * collection rate of ar_weekly (reporting/ar_weekly/engine.py week_result): money applied in the period to the invoice
- * lines that were overdue at the START of the period / that start overdue. The start overdue comes from the receivable
- * snapshot dated the day BEFORE the period (the last state of that day: the 15:00 run replaces the 02:00 one, so the
- * snapshot of the first day itself already holds that day's payments), lines due on or before that day (= overdue when
- * the period starts; due today is not overdue), same filters as the page; no snapshot that day = no rate (null, the line
- * is hidden). Snapshots started on 2026-10-04, so the rate exists only from then on (a rebuild of past balances from partial reconciliations, as ar_weekly does, would give
- * history but a second definition of "overdue" next to the Debt Report's; not done). Differences from ar_weekly: dated by
- * payment date (ar_weekly: reconciliation max_date), and the numerator counts cash only (ar_weekly's collected_overdue
- * too; its credit notes / other settlements are not shown here).
+ * Payments retain their own date and currency. All-currencies amounts use the original payment
+ * allocation's LYD/payment-currency ratio, applied only to the qualifying portion.
+ * The collection rate remains cash applied to invoices overdue at the start of a period / that
+ * starting overdue balance, using the snapshot of the day before the period.
  *
  * Scope = the Debt Report's: the view removes inter-company customers and the report exclusions; the caller's scoped
  * filters (role data scope, salesperson lock) and the page's company / salesperson / branch / segment / channel /
@@ -142,7 +134,20 @@ function inList(column: string, values: readonly unknown[] | undefined, out: str
   params.push(...values);
 }
 
-/** FROM + WHERE on v_finance_collection_trend (alias v, customer cu) for the range and every applicable filter. */
+/** Only matched amounts for invoices issued before payment day, grouped by the original allocation.
+ * The original fact remains a complete cash ledger; this report selects collections from prior invoices. */
+const PRIOR_INVOICE_ALLOCATIONS = `JOIN (
+  SELECT m.payment_id, m.allocation_no, SUM(m.applied_doc_ccy) AS amount_doc_ccy,
+         SUM(CASE WHEN m.kind = 'overdue' THEN m.applied_doc_ccy ELSE 0 END) AS applied_overdue_doc_ccy,
+         SUM(CASE WHEN m.kind = 'not_due' THEN m.applied_doc_ccy ELSE 0 END) AS applied_not_due_doc_ccy
+  FROM fact_finance_collection_invoice m
+  JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
+  JOIN dim_finance_collection_invoice_date i ON i.move_id = m.move_id
+  WHERE m.move_type IN ('out_invoice', 'out_receipt') AND i.invoice_date < c.payment_date AND m.applied_doc_ccy > 0
+  GROUP BY m.payment_id, m.allocation_no
+) e ON e.payment_id = v.payment_id AND e.allocation_no = v.allocation_no`;
+
+/** FROM + WHERE: view applies report exclusions; eligible invoice amounts apply to trend and drill-down alike. */
 export function collectionSource(cq: CollectionsQuery, f: Filters, currency: string | null): Sql {
   const where = ['v.payment_date BETWEEN ? AND ?'];
   const params: unknown[] = [cq.from, cq.to];
@@ -161,7 +166,7 @@ export function collectionSource(cq: CollectionsQuery, f: Filters, currency: str
     where.push(cat.sql);
     params.push(...cat.params);
   }
-  return { sql: `FROM v_finance_collection_trend v JOIN dim_customer cu ON cu.CustomerKey = v.CustomerKey WHERE ${where.join(' AND ')}`, params };
+  return { sql: `FROM v_finance_collection_trend v ${PRIOR_INVOICE_ALLOCATIONS} JOIN dim_customer cu ON cu.CustomerKey = v.CustomerKey WHERE ${where.join(' AND ')}`, params };
 }
 
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
@@ -170,9 +175,9 @@ type Row = Record<string, any>;
 /** One payment column in the payment currency, or in LYD (all currencies): the payment's Odoo LYD amount, its split at
  * that payment's own LYD / payment-currency ratio (so the parts still add up to the LYD amount). */
 function amountSql(column: 'amount' | 'applied_overdue' | 'applied_not_due' | 'applied_other' | 'unapplied', allCurrencies: boolean): string {
-  if (!allCurrencies) return `v.${column}_doc_ccy`;
-  if (column === 'amount') return 'v.amount_company_ccy';
-  return `COALESCE(v.${column}_doc_ccy * v.amount_company_ccy / NULLIF(v.amount_doc_ccy, 0), 0)`;
+  if (column === 'applied_other' || column === 'unapplied') return '0';
+  if (!allCurrencies) return `e.${column}_doc_ccy`;
+  return `COALESCE(e.${column}_doc_ccy * v.amount_company_ccy / NULLIF(v.amount_doc_ccy, 0), 0)`;
 }
 async function rows(pool: Pool, sql: string, params: unknown[]): Promise<Row[]> {
   const [r] = await pool.query(sql, params);
@@ -229,7 +234,7 @@ export async function fetchCollectionsTrend(pool: Pool, cq: CollectionsQuery, f:
     pool,
     `SELECT DATE_FORMAT(${PERIOD_SQL[cq.grain]}, '%Y-%m-%d') AS p, SUM(${amountSql('amount', all)}) AS collected,
             SUM(${amountSql('applied_overdue', all)}) AS overdue, SUM(${amountSql('applied_not_due', all)}) AS not_due,
-            SUM(${amountSql('applied_other', all)}) AS other, SUM(${amountSql('unapplied', all)}) AS unapplied, COUNT(DISTINCT v.payment_id) AS payments
+            0 AS other, 0 AS unapplied, COUNT(DISTINCT v.payment_id) AS payments
      ${s.sql} GROUP BY p`,
     s.params,
   );
@@ -284,6 +289,8 @@ async function startOverdueRates(pool: Pool, cq: CollectionsQuery, f: Filters, c
                   (SELECT SUM(m.applied_invoice_ccy) FROM fact_finance_collection_invoice m
                      JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
                     WHERE c.payment_date BETWEEN ? AND ? AND c.is_intercompany = 0
+                      AND m.move_type IN ('out_invoice', 'out_receipt')
+                      AND EXISTS (SELECT 1 FROM dim_finance_collection_invoice_date i WHERE i.move_id = m.move_id AND i.invoice_date < c.payment_date)
                       AND m.debit_line_id IN (SELECT l.line_id ${s.sql}${cond})) AS collected`,
           [...s.params, currency, p.start, p.end, ...s.params, currency],
         )
@@ -294,7 +301,9 @@ async function startOverdueRates(pool: Pool, cq: CollectionsQuery, f: Filters, c
                      FROM fact_finance_collection_invoice m
                      JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
                      JOIN (SELECT l.line_id, l.residual_doc_ccy, l.residual_company_ccy ${s.sql}${cond}) o ON o.line_id = m.debit_line_id
-                    WHERE c.payment_date BETWEEN ? AND ? AND c.is_intercompany = 0) AS collected`,
+                    WHERE c.payment_date BETWEEN ? AND ? AND c.is_intercompany = 0
+                      AND m.move_type IN ('out_invoice', 'out_receipt')
+                      AND EXISTS (SELECT 1 FROM dim_finance_collection_invoice_date i WHERE i.move_id = m.move_id AND i.invoice_date < c.payment_date)) AS collected`,
           [...s.params, ...s.params, p.start, p.end],
         );
     out.set(p.start, { start: num(x?.start_overdue), collected: num(x?.collected) });
@@ -335,9 +344,10 @@ export async function fetchCollectionsDrilldown(pool: Pool, cq: CollectionsQuery
   const r = await rows(
     pool,
     `SELECT v.payment_id, v.allocation_no, v.payment_name, DATE_FORMAT(v.payment_date, '%Y-%m-%d') AS payment_date, v.company, v.customer,
-            v.currency, v.amount_company_ccy, v.salesperson, v.sales_team, v.attribution, v.amount_doc_ccy, v.applied_overdue_doc_ccy, v.applied_not_due_doc_ccy,
-            v.applied_other_doc_ccy, v.unapplied_doc_ccy
-     ${s.sql} ORDER BY v.payment_date, v.amount_doc_ccy DESC, v.payment_id, v.allocation_no LIMIT ${DRILL_LIMIT + 1}`,
+            v.currency, ${amountSql('amount', true)} AS amount_company_ccy, v.salesperson, v.sales_team, v.attribution,
+            e.amount_doc_ccy, e.applied_overdue_doc_ccy, e.applied_not_due_doc_ccy,
+            0 AS applied_other_doc_ccy, 0 AS unapplied_doc_ccy
+     ${s.sql} ORDER BY v.payment_date, e.amount_doc_ccy DESC, v.payment_id, v.allocation_no LIMIT ${DRILL_LIMIT + 1}`,
     s.params,
   );
   const truncated = r.length > DRILL_LIMIT;
@@ -347,8 +357,13 @@ export async function fetchCollectionsDrilldown(pool: Pool, cq: CollectionsQuery
     const ids = [...new Set(page.map((x) => num(x.payment_id)))];
     const m = await rows(
       pool,
-      `SELECT payment_id, allocation_no, document, applied_doc_ccy FROM fact_finance_collection_invoice
-        WHERE payment_id IN (${ids.map(() => '?').join(', ')}) ORDER BY payment_id, allocation_no, partial_id`,
+      `SELECT m.payment_id, m.allocation_no, m.document, m.applied_doc_ccy
+         FROM fact_finance_collection_invoice m
+         JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
+         JOIN dim_finance_collection_invoice_date i ON i.move_id = m.move_id
+        WHERE m.payment_id IN (${ids.map(() => '?').join(', ')})
+          AND m.move_type IN ('out_invoice', 'out_receipt') AND i.invoice_date < c.payment_date
+        ORDER BY m.payment_id, m.allocation_no, m.partial_id`,
       ids,
     );
     for (const x of m) {

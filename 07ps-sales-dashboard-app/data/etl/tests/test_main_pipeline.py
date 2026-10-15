@@ -71,7 +71,7 @@ def _registry(sales_gate: dict) -> Registry:
 def pipe(platform_engine, platform_config, tmp_path):
     for m in ("0029_core_dimensions.sql", "0030_core_team_map.sql", "0031_sales_mart.sql", "0032_core_odoo_labels.sql",
               "0033_finance_receivables.sql", "0034_finance_receivable_scope.sql",
-              "0040_finance_collections.sql", "0042_finance_collection_split.sql"):
+              "0040_finance_collections.sql", "0042_finance_collection_split.sql", "0045_collection_invoice_dates.sql"):
         apply_migration_sqlite(platform_engine, m)
     with platform_engine.begin() as conn:
         conn.execute(text("CREATE TABLE stub_sales (run_uid VARCHAR(36))"))

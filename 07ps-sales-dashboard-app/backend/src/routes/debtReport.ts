@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import type { Filters } from '../measures/filters';
+import { applyRoleDataScope, applySalespersonLock } from '../measures/filters';
 import { fetchDepartmentFreshness } from '../measures/departmentFreshness';
 import {
   DebtQueryError,
@@ -15,7 +16,7 @@ import {
   parseDebtQuery,
   parseDrill,
 } from '../measures/debtReport';
-import { fetchDebtAging, parseAgingQuery } from '../measures/debtAging';
+import { attachCreditZones, fetchDebtAging, parseAgingQuery } from '../measures/debtAging';
 import { fetchCollectionsDrilldown, fetchCollectionsTrend, parseCollectionsQuery } from '../measures/debtCollections';
 
 /**
@@ -27,16 +28,17 @@ import { fetchCollectionsDrilldown, fetchCollectionsTrend, parseCollectionsQuery
  *   GET /debt-report/trend      open / overdue / not due per snapshot date and currency (null = no row for the filters
  *                               on that snapshot, e.g. a company not yet extracted then)
  *   GET /debt-report/collections-trend?currency=&grain=day|week|month&from=&to=
- *                               money collected per period (measures/debtCollections.ts): overdue / not yet due / other /
- *                               not matched, payment count, collection rate; default the last 12 weeks (Sunday..Saturday)
+ *                               collections against earlier invoices (measures/debtCollections.ts): overdue / not yet due;
+ *                               same-day sales and advances excluded; payment count, collection rate; default the last 12 weeks (Sunday..Saturday)
  *   GET /debt-report/collections-drilldown?currency=&grain=&period=<first day>
  *                               the payments of one period and the invoices they were applied to
- *   GET /debt-report/customers  one row per company + customer + currency
+ *   GET /debt-report/customers  one row per company + customer + currency, each with its customer's credit-policy zone
  *   GET /debt-report/drilldown?kind=customer|aging|salesperson|team|account&key=<key>&currency=<code>
  *                               the open lines behind one chart point / table row, in that currency
- *   GET /debt-report/aging?currency=<code>&term=<key|due_date|missing>
- *                               the Aging Map: one customer per dot, zoned by its oldest open invoice against that
- *                               invoice's term (measures/debtAging.ts; settings in the cfg_finance_aging_* tables, 0037)
+ *   GET /debt-report/aging?currency=<code>|allCurrencies=true&term=<payment term key>
+ *                               Credit Policy Escalation: one customer per dot, placed by the days past due of its
+ *                               unpaid invoice with the earliest due date, in the zones of config/creditPolicy.ts
+ *                               (measures/debtAging.ts)
  *
  * Every endpoint leaves out the excluded segments and sales teams (cfg_finance_report_exclusion; measures/debtReport.ts
  * EXCLUDED_TEAMS_CONDITION) -- no parameter can bring them back.
@@ -72,7 +74,8 @@ const scoped = (req: Request): Filters => req.scopedFilters ?? {};
 debtReportRouter.get(
   '/meta',
   handle(async (req) => ({
-    ...(await fetchDebtMeta(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req))),
+    ...(await fetchDebtMeta(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req),
+      applySalespersonLock(applyRoleDataScope({}, req.userContext?.dataScopeRules ?? []), req.userContext!))),
     freshness: await fetchDepartmentFreshness(pool, 'finance'),
   })),
 );
@@ -102,7 +105,11 @@ debtReportRouter.get(
 
 debtReportRouter.get(
   '/customers',
-  handle((req) => fetchDebtCustomers(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req))),
+  handle(async (req) => {
+    const q = parseDebtQuery(req.query as Record<string, unknown>);
+    // every row carries its customer's credit-policy zone, exactly as the escalation chart places it
+    return attachCreditZones(pool, q, scoped(req), await fetchDebtCustomers(pool, q, scoped(req)));
+  }),
 );
 
 debtReportRouter.get(

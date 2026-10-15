@@ -103,14 +103,19 @@ describe.skipIf(!RUN)('Collections on the real warehouse (read-only)', () => {
     expect(n(r.kept)).toBe(n(r.want));
   });
 
-  it('trend (week) = the view summed per Sunday..Saturday week; drill-down rows = the bar', async () => {
+  it('trend sums only prior invoice portions per week; drill-down rows = the bar', async () => {
     const from = '2026-08-30';
     const to = '2026-09-26';
     const t = (await get(`/debt-report/collections-trend?currency=LYD&grain=week&from=${from}&to=${to}`)).body;
     expect(t.points.map((p: Json) => p.periodStart)).toEqual(['2026-08-30', '2026-09-06', '2026-09-13', '2026-09-20']);
     const direct = await qa(
-      `SELECT DATE_FORMAT(DATE_SUB(payment_date, INTERVAL (DAYOFWEEK(payment_date) - 1) DAY), '%Y-%m-%d') AS w, SUM(amount_doc_ccy) AS s,
-              COUNT(DISTINCT payment_id) AS k FROM v_finance_collection_trend WHERE currency = 'LYD' AND payment_date BETWEEN ? AND ? GROUP BY w`,
+      `SELECT DATE_FORMAT(DATE_SUB(v.payment_date, INTERVAL (DAYOFWEEK(v.payment_date) - 1) DAY), '%Y-%m-%d') AS w,
+              SUM(m.applied_doc_ccy) AS s, COUNT(DISTINCT v.payment_id) AS k
+         FROM v_finance_collection_trend v
+         JOIN fact_finance_collection_invoice m ON m.payment_id = v.payment_id AND m.allocation_no = v.allocation_no
+         JOIN dim_finance_collection_invoice_date d ON d.move_id = m.move_id
+        WHERE v.currency = 'LYD' AND v.payment_date BETWEEN ? AND ?
+          AND m.move_type IN ('out_invoice', 'out_receipt') AND m.applied_doc_ccy > 0 AND d.invoice_date < v.payment_date GROUP BY w`,
       [from, to],
     );
     for (const p of t.points) {
@@ -137,15 +142,21 @@ describe.skipIf(!RUN)('Collections on the real warehouse (read-only)', () => {
     expect(Math.abs(parts.reduce((s, v) => s + v, 0) - all)).toBeLessThan(0.01);
   });
 
-  it('all currencies (≈ LYD): collected = the payments\' Odoo LYD amounts, the split adds up, the drill-down = the bar', async () => {
+  it('all currencies (≈ LYD): qualifying invoice portions at each payment rate; drill-down = bar', async () => {
     const from = '2026-08-30';
     const to = '2026-10-10';
     const t = (await get(`/debt-report/collections-trend?allCurrencies=true&grain=week&from=${from}&to=${to}`)).body;
     expect(t.allCurrencies).toBe(true);
     expect(t.currency).toBe('LYD');
     const direct = await qa(
-      `SELECT DATE_FORMAT(DATE_SUB(payment_date, INTERVAL (DAYOFWEEK(payment_date) - 1) DAY), '%Y-%m-%d') AS w, SUM(amount_company_ccy) AS s,
-              COUNT(DISTINCT payment_id) AS k FROM v_finance_collection_trend WHERE payment_date BETWEEN ? AND ? GROUP BY w`,
+      `SELECT DATE_FORMAT(DATE_SUB(v.payment_date, INTERVAL (DAYOFWEEK(v.payment_date) - 1) DAY), '%Y-%m-%d') AS w,
+              SUM(COALESCE(m.applied_doc_ccy * v.amount_company_ccy / NULLIF(v.amount_doc_ccy, 0), 0)) AS s,
+              COUNT(DISTINCT v.payment_id) AS k
+         FROM v_finance_collection_trend v
+         JOIN fact_finance_collection_invoice m ON m.payment_id = v.payment_id AND m.allocation_no = v.allocation_no
+         JOIN dim_finance_collection_invoice_date d ON d.move_id = m.move_id
+        WHERE v.payment_date BETWEEN ? AND ? AND m.move_type IN ('out_invoice', 'out_receipt')
+          AND m.applied_doc_ccy > 0 AND d.invoice_date < v.payment_date GROUP BY w`,
       [from, to],
     );
     for (const p of t.points) {
@@ -160,6 +171,18 @@ describe.skipIf(!RUN)('Collections on the real warehouse (read-only)', () => {
     expect(dd.allCurrencies).toBe(true);
     if (!dd.truncated) expect(Math.abs(dd.rows.reduce((s: number, r: Json) => s + r.amountCompany, 0) - busiest.collected)).toBeLessThan(0.01);
     expect((await get(`/debt-report/collections-drilldown?grain=week&period=${busiest.periodStart}`)).status).toBe(400);
+  });
+
+  it('all historical invoice matches have dates, and same-day sales exist but cannot qualify', async () => {
+    const r = await q1(`SELECT SUM(d.invoice_date IS NULL) AS missing,
+         SUM(d.invoice_date = c.payment_date) AS same_day, SUM(d.invoice_date < c.payment_date) AS earlier
+       FROM fact_finance_collection_invoice m
+       JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
+       LEFT JOIN dim_finance_collection_invoice_date d ON d.move_id = m.move_id
+       WHERE m.move_type IN ('out_invoice','out_receipt')`);
+    expect(n(r.missing)).toBe(0);
+    expect(n(r.same_day)).toBeGreaterThan(0);
+    expect(n(r.earlier)).toBeGreaterThan(0);
   });
 
   it('bad parameters are a 400', async () => {

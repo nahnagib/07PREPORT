@@ -63,6 +63,8 @@ export interface DataGridProps<T extends Record<string, unknown>> {
   /** Base file name (no extension) for CSV/Excel export - e.g. "ytd-value-breakdown". */
   fileName?: string;
   pageSize?: number;
+  /** Show table search and column filters. Defaults to true. */
+  enableFiltering?: boolean;
   /** Max height of the scrollable table body, in px, before the header sticks (Complete UI
    * Redesign pass). Set to undefined to disable the internal scroll container entirely (header
    * then just scrolls away with the page, same as before this pass). Defaults to 520. */
@@ -117,6 +119,7 @@ export function DataGrid<T extends Record<string, unknown>>({
   getRowId,
   fileName = 'export',
   pageSize = 10,
+  enableFiltering = true,
   maxBodyHeight = 520,
   filtersSummary,
   extraFilterParts,
@@ -164,7 +167,7 @@ export function DataGrid<T extends Record<string, unknown>>({
     data: rows,
     columns: columnDefs,
     getRowId,
-    state: { sorting, columnFilters, globalFilter, columnOrder, columnSizing, columnPinning, pagination },
+    state: { sorting, columnFilters: enableFiltering ? columnFilters : [], globalFilter: enableFiltering ? globalFilter : '', columnOrder, columnSizing, columnPinning, pagination },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
@@ -174,6 +177,7 @@ export function DataGrid<T extends Record<string, unknown>>({
     onPaginationChange: setPagination,
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
+    enableFilters: enableFiltering,
     enableMultiSort: true,
     isMultiSortEvent: (e) => (e as React.MouseEvent).shiftKey,
     getCoreRowModel: getCoreRowModel(),
@@ -428,55 +432,59 @@ export function DataGrid<T extends Record<string, unknown>>({
   return (
     <div>
       {/* Toolbar: global search (left) + export/copy actions (right). */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          flexWrap: 'wrap',
-          marginBottom: 10,
-        }}
-      >
-        <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 320 }}>
-          <Search
-            size={14}
-            style={{
-              position: 'absolute',
-              left: 10,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              color: 'var(--ps-color-muted-text)',
-            }}
-          />
-          <input
-            dir="auto"
-            value={globalFilter}
-            onChange={(e) => setGlobalFilter(e.target.value)}
-            placeholder="Search all columns..."
-            style={{
-              width: '100%',
-              padding: '7px 10px 7px 30px',
-              borderRadius: 8,
-              border: '1px solid var(--ps-color-border)',
-              background: 'var(--ps-color-surface)',
-              color: 'var(--ps-color-text)',
-              fontSize: 13,
-            }}
-          />
+      {(enableFiltering || canExport) && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: enableFiltering ? 'space-between' : 'flex-end',
+            gap: 12,
+            flexWrap: 'wrap',
+            marginBottom: 10,
+          }}
+        >
+          {enableFiltering && (
+            <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 320 }}>
+              <Search
+                size={14}
+                style={{
+                  position: 'absolute',
+                  left: 10,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--ps-color-muted-text)',
+                }}
+              />
+              <input
+                dir="auto"
+                value={globalFilter}
+                onChange={(e) => setGlobalFilter(e.target.value)}
+                placeholder="Search all columns..."
+                style={{
+                  width: '100%',
+                  padding: '7px 10px 7px 30px',
+                  borderRadius: 8,
+                  border: '1px solid var(--ps-color-border)',
+                  background: 'var(--ps-color-surface)',
+                  color: 'var(--ps-color-text)',
+                  fontSize: 13,
+                }}
+              />
+            </div>
+          )}
+          {canExport && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <ToolbarButton icon={Download} label="Export CSV" onClick={exportCsv} disabled={exportRows.length === 0} />
+              <ToolbarButton
+                icon={FileJson}
+                label={exporting ? 'Exporting...' : 'Export as PDF'}
+                onClick={exportPdf}
+                disabled={exporting}
+              />
+            </div>
+          )}
         </div>
-        {canExport && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <ToolbarButton icon={Download} label="Export CSV" onClick={exportCsv} disabled={exportRows.length === 0} />
-            <ToolbarButton
-              icon={FileJson}
-              label={exporting ? 'Exporting...' : 'Export as PDF'}
-              onClick={exportPdf}
-              disabled={exporting}
-            />
-          </div>
-        )}
-      </div>
+      )}
 
       {pdfNotice && (
         <div
@@ -606,7 +614,7 @@ export function DataGrid<T extends Record<string, unknown>>({
                       </div>
 
                       {/* Per-column filter: a dropdown for columns with a known value set, else free text. */}
-                      {filterOptionsOf(header.column.id) ? (
+                      {enableFiltering && (filterOptionsOf(header.column.id) ? (
                         <select
                           value={(header.column.getFilterValue() as string) ?? ''}
                           onChange={(e) => header.column.setFilterValue(e.target.value || undefined)}
@@ -631,7 +639,7 @@ export function DataGrid<T extends Record<string, unknown>>({
                           aria-label={`Filter ${String(header.column.columnDef.header)}`}
                           style={columnFilterStyle}
                         />
-                      )}
+                      ))}
 
                       {/* Resize handle. */}
                       <div
@@ -700,7 +708,7 @@ export function DataGrid<T extends Record<string, unknown>>({
                   colSpan={columns.length}
                   style={{ padding: 16, textAlign: 'center', color: 'var(--ps-color-muted-text)', fontSize: 13 }}
                 >
-                  No rows match the current search/filter.
+                  {enableFiltering ? 'No rows match the current search/filter.' : 'No rows to display.'}
                 </td>
               </tr>
             )}

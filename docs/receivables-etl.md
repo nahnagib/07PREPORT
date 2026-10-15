@@ -110,9 +110,10 @@ Source: the receivables spec of 2026-10-01; the code is in `transform.py`.
 - **Amounts.** `residual_company_ccy` (`amount_residual`, in the company currency `dim_company.CurrencyKey`) and
   `residual_doc_ccy` (`amount_residual_currency`, in `CurrencyKey`).
 - **Customer.** The line partner's commercial partner (`map_partner_customer`, as in sales).
-- **Salesperson.** The invoice's `invoice_user_id` through sheet `OdooUsers`. With no invoice user: the customer's
-  salesperson of record (`partner.user_id`, also through `OdooUsers`). The column `salesperson_source` says which
-  one was used: `invoice_user` | `customer` | `none`.
+- **Salesperson.** The document's `invoice_user_id` through sheet `OdooUsers`. Customer invoices and credit notes
+  without an invoice user stay Unassigned (`-1`), matching Odoo's Salesperson filter. Other entries, including payments,
+  fall back to the customer's salesperson of record (`partner.user_id`, also through `OdooUsers`). The column
+  `salesperson_source` says which one was used: `invoice_user` | `customer` | `none`.
 - **Team.** The invoice's Odoo team through sheet `OdooTeams`. With no team, or a team marked SALESPERSON: the
   salesperson's effective team, as for sales lines and orders. An Odoo team missing from the sheet goes to `'-1'`.
 - **Payment term.** The invoice's term, else the customer's default term for that company.
@@ -262,7 +263,7 @@ backfilled date against the Aged Receivable report for D.
 - **Salesperson fallbacks.** 1,868 lines have an invoice user that is not in `OdooUsers`. 5,186 lines have no
   salesperson at all (`salesperson_source = none`).
 
-## 8. Collections (2026-10-11)
+## 8. Collections (updated 2026-10-15)
 
 Tasks `extract_collections` and `load_collections` of the same `finance_receivables` job, after the snapshot
 (`data/etl/src/departments/finance/collections.py`, migrations 0040 + 0042). Report exclusions since 2026-10-11
@@ -270,7 +271,7 @@ Tasks `extract_collections` and `load_collections` of the same `finance_receivab
 
 ### Definition
 
-A **collection** is a **posted inbound customer payment** (`account.payment`, `payment_type = inbound`,
+A **cash ledger payment** is a **posted inbound customer payment** (`account.payment`, `payment_type = inbound`,
 `partner_type = customer`) that is **not an internal transfer**, dated by the **payment date** (`account.payment.date`,
 Odoo's date). The amount is the payment amount in the payment currency (`amount`); the LYD equivalent is Odoo's
 `amount_company_currency_signed`.
@@ -286,6 +287,18 @@ payment currency, `credit_amount_currency`):
 | Not matched yet | the rest: an advance or a payment not reconciled yet (as of the last refresh) |
 
 The four parts always add up to the payment.
+
+The **Collections chart** counts only the portion applied to customer invoices whose actual `invoice_date` is
+**before the payment date**. Both overdue and not-yet-due invoices qualify. Same-day sales, future-dated invoices,
+unmatched advances and non-invoice receipts are excluded. For a mixed payment, only eligible invoice portions count.
+This rule applies to all chart totals, payment counts and drill-down rows; it does not change the complete cash ledger.
+LYD totals convert the eligible portion using the original allocation's LYD/payment-currency ratio.
+
+Migration **0045** adds `dim_finance_collection_invoice_date`, retaining invoice dates even after invoices are fully
+paid and disappear from the open-receivables dimension. `load_collections` maintains it on each run. For existing
+history, run `python data/etl/scripts/finance/backfill_collection_invoice_dates.py --apply` after the migration;
+without `--apply` the script only reports the missing count. It reads Odoo and writes only warehouse date metadata.
+Unknown invoice dates are excluded until populated; the invoice due date is never substituted.
 
 **Not collections:** credit notes, write-offs, exchange differences and netting entries that settle invoices. The
 collections start from cash (payments), never from reconciliations.
@@ -314,7 +327,8 @@ the report exclusions removed (the same exclusion condition as the Debt Report).
 ### The chart
 
 **Collections trend · {currency}** next to the Receivables trend: stacked bars per day / week (Sunday..Saturday, as
-`reporting/ar_weekly`) / month with the four parts, a line for the total collected, and (right axis) the **collection
+`reporting/ar_weekly`) / month with two parts (earlier invoices overdue / not overdue), a line for the eligible total
+collected, and (right axis) the **collection
 rate**:
 
 > collection rate = money applied in the period to the invoice lines that were overdue at the start of the period ÷
@@ -324,7 +338,7 @@ The start overdue comes from the receivable snapshot of the **day before** the p
 day), with the page's filters. That is `ar_weekly`'s definition; the receivable snapshot is used instead of rebuilding
 past balances from partial reconciliations so the dashboard keeps one definition of "overdue" (the Debt Report's). The
 rate exists only where that snapshot exists (snapshots started 2026-10-04); otherwise the line is hidden. Clicking a bar
-lists the payments of that period with the invoices they were applied to.
+lists the eligible portions of payments of that period with the earlier invoices they were applied to.
 
 API: `GET /debt-report/collections-trend?currency=&grain=day|week|month&from=&to=` (default: the last 12 weeks) and
 `GET /debt-report/collections-drilldown?currency=&grain=&period=<first day>`, same permission and filters as the Debt
@@ -337,13 +351,16 @@ status, payment term, invoice size) do not apply to payments.
 | --- | --- |
 | Dated by the reconciliation's `create_date`: a payment matched late landed in the wrong week | Dated by the payment date |
 | Every reconciliation counted as cash: credit notes, write-offs, netting and inter-company inflated "collected" | Only posted customer payments; credit notes etc. are never collections; inter-company excluded |
-| Payments not matched to an invoice were not counted | Counted, shown as "Not matched yet" |
-| Salespersons excluded by name in the query; reconciliations < 2 days after the invoice dropped (cash sales) | No name lists, no date hacks: the report exclusions are the one config table (`cfg_finance_report_exclusion`) |
+| Payments not matched to an invoice were not counted | Retained in the cash ledger, excluded from the Collections chart |
+| Salespersons excluded by name in the query; reconciliations < 2 days after the invoice dropped (cash sales) | Report exclusions use `cfg_finance_report_exclusion`; the chart requires invoice date strictly before payment date |
 | "Collection %" divided by the residual after payment | Divided by the overdue at the start of the period |
 | Current week only | Full history, day / week / month |
 | Plain-text Odoo API key, dev database | Credentials only in `data/etl/.env`; production read-only guard |
 
 ### Reconciliation (2026-10-11, local warehouse vs live Odoo)
+
+Historical audit of the full cash ledger before the 2026-10-15 chart eligibility rule; these totals include same-day
+sales and unmatched receipts and therefore are not expected to equal the current Collections chart.
 
 September 2026, posted inbound customer payments that are not internal transfers (Odoo's Customer Payments list):
 

@@ -1,0 +1,143 @@
+Live test started Thu 10/08/2026 11:45:29.74
+===== PACKAGES =====
+
+[notice] A new release of pip is available: 25.2 -> 26.2.1
+[notice] To update, run: C:\Users\Lenovo\Desktop\07PREPORT\07ps-sales-dashboard-app\reporting\ar_weekly\.venv\Scripts\python.exe -m pip install --upgrade pip
+===== CHECK =====
+Odoo URL      : https://majaal.odoo.com
+Database      : odoo-ps-majaal-main-3380005
+Login         : nahla.burweiss@bmh.com.ly (profile DEFAULT)
+Companies     : [1, 3]
+Secrets from  : C:\Users\Lenovo\Desktop\07PREPORT\07ps-sales-dashboard-app\data\etl\.env, C:\Users\Lenovo\Desktop\07PREPORT\07ps-sales-dashboard-app\backend\.env
+Odoo version  : 17.0+e
+User id       : 147
+Open receivable lines readable : 17,660
+Reconciliations last 4 weeks   : 5,330
+Read access   : OK on every model the report needs
+
+Connection OK. Run without --check to build the report.
+===== UPDATE RECIPIENTS =====
+2026-10-08 11:45:35,907 INFO    ar_weekly: Report for week ending 2026-10-03 (trend from 2026-09-05), Odoo https://majaal.odoo.com, demo=False
+2026-10-08 11:45:39,540 INFO    ar_weekly.odoo: account.move.line: 3510 rows
+2026-10-08 11:45:40,634 INFO    ar_weekly.odoo: account.partial.reconcile: 2289 rows
+2026-10-08 11:45:42,811 INFO    ar_weekly.odoo: account.move: fields not in this Odoo version, skipped: origin_payment_id
+2026-10-08 11:45:52,070 INFO    ar_weekly.odoo: res.company: 5 rows
+2026-10-08 11:45:54,906 WARNING ar_weekly.odoo: res.users: 1 record(s) not readable by the API user, left out: [11]
+2026-10-08 11:45:54,937 INFO    ar_weekly.extract: Sales team file: 23 Odoo teams, 79 Odoo users mapped
+2026-10-08 11:45:55,003 INFO    ar_weekly.extract: Extract: {'open_lines_read': 3510, 'closed_lines_read': 3764, 'partials': 2289, 'lines_in_scope': 7232, 'excluded': {'segment: Backoffice': 1232, 'segment: Inter Company': 261, 'intercompany': 25}, 'rep_source': {'invoice_user': 5166, 'none': 1811, 'customer': 255}}
+2026-10-08 11:45:55,049 INFO    ar_weekly.recipients: Recipients file: 84 salespeople (4 to email), 0 team-summary addresses
+2026-10-08 11:45:55,115 INFO    ar_weekly: Recipients file updated: 0 salespeople added, Odoo emails filled in the reference column
+===== REPORT =====
+2026-10-08 11:45:55,996 INFO    ar_weekly: Report for week ending 2026-10-03 (trend from 2026-09-05), Odoo https://majaal.odoo.com, demo=False
+2026-10-08 11:46:00,482 INFO    ar_weekly.odoo: account.move.line: 3510 rows
+2026-10-08 11:46:01,865 INFO    ar_weekly.odoo: account.partial.reconcile: 2289 rows
+2026-10-08 11:46:04,716 INFO    ar_weekly.odoo: account.move: fields not in this Odoo version, skipped: origin_payment_id
+2026-10-08 11:46:12,082 INFO    ar_weekly.odoo: res.company: 5 rows
+2026-10-08 11:46:14,882 WARNING ar_weekly.odoo: res.users: 1 record(s) not readable by the API user, left out: [11]
+2026-10-08 11:46:14,962 INFO    ar_weekly.extract: Sales team file: 23 Odoo teams, 79 Odoo users mapped
+2026-10-08 11:46:15,122 INFO    ar_weekly.extract: Extract: {'open_lines_read': 3510, 'closed_lines_read': 3764, 'partials': 2289, 'lines_in_scope': 7232, 'excluded': {'segment: Backoffice': 1232, 'segment: Inter Company': 261, 'intercompany': 25}, 'rep_source': {'invoice_user': 5166, 'none': 1811, 'customer': 255}}
+2026-10-08 11:46:15,203 INFO    ar_weekly.recipients: Recipients file: 84 salespeople (4 to email), 0 team-summary addresses
+2026-10-08 11:46:15,923 INFO    ar_weekly: Mohamed Eljhawi              LYD  outstanding      1,947,848  overdue      1,947,848  collected            0  -> AR_Weekly_Mohamed_Eljhawi_LYD_2026-10-03.html
+2026-10-08 11:46:16,185 INFO    ar_weekly: Hussain.elkhateb             LYD  outstanding          4,295  overdue          4,295  collected            0  -> AR_Weekly_Hussain_elkhateb_LYD_2026-10-03.html
+2026-10-08 11:46:16,545 INFO    ar_weekly: Ahmed Layas                  LYD  outstanding        339,210  overdue        339,210  collected            0  -> AR_Weekly_Ahmed_Layas_LYD_2026-10-03.html
+2026-10-08 11:46:16,727 INFO    ar_weekly: Habib Sager                  LYD  outstanding          8,040  overdue          8,040  collected            0  -> AR_Weekly_Habib_Sager_LYD_2026-10-03.html
+2026-10-08 11:46:17,082 INFO    ar_weekly: Hesham Abhor                 LYD  outstanding          6,730  overdue          6,730  collected        1,980  -> AR_Weekly_Hesham_Abhor_LYD_2026-10-03.html
+2026-10-08 11:46:17,267 INFO    ar_weekly: Muhaned Eljahawi             LYD  outstanding        804,865  overdue        381,712  collected            0  -> AR_Weekly_Muhaned_Eljahawi_LYD_2026-10-03.html
+2026-10-08 11:46:17,547 INFO    ar_weekly: Samar Elarebi                LYD  outstanding        285,515  overdue        285,515  collected            0  -> AR_Weekly_Samar_Elarebi_LYD_2026-10-03.html
+2026-10-08 11:46:17,985 INFO    ar_weekly: Marwan Alabbar               LYD  outstanding      4,310,422  overdue      1,892,132  collected      333,713  -> AR_Weekly_Marwan_Alabbar_LYD_2026-10-03.html
+2026-10-08 11:46:18,193 INFO    ar_weekly: Rwad                         LYD  outstanding         58,597  overdue         58,597  collected            0  -> AR_Weekly_Rwad_LYD_2026-10-03.html
+2026-10-08 11:46:18,400 INFO    ar_weekly: Abdelraheam Benkhayal        LYD  outstanding      1,545,624  overdue      1,003,169  collected            0  -> AR_Weekly_Abdelraheam_Benkhayal_LYD_2026-10-03.html
+2026-10-08 11:46:18,777 INFO    ar_weekly: abdulmuhaymin                LYD  outstanding        622,907  overdue        139,475  collected       52,246  -> AR_Weekly_abdulmuhaymin_LYD_2026-10-03.html
+2026-10-08 11:46:19,009 INFO    ar_weekly: Moftah Nohee                 LYD  outstanding          4,378  overdue          3,868  collected            0  -> AR_Weekly_Moftah_Nohee_LYD_2026-10-03.html
+2026-10-08 11:46:19,122 INFO    ar_weekly: Randa                        LYD  outstanding          2,150  overdue              0  collected            0  -> AR_Weekly_Randa_LYD_2026-10-03.html
+2026-10-08 11:46:19,227 INFO    ar_weekly: zakaria                      LYD  outstanding            580  overdue            580  collected            0  -> AR_Weekly_zakaria_LYD_2026-10-03.html
+2026-10-08 11:46:19,394 INFO    ar_weekly: ahmed.benmussa               EUR  outstanding          4,242  overdue          4,242  collected            0  -> AR_Weekly_ahmed_benmussa_EUR_2026-10-03.html
+2026-10-08 11:46:19,497 INFO    ar_weekly: Islam Katch                  LYD  outstanding              0  overdue              0  collected            0  -> AR_Weekly_Islam_Katch_LYD_2026-10-03.html
+2026-10-08 11:46:19,644 INFO    ar_weekly: Mohammad Al-Araibi           LYD  outstanding         88,860  overdue         88,860  collected            0  -> AR_Weekly_Mohammad_Al-Araibi_LYD_2026-10-03.html
+2026-10-08 11:46:19,981 INFO    ar_weekly: Ahmed Alarfy                 LYD  outstanding          2,010  overdue          2,010  collected            0  -> AR_Weekly_Ahmed_Alarfy_LYD_2026-10-03.html
+2026-10-08 11:46:20,332 INFO    ar_weekly: Nadia                        USD  outstanding          4,898  overdue          4,898  collected            0  -> AR_Weekly_Nadia_USD_2026-10-03.html
+2026-10-08 11:46:20,478 INFO    ar_weekly: Mohamed Qataf                LYD  outstanding          7,055  overdue          7,055  collected            0  -> AR_Weekly_Mohamed_Qataf_LYD_2026-10-03.html
+2026-10-08 11:46:20,610 INFO    ar_weekly: Balqeis khaled               LYD  outstanding         24,690  overdue         24,690  collected       15,000  -> AR_Weekly_Balqeis_khaled_LYD_2026-10-03.html
+2026-10-08 11:46:20,746 INFO    ar_weekly: Abdala Baitelmal             LYD  outstanding         24,035  overdue         24,035  collected            0  -> AR_Weekly_Abdala_Baitelmal_LYD_2026-10-03.html
+2026-10-08 11:46:20,903 INFO    ar_weekly: Abdeslam Omar                LYD  outstanding         13,245  overdue         12,985  collected        3,210  -> AR_Weekly_Abdeslam_Omar_LYD_2026-10-03.html
+2026-10-08 11:46:21,142 INFO    ar_weekly: Hussain.elkhateb             EUR  outstanding          7,184  overdue          7,184  collected            0  -> AR_Weekly_Hussain_elkhateb_EUR_2026-10-03.html
+2026-10-08 11:46:21,366 INFO    ar_weekly: Anas Alshlmany               LYD  outstanding            570  overdue            570  collected            0  -> AR_Weekly_Anas_Alshlmany_LYD_2026-10-03.html
+2026-10-08 11:46:21,642 INFO    ar_weekly: Ibrahim Garguom              LYD  outstanding      1,365,803  overdue        171,399  collected      100,270  -> AR_Weekly_Ibrahim_Garguom_LYD_2026-10-03.html
+2026-10-08 11:46:21,849 INFO    ar_weekly: Ashraf                       LYD  outstanding         23,000  overdue         23,000  collected            0  -> AR_Weekly_Ashraf_LYD_2026-10-03.html
+2026-10-08 11:46:22,034 INFO    ar_weekly: Firas Alshami                LYD  outstanding        715,136  overdue        264,691  collected        4,387  -> AR_Weekly_Firas_Alshami_LYD_2026-10-03.html
+2026-10-08 11:46:22,221 INFO    ar_weekly: Abd Nasser Khair             LYD  outstanding            195  overdue            195  collected            0  -> AR_Weekly_Abd_Nasser_Khair_LYD_2026-10-03.html
+2026-10-08 11:46:22,343 INFO    ar_weekly: Nada Benswayed               LYD  outstanding          1,145  overdue          1,145  collected            0  -> AR_Weekly_Nada_Benswayed_LYD_2026-10-03.html
+2026-10-08 11:46:22,452 INFO    ar_weekly: Abdelraheam Benkhayal        USD  outstanding        396,119  overdue        396,119  collected            0  -> AR_Weekly_Abdelraheam_Benkhayal_USD_2026-10-03.html
+2026-10-08 11:46:22,592 INFO    ar_weekly: Faraj Ali                    LYD  outstanding        100,609  overdue        100,609  collected            0  -> AR_Weekly_Faraj_Ali_LYD_2026-10-03.html
+2026-10-08 11:46:22,768 INFO    ar_weekly: Abdurrahman Laayrij          LYD  outstanding         14,703  overdue         11,533  collected       11,215  -> AR_Weekly_Abdurrahman_Laayrij_LYD_2026-10-03.html
+2026-10-08 11:46:22,952 INFO    ar_weekly: Hussian Makey                LYD  outstanding        586,528  overdue        109,285  collected       13,440  -> AR_Weekly_Hussian_Makey_LYD_2026-10-03.html
+2026-10-08 11:46:23,162 INFO    ar_weekly: Muhaned Eljahawi             USD  outstanding        577,679  overdue        543,089  collected            0  -> AR_Weekly_Muhaned_Eljahawi_USD_2026-10-03.html
+2026-10-08 11:46:23,374 INFO    ar_weekly: Faraj Ben Arous              LYD  outstanding              0  overdue              0  collected            0  -> AR_Weekly_Faraj_Ben_Arous_LYD_2026-10-03.html
+2026-10-08 11:46:23,527 INFO    ar_weekly: Yusef Zoupy                  LYD  outstanding            320  overdue            320  collected            0  -> AR_Weekly_Yusef_Zoupy_LYD_2026-10-03.html
+2026-10-08 11:46:23,700 INFO    ar_weekly: Mohamed Abdulhady            LYD  outstanding        427,870  overdue        405,445  collected            0  -> AR_Weekly_Mohamed_Abdulhady_LYD_2026-10-03.html
+2026-10-08 11:46:23,854 INFO    ar_weekly: Mohamed Eljhawi              USD  outstanding         20,714  overdue         20,714  collected            0  -> AR_Weekly_Mohamed_Eljhawi_USD_2026-10-03.html
+2026-10-08 11:46:24,055 INFO    ar_weekly: Ahmed Belgasim               LYD  outstanding         13,628  overdue         11,153  collected            0  -> AR_Weekly_Ahmed_Belgasim_LYD_2026-10-03.html
+2026-10-08 11:46:24,255 INFO    ar_weekly: Saleh Alabeedi               LYD  outstanding          2,640  overdue          2,385  collected            0  -> AR_Weekly_Saleh_Alabeedi_LYD_2026-10-03.html
+2026-10-08 11:46:24,430 INFO    ar_weekly: Mustapha Shaddad             EUR  outstanding          5,034  overdue          5,034  collected            0  -> AR_Weekly_Mustapha_Shaddad_EUR_2026-10-03.html
+2026-10-08 11:46:24,552 INFO    ar_weekly: kaled Alwani                 LYD  outstanding          4,498  overdue          4,498  collected            0  -> AR_Weekly_kaled_Alwani_LYD_2026-10-03.html
+2026-10-08 11:46:24,655 INFO    ar_weekly: Yousef Salim                 LYD  outstanding            630  overdue            630  collected            0  -> AR_Weekly_Yousef_Salim_LYD_2026-10-03.html
+2026-10-08 11:46:24,751 INFO    ar_weekly: Mohamed Ramadan              LYD  outstanding             27  overdue             27  collected            0  -> AR_Weekly_Mohamed_Ramadan_LYD_2026-10-03.html
+2026-10-08 11:46:24,868 INFO    ar_weekly: Mustapha Shaddad             LYD  outstanding         13,200  overdue              0  collected            0  -> AR_Weekly_Mustapha_Shaddad_LYD_2026-10-03.html
+2026-10-08 11:46:25,084 INFO    ar_weekly: Ahmed Mandi                  LYD  outstanding              0  overdue              0  collected            0  -> AR_Weekly_Ahmed_Mandi_LYD_2026-10-03.html
+2026-10-08 11:46:25,201 INFO    ar_weekly: Mohammed Alabed              LYD  outstanding              0  overdue              0  collected            0  -> AR_Weekly_Mohammed_Alabed_LYD_2026-10-03.html
+2026-10-08 11:46:25,316 INFO    ar_weekly.mail: [dry run] would email 'Weekly Collection & Aging Report · Marwan Alabbar · 03 Oct 2026' to ['Nahla.burweiss@bmh.com.ly'] (cc []) with ['AR_Weekly_Marwan_Alabbar_LYD_2026-10-03.xlsx']
+2026-10-08 11:46:25,334 INFO    ar_weekly.mail: [dry run] would email 'Weekly Collection & Aging Report · Abdelraheam Benkhayal · 03 Oct 2026' to ['Nahla.burweiss@bmh.com.ly'] (cc []) with ['AR_Weekly_Abdelraheam_Benkhayal_LYD_2026-10-03.xlsx']
+2026-10-08 11:46:25,346 INFO    ar_weekly.mail: [dry run] would email 'Weekly Collection & Aging Report · Ibrahim Garguom · 03 Oct 2026' to ['Nahla.burweiss@bmh.com.ly'] (cc []) with ['AR_Weekly_Ibrahim_Garguom_LYD_2026-10-03.xlsx']
+2026-10-08 11:46:25,357 INFO    ar_weekly.mail: [dry run] would email 'Weekly Collection & Aging Report · Abdelraheam Benkhayal · 03 Oct 2026 · USD' to ['Nahla.burweiss@bmh.com.ly'] (cc []) with ['AR_Weekly_Abdelraheam_Benkhayal_USD_2026-10-03.xlsx']
+2026-10-08 11:46:25,373 INFO    ar_weekly.mail: [dry run] would email 'Weekly Collection & Aging Report · Mohamed Abdulhady · 03 Oct 2026' to ['Nahla.burweiss@bmh.com.ly'] (cc []) with ['AR_Weekly_Mohamed_Abdulhady_LYD_2026-10-03.xlsx']
+2026-10-08 11:46:25,374 INFO    ar_weekly: Email plan (dry run, nothing sent):
+  Mohamed Eljhawi                -                                             not sent: Send Report = No
+  Hussain.elkhateb               -                                             not sent: Send Report = No
+  Ahmed Layas                    -                                             not sent: Send Report = No
+  Habib Sager                    -                                             not sent: Send Report = No
+  Hesham Abhor                   -                                             not sent: Send Report = No
+  Muhaned Eljahawi               -                                             not sent: Send Report = No
+  Samar Elarebi                  -                                             not sent: Send Report = No
+  Marwan Alabbar                 Nahla.burweiss@bmh.com.ly                     would send
+  Rwad                           -                                             NOT SENT: no email in the recipients file
+  Abdelraheam Benkhayal          Nahla.burweiss@bmh.com.ly                     would send
+  abdulmuhaymin                  -                                             not sent: Send Report = No
+  Moftah Nohee                   -                                             not sent: Send Report = No
+  Randa                          -                                             not sent: Send Report = No
+  zakaria                        -                                             not sent: Send Report = No
+  ahmed.benmussa                 -                                             not sent: Send Report = No
+  Islam Katch                    -                                             not sent: Send Report = No
+  Mohammad Al-Araibi             -                                             not sent: Send Report = No
+  Ahmed Alarfy                   -                                             not sent: Send Report = No
+  Nadia                          -                                             not sent: Send Report = No
+  Mohamed Qataf                  -                                             not sent: Send Report = No
+  Balqeis khaled                 -                                             not sent: Send Report = No
+  Abdala Baitelmal               -                                             not sent: Send Report = No
+  Abdeslam Omar                  -                                             not sent: Send Report = No
+  Hussain.elkhateb               -                                             not sent: Send Report = No
+  Anas Alshlmany                 -                                             not sent: Send Report = No
+  Ibrahim Garguom                Nahla.burweiss@bmh.com.ly                     would send
+  Ashraf                         -                                             not sent: Send Report = No
+  Firas Alshami                  -                                             not sent: Send Report = No
+  Abd Nasser Khair               -                                             not sent: Send Report = No
+  Nada Benswayed                 -                                             not sent: Send Report = No
+  Abdelraheam Benkhayal          Nahla.burweiss@bmh.com.ly                     would send
+  Faraj Ali                      -                                             not sent: Send Report = No
+  Abdurrahman Laayrij            -                                             not sent: Send Report = No
+  Hussian Makey                  -                                             not sent: Send Report = No
+  Muhaned Eljahawi               -                                             not sent: Send Report = No
+  Faraj Ben Arous                -                                             not sent: Send Report = No
+  Yusef Zoupy                    -                                             not sent: Send Report = No
+  Mohamed Abdulhady              Nahla.burweiss@bmh.com.ly                     would send
+  Mohamed Eljhawi                -                                             not sent: Send Report = No
+  Ahmed Belgasim                 -                                             not sent: Send Report = No
+  Saleh Alabeedi                 -                                             not sent: Send Report = No
+  Mustapha Shaddad               -                                             not sent: Send Report = No
+  kaled Alwani                   -                                             not sent: Send Report = No
+  Yousef Salim                   -                                             not sent: Send Report = No
+  Mohamed Ramadan                -                                             not sent: Send Report = No
+  Mustapha Shaddad               -                                             not sent: Send Report = No
+  Ahmed Mandi                    -                                             not sent: Send Report = No
+  Mohammed Alabed                -                                             not sent: Send Report = No
+2026-10-08 11:46:25,374 INFO    ar_weekly: Done: 48 salesperson reports in C:\Users\Lenovo\Desktop\07PREPORT\07ps-sales-dashboard-app\reporting\ar_weekly\output\2026-10-03 (log ar_weekly_20261008_114555.log)
+===== FINISHED Thu 10/08/2026 11:46:25.47 (exit 0) =====

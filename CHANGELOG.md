@@ -6,6 +6,30 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Receivables and Collections: "Credit Policy Escalation" replaces the Aging Map, 2026-10-15)
+- **Placement:** each customer is placed by days past due of its unpaid invoice with the EARLIEST due date (as of the
+  snapshot date), in the credit policy zones. Payment-term multiples (1x / 2x / 3x term, > 4.5x) are gone.
+  - The zones are GREEN 0-15 (Sales Rep), YELLOW 16-30 (Sales Manager), RED 31-44 (Sales Director), CEO 45-60,
+    CRITICAL 61-65 (Final Warning + Stop Supply) and LEGAL > 65 (CFO + GCEO).
+  - They are defined once, in `backend/src/config/creditPolicy.ts`, and validated at load (no gaps or overlaps).
+  - The due date is the unpaid instalment's own due date (Odoo `date_maturity`), else the invoice's `invoice_date_due`,
+    else invoice date + term days.
+- **Not yet due:** customers whose earliest due date is after the snapshot date are never day 0 / GREEN. They appear in
+  a grey strip left of "Due Date (Day 0)" with a count and an amount, so the chart adds up to Total debt.
+- **Layout:**
+  - One dot per customer, sized by total outstanding (sqrt scale), linear by days inside each zone, without overlaps.
+  - LEGAL packs its dots and shows the days inside the large ones.
+  - A dashed ring marks a customer entering the next zone within 7 days.
+  - Each zone header shows its range, owner, action and live "N customers · amount" in the page's currency.
+- **Interaction:** hovering a dot shows its details (kept inside the viewport). Clicking opens the customer's open
+  invoices through a new `customer_open` drill-down, which reconciles to the dot.
+- **Payment term filter:** relabelled "Payment term (Filter)". It only chooses which customers are shown.
+- **Customers table:** the "Aging bucket" column is the same zone, computed by the same backend code
+  (`creditZone` on every row): zone + range, "Not yet due", or "—". It is sortable by age and filterable.
+- **Removed:** the term-multiple Aging Map, its layout code and tests, the old zone tokens, and the table's previous
+  oldest-overdue bucket. The `cfg_finance_aging_zone` / `cfg_finance_aging_setting` tables (migration 0037) are no
+  longer read; they are not dropped. No migration.
+
 ### Changed (Roles: data scope rules with "is" / "is not" and several values, 2026-10-15)
 - **Rule shape:** a data scope rule is now `[Dimension] [is | is not] [values]`, one rule per dimension.
   - "is" (`in`): users see ONLY the selected values.

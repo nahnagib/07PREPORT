@@ -6,10 +6,127 @@
       "url": "http://localhost:4000"
     },
     {
+      "name": "etl-api-local",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/bcb2f632-1890-47a3-b705-e37122aba197/scratchpad/etl-api-uploadtest.cjs"
+      ],
+      "port": 5001
+    },
+    {
       "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "07ps-sales-dashboard-app", "run", "dev:frontend"],
+      "runtimeArgs": [
+        "--prefix",
+        "07ps-sales-dashboard-app",
+        "run",
+        "dev:frontend"
+      ],
       "port": 3000
+    },
+    {
+      "name": "dev-backend-4100",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/835897a9-0acb-48f2-bdeb-26179e7b6802/scratchpad/dev-backend.cjs"
+      ],
+      "port": 4100
+    },
+    {
+      "name": "dev-frontend-3100",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/835897a9-0acb-48f2-bdeb-26179e7b6802/scratchpad/dev-frontend.cjs"
+      ],
+      "port": 3100
+    },
+    {
+      "name": "kaizen-backend-4100",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/c4ae5333-262a-4643-a30d-f45bc625c65b/scratchpad/kaizen-backend.cjs"
+      ],
+      "port": 4100
+    },
+    {
+      "name": "kaizen-frontend-3100",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/c4ae5333-262a-4643-a30d-f45bc625c65b/scratchpad/kaizen-frontend.cjs"
+      ],
+      "port": 3100
+    },
+    {
+      "name": "ppl-backend-before-4201",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/5acee02a-9152-41c2-a7cc-521a28b989f2/scratchpad/ppl-backend-before.cjs"
+      ],
+      "port": 4201
+    },
+    {
+      "name": "ppl-backend-after-4202",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/5acee02a-9152-41c2-a7cc-521a28b989f2/scratchpad/ppl-backend-after.cjs"
+      ],
+      "port": 4202
+    },
+    {
+      "name": "ppl-frontend-3202",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/5acee02a-9152-41c2-a7cc-521a28b989f2/scratchpad/ppl-frontend.cjs"
+      ],
+      "port": 3202
+    },
+    {
+      "name": "ux-backend-4400",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/d39e32c6-5a68-4a7c-bb2e-c9431deb4659/scratchpad/ux-backend.cjs"
+      ],
+      "port": 4400
+    },
+    {
+      "name": "ux-frontend-3400",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/d39e32c6-5a68-4a7c-bb2e-c9431deb4659/scratchpad/ux-frontend.cjs"
+      ],
+      "port": 3400
+    },
+    {
+      "name": "debt-backend-4500",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/74790315-dd01-4ff6-b28b-cc0d7f2bc0ac/scratchpad/debt-backend.cjs"
+      ],
+      "port": 4500
+    },
+    {
+      "name": "debt-frontend-3500",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/74790315-dd01-4ff6-b28b-cc0d7f2bc0ac/scratchpad/debt-frontend.cjs"
+      ],
+      "port": 3500
+    },
+    {
+      "name": "aging-backend-4600",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/5318d0aa-f1fe-4afb-823e-ac8d243b1943/scratchpad/aging-backend.cjs"
+      ],
+      "port": 4600
+    },
+    {
+      "name": "aging-frontend-3600",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Lenovo/AppData/Local/Temp/claude/C--Users-Lenovo-Desktop-07PREPORT/5318d0aa-f1fe-4afb-823e-ac8d243b1943/scratchpad/aging-frontend.cjs"
+      ],
+      "port": 3600
     }
   ]
 }

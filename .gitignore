@@ -3,6 +3,7 @@
 .env.local
 .env.*.local
 .env.example.local
+.env.bak*
 
 # Node.js
 node_modules/

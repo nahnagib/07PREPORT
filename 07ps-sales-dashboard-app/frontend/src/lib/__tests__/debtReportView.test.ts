@@ -21,9 +21,6 @@ import {
   currencyFromSearch,
   searchWithCurrency,
   toggleCurrency,
-  customerAgingBucket,
-  customerBucketColor,
-  customerBucketOptions,
 } from '../debt/view';
 
 describe('Debt Report view helpers', () => {
@@ -96,6 +93,14 @@ describe('Debt Report view helpers', () => {
     expect(buildDebtReportQuery({})).toBe('');
   });
 
+  it('sends Customer group and Distribution Channel to every report endpoint and counts/reset them', () => {
+    const filters = { ...DEFAULT_DEBT_FILTERS, segmentKeys: [1, 2], channelKeys: [3] };
+    expect(buildDebtReportQuery(toScope(filters, false))).toBe('segmentKeys=1&segmentKeys=2&channelKeys=3');
+    expect(activeFilterCount(filters)).toBe(2);
+    expect(toScope(filters, true)).toMatchObject({ segmentKeys: [], channelKeys: [] });
+    expect(DEFAULT_DEBT_FILTERS).toMatchObject({ segmentKeys: [], channelKeys: [] });
+  });
+
   it('renders only http(s) Odoo links', () => {
     expect(safeOdooUrl('https://majaal.odoo.com/web#id=1&model=account.move&view_type=form')).not.toBeNull();
     expect(safeOdooUrl('javascript:alert(1)')).toBeNull();
@@ -134,33 +139,5 @@ describe('page currency filter (2026-10-15)', () => {
 
   it('drill-down title of the all-currencies view', () => {
     expect(drillTitle('aging', 'Overdue 90+', null)).toBe('Open documents in Overdue 90+ · All currencies (≈ LYD)');
-  });
-});
-
-describe('customer Aging bucket column (2026-10-15)', () => {
-  const buckets = [
-    { value: '1', labelEn: 'Not due 60+', isOverdue: false },
-    { value: '4', labelEn: 'Not due 0-15', isOverdue: false },
-    { value: '5', labelEn: 'Overdue 1-30', isOverdue: true },
-    { value: '6', labelEn: 'Overdue 31-60', isOverdue: true },
-    { value: '7', labelEn: 'Overdue 61-90', isOverdue: true },
-    { value: '8', labelEn: 'Overdue 90+', isOverdue: true },
-  ];
-
-  it('the oldest overdue invoice decides; Not due without overdue; — with credits only', () => {
-    expect(customerAgingBucket({ openDocuments: 3, oldestOverdueBucketKey: 8 }, buckets)).toEqual({ label: 'Overdue 90+', rank: 4, severity: 1 });
-    expect(customerAgingBucket({ openDocuments: 1, oldestOverdueBucketKey: 5 }, buckets)).toEqual({ label: 'Overdue 1-30', rank: 1, severity: 0 });
-    expect(customerAgingBucket({ openDocuments: 2, oldestOverdueBucketKey: null }, buckets).label).toBe('Not due');
-    expect(customerAgingBucket({ openDocuments: 0, oldestOverdueBucketKey: null }, buckets).label).toBe('—');
-  });
-
-  it('filter options run from Not due to the oldest bucket, then —', () => {
-    expect(customerBucketOptions(buckets).map((o) => o.value)).toEqual(['Not due', 'Overdue 1-30', 'Overdue 31-60', 'Overdue 61-90', 'Overdue 90+', '—']);
-  });
-
-  it('green for Not due, stronger red as the bucket ages', () => {
-    expect(customerBucketColor({ label: 'Not due', rank: 0, severity: null })).toBe('var(--ps-color-success)');
-    expect(customerBucketColor({ label: 'Overdue 1-30', rank: 1, severity: 0 })).toContain('alert) 25%');
-    expect(customerBucketColor({ label: 'Overdue 90+', rank: 4, severity: 1 })).toContain('alert) 100%');
   });
 });
