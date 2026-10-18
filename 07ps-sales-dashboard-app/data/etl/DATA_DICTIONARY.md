@@ -1,5 +1,8 @@
 # Data Dictionary
 
+> The sections below are generated from the legacy workbook. The ETL platform's own tables are documented in their
+> migrations; the NPS Score tables (Process department) are described at the end of this file.
+
 Generated from the actual workbook schema at `..\Exports\SalesModel_OneOutput.xlsx`.
 Data types are inferred from the current workbook and may be widened by SQL export.
 Descriptions marked Needs confirmation intentionally avoid inventing undocumented meaning.
@@ -517,3 +520,50 @@ Descriptions marked Needs confirmation intentionally avoid inventing undocumente
 | ExistsInOdoo | bool | Needs confirmation: see the producing builder and business logic documentation. | Produced by `OdooRepositoryBase.available_fields`; exact source field needs confirmation where the builder derives or renames it. | No | Not a documented relationship key. |
 | UsedByPipeline | bool | Needs confirmation: see the producing builder and business logic documentation. | Produced by `OdooRepositoryBase.available_fields`; exact source field needs confirmation where the builder derives or renames it. | No | Not a documented relationship key. |
 | Notes | object | Needs confirmation: see the producing builder and business logic documentation. | Produced by `OdooRepositoryBase.available_fields`; exact source field needs confirmation where the builder derives or renames it. | Yes | Not a documented relationship key. |
+
+## NPS Score (Process; migration 0046, job `process_nps`, runbook `docs/nps-etl.md`)
+
+### raw_nps_rating / raw_nps_low_rating
+
+Every column of the source tables `nps_rating_full_data` / `low_rating_data` (MySQL of the NPS developer), timestamps
+as stored there (**UTC**), FLOAT Odoo ids as BIGINT, plus `_extracted_at`, `_run_id`, `_source_write_date` (= the source
+`updated_at`) and `_deleted_at` (the id left the source). `company_id` is the developer's WhatsApp account, **not** an
+Odoo company: never used. `mobile_number` and `recipient_email` are personal data and exist only here.
+
+### dim_process_nps_level
+
+| Column | Description |
+|---|---|
+| nps_level | 3 exceeded, 2 met, 1 below (key) |
+| level_key | `exceeded` / `met` / `below` |
+| source_text | the developer's exact answer text (فاقت التوقعات / في مستوى التوقعات / أقل من المتوقع) |
+| label_en, label_ar | our labels |
+| is_low_rating | 1 for level 1 |
+
+### fact_process_nps_response (one row per rating)
+
+| Column | Description |
+|---|---|
+| response_id | `raw_nps_rating.id` of the rating message (key) |
+| delivery_code, order_ref | the rated delivery (picking name) and the source order text |
+| rated_at_utc, rated_at_local, RatingDateKey | the rating time in UTC and Africa/Tripoli; the local date key (`dim_date`) |
+| DeliveryDateKey | local date of the delivery's scheduled date; -1 none |
+| CompanyKey, company_source | the matched order's company, else the delivery's, else `company_name` MAJAAL/TIKA, else -1; which rule applied |
+| CustomerKey, SalespersonKey, SalesTeamKey, SegmentKey, ChannelKey | conformed keys (commercial partner; Odoo user via OdooUsers; team as transacted via OdooTeams, else the salesperson's; segment from the team; channel from the salesperson) |
+| SalesOrderKey | Odoo sale.order id of the matched order; -1 none |
+| nps_level, is_low_rating | the level (`dim_process_nps_level`); 1 when "below" |
+| in_low_rating_table, team_branch | the id is in `low_rating_data`; its B2B / B2C branch |
+| has_comment | a comment is linked to this rating |
+
+### fact_process_nps_comment (one row per free-text message)
+
+`comment_id` (key), `response_id` (the rating of the same delivery, -1 none), `delivery_code`, `commented_at_utc` /
+`_local`, `CommentDateKey`, the same conformed keys as the response, and `comment_text`: plain text with phone numbers
+and e-mail addresses masked. Personal free text: show it only to permitted roles.
+
+### Views
+
+`v_process_nps_response` (fact + labels and names), `v_process_nps_comment`, `v_process_nps_summary` (per day /
+company / team / salesperson / segment / channel / customer: responses, exceeded, met, below, with_comment, nps_style),
+`v_process_nps_trend` (per month and company), `v_process_nps_low_rating`. NPS-style = (exceeded - below) / responses x
+100: always sum the counts first, never average `nps_style` across rows.

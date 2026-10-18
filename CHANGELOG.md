@@ -6,6 +6,30 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Added (Process: NPS Score data, step 1 -- ETL only, 2026-10-18; runbook docs/nps-etl.md)
+- **Source:** the NPS developer's MySQL (`NPS_DB_NAME`, default `xtremech_nps_dashboard`), read only by the ETL through an
+  SSH tunnel. The new generic source is `etl_platform/sources/mysql_ssh.py` (paramiko 3.5.1). It pins the host key,
+  runs READ ONLY sessions with SELECT-only helpers, and retries network errors only. Its settings are `NPS_*` in
+  `data/etl/.env`, and missing ones fail the job naming the variables.
+- **ETL job `process_nps`** (after `core_dims`):
+  - Raw `raw_nps_*` → `fact_process_nps_response` (one row per delivery rating) and `fact_process_nps_comment`
+    (masked free text).
+  - Every run reads the whole source, because the source is reloaded as a whole.
+  - It is the last, optional step of `full_all`, so a failure never affects sales or finance. It also runs alone
+    every 3 h (`ETL_SCHEDULE_PROCESS_NPS_CRON`) and from the ETL Control Center ("NPS Score").
+  - `NPS_ENABLED=false` switches it off (recorded as skipped; new `JobSpec.disabled_reason`).
+- **Measure:** the developer's 3-level answer (Exceeded / Met / Below expectations, exact Arabic text rule in
+  `departments/process/nps.py`); NPS-style (3-level) = %Exceeded − %Below, from counts.
+- **Company:** the matched sale order's, else the delivery's, else the source company name. The source `company_id`
+  (a WhatsApp account) is never used. Dates are converted UTC → Africa/Tripoli.
+- **Quality:** orphans, duplicate responses and levels outside 1..3 fail the run. An unmatched company or order,
+  source rows that are not a rating, and no rating for 3 days warn.
+- **Warehouse:** migration 0046 (+ down): raw, `dim_process_nps_level`, both facts, and the views
+  `v_process_nps_response / _comment / _summary / _trend / _low_rating`.
+- **Reconciliation:** `scripts/process/check_nps_totals.py` checks source vs warehouse and reproduces the weekly e-mail's
+  counts per company and level.
+- **Not yet:** the API, permissions and page (step 2).
+
 ### Changed (Receivables and Collections: "Credit Policy Escalation" replaces the Aging Map, 2026-10-15)
 - **Placement:** each customer is placed by days past due of its unpaid invoice with the EARLIEST due date (as of the
   snapshot date), in the credit policy zones. Payment-term multiples (1x / 2x / 3x term, > 4.5x) are gone.
