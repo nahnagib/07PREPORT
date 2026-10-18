@@ -12,7 +12,7 @@
  */
 import type { Pool } from 'mysql2/promise';
 
-export const ETL_DEPARTMENTS = ['sales', 'finance', 'core'] as const;
+export const ETL_DEPARTMENTS = ['sales', 'finance', 'process', 'core'] as const;
 export type EtlDepartment = (typeof ETL_DEPARTMENTS)[number];
 
 export interface DepartmentFreshness {

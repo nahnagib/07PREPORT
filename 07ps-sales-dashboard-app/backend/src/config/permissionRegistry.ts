@@ -55,6 +55,10 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   // a soft delete, Export is the Excel download. Seeded for the Excellence Manager role (0027).
   { key: 'kaizen_board', label: 'Kaizen Board', group: 'dashboard', actions: DASHBOARD },
   { key: 'kaizen_cards', label: 'Kaizen Cards', group: 'data_entry', actions: ['view', 'create', 'edit', 'delete', 'export'] },
+  // NPS Score (ETL job process_nps; migration 0048 grants both to ADMIN). nps_comments = the detractor list with the
+  // customers' free-text comments (personal free text), granted separately from the page: View shows it, Export downloads it.
+  { key: 'nps_score', label: 'NPS Score', group: 'dashboard', actions: DASHBOARD },
+  { key: 'nps_comments', label: 'NPS Score detractor list and comments', group: 'dashboard', actions: DASHBOARD },
   // Price (Finance) department. Granted to the full-access roles by migration 0034 (not to Salesperson; an admin may
   // enable it, the API then scopes a salesperson to their own SalespersonKey).
   // key kept from the "Debt Report" days (role grants reference it); the label is what the Roles page shows

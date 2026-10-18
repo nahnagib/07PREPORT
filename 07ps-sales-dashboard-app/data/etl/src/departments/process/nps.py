@@ -1,17 +1,16 @@
-"""The NPS Score measure: the ONLY place the rating levels, the classification rule and the score formula are defined.
+"""The NPS Score rating rule: the ONLY place the rating levels and the classification rule are defined.
 
 The source (MySQL ``nps_rating_full_data``, filled by the NPS developer's script from Odoo's delivery ratings) has no
-0-10 score. The official measure is the developer's 3-level count (decision of 2026-10-18, from the developer's weekly
-report): a message ``body`` is a RATING only when its whole ``<p>...</p>`` text, whitespace trimmed, is exactly one of
-three Arabic answers. Anything else is a comment (free text) or blank -- never a rating, never counted as 0.
+0-10 score: the customer answers with stars. A message ``body`` is a RATING only when its whole ``<p>...</p>`` text,
+whitespace trimmed, is exactly one of three Arabic answers (decision of 2026-10-18). Anything else is a comment (free
+text) or blank -- never a rating, never counted as 0. The levels are shown on the standard NPS scale (step 2, 0047):
 
-  level 3  exceeded  فاقت التوقعات       Exceeded expectations
-  level 2  met       في مستوى التوقعات   Met expectations
-  level 1  below     أقل من المتوقع      Below expectations   (a low rating)
+  level 3  ***  فاقت التوقعات       Promoters   المروجون    (standard NPS score 9-10)
+  level 2  **   في مستوى التوقعات   Passives    المحايدون   (7-8)
+  level 1  *    أقل من المتوقع      Detractors  المنتقدون   (0-6; a low rating)
 
-The page's main figures are the counts and shares of the three levels. The secondary "NPS-style (3-level)" score is
-%exceeded - %below over the rated responses, -100..+100, computed from COUNTS (never an average of group scores);
-no responses = no score. The views (migration 0046) and the backend measures use the same counts and this formula.
+NPS = %promoters - %detractors and CSAT = (passives + promoters) / responders are defined in the backend
+(measures/npsScore.ts), always from summed counts. ``nps_style`` below is the same NPS, rounded, for the ETL's run log.
 """
 
 from __future__ import annotations
@@ -34,9 +33,10 @@ class NpsLevel:
 
 
 LEVELS: tuple[NpsLevel, ...] = (
-    NpsLevel(3, "exceeded", "فاقت التوقعات", "Exceeded expectations", "فاقت التوقعات", 1),
-    NpsLevel(2, "met", "في مستوى التوقعات", "Met expectations", "في مستوى التوقعات", 2),
-    NpsLevel(1, "below", "أقل من المتوقع", "Below expectations", "أقل من المتوقع", 3),
+    # labels on the standard NPS scale (migration 0047): Promoters / Passives / Detractors
+    NpsLevel(3, "exceeded", "فاقت التوقعات", "Promoters", "المروجون", 1),
+    NpsLevel(2, "met", "في مستوى التوقعات", "Passives", "المحايدون", 2),
+    NpsLevel(1, "below", "أقل من المتوقع", "Detractors", "المنتقدون", 3),
 )
 LOW_RATING_LEVEL = 1
 BY_TEXT = {lv.source_text: lv.level for lv in LEVELS}
