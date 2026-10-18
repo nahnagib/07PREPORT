@@ -318,6 +318,10 @@ def test_job_loads_raw_and_facts_and_keeps_personal_data_in_raw(npsjob):
     assert dq["orphan:fact_process_nps_response.CompanyKey"] == "pass"
     assert (dq[dq.index.str.startswith(("orphan:", "fail:"))] == "pass").all()
     assert dq["warn:nps_sync_state_stale"] == "pass"  # synced an hour ago
+    assert dq["warn:nps_company_unmatched"] == "pass"  # row 4 has no order: TIKA by company name
+    assert dq["warn:nps_order_unmatched"] == "pass"
+    assert dq["warn:nps_rows_not_a_rating"] == "warn"  # the comment (2) and the blank (5)
+    assert dq["fail:fact_process_nps_response.duplicate_response_id"] == "pass"
 
 
 def test_an_empty_sync_state_warns(npsjob):
@@ -375,3 +379,14 @@ def test_job_definition():
     job = REGISTRY.jobs["process_nps"]
     assert job.department == "process" and job.depends_on_jobs == ("core_dims",) and job.tasks == ("extract_nps", "load_nps")
     assert REGISTRY.datasets["raw_nps_rating"].source == "mysql"
+
+
+def test_unmatched_company_and_order_warn_but_load(npsjob):
+    engine, run, source = npsjob
+    lost = _src_row(9, MET, code="Tom Tom", order="S404", partner=None, sp=None, team=None, company="OTHER")
+    source["fake"] = FakeNpsSource([*SOURCE_FULL, lost], SOURCE_LOW, SYNC)
+    run()
+    dq = _df(engine, "SELECT check_name, status, message FROM etl_dq_result").set_index("check_name")
+    assert dq.loc["warn:nps_company_unmatched", "status"] == "warn" and "9" in dq.loc["warn:nps_company_unmatched", "message"]
+    assert dq.loc["warn:nps_order_unmatched", "status"] == "warn" and "S404" in dq.loc["warn:nps_order_unmatched", "message"]
+    assert _df(engine, "SELECT CompanyKey, SalesOrderKey FROM fact_process_nps_response WHERE response_id = 9").values.tolist() == [[-1, -1]]

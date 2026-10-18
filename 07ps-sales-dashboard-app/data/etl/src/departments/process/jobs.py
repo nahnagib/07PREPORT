@@ -52,7 +52,7 @@ LOW_COLUMNS = [*COMMON, "team_branch", "recipient_email", "email_notification", 
 ID_COLUMNS = ("company_id", "created_id", "partner_id", "salesperson_id", "team_id")  # FLOAT in the source
 # warnings
 STALE_DAYS = 3  # no new rating for this many days -> the source probably stopped syncing
-MAX_FALLBACK_PCT = {"CompanyKey": 5.0, "CustomerKey": 10.0, "SalespersonKey": 10.0, "SalesTeamKey": 10.0}
+MAX_FALLBACK_PCT = {"CustomerKey": 10.0, "SalespersonKey": 10.0, "SalesTeamKey": 10.0}  # company / order: every row warns
 KEY_DIMS = {
     "CompanyKey": ("dim_company", "CompanyKey"), "CustomerKey": ("dim_customer", "CustomerKey"),
     "SalespersonKey": ("dim_salesperson", "SalespersonKey"), "SalesTeamKey": ("dim_sales_team", "SalesTeamKey"),
@@ -185,6 +185,18 @@ def _checks(stale_before: _dt.datetime) -> list[q.CheckSpec]:
         q.custom_sql("warn:nps_delivery_rated_more_than_once",
                      f"SELECT delivery_code, COUNT(*) FROM {FACT} WHERE delivery_code IS NOT NULL GROUP BY delivery_code HAVING COUNT(*) > 1",
                      table=FACT, severity="warn"),
+        # every response whose company could not be found (order, delivery and company name all failed)
+        q.custom_sql("warn:nps_company_unmatched", f"SELECT response_id, delivery_code FROM {FACT} WHERE CompanyKey = -1",
+                     table=FACT, severity="warn"),
+        # a response naming an order that is not in dim_sales_order (or is ambiguous across companies)
+        q.custom_sql("warn:nps_order_unmatched",
+                     f"SELECT response_id, order_ref FROM {FACT} WHERE order_ref IS NOT NULL AND SalesOrderKey = -1",
+                     table=FACT, severity="warn"),
+        # source rows that are not one of the 3 answers (comments and blanks: listed, never counted)
+        q.custom_sql("warn:nps_rows_not_a_rating",
+                     f"SELECT r.id FROM {RAW_FULL} r LEFT JOIN {FACT} f ON f.response_id = r.id "
+                     "WHERE r._deleted_at IS NULL AND f.response_id IS NULL",
+                     table=RAW_FULL, severity="warn"),
     ]
     for col, pct in MAX_FALLBACK_PCT.items():
         unknown = "'-1'" if col == "SalesTeamKey" else "-1"
