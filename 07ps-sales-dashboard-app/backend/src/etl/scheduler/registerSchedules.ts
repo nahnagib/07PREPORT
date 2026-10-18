@@ -14,6 +14,8 @@ import { etlLogger } from '../services/etlLogger';
  *   incremental  ETL job `main`               core dims -> sales incremental (no finance)    every 3 h
  *   full         ETL job `full_all`           core dims -> receivables -> sales full         02:00
  *   finance      ETL job `finance_receivables` core dims (reused when fresh) -> receivables   15:00
+ *   nps          ETL job `process_nps`         core dims (reused when fresh) -> NPS Score     every 3 h at :30
+ *                (off unless ETL_SCHEDULE_PROCESS_NPS_ENABLED=true; the ETL's NPS_ENABLED must be true too)
  */
 /** A tick that lands while a run is still active is skipped, not queued behind it (that would build
  * a backlog after any long run) -- the next tick simply tries again. */
@@ -98,5 +100,28 @@ export function registerEtlSchedules(): void {
     }
   } else {
     etlLogger.info('Receivables snapshot schedule disabled (ETL_SCHEDULE_FINANCE_ENABLED=false)');
+  }
+
+  if (config.schedule.processNpsEnabled) {
+    if (!cron.validate(config.schedule.processNpsCron)) {
+      etlLogger.error('Invalid ETL_SCHEDULE_PROCESS_NPS_CRON -- NPS Score schedule not registered', {
+        cron: config.schedule.processNpsCron,
+      });
+    } else {
+      cron.schedule(config.schedule.processNpsCron, () => {
+        etlLogger.info('Scheduled NPS Score tick -- enqueueing job');
+        enqueuePipelineRun({
+          job: 'process_nps',
+          mode: 'nps',
+          loadMode: 'full',
+          outputMode: 'sql',
+          label: 'scheduled-nps',
+          triggerSource: 'scheduled',
+        }).catch(onScheduledEnqueueError('nps'));
+      }, { timezone: config.schedule.timezone });
+      etlLogger.info('Registered NPS Score schedule', { cron: config.schedule.processNpsCron, timezone: config.schedule.timezone });
+    }
+  } else {
+    etlLogger.info('NPS Score schedule disabled (ETL_SCHEDULE_PROCESS_NPS_ENABLED is not true)');
   }
 }

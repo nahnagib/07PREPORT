@@ -1155,7 +1155,7 @@ export const adminApi = {
 /** partial = the run loaded but a step failed (the receivables snapshot); skipped = refused, another run held the lock. */
 export type EtlRunStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'skipped';
 /** What an admin can start. 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform. */
-export type EtlStartMode = 'incremental' | 'full' | 'finance';
+export type EtlStartMode = 'incremental' | 'full' | 'finance' | 'nps';
 export type EtlMode = EtlStartMode | 'sql' | 'excel';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';
 
@@ -1303,6 +1303,8 @@ export interface EtlStatusResponse {
   nextFullRun: string | null;
   /** The daily receivables snapshot (finance_receivables alone, 15:00 by default). */
   nextFinanceRun?: string | null;
+  /** The NPS Score refresh (process_nps alone, every 3 h at :30; off unless enabled). */
+  nextNpsRun?: string | null;
 }
 
 export interface EtlScheduleInfo {
@@ -1315,6 +1317,7 @@ export interface EtlSchedulerConfigResponse {
   incremental: EtlScheduleInfo;
   full: EtlScheduleInfo;
   finance: EtlScheduleInfo;
+  nps?: EtlScheduleInfo;
   /** IANA zone the crons are read in (ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE). */
   timezone?: string;
 }

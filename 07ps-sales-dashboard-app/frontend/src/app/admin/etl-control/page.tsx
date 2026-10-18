@@ -130,6 +130,7 @@ const MODE_LABEL: Record<EtlMode, string> = {
   incremental: 'Sales Refresh',
   full: 'Full Refresh',
   finance: 'Receivables Snapshot',
+  nps: 'NPS Score',
   sql: 'SQL Mode (before 2026-10)',
   excel: 'Excel Mode (before 2026-10)',
 };
@@ -138,6 +139,7 @@ const MODE_LABEL: Record<EtlMode, string> = {
 const STEP_LABEL: Record<string, string> = {
   core_dims: 'Reference data',
   finance_receivables: 'Receivables snapshot',
+  process_nps: 'NPS Score',
   sales_incremental: 'Sales (incremental)',
   sales_full: 'Sales (full)',
 };
@@ -235,6 +237,13 @@ const MANUAL_MODES: {
     description:
       "The 15:00 run (job finance_receivables): today's receivables snapshot for Receivables and Collections, with the reference data first when it is older than 3 hours. Also taken by the 02:00 Full Refresh; a re-run replaces today's snapshot.",
     confirmMessage: 'This process takes about 3-10 minutes and replaces today\'s receivables snapshot. Do you want to continue?',
+  },
+  {
+    mode: 'nps',
+    label: 'NPS Score',
+    description:
+      "Job process_nps: reads the NPS developer's ratings database (SSH tunnel) and rebuilds the NPS Score page, with the reference data first when it is older than 3 hours. Also the last step of the 02:00 Full Refresh. Needs NPS_ENABLED=true in the ETL.",
+    confirmMessage: 'This process takes about a minute and rebuilds the NPS Score data. Do you want to continue?',
   },
 ];
 
@@ -595,6 +604,7 @@ function EtlControlBody() {
             <InfoRow label="Next Incremental Refresh" value={formatDateTime(status?.nextIncrementalRun ?? null)} stacked />
             <InfoRow label="Next Full Refresh" value={formatDateTime(status?.nextFullRun ?? null)} stacked />
             <InfoRow label="Next Receivables Snapshot" value={formatDateTime(status?.nextFinanceRun ?? null)} stacked />
+            <InfoRow label="Next NPS Score refresh" value={formatDateTime(status?.nextNpsRun ?? null)} stacked />
           </dl>
         </Card>
       </div>
@@ -746,6 +756,22 @@ function EtlControlBody() {
                 </p>
               </div>
             )}
+            {schedulerConfig.nps && (
+              <div>
+                <strong>NPS Score</strong>
+                <p style={{ margin: '4px 0 0', color: 'var(--ps-color-muted-text)' }}>
+                  {schedulerConfig.nps.enabled ? (
+                    <>
+                      Cron: <code>{schedulerConfig.nps.cron}</code>
+                      <br />
+                      Next run: {formatDateTime(schedulerConfig.nps.nextRun)}
+                    </>
+                  ) : (
+                    'Disabled'
+                  )}
+                </p>
+              </div>
+            )}
           </div>
         ) : (
           <LoadingSkeleton variant="kpi" />
@@ -872,6 +898,7 @@ function RunHistorySection({ token, refreshKey }: { token: string | null; refres
             { value: 'incremental', label: 'Sales Refresh' },
             { value: 'full', label: 'Full Refresh' },
             { value: 'finance', label: 'Receivables Snapshot' },
+            { value: 'nps', label: 'NPS Score' },
             { value: 'sql', label: 'SQL Mode (before 2026-10)' },
             { value: 'excel', label: 'Excel Mode (before 2026-10)' },
           ]}

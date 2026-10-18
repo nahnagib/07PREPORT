@@ -15,7 +15,8 @@ import { registerEtlSchedules } from '../registerSchedules';
 
 const SCHEDULE_VARS = [
   'ETL_SCHEDULE_INCREMENTAL_CRON', 'ETL_SCHEDULE_INCREMENTAL_ENABLED', 'ETL_SCHEDULE_FULL_CRON', 'ETL_SCHEDULE_FULL_ENABLED',
-  'ETL_SCHEDULE_FINANCE_CRON', 'ETL_SCHEDULE_FINANCE_ENABLED', 'ETL_SCHEDULE_TIMEZONE', 'APP_TIMEZONE',
+  'ETL_SCHEDULE_FINANCE_CRON', 'ETL_SCHEDULE_FINANCE_ENABLED', 'ETL_SCHEDULE_PROCESS_NPS_CRON', 'ETL_SCHEDULE_PROCESS_NPS_ENABLED',
+  'ETL_SCHEDULE_TIMEZONE', 'APP_TIMEZONE',
 ];
 let saved: Record<string, string | undefined>;
 
@@ -69,5 +70,13 @@ describe('ETL schedules', () => {
   it('the finance schedule can be switched off on its own', async () => {
     process.env.ETL_SCHEDULE_FINANCE_ENABLED = 'false';
     expect((await registered()).map((s) => s.job)).toEqual(['main', 'full_all']);
+  });
+
+  it('NPS Score (process_nps alone) is off unless enabled; then every 3 hours at :30 in Africa/Tripoli', async () => {
+    expect((await registered()).map((s) => s.job)).not.toContain('process_nps');
+    vi.clearAllMocks();
+    process.env.ETL_SCHEDULE_PROCESS_NPS_ENABLED = 'true';
+    expect((await registered()).at(-1)).toEqual({ cron: '30 */3 * * *', timezone: 'Africa/Tripoli', job: 'process_nps', mode: 'nps' });
+    expect(getEtlConfig().schedule.processNpsCron).toBe('30 */3 * * *');
   });
 });

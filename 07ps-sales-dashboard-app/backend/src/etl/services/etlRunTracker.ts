@@ -4,7 +4,7 @@ import { getAppTimezone, utcSqlDateTimeToDate } from '../../lib/timezone';
 import { etlLogger } from './etlLogger';
 
 /** 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform; new runs use incremental/full/finance. */
-export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel' | 'finance';
+export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel' | 'finance' | 'nps';
 export type EtlLoadMode = 'full' | 'incremental';
 export type EtlOutputMode = 'sql' | 'excel' | 'both';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';

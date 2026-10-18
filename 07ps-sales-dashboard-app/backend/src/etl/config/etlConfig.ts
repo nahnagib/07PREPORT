@@ -26,6 +26,10 @@ export interface EtlConfig {
      * (full_all) takes one too; the 3-hourly incremental (main) does not. */
     financeCron: string;
     financeEnabled: boolean;
+    /** NPS Score refresh (job process_nps alone; also the last step of full_all): every 3 hours at :30 by default.
+     * Off unless ETL_SCHEDULE_PROCESS_NPS_ENABLED=true -- set it together with the ETL's NPS_ENABLED. */
+    processNpsCron: string;
+    processNpsEnabled: boolean;
     /** IANA zone every cron expression is read in: ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE (default
      * Africa/Tripoli) -- never the process's own zone, which is UTC in a container without TZ. The displayed
      * "next run" uses the same zone, so the two always agree. */
@@ -69,6 +73,8 @@ export function getEtlConfig(): EtlConfig {
       fullEnabled: bool('ETL_SCHEDULE_FULL_ENABLED', true),
       financeCron: process.env.ETL_SCHEDULE_FINANCE_CRON || '0 15 * * *',
       financeEnabled: bool('ETL_SCHEDULE_FINANCE_ENABLED', true),
+      processNpsCron: process.env.ETL_SCHEDULE_PROCESS_NPS_CRON || '30 */3 * * *',
+      processNpsEnabled: bool('ETL_SCHEDULE_PROCESS_NPS_ENABLED', false),
       timezone: process.env.ETL_SCHEDULE_TIMEZONE?.trim() || getAppTimezone(),
     },
     redis: {

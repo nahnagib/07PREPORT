@@ -40,6 +40,7 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       : null;
     const nextFull = config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null;
     const nextFinance = config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null;
+    const nextNps = config.schedule.processNpsEnabled ? computeNextRunTime(config.schedule.processNpsCron, config.schedule.timezone) : null;
 
     // Checked up front so the UI can tell "queue is genuinely unreachable" apart from "a run is
     // genuinely active" -- those used to be indistinguishable (any queued/running row read as
@@ -83,6 +84,7 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
         nextIncrementalRun: nextIncremental,
         nextFullRun: nextFull,
         nextFinanceRun: nextFinance,
+        nextNpsRun: nextNps,
       });
       return;
     }
@@ -98,6 +100,7 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       nextIncrementalRun: nextIncremental,
       nextFullRun: nextFull,
       nextFinanceRun: nextFinance,
+      nextNpsRun: nextNps,
     });
   } catch (err) {
     next(err);
@@ -123,7 +126,7 @@ adminEtlControlRouter.get('/preflight', async (_req, res, next) => {
 });
 
 const VALID_STATUSES: EtlRunStatus[] = ['queued', 'running', ...FINISHED_RUN_STATUSES];
-const VALID_MODES: EtlMode[] = ['incremental', 'full', 'finance', 'sql', 'excel'];
+const VALID_MODES: EtlMode[] = ['incremental', 'full', 'finance', 'nps', 'sql', 'excel'];
 
 adminEtlControlRouter.get('/history', async (req: Request, res, next) => {
   try {
@@ -164,6 +167,11 @@ adminEtlControlRouter.get('/scheduler-config', async (_req, res, next) => {
         enabled: config.schedule.financeEnabled,
         nextRun: config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null,
       },
+      nps: {
+        cron: config.schedule.processNpsCron,
+        enabled: config.schedule.processNpsEnabled,
+        nextRun: config.schedule.processNpsEnabled ? computeNextRunTime(config.schedule.processNpsCron, config.schedule.timezone) : null,
+      },
       timezone: config.schedule.timezone,
     });
   } catch (err) {
@@ -181,12 +189,14 @@ interface StartConfig {
 
 /** One entry per ETL platform job an admin may start. The pre-platform "sql" and "excel" modes are gone: the platform
  * loads the warehouse only (no Excel export) and "sql" was a second name for a sales refresh. Sales Refresh = main
- * (core dims -> sales), Full Refresh = full_all (core dims -> receivables -> sales full), Receivables Snapshot = the
- * job of the 15:00 schedule (finance_receivables). All take the same lock / one-run-at-a-time guard. */
-const START_CONFIGS: Record<'incremental' | 'full' | 'finance', StartConfig> = {
+ * (core dims -> sales), Full Refresh = full_all (core dims -> receivables -> sales full -> NPS Score), Receivables
+ * Snapshot = the job of the 15:00 schedule (finance_receivables), NPS Score = process_nps (the NPS source must be
+ * enabled in the ETL, NPS_ENABLED). All take the same lock / one-run-at-a-time guard. */
+const START_CONFIGS: Record<'incremental' | 'full' | 'finance' | 'nps', StartConfig> = {
   incremental: { job: 'main', mode: 'incremental', loadMode: 'incremental', outputMode: 'sql', fast: true },
   full: { job: 'full_all', mode: 'full', loadMode: 'full', outputMode: 'sql' },
   finance: { job: 'finance_receivables', mode: 'finance', loadMode: 'full', outputMode: 'sql' },
+  nps: { job: 'process_nps', mode: 'nps', loadMode: 'full', outputMode: 'sql' },
 };
 
 /** Shared by the start-* routes and retry: preflight checks, then enqueue. Returns true if it
@@ -273,6 +283,7 @@ function makeStartHandler(key: keyof typeof START_CONFIGS) {
 adminEtlControlRouter.post('/start/incremental', makeStartHandler('incremental'));
 adminEtlControlRouter.post('/start/full', makeStartHandler('full'));
 adminEtlControlRouter.post('/start/finance', makeStartHandler('finance'));
+adminEtlControlRouter.post('/start/nps', makeStartHandler('nps'));
 
 /**
  * Re-runs a failed/cancelled run with the same mode (the newest one if no runId is given). It is a
