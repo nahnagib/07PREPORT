@@ -100,10 +100,10 @@ const FilterContext = createContext<FilterContextValue | null>(null);
  */
 export function FilterProvider({ children }: { children: React.ReactNode }) {
   const { isSalesperson, salespersonKey, token: authToken, canView } = useAuth();
-  // Filter options and the refresh poll serve the sales/product reports only. A user with none of
+  // Filter options and the refresh poll serve the sales/product reports and NPS Score. A user with none of
   // them (e.g. an Excellence Manager, Kaizen Board only) has no data-scope tier, so those endpoints
   // would just 403 on every page -- don't call them at all.
-  const needsSalesData = NAV_ITEMS.some((item) => item.department !== 'process' && canView(item.pageKey));
+  const needsSalesData = canView('nps_score') || NAV_ITEMS.some((item) => item.department !== 'process' && canView(item.pageKey));
   const token = needsSalesData ? authToken : null;
   const { setBusinessUnit } = useBusinessUnit();
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as _dt
+import re
 from dataclasses import replace
 
 import pandas as pd
@@ -16,10 +17,11 @@ from core_fixtures import ODOO, PARTNER_COMPANY, FakeOdooSource, write_inputs
 from departments.process import jobs as nps_jobs
 from departments.process import nps
 from departments.process import transform as tf
+from departments.process import whatsapp as wa
 from etl_platform.registry import REGISTRY, RegistryError, load_definitions
 from etl_platform.runner import Runner
 from etl_platform.sources import mysql_ssh as ms
-from sqlite_schema import apply_migration_sqlite
+from sqlite_schema import MIGRATIONS, apply_migration_sqlite
 
 EXCEEDED, MET, BELOW = "<p>فاقت التوقعات</p>", "<p>في مستوى التوقعات</p>", "<p>أقل من المتوقع</p>"
 
@@ -227,8 +229,10 @@ def test_driver_errors_say_what_to_check(code, cls, hint):
 
 # -- the job on SQLite -----------------------------------------------------------------------------------------------------
 class FakeNpsSource:
-    def __init__(self, full, low, sync):
+    def __init__(self, full, low, sync, messages=None):
         self.tables = {"nps_rating_full_data": full, "low_rating_data": low}
+        if messages is not None:
+            self.tables[wa.SOURCE_TABLE] = messages
         self.sync = sync
         self.queries: list[str] = []
 
@@ -239,6 +243,8 @@ class FakeNpsSource:
     def read_query(self, sql, params=None):
         ms.check_read_only(sql)
         self.queries.append(sql)
+        if "information_schema.TABLES" in sql:
+            return [{"n": int(wa.SOURCE_TABLE in self.tables)}]
         return list(self.sync)
 
 
@@ -262,7 +268,8 @@ SYNC = [{"source": "odoo", "last_successful_sync": _dt.datetime.now(_dt.timezone
 
 @pytest.fixture
 def npsjob(platform_engine, platform_config, tmp_path, monkeypatch):
-    for m in ("0029_core_dimensions.sql", "0030_core_team_map.sql", "0031_sales_mart.sql", "0032_core_odoo_labels.sql", "0046_process_nps.sql"):
+    for m in ("0029_core_dimensions.sql", "0030_core_team_map.sql", "0031_sales_mart.sql", "0032_core_odoo_labels.sql", "0046_process_nps.sql",
+              "0049_process_nps_reach.sql", "0050_process_nps_reach_state.sql"):
         apply_migration_sqlite(platform_engine, m)
     with platform_engine.begin() as conn:
         conn.execute(text("INSERT INTO dim_sales_order (SalesOrderKey, order_number, CompanyKey, CustomerKey) VALUES (4000, 'S001', 1, 100)"))
@@ -390,3 +397,124 @@ def test_unmatched_company_and_order_warn_but_load(npsjob):
     assert dq.loc["warn:nps_company_unmatched", "status"] == "warn" and "9" in dq.loc["warn:nps_company_unmatched", "message"]
     assert dq.loc["warn:nps_order_unmatched", "status"] == "warn" and "S404" in dq.loc["warn:nps_order_unmatched", "message"]
     assert _df(engine, "SELECT CompanyKey, SalesOrderKey FROM fact_process_nps_response WHERE response_id = 9").values.tolist() == [[-1, -1]]
+
+
+def _message(i, state, **changes):
+    return {"id": i, "create_date": _dt.datetime(2026, 10, 17, 22, 30), "company_name": "MAJAAL",
+            "template_name": "Customer Feedback", "state": state, "mobile_number": "+218910000009",
+            "failure_type": None, "failure_reason": None, "first_seen_at": _dt.datetime(2026, 10, 18),
+            "updated_at": _dt.datetime(2026, 10, 18), **changes}
+
+
+MESSAGES = [_message(1, " DELIVERED "), _message(2, "read", company_name="TIKA"), _message(3, "sent"),
+            _message(4, "error", failure_reason="131026 Undeliverable"), _message(5, "error", failure_type="phone format"),
+            _message(6, "queued"), _message(7, "read", template_name="Invoice"),
+            _message(8, "sent", mobile_number="0910000001"),
+            _message(9, "error", create_date=_dt.datetime(2026, 10, 17, 21, 59))]
+
+
+def test_reach_rules_tripoli_dates_exclusions_error_groups_and_privacy():
+    config = wa.ReachConfig.from_env({"NPS_REACH_ENABLED": "true", "NPS_REACH_START": "2026-10-18",
+                                    "NPS_REACH_EXCLUDED_NUMBERS": "+218 91 000 0001"})
+    fact = wa.build_messages(pd.DataFrame(MESSAGES), config, "Africa/Tripoli", lambda name: {"MAJAAL": 1, "TIKA": 3}[name])
+    assert fact.MessageDateKey.tolist() == [20261018] * 8 + [20261017]
+    assert fact.in_reach_scope.tolist() == [1] * 6 + [0, 0, 0]
+    assert fact.box.tolist()[:6] == ["delivered", "read", "not_delivered", "error", "error", "other"]
+    assert fact.failure_group.tolist()[:6] == ["-", "-", "-", "undeliverable_131026", "phone_format", "-"]
+    assert not {"mobile_number", "failure_reason", "failure_type"} & set(fact.columns)
+
+
+@pytest.mark.parametrize("code,group", [("131026", "undeliverable_131026"), ("131049", "ecosystem_131049"),
+                                      ("quality", "template_quality"), ("invalid recipient", "phone_format"),
+                                      ("131000", "meta_temporary"), ("new failure", "other")])
+def test_reach_failure_groups_and_fixable_flags(code, group):
+    assert wa.failure_group(None, code, "error") == group
+    assert wa.failure_group(code, code, "read") is None
+    flags = wa.group_frame().set_index("failure_group").is_fixable.to_dict()
+    assert {key for key, fixable in flags.items() if fixable} == {"phone_format", "template_quality"}
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_reach_absent_source_or_disabled_never_invents_counts(npsjob, monkeypatch, enabled):
+    engine, run, source = npsjob
+    monkeypatch.setenv("NPS_REACH_ENABLED", str(enabled))
+    run()
+    assert _df(engine, "SELECT COUNT(*) AS n FROM fact_process_nps_response").n.iloc[0] == 3
+    assert _df(engine, "SELECT COUNT(*) AS n FROM process_nps_reach_state").n.iloc[0] == 0
+    assert wa.SOURCE_TABLE not in source["fake"].queries
+    assert any("information_schema.TABLES" in sql for sql in source["fake"].queries) == enabled
+
+
+def test_reach_job_fixture_table_rebuild_delete_restore_and_empty_guard(npsjob, monkeypatch):
+    engine, run, source = npsjob
+    monkeypatch.setenv("NPS_REACH_ENABLED", "true")
+    monkeypatch.setenv("NPS_REACH_START", "2026-10-18")
+    monkeypatch.setenv("NPS_REACH_EXCLUDED_NUMBERS", "+218910000001")
+    source["fake"] = FakeNpsSource(SOURCE_FULL, SOURCE_LOW, SYNC, MESSAGES)
+    run()
+    fact = _df(engine, "SELECT * FROM fact_process_nps_message ORDER BY message_id")
+    assert len(fact) == 9 and fact.in_reach_scope.sum() == 6
+    assert _df(engine, "SELECT messages_loaded FROM process_nps_reach_state").messages_loaded.iloc[0] == 9
+    assert _df(engine, "SELECT mobile_number FROM raw_nps_whatsapp_message WHERE id = 8").mobile_number.iloc[0] == "0910000001"
+    dq = _df(engine, "SELECT check_name, status FROM etl_dq_result").set_index("check_name").status
+    assert dq["warn:nps_message_other_state"] == "warn"
+    assert (dq[dq.index.str.startswith("orphan:fact_process_nps_message")] == "pass").all()
+    # State transitions and source deletions are reflected on every full snapshot.
+    source["fake"].tables[wa.SOURCE_TABLE] = [_message(1, "read")]
+    run()
+    assert _df(engine, "SELECT message_id, box FROM fact_process_nps_message").values.tolist() == [[1, "read"]]
+    assert _df(engine, "SELECT COUNT(*) AS n FROM raw_nps_whatsapp_message WHERE _deleted_at IS NOT NULL").n.iloc[0] == 8
+    previous_run = _df(engine, "SELECT _run_id FROM process_nps_reach_state")._run_id.iloc[0]
+    source["fake"].tables[wa.SOURCE_TABLE] = []
+    run()
+    assert _df(engine, "SELECT message_id FROM fact_process_nps_message").message_id.tolist() == [1]
+    assert _df(engine, "SELECT _run_id FROM process_nps_reach_state")._run_id.iloc[0] == previous_run
+    source["fake"].tables[wa.SOURCE_TABLE] = MESSAGES
+    run()
+    assert _df(engine, "SELECT COUNT(*) AS n FROM raw_nps_whatsapp_message WHERE _deleted_at IS NOT NULL").n.iloc[0] == 0
+
+
+def test_reach_serving_views_reconcile_source_dates_companies_states_and_errors(npsjob, monkeypatch, capsys):
+    from scripts.process.check_nps_totals import reconcile_reach
+
+    engine, run, source = npsjob
+    monkeypatch.setenv("NPS_REACH_ENABLED", "true")
+    monkeypatch.setenv("NPS_REACH_START", "2026-10-18")
+    monkeypatch.setenv("NPS_REACH_EXCLUDED_NUMBERS", "+218910000001")
+    source["fake"] = FakeNpsSource(SOURCE_FULL, SOURCE_LOW, SYNC, MESSAGES)
+    run()
+    views = re.findall(r"CREATE OR REPLACE VIEW (\w+) AS(.*?);", (MIGRATIONS / "0049_process_nps_reach.sql").read_text(encoding="utf-8"), re.S)
+    with engine.begin() as conn:
+        for name, query in views:
+            conn.execute(text(f"CREATE VIEW {name} AS {query}"))
+        boxes = conn.execute(text("SELECT CompanyKey, total_reach, delivered, not_delivered, read_count, error_count, other_state "
+                                  "FROM v_process_nps_reach ORDER BY CompanyKey")).fetchall()
+        assert [tuple(row) for row in boxes] == [(1, 5, 1, 1, 0, 2, 1), (3, 1, 0, 0, 1, 0, 0)]
+        day = _dt.date(2026, 10, 18)
+        assert reconcile_reach(conn, MESSAGES, wa.ReachConfig.from_env(), "Africa/Tripoli", day, day)
+        conn.execute(text("UPDATE fact_process_nps_message SET box = 'read' WHERE message_id = 3"))
+        assert not reconcile_reach(conn, MESSAGES, wa.ReachConfig.from_env(), "Africa/Tripoli", day, day)
+    assert "+218910000009" not in capsys.readouterr().out
+
+
+def test_reach_successful_empty_first_load_is_ready(npsjob, monkeypatch):
+    engine, run, source = npsjob
+    monkeypatch.setenv("NPS_REACH_ENABLED", "true")
+    source["fake"] = FakeNpsSource(SOURCE_FULL, SOURCE_LOW, SYNC, [])
+    run()
+    assert _df(engine, "SELECT messages_loaded FROM process_nps_reach_state").messages_loaded.tolist() == [0]
+
+
+def test_reach_failed_quality_checks_roll_back_snapshot_and_load_state(npsjob, monkeypatch):
+    engine, run, source = npsjob
+    monkeypatch.setenv("NPS_REACH_ENABLED", "true")
+    source["fake"] = FakeNpsSource(SOURCE_FULL, SOURCE_LOW, SYNC, [_message(1, "sent")])
+    run()
+    previous = _df(engine, "SELECT _run_id FROM process_nps_reach_state")._run_id.iloc[0]
+    # Broken company resolution must fail the quality gate, never commit half a snapshot.
+    monkeypatch.setattr(nps_jobs.tf, "source_company", lambda *_: 987654)
+    source["fake"].tables[wa.SOURCE_TABLE] = [_message(2, "read")]
+    with pytest.raises(Exception, match="(?i)quality"):
+        run()
+    assert _df(engine, "SELECT _run_id FROM process_nps_reach_state")._run_id.iloc[0] == previous
+    assert _df(engine, "SELECT message_id, box FROM fact_process_nps_message").values.tolist() == [[1, "not_delivered"]]

@@ -19,7 +19,7 @@
  * resolveScopedFilters applied the role's data scope and the salesperson lock. Parameterised SQL only.
  */
 import type { Pool } from 'mysql2/promise';
-import { buildWhereClause, type Filters } from './filters';
+import { buildWhereClause, type Filters, type UserContext } from './filters';
 import { fetchDepartmentFreshness, type DepartmentFreshness } from './departmentFreshness';
 import { CSAT_SCALE, NPS_SCALE, csatBand, minResponders, npsBand, type Band, type BandScale } from '../config/npsThresholds';
 
@@ -335,5 +335,59 @@ export async function fetchNpsMeta(pool: Pool, canSeeDetractors: boolean): Promi
     thresholds: { nps: NPS_SCALE, csat: CSAT_SCALE },
     canSeeDetractors,
     freshness: await fetchDepartmentFreshness(pool, 'process'),
+  };
+}
+
+// Message reach has no customer/order/salesperson link. User-selected filters may be ignored with a label;
+// mandatory role restrictions may never be dropped to produce broader company totals.
+const REACH_UNSUPPORTED = ['segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys', 'customerKeys'] as const;
+
+export interface NpsReach {
+  status: 'waiting' | 'restricted' | 'ready';
+  dateFrom: string;
+  dateTo: string;
+  companyAndDateOnly: boolean;
+  loadedAt: string | null;
+  totals: { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number } | null;
+  errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
+}
+
+export async function fetchNpsReach(pool: Pool, q: NpsQuery, f: Filters, user: UserContext): Promise<NpsReach> {
+  const base: NpsReach = {
+    status: 'waiting', dateFrom: q.dateFrom, dateTo: q.dateTo,
+    companyAndDateOnly: REACH_UNSUPPORTED.some((key) => (f[key]?.length ?? 0) > 0),
+    loadedAt: null, totals: null, errors: [],
+  };
+  if (user.roleCode === 'SALESPERSON' || user.dataScopeRules?.some((r) => r.dimension !== 'companyKeys')) {
+    return { ...base, status: 'restricted' };
+  }
+  const [stateRows] = await pool.query('SELECT loaded_at_utc FROM process_nps_reach_state WHERE singleton_id = 1');
+  const state = (stateRows as Record<string, unknown>[])[0];
+  if (!state) return base;
+
+  const company = f.companyKeys ?? [];
+  const where = `f.MessageDateKey BETWEEN ? AND ?${company.length ? ` AND f.CompanyKey IN (${company.map(() => '?').join(', ')})` : ''}`;
+  const params = [dateKeyOf(q.dateFrom), dateKeyOf(q.dateTo), ...company];
+  const [rows] = await pool.query(
+    `SELECT SUM(f.total_reach) AS total_reach, SUM(f.delivered) AS delivered,
+            SUM(f.not_delivered) AS not_delivered, SUM(f.read_count) AS read_count,
+            SUM(f.error_count) AS error_count, SUM(f.other_state) AS other_state
+       FROM v_process_nps_reach f WHERE ${where}`, params);
+  const [errors] = await pool.query(
+    `SELECT f.failure_group, f.label_en, f.is_fixable, f.hint, SUM(f.errors) AS errors
+       FROM v_process_nps_message_error f WHERE ${where}
+      GROUP BY f.failure_group, f.label_en, f.is_fixable, f.hint, f.sort_order ORDER BY f.sort_order`, params);
+  const r = (rows as Record<string, unknown>[])[0];
+  return {
+    ...base, status: 'ready', loadedAt: asDateTime(state.loaded_at_utc),
+    totals: {
+      totalReach: Number(r?.total_reach ?? 0), delivered: Number(r?.delivered ?? 0),
+      notDelivered: Number(r?.not_delivered ?? 0), read: Number(r?.read_count ?? 0),
+      error: Number(r?.error_count ?? 0), otherState: Number(r?.other_state ?? 0),
+    },
+    errors: (errors as Record<string, unknown>[]).map((r) => ({
+      key: String(r.failure_group), label: String(r.label_en), fixable: Number(r.is_fixable) === 1,
+      hint: String(r.hint), count: Number(r.errors),
+    })),
   };
 }

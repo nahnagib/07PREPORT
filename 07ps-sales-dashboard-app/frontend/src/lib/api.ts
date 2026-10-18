@@ -2796,6 +2796,15 @@ export interface NpsTrend {
   minResponders: number;
   points: ({ period: string } & NpsCounts)[];
 }
+export interface NpsReach {
+  status: 'waiting' | 'restricted' | 'ready';
+  dateFrom: string;
+  dateTo: string;
+  companyAndDateOnly: boolean;
+  loadedAt: string | null;
+  totals: { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number } | null;
+  errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
+}
 export interface NpsPage<T> {
   rows: T[];
   total: number;

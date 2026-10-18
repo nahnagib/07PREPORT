@@ -29,8 +29,10 @@ for p in (ROOT, ROOT / "src"):
         sys.path.insert(0, str(p))
 
 from sqlalchemy import create_engine, text  # noqa: E402
+import pandas as pd  # noqa: E402
 
 from departments.process import nps  # noqa: E402
+from departments.process import whatsapp as wa  # noqa: E402
 from departments.process.transform import COMPANY_BY_SOURCE_NAME  # noqa: E402
 from etl_platform.config import PlatformConfig  # noqa: E402
 from etl_platform.sources.mysql_ssh import MySqlSshSettings, open_source  # noqa: E402
@@ -45,6 +47,46 @@ def _table(title: str, rows: dict, columns: list[str]) -> None:
         print(f"  {str(key):<14}" + "".join(f"{rows[key].get(c, 0):>10}" for c in columns))
 
 
+def reconcile_reach(conn, messages: list[dict], config: wa.ReachConfig, timezone: str,
+                    date_from: _dt.date, date_to: _dt.date) -> bool:
+    """Compare source messages to raw ids and serving views; never print personal data or free-text failures."""
+    raw_ids = {int(r[0]) for r in conn.execute(text("SELECT id FROM raw_nps_whatsapp_message WHERE _deleted_at IS NULL"))}
+    source_ids = {int(r["id"]) for r in messages}
+    raw_ok = source_ids == raw_ids
+    state = conn.execute(text("SELECT loaded_at_utc FROM process_nps_reach_state WHERE singleton_id = 1")).first()
+    print(f"\n4. WhatsApp raw ids: source {len(source_ids)}, warehouse {len(raw_ids)}: {'ok' if raw_ok else 'DIFFERENT'}")
+    if state is None:
+        print("  DIFFERENT: source is available but no successful warehouse message load exists; run process_nps first.")
+        return False
+    print(f"  Last successful message load: {state[0]} UTC")
+    frame = wa.build_messages(pd.DataFrame(messages, columns=wa.SOURCE_COLUMNS), config, timezone,
+                              lambda name: COMPANY_BY_SOURCE_NAME.get(str(name or '').strip().upper(), -1))
+    lo, hi = (int(d.strftime("%Y%m%d")) for d in (date_from, date_to))
+    scope = frame[(frame.in_reach_scope == 1) & frame.MessageDateKey.between(lo, hi)]
+    columns = ["total_reach", "delivered", "not_delivered", "read_count", "error_count", "other_state"]
+    box_col = {"delivered": "delivered", "not_delivered": "not_delivered", "read": "read_count", "error": "error_count", "other": "other_state"}
+    expected: dict[tuple, collections.Counter] = collections.defaultdict(collections.Counter)
+    errors = collections.Counter()
+    for row in scope.to_dict("records"):
+        key = (int(row["MessageDateKey"]), int(row["CompanyKey"]))
+        expected[key]["total_reach"] += 1
+        expected[key][box_col[row["box"]]] += 1
+        if row["box"] == "error":
+            errors[(*key, row["failure_group"])] += 1
+    params = {"lo": lo, "hi": hi}
+    actual = {tuple(int(v) for v in row[:2]): {key: int(value or 0) for key, value in zip(columns, row[2:])}
+              for row in conn.execute(text("SELECT MessageDateKey, CompanyKey, total_reach, delivered, not_delivered, read_count, error_count, other_state "
+                                           "FROM v_process_nps_reach WHERE MessageDateKey BETWEEN :lo AND :hi"), params)}
+    actual_errors = {(int(day), int(company), group): int(count) for day, company, group, count in conn.execute(text(
+        "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE MessageDateKey BETWEEN :lo AND :hi"), params)}
+    normalized = {key: {column: counts[column] for column in columns} for key, counts in expected.items()}
+    boxes_ok, errors_ok = normalized == actual, dict(errors) == actual_errors
+    _table(f"  Reach {date_from}..{date_to} (Tripoli date, company) -- source", normalized, columns)
+    _table("  Reach -- warehouse v_process_nps_reach", actual, columns)
+    print(f"  Reach boxes: {'ok' if boxes_ok else 'DIFFERENT'}; error groups: {'ok' if errors_ok else 'DIFFERENT'}")
+    return raw_ok and boxes_ok and errors_ok
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--from", dest="date_from", help="weekly e-mail period start (yyyy-mm-dd), default 7 days ago")
@@ -52,9 +94,16 @@ def main() -> int:
     args = ap.parse_args()
     config = PlatformConfig.from_env()  # also loads data/etl/.env
     tz = ZoneInfo(config.business_timezone)
+    reach_config = wa.ReachConfig.from_env()
+    messages = None
     with open_source(MySqlSshSettings.from_env("NPS")) as src:
         counts = {t: int(src.read_query(f"SELECT COUNT(*) AS n FROM {t}")[0]["n"]) for t in ("nps_rating_full_data", "low_rating_data")}
         rows = src.read_query("SELECT id, create_date, company_name, body FROM nps_rating_full_data")
+        if reach_config.enabled:
+            exists = src.read_query("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t",
+                                    {"t": wa.SOURCE_TABLE})
+            if exists and int(exists[0]["n"]):
+                messages = src.read_table_incremental(wa.SOURCE_TABLE, wa.SOURCE_COLUMNS)
     wh = create_engine(config.database_url)
     with wh.connect() as c:
         raw = {"nps_rating_full_data": int(c.execute(text("SELECT COUNT(*) FROM raw_nps_rating WHERE _deleted_at IS NULL")).scalar()),
@@ -119,6 +168,17 @@ def main() -> int:
     _table(f"Same period, Africa/Tripoli dates (the dashboard's basis)", {k: dict(v) for k, v in ours.items()}, cols)
     if edge:
         print(f"  {len(edge)} rating(s) change period with the time zone (id, UTC create_date, Tripoli date): {edge[:20]}")
+    for name, values in sorted(ours.items()):
+        total = values["responses"]
+        if total:
+            print(f"  {name}: responders {total}, NPS {100 * (values['exceeded'] - values['below']) / total:.2f}, "
+                  f"CSAT {100 * (values['exceeded'] + values['met']) / total:.2f}")
+    if messages is not None:
+        with wh.connect() as c:
+            ok &= reconcile_reach(c, messages, reach_config, config.business_timezone, d_from, d_to)
+    else:
+        print("\n4. WhatsApp reach: SKIPPED (NPS_REACH_ENABLED is false or the source table is not available).")
+    wh.dispose()
     print("\nMATCH" if ok else "\nDIFFERENCE (see above and the docstring)")
     return 0 if ok else 1
 

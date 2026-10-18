@@ -10,7 +10,7 @@ import { NpsReach } from '../../../../components/nps/NpsReach';
 import { Waiting } from '../../../../components/nps/Waiting';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useNpsScore } from '../../../../lib/hooks';
-import type { NpsDetractor, NpsGrain, NpsMeta, NpsOverview, NpsPage, NpsScope, NpsTrend } from '../../../../lib/api';
+import type { NpsDetractor, NpsGrain, NpsMeta, NpsOverview, NpsPage, NpsReach as ReachData, NpsScope, NpsTrend } from '../../../../lib/api';
 import { formatDate, formatNumber, formatTimestamp } from '../../../../lib/format';
 import {
   BAND_STATUS,
@@ -44,7 +44,7 @@ import {
  *
  * Row 1 the score: the NPS tachometer (the Promotion pages' Gauge with fixed bands) + the CSAT bar.
  * Row 2 responders: Total · Promoters · Passives · Detractors (# and % of responders).
- * Row 3 WhatsApp message reach (components/nps/NpsReach): waiting for the developer's message table.
+ * Row 3 WhatsApp message reach: company/date only; waiting until the first message load.
  * Row 4 the NPS trend: Daily / Monthly / Yearly; target line; periods below the minimum faded.
  * Row 5 Errors by reason (with the message data) · Detractors by reason · Detractors by status (waiting for the
  *       follow-up data source -- no data is invented).
@@ -77,6 +77,7 @@ function NpsScoreBody() {
   const meta = useNpsScore<NpsMeta>(token, authError, retryAuth, 'meta', scope, undefined, allowed);
   const overview = useNpsScore<NpsOverview>(token, authError, retryAuth, 'overview', scope, undefined, allowed);
   const trend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { grain }, allowed);
+  const reach = useNpsScore<ReachData>(token, authError, retryAuth, 'reach', scope, undefined, allowed);
   const canSeeDetractors = meta.data?.canSeeDetractors === true;
   const detractors = useNpsScore<NpsPage<NpsDetractor>>(token, authError, retryAuth, 'detractors', scope,
     { page: 1, pageSize: LIST_PAGE * listPages }, allowed && canSeeDetractors);
@@ -118,10 +119,9 @@ function NpsScoreBody() {
           <ErrorState message={overview.error ?? meta.error ?? undefined} onRetry={() => { overview.retry(); meta.retry(); }} />
         ) : !totals || !thresholds ? (
           <div className="ps-nps-row">{[0, 1, 2].map((i) => <LoadingSkeleton key={i} variant="chart" />)}</div>
-        ) : totals.responders === 0 ? (
-          <EmptyState message="No ratings for these filters and dates." />
         ) : (
           <>
+            {totals.responders === 0 && <EmptyState message="No ratings for these filters and dates." />}
             {/* Row 1: the score */}
             <section className="ps-nps-score-row" aria-label="NPS and CSAT">
               <ChartPanel title="NPS Score" infoText={NPS_CONTEXT}>
@@ -165,11 +165,12 @@ function NpsScoreBody() {
             </section>
 
             {/* Row 3: WhatsApp message reach (section 4) */}
-            <NpsReach token={token} authError={authError} retryAuth={retryAuth} scope={scope} enabled={allowed} part="boxes" />
+            <NpsReach state={reach} part="boxes" />
 
             {/* Row 4: trend */}
             <ChartPanel
               title="NPS trend"
+              wrapHeader
               infoText={`Line: NPS per period, with the target line at ${trend.data?.target ?? thresholds.nps.target}. Bars: responders. A period below ${meta.data?.minResponders} responders is shown faded.`}
               headerActions={
                 <div className="ps-nps-switch" role="group" aria-label="Trend period">
@@ -204,7 +205,7 @@ function NpsScoreBody() {
 
             {/* Row 5: reasons and follow-up */}
             <section className="ps-nps-row" aria-label="Reasons and follow-up">
-              <NpsReach token={token} authError={authError} retryAuth={retryAuth} scope={scope} enabled={allowed} part="errors" />
+              <NpsReach state={reach} part="errors" />
               <ChartPanel title="Detractors by reason" infoText="The reason each detractor gave or the team recorded. No data source exists yet (see docs/nps-etl.md, follow-up).">
                 <Waiting message="Waiting for the follow-up data source" />
               </ChartPanel>

@@ -159,6 +159,7 @@ def extract_nps(ctx: RunContext) -> TaskResult:
                 deleted_msg = mark_deleted(conn, RAW_MSG, {int(i) for i in msg_df["id"]}, extracted_at)
             else:
                 notify("WARNING", f"{wa.SOURCE_TABLE} returned 0 rows while the warehouse holds {held_msg}: none marked deleted", job=ctx.job.name)
+                reach_status = "retained previous snapshot: source returned 0 messages"
     ctx.state["reach_status"] = reach_status
     details = {"source_db": settings.db_name, "ssh": settings.ssh_enabled, "ssh_auth": settings.auth_method if settings.ssh_enabled else None,
                "rows": {SOURCE_FULL: len(full_df), SOURCE_LOW: len(low_df), "sync_state": len(sync_df)},
@@ -166,7 +167,8 @@ def extract_nps(ctx: RunContext) -> TaskResult:
                "sync_state": {str(r["source"]): str(r["last_successful_sync"]) for r in sync},
                "reach": {"status": reach_status, "messages": None if messages is None else len(messages), "deleted_restored": deleted_msg}}
     ctx.logger.info("NPS extracted: %s", details)
-    return TaskResult(rows_extracted=len(full_df) + len(low_df), rows_loaded=len(full_df) + len(low_df), details=details)
+    extracted = len(full_df) + len(low_df) + (len(messages) if messages is not None else 0)
+    return TaskResult(rows_extracted=extracted, rows_loaded=extracted, details=details)
 
 
 # -- load --------------------------------------------------------------------------------------------------------------
@@ -252,6 +254,9 @@ def load_messages(conn, ctx: RunContext, now: _dt.datetime) -> dict[str, Any]:
                           _dt.date(max(keys) // 10000, max(keys) // 100 % 100, max(keys) % 100))
     upsert(conn, FAILURE_GROUPS, wa.group_frame().assign(updated_at_utc=now))
     replace_all(conn, MSG_FACT, _stamped(fact, ctx, now))
+    upsert(conn, "process_nps_reach_state", pd.DataFrame([{
+        "singleton_id": 1, "loaded_at_utc": now, "messages_loaded": len(fact), "_run_id": ctx.run_uid,
+    }]))
     scope = fact[fact["in_reach_scope"] == 1]
     return {"messages": len(fact), "in_scope": len(scope), "by_box": scope["box"].value_counts().to_dict(),
             "states": fact["state"].value_counts().to_dict(), "error_groups": scope.loc[scope["box"] == "error", "failure_group"].value_counts().to_dict()}
@@ -309,7 +314,7 @@ def load_nps(ctx: RunContext) -> TaskResult:
                "reach": reach_stats or ctx.state.get("reach_status")}
     ctx.logger.info("NPS loaded: %s response(s) %s, NPS-style %s; %s comment(s); %s blank; company from %s",
                     len(responses), details["by_level"], details["nps_style"], len(comments), details["blank"], details["company_source"])
-    return TaskResult(rows_loaded=len(responses) + len(comments), details=details)
+    return TaskResult(rows_loaded=len(responses) + len(comments) + (reach_stats["messages"] if reach_stats is not None else 0), details=details)
 
 
 # -- registration ----------------------------------------------------------------------------------------------------------

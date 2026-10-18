@@ -140,4 +140,24 @@ describe.skipIf(!RUN)('NPS Score on the real warehouse (read-only)', () => {
     expect(status).toBe(200);
     expect(body.totals).toMatchObject(await factCounts('SalespersonKey = ?', [key]));
   });
+
+  it('reach is waiting before the first load; its aggregate SQL agrees with the message fact', async () => {
+    const { fetchNpsReach, parseNpsQuery } = await import('../../measures/npsScore');
+    const { status, body } = await get(`/nps-score/reach?${RANGE}`);
+    expect(status).toBe(200);
+    const loaded = await qa('SELECT loaded_at_utc FROM process_nps_reach_state WHERE singleton_id = 1');
+    if (!loaded.length) expect(body).toMatchObject({ status: 'waiting', totals: null, errors: [] });
+    // Exercise real MySQL aggregation even before real message data arrives, without writing a readiness marker.
+    const queryPool = {
+      query: (sql: string, params: unknown[]) => sql.includes('FROM process_nps_reach_state')
+        ? Promise.resolve([[{ loaded_at_utc: '2026-10-18 00:00:00' }], []]) : pool.query(sql, params),
+    } as unknown as typeof pool;
+    const reach = await fetchNpsReach(queryPool, parseNpsQuery({ dateFrom: '2020-01-01', dateTo: '2030-12-31' }), {}, { roleCode: 'BI00_EXECUTIVE' });
+    const [want] = await qa(`SELECT COUNT(*) AS total, SUM(box = 'delivered') AS delivered, SUM(box = 'read') AS read_count,
+      SUM(box = 'not_delivered') AS not_delivered, SUM(box = 'error') AS error_count, SUM(box = 'other') AS other_state
+      FROM fact_process_nps_message WHERE in_reach_scope = 1 AND MessageDateKey BETWEEN 20200101 AND 20301231`);
+    expect(reach.totals).toEqual({ totalReach: n(want.total), delivered: n(want.delivered), read: n(want.read_count),
+      notDelivered: n(want.not_delivered), error: n(want.error_count), otherState: n(want.other_state) });
+    expect(reach.errors.reduce((sum, e) => sum + e.count, 0)).toBe(n(want.error_count));
+  });
 });

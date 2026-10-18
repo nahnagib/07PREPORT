@@ -5,7 +5,7 @@ import { requirePasswordChangeCleared, requirePermission } from '../middleware/p
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import { allows, getRequestPermissions } from '../services/permissionService';
 import type { Filters } from '../measures/filters';
-import { NpsQueryError, fetchNpsDetractors, fetchNpsMeta, fetchNpsOverview, fetchNpsTrend, parseNpsQuery } from '../measures/npsScore';
+import { NpsQueryError, fetchNpsDetractors, fetchNpsMeta, fetchNpsOverview, fetchNpsReach, fetchNpsTrend, parseNpsQuery } from '../measures/npsScore';
 
 /**
  * NPS Score (Process department; measures/npsScore.ts), permission page `nps_score`:
@@ -17,6 +17,9 @@ import { NpsQueryError, fetchNpsDetractors, fetchNpsMeta, fetchNpsOverview, fetc
  *                               NPS, CSAT, responders, promoters / passives / detractors (# and %)
  *   GET /nps-score/trend?dateFrom=&dateTo=&grain=day|month|year
  *                               NPS and responders per period for the active filters
+ *   GET /nps-score/reach?dateFrom=&dateTo=
+ *                               WhatsApp message counts and error groups; company/date only. Unsupported role scopes
+ *                               receive no counts. Waiting until the first successful message snapshot.
  *   GET /nps-score/detractors?dateFrom=&dateTo=&page=&pageSize=
  *                               the detractor list with the customers' comments -- ONLY with View on `nps_comments`
  *
@@ -56,6 +59,8 @@ npsScoreRouter.get(
 npsScoreRouter.get('/overview', handle((req) => fetchNpsOverview(pool, query(req), scoped(req))));
 
 npsScoreRouter.get('/trend', handle((req) => fetchNpsTrend(pool, query(req), scoped(req))));
+
+npsScoreRouter.get('/reach', handle((req) => fetchNpsReach(pool, query(req), scoped(req), req.userContext!)));
 
 npsScoreRouter.get(
   '/detractors',

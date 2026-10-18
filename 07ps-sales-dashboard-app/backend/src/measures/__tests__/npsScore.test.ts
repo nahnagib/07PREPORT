@@ -6,6 +6,7 @@ import {
   csatScore,
   fetchNpsDetractors,
   fetchNpsOverview,
+  fetchNpsReach,
   fetchNpsTrend,
   npsScore,
   npsWhere,
@@ -139,5 +140,12 @@ describe('SQL', () => {
     expect(queries[1].sql).toContain('f.nps_level = 1');
     expect(queries[1].sql).toContain('FROM fact_process_nps_comment c WHERE c.response_id = f.response_id');
     expect(queries[1].params.slice(-2)).toEqual([10, 10]);
+  });
+
+  it('reach: a successful empty snapshot returns real zeros, while an unfiltered request needs no filter label', async () => {
+    const { pool } = fakePool((sql) => sql.includes('process_nps_reach_state') ? [{ loaded_at_utc: '2026-10-18 10:00:00' }] : []);
+    const result = await fetchNpsReach(pool, parseNpsQuery({}, NOW), {}, { roleCode: 'BI00_EXECUTIVE' });
+    expect(result).toMatchObject({ status: 'ready', companyAndDateOnly: false, errors: [],
+      totals: { totalReach: 0, delivered: 0, notDelivered: 0, read: 0, error: 0, otherState: 0 } });
   });
 });

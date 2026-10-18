@@ -20,7 +20,7 @@ MIGRATIONS = Path(__file__).resolve().parents[2] / "warehouse" / "migrations"
 
 _COMMENT = re.compile(r"\s+COMMENT\s+'(?:[^']|'')*'")
 _CREATE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\)\s*ENGINE[^;]*;", re.S)
-_SEED = re.compile(r"INSERT IGNORE INTO .*?;", re.S)
+_SEED = re.compile(r"INSERT IGNORE INTO (?:[^';]|'(?:[^']|'')*')*;", re.S)
 _SEED_TABLE = re.compile(r"INSERT OR IGNORE INTO (\w+)")
 # 'ALTER TABLE t ADD COLUMN c TYPE ... [COMMENT ''...''] [AFTER x]' inside a SET @s = (SELECT IF(...)) prepared statement
 _ADD_COLUMN = re.compile(r"'ALTER TABLE (\w+) ADD COLUMN (\w+) ((?:[^']|'')+)'")
