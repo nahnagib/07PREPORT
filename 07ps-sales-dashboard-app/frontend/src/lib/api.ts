@@ -2743,3 +2743,97 @@ export function fetchDebtReport<T>(token: string, endpoint: DebtReportEndpoint, 
   const qs = buildDebtReportQuery(scope, extra);
   return request<T>(`/debt-report/${endpoint}${qs ? `?${qs}` : ''}`, token, { signal });
 }
+
+// -- NPS Score (Process; backend routes/npsScore.ts, measures/npsScore.ts, config/npsThresholds.ts) -----------------
+export type NpsEndpoint = 'meta' | 'overview' | 'trend' | 'detractors' | 'reach';
+export type NpsBand = 'red' | 'yellow' | 'green';
+export type NpsGrain = 'day' | 'month' | 'year';
+/** A visual's bands: yellow from `yellowFrom`, green from `greenFrom` (both inclusive), the target, the drawn scale. */
+export interface NpsBandScale {
+  yellowFrom: number;
+  greenFrom: number;
+  target: number;
+  min: number;
+  max: number;
+}
+/** Every figure of a filtered set; percentages 0..100 unrounded; null without responders. */
+export interface NpsCounts {
+  responders: number;
+  promoters: number;
+  passives: number;
+  detractors: number;
+  promotersPct: number | null;
+  passivesPct: number | null;
+  detractorsPct: number | null;
+  nps: number | null;
+  csat: number | null;
+  npsBand: NpsBand | null;
+  csatBand: NpsBand | null;
+  /** fewer responders than the minimum: show greyed with "n = x" */
+  belowMinimum: boolean;
+}
+export interface NpsMeta {
+  levels: { level: number; key: string; labelEn: string; labelAr: string; sourceText: string; stars: number }[];
+  firstRatingDate: string | null;
+  lastRatingDate: string | null;
+  lastRatingAt: string | null;
+  sourceLastSync: string | null;
+  minResponders: number;
+  thresholds: { nps: NpsBandScale; csat: NpsBandScale };
+  canSeeDetractors: boolean;
+  /** the "process" department refresh (the same per-department shape as the finance one) */
+  freshness: DebtFreshness;
+}
+export interface NpsOverview {
+  dateFrom: string;
+  dateTo: string;
+  totals: NpsCounts & { withComment: number };
+  minResponders: number;
+}
+export interface NpsTrend {
+  grain: NpsGrain;
+  target: number;
+  minResponders: number;
+  points: ({ period: string } & NpsCounts)[];
+}
+export interface NpsPage<T> {
+  rows: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+export interface NpsDetractor {
+  responseId: number;
+  ratedAt: string | null;
+  ratingDate: string | null;
+  company: string | null;
+  customerKey: number;
+  customer: string | null;
+  orderRef: string | null;
+  deliveryCode: string | null;
+  salesTeam: string | null;
+  salesperson: string | null;
+  teamBranch: string | null;
+  /** the follow-up status / reason: no source yet (null) */
+  status: string | null;
+  reason: string | null;
+  comment: string | null;
+}
+/** The global filters + the page's date range. */
+export interface NpsScope extends TachometerFilters {
+  dateFrom: string;
+  dateTo: string;
+}
+
+export function buildNpsQuery(scope: NpsScope, extra: Record<string, string | number> = {}): string {
+  const params = new URLSearchParams(buildQuery('', scope));
+  params.delete('anchorDate');
+  params.set('dateFrom', scope.dateFrom);
+  params.set('dateTo', scope.dateTo);
+  for (const [k, v] of Object.entries(extra)) if (v !== '' && v !== undefined) params.set(k, String(v));
+  return params.toString();
+}
+
+export function fetchNpsScore<T>(token: string, endpoint: NpsEndpoint, scope: NpsScope, extra: Record<string, string | number> = {}, signal?: AbortSignal): Promise<T> {
+  return request<T>(`/nps-score/${endpoint}?${buildNpsQuery(scope, extra)}`, token, { signal });
+}

@@ -45,6 +45,13 @@ export interface GaugeProps {
    * behavior for any consumer that doesn't pass this) so this is purely additive.
    */
   showValueLabel?: boolean;
+  /**
+   * Optional fixed scale and colour bands, for a measure that has its own thresholds instead of the target-relative
+   * zones above (e.g. the NPS Score: 0..100, red below 50, yellow below 90, green from 90, target marker at 90).
+   * Bounds are inclusive at the lower end. The needle is clamped to [min, max] -- a value below `min` pins it at the
+   * left edge, so the caller prints the real number. Omitted = the Target x0.5..x1.5 behaviour, unchanged.
+   */
+  bands?: { min: number; max: number; yellowFrom: number; greenFrom: number };
 }
 
 const zoneColorVar: Record<'red' | 'yellow' | 'green', string> = {
@@ -130,6 +137,7 @@ export function Gauge({
   valueLabel,
   targetLabel,
   showValueLabel = true,
+  bands,
 }: GaugeProps) {
   const cx = 100;
   const cy = 100;
@@ -137,19 +145,22 @@ export function Gauge({
   const trackWidth = 14;
 
   const hasTarget = targetToDate !== null && targetToDate > 0;
+  // zones are drawn with a target (target-relative) or with fixed bands
+  const hasZones = hasTarget || bands !== undefined;
 
-  const advertisedScaleMin = hasTarget ? (targetToDate as number) * 0.5 : null;
-  const advertisedScaleMax = hasTarget ? (targetToDate as number) * 1.5 : null;
+  const advertisedScaleMin = bands ? bands.min : hasTarget ? (targetToDate as number) * 0.5 : null;
+  const advertisedScaleMax = bands ? bands.max : hasTarget ? (targetToDate as number) * 1.5 : null;
 
-  let scaleMin = hasTarget ? (advertisedScaleMin as number) : 0;
-  let scaleMax = hasTarget ? (advertisedScaleMax as number) : Math.max(actual, 1) * 1.15;
-  if (hasTarget) {
+  let scaleMin = advertisedScaleMin ?? 0;
+  let scaleMax = advertisedScaleMax ?? Math.max(actual, 1) * 1.15;
+  if (hasTarget && !bands) {
     // Safety extension - see docstring above. Never shrinks the range, only grows it outward.
     if (actual < scaleMin) scaleMin = actual * 0.95;
     if (actual > scaleMax) scaleMax = actual * 1.05;
   }
 
-  const yellowFloor = hasTarget ? (targetToDate as number) * 0.9 : 0;
+  const yellowFloor = bands ? bands.yellowFrom : hasTarget ? (targetToDate as number) * 0.9 : 0;
+  const greenFloor = bands ? bands.greenFrom : (targetToDate ?? 0);
   const needleAngle = valueToAngle(actual, scaleMin, scaleMax);
   const targetAngle = hasTarget ? valueToAngle(targetToDate as number, scaleMin, scaleMax) : null;
 
@@ -184,7 +195,7 @@ export function Gauge({
       role="img"
       aria-label={ariaLabel}
     >
-      {!hasTarget && (
+      {!hasZones && (
         <path
           d={describeArc(cx, cy, r, 180, 0)}
           fill="none"
@@ -193,9 +204,9 @@ export function Gauge({
           strokeLinecap="round"
         />
       )}
-      {hasTarget && (
+      {hasZones && (
         <>
-          {/* Red zone: scale min -> 90% of target */}
+          {/* Red zone: scale min -> 90% of target (or the band's yellowFrom) */}
           <path
             d={describeArc(cx, cy, r, 180, valueToAngle(yellowFloor, scaleMin, scaleMax))}
             fill="none"
@@ -210,7 +221,7 @@ export function Gauge({
               cy,
               r,
               valueToAngle(yellowFloor, scaleMin, scaleMax),
-              valueToAngle(targetToDate as number, scaleMin, scaleMax),
+              valueToAngle(greenFloor, scaleMin, scaleMax),
             )}
             fill="none"
             stroke={zoneColorVar.yellow}
@@ -218,7 +229,7 @@ export function Gauge({
           />
           {/* Green zone: 100% of target -> scale max */}
           <path
-            d={describeArc(cx, cy, r, valueToAngle(targetToDate as number, scaleMin, scaleMax), 0)}
+            d={describeArc(cx, cy, r, valueToAngle(greenFloor, scaleMin, scaleMax), 0)}
             fill="none"
             stroke={zoneColorVar.green}
             strokeWidth={trackWidth}
@@ -258,7 +269,7 @@ export function Gauge({
 
       {/* Scale min/max labels at each end of the arc - "the user should always know the gauge
           range." Only shown when there's a target, since the scale is defined as Target x0.5/x1.5. */}
-      {hasTarget && (
+      {hasZones && (
         <>
           <text x={cx - r} y={cy + 16} textAnchor="start" fontSize="8.5" fill="var(--ps-color-muted-text)">
             {compactAxis(advertisedScaleMin as number)}

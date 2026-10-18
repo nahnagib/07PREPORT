@@ -1,4 +1,4 @@
-import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store, ClipboardList, HandCoins } from 'lucide-react';
+import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store, ClipboardList, HandCoins, Smile } from 'lucide-react';
 
 /** Which department hub (PromotionHubPage/ProductHubPage via DepartmentHubPage) lists a given
  * report card, and which sidebar tab it's grouped under. Normally matches the `href`'s route
@@ -44,6 +44,8 @@ export const NAV_ITEMS = [
   { label: 'Product Lifecycle', icon: RefreshCw, href: '/product/product-lifecycle', pageKey: 'product_lifecycle', department: 'product' },
   // Process department. The card list/entry screens live under this href (see ROUTE_PAGE_KEYS).
   { label: 'Kaizen Board', icon: ClipboardList, href: '/process/kaizen-board', pageKey: 'kaizen_board', department: 'process' },
+  // Process department: customers' delivery ratings (ETL job process_nps, docs/nps-etl.md).
+  { label: 'NPS Score', icon: Smile, href: '/process/nps-score', pageKey: 'nps_score', department: 'process' },
   // Price (Finance) department: open customer receivables from the receivables snapshot (finance ETL, 02:00 + 15:00).
   // Was "Debt Report" at /price/debt-report (that URL redirects here, next.config.mjs); the permission key stays debt_report.
   { label: 'Receivables and Collections', icon: HandCoins, href: '/price/receivables-collections', pageKey: 'debt_report', department: 'price' },
