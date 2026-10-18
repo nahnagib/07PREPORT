@@ -61,6 +61,8 @@ def _registry(sales_gate: dict) -> Registry:
     r.task(TaskSpec("load_stub_sales", load_stub_sales))
     for name in ("core_dims", "finance_receivables", "main", "full_all"):
         r.job(REGISTRY.jobs[name])
+    # the NPS source is not configured in these tests: full_all records process_nps as skipped (disabled)
+    r.job(replace(REGISTRY.jobs["process_nps"], disabled_reason=lambda: "NPS_ENABLED is not true"))
     for name, mode in (("sales_incremental", "incremental"), ("sales_full", "full")):
         r.job(JobSpec(name, "sales", tasks=("load_stub_sales",), depends_on_jobs=("core_dims",), mode=mode))
     r.validate()
@@ -132,8 +134,9 @@ def test_full_all_runs_core_then_finance_then_sales_under_one_run_id(pipe):
     assert runs[runs.parent_run_uid.isna()].job_name.tolist() == ["full_all"]
     children = runs[runs.parent_run_uid.notna()]
     assert set(children.parent_run_uid) == {uid}
-    assert children.job_name.tolist() == ["core_dims", "finance_receivables", "sales_full"]  # finance before sales
-    assert (children.status == "success").all()
+    assert children.job_name.tolist() == ["core_dims", "finance_receivables", "sales_full", "process_nps"]  # finance before sales
+    assert children.status.tolist() == ["success", "success", "success", "skipped"]  # NPS switched off here: not a failure
+    assert "disabled: NPS_ENABLED is not true" in children.error_message.iloc[-1]
     assert _count(engine, SNAPSHOT) == 6 and _count(engine, "stub_sales") == 1
 
 
@@ -156,7 +159,7 @@ def test_core_dims_failure_skips_finance_and_sales_and_fails_the_run(pipe):
         pipe["run"]("full_all", cfg=replace(pipe["config"], input_dir=empty))
     runs = _runs(engine).set_index("job_name")
     assert runs.status.to_dict() == {"full_all": "failed", "core_dims": "failed", "finance_receivables": "skipped",
-                                     "sales_full": "skipped"}
+                                     "sales_full": "skipped", "process_nps": "skipped"}
     assert "skipped: dependency job 'core_dims' failed" in runs.loc["finance_receivables", "error_message"]
     assert _count(engine, SNAPSHOT) == 0 and _count(engine, "stub_sales") == 0
     assert _count(engine, "etl_task_log WHERE job_name IN ('finance_receivables', 'sales_full')") == 0  # never started
@@ -169,7 +172,7 @@ def test_finance_failure_leaves_full_all_partial_and_keeps_core_and_sales(pipe):
     assert status == STATUS_PARTIAL
     runs = _runs(engine).set_index("job_name")
     assert runs.status.to_dict() == {"full_all": "partial", "core_dims": "success", "finance_receivables": "failed",
-                                     "sales_full": "success"}
+                                     "sales_full": "success", "process_nps": "skipped"}
     assert runs.loc["full_all", "error_message"].startswith("finance failed: RuntimeError: Odoo read of account.move.line timed out")
     assert _count(engine, "dim_customer") > 0  # core data kept
     assert _count(engine, "stub_sales") == 1  # sales still ran after finance failed
@@ -201,7 +204,8 @@ def test_sales_failure_fails_full_all_but_keeps_the_snapshot(pipe):
     with pytest.raises(Exception, match="sales_full"):
         pipe["run"]("full_all")
     assert _runs(engine).set_index("job_name").status.to_dict() == {
-        "full_all": "failed", "core_dims": "success", "finance_receivables": "success", "sales_full": "failed"}
+        "full_all": "failed", "core_dims": "success", "finance_receivables": "success", "sales_full": "failed",
+        "process_nps": "skipped"}
     assert _count(engine, SNAPSHOT) == 6
 
 
@@ -273,6 +277,7 @@ def test_cli_exit_codes(pipe, monkeypatch):
 def test_job_definitions(pipe):
     assert REGISTRY.jobs["main"].depends_on_jobs == ("core_dims", "sales_incremental")
     assert REGISTRY.jobs["main"].optional_jobs == ()
-    assert REGISTRY.jobs["full_all"].depends_on_jobs == ("core_dims", "finance_receivables", "sales_full")
-    assert REGISTRY.jobs["full_all"].optional_jobs == ("finance_receivables",)
+    assert REGISTRY.jobs["full_all"].depends_on_jobs == ("core_dims", "finance_receivables", "sales_full", "process_nps")
+    assert REGISTRY.jobs["full_all"].optional_jobs == ("finance_receivables", "process_nps")
+    assert REGISTRY.jobs["process_nps"].depends_on_jobs == ("core_dims",)
     assert REGISTRY.jobs["finance_receivables"].depends_on_jobs == ("core_dims",)
