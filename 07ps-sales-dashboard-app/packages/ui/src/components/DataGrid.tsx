@@ -92,6 +92,10 @@ const containsText: FilterFn<unknown> = (row, columnId, filterValue) => {
 const equalsOption: FilterFn<unknown> = (row, columnId, filterValue) =>
   filterValue == null || filterValue === '' || String(row.getValue(columnId) ?? '') === String(filterValue);
 
+// TanStack treats a new array as changed filters and queues a pagination reset. Keep this
+// reference stable when filtering is disabled so the reset cannot trigger another reset.
+const EMPTY_COLUMN_FILTERS: ColumnFiltersState = [];
+
 /**
  * Interactive analytical data grid (UI-improvements pass: "the table should feel similar to Power
  * BI, Excel, or AG Grid"). Built on @tanstack/react-table (headless table logic) - this file
@@ -167,7 +171,7 @@ export function DataGrid<T extends Record<string, unknown>>({
     data: rows,
     columns: columnDefs,
     getRowId,
-    state: { sorting, columnFilters: enableFiltering ? columnFilters : [], globalFilter: enableFiltering ? globalFilter : '', columnOrder, columnSizing, columnPinning, pagination },
+    state: { sorting, columnFilters: enableFiltering ? columnFilters : EMPTY_COLUMN_FILTERS, globalFilter: enableFiltering ? globalFilter : '', columnOrder, columnSizing, columnPinning, pagination },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
