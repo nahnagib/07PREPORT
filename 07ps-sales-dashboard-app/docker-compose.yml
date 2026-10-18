@@ -76,6 +76,9 @@ services:
       # Previous versions of replaced input workbooks (<name>.<UTC timestamp>.xlsx). A named volume by
       # default; set ETL_INPUT_BACKUP_HOST_DIR to a host folder to bind-mount instead.
       - ${ETL_INPUT_BACKUP_HOST_DIR:-etl_input_backups}:/etl/input_backups
+      # NPS Score source (docs/nps-etl.md): the SSH private key, read-only. Uncomment, set NPS_SSH_KEY_HOST_PATH in the
+      # project .env and NPS_SSH_KEY_PATH=/run/secrets/nps_ssh_key in data/etl/.env.
+      # - ${NPS_SSH_KEY_HOST_PATH}:/run/secrets/nps_ssh_key:ro
       # A named volume by default; set ETL_OUTPUT_HOST_DIR to a host folder to bind-mount instead.
       - ${ETL_OUTPUT_HOST_DIR:-etl_output}:/etl/output
     ports:

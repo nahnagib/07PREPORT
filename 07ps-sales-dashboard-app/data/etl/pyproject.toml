@@ -3,6 +3,8 @@ name = "powerbi-sales-pipeline"
 version = "0.1.0"
 description = "Odoo sale.report to Power BI Excel model pipeline"
 requires-python = ">=3.10"
+# The full pinned set is requirements.txt (the Docker image installs it); listed here: what the NPS source needs.
+dependencies = ["paramiko==3.5.1", "PyMySQL==1.1.2", "SQLAlchemy==2.0.43"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

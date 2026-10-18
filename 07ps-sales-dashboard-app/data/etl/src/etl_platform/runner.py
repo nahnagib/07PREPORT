@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 STATUS_RUNNING, STATUS_SUCCESS, STATUS_FAILED, STATUS_SKIPPED = "running", "success", "failed", "skipped"
 STATUS_PARTIAL = "partial"  # an optional dependency job failed; the rest of the run succeeded
+STATUS_DISABLED = "disabled"  # a dependency switched off in this environment (JobSpec.disabled_reason); not a failure
 NOT_RUN = (STATUS_FAILED, STATUS_SKIPPED)
 STALE_RUNNING_AFTER = _dt.timedelta(hours=6)  # same as sales_pipeline.etl_run_log
 FALLBACK_SAMPLE = 20
@@ -215,6 +216,10 @@ class Runner:
     # -- jobs ---------------------------------------------------------------------------------------------
     def _run_job(self, job: JobSpec, *, parent_uid: str | None, as_of: _dt.date, full_refresh: bool, dataset: str | None,
                  allow_large_change: bool, trigger_source: str) -> str:
+        if parent_uid is None and job.disabled_reason is not None:
+            disabled = job.disabled_reason()
+            if disabled:
+                raise RegistryError(f"Job '{job.name}' is disabled in this environment: {disabled}")
         run_uid = str(uuid.uuid4())
         started = utc_now()
         logger.info("Job %s started (run_uid=%s as_of=%s full_refresh=%s dataset=%s)", job.name, run_uid, as_of, full_refresh, dataset)
@@ -238,6 +243,13 @@ class Runner:
                 if dep_name in self._done:
                     continue
                 dep = self.registry.get_job(dep_name)
+                disabled = dep.disabled_reason() if dep.disabled_reason else None
+                if disabled:
+                    logger.info("Job %s: dependency %s not run: %s", job.name, dep.name, disabled)
+                    if dep.log_run:
+                        self._skipped_run_row(dep, run_uid, trigger_source, f"disabled: {disabled}")
+                    self._done[dep.name] = STATUS_DISABLED
+                    continue
                 blocker = self._failed_requirement(dep)
                 if blocker is not None:
                     reason = f"skipped: dependency job '{blocker}' failed"

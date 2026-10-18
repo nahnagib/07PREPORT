@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 Layer = Literal["raw", "core", "mart", "serving"]
 LoadPattern = Literal["upsert", "replace", "swap", "snapshot_replace", "append"]
-SourceKind = Literal["odoo", "excel", "sql"]
+SourceKind = Literal["odoo", "excel", "sql", "mysql"]  # mysql: a remote MySQL source (sources/mysql_ssh.py)
 
 
 class RegistryError(ValueError):
@@ -46,7 +46,7 @@ class DatasetSpec:
     target_table: str
     load_pattern: LoadPattern
     natural_key: tuple[str, ...]
-    model: str | None = None  # odoo
+    model: str | None = None  # odoo model, or the source table of a mysql dataset
     file: str | None = None  # excel (file name inside the input folder)
     sheet: str | None = None  # excel
     domain: tuple[Any, ...] = ()
@@ -58,7 +58,7 @@ class DatasetSpec:
 
     @property
     def source_object(self) -> str | None:
-        if self.source == "odoo":
+        if self.source in ("odoo", "mysql"):
             return self.model
         if self.source == "excel":
             return f"{self.file}:{self.sheet}" if self.sheet else self.file
@@ -101,6 +101,10 @@ class JobSpec:
     # Extra etl_run_log values (e.g. the sales order watermark) read in the SAME transaction that flips the
     # run to success, so the log describes exactly what was loaded.
     on_success: "Callable[[Any], Mapping[str, Any]] | None" = field(default=None, compare=False)
+    # Read at run time (after the .env is loaded): a reason when the job is switched off in this environment (e.g. a
+    # source that is not configured here), else None. As a dependency of an umbrella job it is then recorded as
+    # 'skipped' and the umbrella job is not affected; run on its own it fails with that reason.
+    disabled_reason: "Callable[[], str | None] | None" = field(default=None, compare=False)
     description: str = ""
 
 
