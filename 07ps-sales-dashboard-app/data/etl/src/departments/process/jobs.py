@@ -32,6 +32,7 @@ from core.jobs import ensure_date_range
 from core.resolve import KeyMaps
 from departments.process import nps
 from departments.process import transform as tf
+from departments.process import whatsapp as wa
 from etl_platform import quality as q
 from etl_platform.load import replace_all, upsert
 from etl_platform.notify import notify
@@ -44,6 +45,8 @@ PROFILE = "NPS"
 SOURCE_FULL, SOURCE_LOW = "nps_rating_full_data", "low_rating_data"
 RAW_FULL, RAW_LOW, RAW_SYNC = "raw_nps_rating", "raw_nps_low_rating", "raw_nps_sync_state"
 FACT, COMMENTS, LEVELS = "fact_process_nps_response", "fact_process_nps_comment", "dim_process_nps_level"
+# WhatsApp message reach (step 2, section 4; departments/process/whatsapp.py), behind NPS_REACH_ENABLED
+RAW_MSG, MSG_FACT, FAILURE_GROUPS = "raw_nps_whatsapp_message", "fact_process_nps_message", "dim_process_nps_failure_group"
 COMMON = ["id", "create_date", "company_id", "company_name", "created_id", "created_name", "mobile_number", "delivery_code",
           "body", "failure_type", "failure_reason", "order_id", "scheduled_date", "partner_id", "partner_name", "salesperson_id",
           "salesperson_name", "team_id", "team_name"]
@@ -110,12 +113,29 @@ def mark_deleted(conn, table: str, present_ids: set[int], now: _dt.datetime) -> 
     return len(gone), len(back)
 
 
+def wa_raw_frame(records: list[dict[str, Any]], ctx: RunContext, extracted_at: _dt.datetime) -> pd.DataFrame:
+    df = pd.DataFrame(records, columns=wa.SOURCE_COLUMNS)
+    df["_source_write_date"] = df.pop("updated_at")
+    df["_extracted_at"], df["_run_id"], df["_deleted_at"] = extracted_at, ctx.run_uid, None
+    return df.astype(object).where(df.notna(), None)
+
+
 def extract_nps(ctx: RunContext) -> TaskResult:
     settings = source_settings()
     with open_source(settings) as src:
         full = src.read_table_incremental(SOURCE_FULL, FULL_COLUMNS)
         low = src.read_table_incremental(SOURCE_LOW, LOW_COLUMNS)
         sync = src.read_query("SELECT source, last_successful_sync FROM sync_state")
+        reach = wa.ReachConfig.from_env()
+        messages, reach_status = None, "disabled (NPS_REACH_ENABLED is not true)"
+        if reach.enabled:
+            exists = src.read_query("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() "
+                                    "AND TABLE_NAME = :t", {"t": wa.SOURCE_TABLE})
+            if int(exists[0]["n"] if exists else 0):
+                messages, reach_status = src.read_table_incremental(wa.SOURCE_TABLE, wa.SOURCE_COLUMNS), "loaded"
+            else:
+                reach_status = f"skipped: {wa.SOURCE_TABLE} does not exist in the source yet"
+                ctx.logger.info("NPS reach %s; the ratings are not affected", reach_status)
     extracted_at = _now()
     full_df = raw_frame(full, FULL_COLUMNS, SOURCE_FULL, ctx, extracted_at)
     low_df = raw_frame(low, LOW_COLUMNS, SOURCE_LOW, ctx, extracted_at)
@@ -130,10 +150,21 @@ def extract_nps(ctx: RunContext) -> TaskResult:
         deleted_full = mark_deleted(conn, RAW_FULL, {int(i) for i in full_df["id"]}, extracted_at)
         deleted_low = mark_deleted(conn, RAW_LOW, {int(i) for i in low_df["id"]}, extracted_at)
         replace_all(conn, RAW_SYNC, sync_df)
+        deleted_msg = None
+        if messages is not None:
+            msg_df = wa_raw_frame(messages, ctx, extracted_at)
+            held_msg = int(conn.execute(text(f"SELECT COUNT(*) FROM {RAW_MSG} WHERE _deleted_at IS NULL")).scalar() or 0)
+            upsert(conn, RAW_MSG, msg_df)
+            if len(msg_df) or not held_msg:  # an empty source table never marks every message deleted
+                deleted_msg = mark_deleted(conn, RAW_MSG, {int(i) for i in msg_df["id"]}, extracted_at)
+            else:
+                notify("WARNING", f"{wa.SOURCE_TABLE} returned 0 rows while the warehouse holds {held_msg}: none marked deleted", job=ctx.job.name)
+    ctx.state["reach_status"] = reach_status
     details = {"source_db": settings.db_name, "ssh": settings.ssh_enabled, "ssh_auth": settings.auth_method if settings.ssh_enabled else None,
                "rows": {SOURCE_FULL: len(full_df), SOURCE_LOW: len(low_df), "sync_state": len(sync_df)},
                "deleted_restored": {RAW_FULL: deleted_full, RAW_LOW: deleted_low},
-               "sync_state": {str(r["source"]): str(r["last_successful_sync"]) for r in sync}}
+               "sync_state": {str(r["source"]): str(r["last_successful_sync"]) for r in sync},
+               "reach": {"status": reach_status, "messages": None if messages is None else len(messages), "deleted_restored": deleted_msg}}
     ctx.logger.info("NPS extracted: %s", details)
     return TaskResult(rows_extracted=len(full_df) + len(low_df), rows_loaded=len(full_df) + len(low_df), details=details)
 
@@ -208,6 +239,37 @@ def _checks(stale_before: _dt.datetime) -> list[q.CheckSpec]:
     return specs
 
 
+def load_messages(conn, ctx: RunContext, now: _dt.datetime) -> dict[str, Any]:
+    """fact_process_nps_message from the raw messages, in the load transaction (only when the source table was read)."""
+    raw = pd.read_sql(text(f"SELECT * FROM {RAW_MSG} WHERE _deleted_at IS NULL"), conn)
+    raw["create_date"] = pd.to_datetime(raw["create_date"])
+    company_keys = {int(k) for (k,) in conn.execute(text("SELECT CompanyKey FROM dim_company"))}
+    fact = wa.build_messages(raw, wa.ReachConfig.from_env(), ctx.config.business_timezone,
+                             lambda name: tf.source_company(name, company_keys))
+    keys = [int(v) for v in fact["MessageDateKey"].unique() if int(v) > 0]
+    if keys:
+        ensure_date_range(conn, _dt.date(min(keys) // 10000, min(keys) // 100 % 100, min(keys) % 100),
+                          _dt.date(max(keys) // 10000, max(keys) // 100 % 100, max(keys) % 100))
+    upsert(conn, FAILURE_GROUPS, wa.group_frame().assign(updated_at_utc=now))
+    replace_all(conn, MSG_FACT, _stamped(fact, ctx, now))
+    scope = fact[fact["in_reach_scope"] == 1]
+    return {"messages": len(fact), "in_scope": len(scope), "by_box": scope["box"].value_counts().to_dict(),
+            "states": fact["state"].value_counts().to_dict(), "error_groups": scope.loc[scope["box"] == "error", "failure_group"].value_counts().to_dict()}
+
+
+def _message_checks() -> list[q.CheckSpec]:
+    return [
+        q.orphan(MSG_FACT, "CompanyKey", "dim_company", "CompanyKey", name=f"orphan:{MSG_FACT}.CompanyKey"),
+        q.orphan(MSG_FACT, "MessageDateKey", "dim_date", "DateKey", name=f"orphan:{MSG_FACT}.MessageDateKey"),
+        q.orphan(MSG_FACT, "failure_group", FAILURE_GROUPS, "failure_group", name=f"orphan:{MSG_FACT}.failure_group"),
+        # a state that is none of delivered / read / sent / error: listed with its count, to be placed by the business
+        q.custom_sql("warn:nps_message_other_state", f"SELECT state, COUNT(*) FROM {MSG_FACT} WHERE box = 'other' GROUP BY state",
+                     table=MSG_FACT, severity="warn"),
+        q.custom_sql("warn:nps_message_company_unmatched", f"SELECT message_id FROM {MSG_FACT} WHERE CompanyKey = -1",
+                     table=MSG_FACT, severity="warn"),
+    ]
+
+
 def _stamped(df: pd.DataFrame, ctx: RunContext, now: _dt.datetime) -> pd.DataFrame:
     out = df.assign(loaded_at_utc=now, _run_id=ctx.run_uid)
     return out.astype(object).where(out.notna(), None)
@@ -239,9 +301,12 @@ def load_nps(ctx: RunContext) -> TaskResult:
         upsert(conn, LEVELS, nps.level_frame().assign(updated_at_utc=now))
         replace_all(conn, FACT, responses)
         replace_all(conn, COMMENTS, comments)
-        results = ctx.quality.evaluate(_checks(now - _dt.timedelta(days=STALE_DAYS)), conn, task_name="load_nps")
+        reach_stats = load_messages(conn, ctx, now) if ctx.state.get("reach_status") == "loaded" else None
+        checks = _checks(now - _dt.timedelta(days=STALE_DAYS)) + (_message_checks() if reach_stats is not None else [])
+        results = ctx.quality.evaluate(checks, conn, task_name="load_nps")
         q.raise_for_failures(results)  # rolls back the whole mart load
-    details = {**built.stats, "responses_loaded": len(responses), "comments_loaded": len(comments)}
+    details = {**built.stats, "responses_loaded": len(responses), "comments_loaded": len(comments),
+               "reach": reach_stats or ctx.state.get("reach_status")}
     ctx.logger.info("NPS loaded: %s response(s) %s, NPS-style %s; %s comment(s); %s blank; company from %s",
                     len(responses), details["by_level"], details["nps_style"], len(comments), details["blank"], details["company_source"])
     return TaskResult(rows_loaded=len(responses) + len(comments), details=details)
@@ -254,8 +319,12 @@ REGISTRY.dataset(DatasetSpec(RAW_SYNC, DEPARTMENT, "raw", "mysql", RAW_SYNC, "re
 REGISTRY.dataset(DatasetSpec(LEVELS, DEPARTMENT, "mart", "sql", LEVELS, "upsert", ("nps_level",)))
 for table, key in ((FACT, ("response_id",)), (COMMENTS, ("comment_id",))):
     REGISTRY.dataset(DatasetSpec(table, DEPARTMENT, "mart", "sql", table, "replace", key))
-REGISTRY.task(TaskSpec("extract_nps", extract_nps, datasets=(RAW_FULL, RAW_LOW, RAW_SYNC)))
-REGISTRY.task(TaskSpec("load_nps", load_nps, depends_on=("extract_nps",), datasets=(LEVELS, FACT, COMMENTS)))
+REGISTRY.dataset(DatasetSpec(RAW_MSG, DEPARTMENT, "raw", "mysql", RAW_MSG, "upsert", ("id",), model=wa.SOURCE_TABLE,
+                             description="WhatsApp feedback messages; only with NPS_REACH_ENABLED and once the source table exists"))
+REGISTRY.dataset(DatasetSpec(FAILURE_GROUPS, DEPARTMENT, "mart", "sql", FAILURE_GROUPS, "upsert", ("failure_group",)))
+REGISTRY.dataset(DatasetSpec(MSG_FACT, DEPARTMENT, "mart", "sql", MSG_FACT, "replace", ("message_id",)))
+REGISTRY.task(TaskSpec("extract_nps", extract_nps, datasets=(RAW_FULL, RAW_LOW, RAW_SYNC, RAW_MSG)))
+REGISTRY.task(TaskSpec("load_nps", load_nps, depends_on=("extract_nps",), datasets=(LEVELS, FACT, COMMENTS, FAILURE_GROUPS, MSG_FACT)))
 REGISTRY.job(JobSpec("process_nps", DEPARTMENT, tasks=("extract_nps", "load_nps"), depends_on_jobs=("core_dims",), mode="full",
                      disabled_reason=disabled_reason,
                      description="NPS Score: the NPS developer's MySQL (SSH tunnel) -> raw_nps_* -> NPS facts; nightly inside "
