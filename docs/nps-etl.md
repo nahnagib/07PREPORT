@@ -220,8 +220,8 @@ next day for us, so a week can differ at its edges; the script lists those ratin
 **Note on the page's default filter.** The NPS Score page opens with the app's default Customer Group filter
 (B2B + B2C). It leaves out ratings whose team, and therefore segment, is unknown (-1) or Backoffice / Inter Company, so
 the page shows fewer responders than the weekly report. To reproduce a report figure, clear the Customer Group filter
-and use the same dates and company. Example (2026-10-19, after the July-September backfill): **Majaal, 12 Jul - 26 Sep
-2026, all customer groups = 177 responders = 124 Promoters / 44 Passives / 9 Detractors, NPS 64.97, CSAT 94.92 (Yellow)**,
+and use the same dates and company. Example (2026-10-19, after the July-September backfill and the company
+fall-through): **Majaal, 12 Jul - 24 Sep 2026 (or to 25 Sep: no rating that day), all customer groups = 177 responders = 124 Promoters / 44 Passives / 9 Detractors, NPS 64.97, CSAT 94.92 (Yellow)**,
 the requirement's example; no other date range gives it, and B2B + B2C alone does not.
 
 - **First local run (2026-10-18):** 152 / 9 rows; 133 responses (50 exceeded, 76 met, 7 below), NPS-style +32.3; 15
