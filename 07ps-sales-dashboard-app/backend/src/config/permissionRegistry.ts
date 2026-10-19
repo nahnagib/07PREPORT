@@ -59,6 +59,10 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   // customers' free-text comments (personal free text), granted separately from the page: View shows it, Export downloads it.
   { key: 'nps_score', label: 'NPS Score', group: 'dashboard', actions: DASHBOARD },
   { key: 'nps_comments', label: 'NPS Score detractor list and comments', group: 'dashboard', actions: DASHBOARD },
+  // Detractor Follow-up (migration 0052; granted to ADMIN and EXCELLENCE_MANAGER): one case per detractor rating.
+  // Edit = change a case (status, reason, owner, dates, notes); the comments still need nps_comments.
+  { key: 'nps_followup', label: 'Detractor Follow-up', group: 'data_entry', actions: ['view', 'edit', 'export'] },
+  { key: 'nps_followup_reasons', label: 'Detractor Follow-up reasons', group: 'data_entry', actions: CRUD },
   // Price (Finance) department. Granted to the full-access roles by migration 0034 (not to Salesperson; an admin may
   // enable it, the API then scopes a salesperson to their own SalespersonKey).
   // key kept from the "Debt Report" days (role grants reference it); the label is what the Roles page shows
