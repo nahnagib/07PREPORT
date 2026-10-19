@@ -6,6 +6,13 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Process: NPS Score CSAT card, 2026-10-19)
+- The CSAT vertical bar is replaced by a card next to the NPS tachometer: the value in its band colour, a status line
+  ("Yellow · 0.48 pts below target 95" / "Green · on target"), "Satisfied x of y responders", and a full-width
+  horizontal bullet bar 0-100 with red / yellow / green zones, the value bar, the target tick with its label always
+  inside the card, and axis labels 0 / 85 / 95 / 100. Grey with "n = x" below the minimum responders; "—" with none.
+  Bands unchanged (config/npsThresholds.ts).
+
 ### Changed (Process: NPS Score refreshes once a night, 2026-10-19)
 - `process_nps` runs once a night as a full reload (ratings + WhatsApp messages): the last step of the 02:00
   `full_all`, under the same lock as sales and finance. Its own schedule (`ETL_SCHEDULE_PROCESS_NPS_CRON`, now

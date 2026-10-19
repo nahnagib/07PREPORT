@@ -5,7 +5,7 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
-import { CsatBar } from '../../../../components/nps/CsatBar';
+import { CsatCard } from '../../../../components/nps/CsatCard';
 import { NpsReach } from '../../../../components/nps/NpsReach';
 import { Waiting } from '../../../../components/nps/Waiting';
 import { useAuth } from '../../../../lib/AuthProvider';
@@ -142,11 +142,8 @@ function NpsScoreBody() {
                 </div>
               </ChartPanel>
               <ChartPanel title="CSAT" infoText={`Satisfied = (Passives + Promoters) / Responders. Red below ${thresholds.csat.yellowFrom}, yellow from ${thresholds.csat.yellowFrom}, green from ${thresholds.csat.greenFrom}; target ${thresholds.csat.target}.`}>
-                <div className="ps-nps-gauge">
-                  <CsatBar value={totals.csat} band={totals.csatBand} scale={thresholds.csat} muted={totals.belowMinimum} />
-                  <div className="ps-nps-sub">Satisfied = (Passives + Promoters) / Responders</div>
-                  {smallSample(totals) && <div className="ps-nps-sub">{smallSample(totals)}</div>}
-                </div>
+                <CsatCard value={totals.csat} band={totals.csatBand} scale={thresholds.csat} belowMinimum={totals.belowMinimum}
+                  satisfied={totals.promoters + totals.passives} responders={totals.responders} />
               </ChartPanel>
             </section>
 

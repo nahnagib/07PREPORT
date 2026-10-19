@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { NpsBandScale, NpsCounts } from '../api';
 import { NAV_ITEMS, departmentReports, pageKeyForPath } from '../navItems';
-import { GROUPS, barRatio, fmt2, gaugeValue, npsBreakdown, pct, periodLabel, smallSample, trendPoints } from '../nps/view';
+import { GROUPS, barRatio, csatStatus, fmt2, gaugeValue, npsBreakdown, pct, periodLabel, smallSample, trendPoints } from '../nps/view';
 
 const NPS: NpsBandScale = { yellowFrom: 50, greenFrom: 90, target: 90, min: 0, max: 100 };
 const CSAT: NpsBandScale = { yellowFrom: 85, greenFrom: 95, target: 95, min: 0, max: 100 };
@@ -60,5 +60,23 @@ describe('NPS Score view helpers', () => {
     expect(departmentReports('process', () => true).map((i) => i.pageKey)).toEqual(['kaizen_board', 'nps_score']);
     expect(departmentReports('process', (k) => k !== 'nps_score').map((i) => i.pageKey)).toEqual(['kaizen_board']);
     expect(pageKeyForPath('/process/nps-score')).toBe('nps_score');
+  });
+});
+
+describe('csatStatus (bands from config/npsThresholds.ts: red < 85 <= yellow < 95 <= green, target 95)', () => {
+  it.each([
+    [84.99, 'red', 'Red · 10.01 pts below target 95'],
+    [85, 'yellow', 'Yellow · 10.00 pts below target 95'],
+    [94.52, 'yellow', 'Yellow · 0.48 pts below target 95'],
+    [94.99, 'yellow', 'Yellow · 0.01 pts below target 95'],
+    [94.999, 'yellow', 'Yellow · 0.01 pts below target 95'], // shows 95.00% but is below: never "0.00 pts"
+    [95, 'green', 'Green · on target'],
+    [100, 'green', 'Green · on target'],
+  ] as const)('%s -> %s', (value, band, text) => {
+    expect(csatStatus(value, band, 95)).toBe(text);
+  });
+
+  it('no value, no line', () => {
+    expect(csatStatus(null, null, 95)).toBeNull();
   });
 });

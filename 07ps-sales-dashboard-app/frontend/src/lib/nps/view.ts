@@ -64,7 +64,21 @@ export function gaugeValue(nps: number | null, scale: NpsBandScale): number {
   return Math.max(scale.min, Math.min(scale.max, nps));
 }
 
-/** Position (0 = bottom, 1 = top) of a value on a min..max vertical bar. */
+const BAND_NAME: Record<NpsBand, string> = { red: 'Red', yellow: 'Yellow', green: 'Green' };
+
+/**
+ * The CSAT card's status line: "Yellow · 0.48 pts below target 95", or "Green · on target" from the target up. The band
+ * comes from the API (config/npsThresholds.ts); the gap is measured on the value as shown (2 decimals), and a value that
+ * rounds up to the target but is still below it reads "0.01 pts below", never "0.00". No value: null.
+ */
+export function csatStatus(value: number | null, band: NpsBand | null, target: number): string | null {
+  if (value === null || band === null) return null;
+  if (value >= target) return `${BAND_NAME[band]} · on target`;
+  const gap = Math.max(0.01, Math.round((target - value) * 100) / 100);
+  return `${BAND_NAME[band]} · ${gap.toFixed(2)} pts below target ${target}`;
+}
+
+/** Position (0 = start, 1 = end) of a value on a min..max bar. */
 export function barRatio(value: number, scale: NpsBandScale): number {
   const span = scale.max - scale.min;
   return span > 0 ? Math.max(0, Math.min(1, (value - scale.min) / span)) : 0;
