@@ -2,7 +2,7 @@ import { NextFunction, Request, Response, Router } from 'express';
 import { Job as BullJob } from 'bullmq';
 import { requireAuth } from '../../middleware/auth';
 import { requireAdminRole, requirePasswordChangeCleared } from '../../middleware/permission';
-import { getEtlConfig } from '../../etl/config/etlConfig';
+import { getEtlConfig, npsRefresh } from '../../etl/config/etlConfig';
 import { computeNextRunTime } from '../../etl/scheduler/nextRunTime';
 import { EtlAlreadyRunningError, EtlJobData, enqueuePipelineRun, getEtlQueue, hasActiveWorker } from '../../etl/queue/etlQueue';
 import { isQueueReachable } from '../../etl/queue/queueHealth';
@@ -40,7 +40,8 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       : null;
     const nextFull = config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null;
     const nextFinance = config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null;
-    const nextNps = config.schedule.processNpsEnabled ? computeNextRunTime(config.schedule.processNpsCron, config.schedule.timezone) : null;
+    const npsPlan = npsRefresh(config.schedule);
+    const nextNps = npsPlan.cron ? computeNextRunTime(npsPlan.cron, config.schedule.timezone) : null;
 
     // Checked up front so the UI can tell "queue is genuinely unreachable" apart from "a run is
     // genuinely active" -- those used to be indistinguishable (any queued/running row read as
@@ -167,11 +168,16 @@ adminEtlControlRouter.get('/scheduler-config', async (_req, res, next) => {
         enabled: config.schedule.financeEnabled,
         nextRun: config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null,
       },
-      nps: {
-        cron: config.schedule.processNpsCron,
-        enabled: config.schedule.processNpsEnabled,
-        nextRun: config.schedule.processNpsEnabled ? computeNextRunTime(config.schedule.processNpsCron, config.schedule.timezone) : null,
-      },
+      // NPS runs once a night: inside full_all when the full schedule is on, else on its own schedule (npsRefresh)
+      nps: (() => {
+        const plan = npsRefresh(config.schedule);
+        return {
+          cron: plan.cron ?? config.schedule.processNpsCron,
+          enabled: plan.via !== 'off',
+          via: plan.via,
+          nextRun: plan.cron ? computeNextRunTime(plan.cron, config.schedule.timezone) : null,
+        };
+      })(),
       timezone: config.schedule.timezone,
     });
   } catch (err) {

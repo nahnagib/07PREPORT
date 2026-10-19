@@ -242,7 +242,7 @@ const MANUAL_MODES: {
     mode: 'nps',
     label: 'NPS Score',
     description:
-      "Job process_nps: reads the NPS developer's ratings database (SSH tunnel) and rebuilds the NPS Score page, with the reference data first when it is older than 3 hours. Also the last step of the 02:00 Full Refresh. Needs NPS_ENABLED=true in the ETL.",
+      "Job process_nps: reads the NPS developer's ratings database (SSH tunnel) and rebuilds the NPS Score page from a full reload of the ratings and the WhatsApp messages, with the reference data first when it is older than 3 hours. Scheduled once a night as the last step of the 02:00 Full Refresh; this button runs it now. Needs NPS_ENABLED=true in the ETL.",
     confirmMessage: 'This process takes about a minute and rebuilds the NPS Score data. Do you want to continue?',
   },
 ];
@@ -762,6 +762,8 @@ function EtlControlBody() {
                 <p style={{ margin: '4px 0 0', color: 'var(--ps-color-muted-text)' }}>
                   {schedulerConfig.nps.enabled ? (
                     <>
+                      {schedulerConfig.nps.via === 'full_all' ? 'Last step of the nightly Full Refresh (full reload), once a night' : 'Once a night, full reload'}
+                      <br />
                       Cron: <code>{schedulerConfig.nps.cron}</code>
                       <br />
                       Next run: {formatDateTime(schedulerConfig.nps.nextRun)}

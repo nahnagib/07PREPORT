@@ -1311,6 +1311,8 @@ export interface EtlScheduleInfo {
   cron: string;
   enabled: boolean;
   nextRun: string | null;
+  /** NPS only: inside the nightly full_all, on its own schedule (full schedule off), or off. Runs once a night. */
+  via?: 'full_all' | 'own' | 'off';
 }
 
 export interface EtlSchedulerConfigResponse {

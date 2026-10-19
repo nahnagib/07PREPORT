@@ -108,7 +108,7 @@ function NpsScoreBody() {
       />
 
       <div className="ps-nps-freshness" data-testid="nps-freshness">
-        <span>NPS refresh <strong>{formatTimestamp(freshness?.lastSuccessUtc ?? null)}</strong></span>
+        <span title="The last successful NPS Score load (once a night, full reload), Tripoli time">Data refreshed: <strong>{formatTimestamp(freshness?.lastSuccessUtc ?? null)}</strong></span>
         <span>Latest rating <strong>{meta.data?.lastRatingAt ? `${meta.data.lastRatingAt.slice(0, 16)} (Tripoli)` : '—'}</strong></span>
         <span>Ratings since <strong>{meta.data?.firstRatingDate ? formatDate(meta.data.firstRatingDate) : '—'}</strong></span>
         {freshness?.lastFailureUtc ? <span style={{ color: 'var(--ps-color-alert)' }}>Last NPS run failed at {formatTimestamp(freshness.lastFailureUtc)}</span> : null}

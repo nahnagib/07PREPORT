@@ -9,7 +9,7 @@ vi.mock('node-cron', () => ({ default: cron }));
 vi.mock('../../queue/etlQueue', () => ({ enqueuePipelineRun: enqueue, EtlAlreadyRunningError: class extends Error {} }));
 vi.mock('../../services/etlLogger', () => ({ etlLogger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 
-import { getEtlConfig } from '../../config/etlConfig';
+import { getEtlConfig, npsRefresh } from '../../config/etlConfig';
 import { computeNextRunTime } from '../nextRunTime';
 import { registerEtlSchedules } from '../registerSchedules';
 
@@ -72,11 +72,28 @@ describe('ETL schedules', () => {
     expect((await registered()).map((s) => s.job)).toEqual(['main', 'full_all']);
   });
 
-  it('NPS Score (process_nps alone) is off unless enabled; then every 3 hours at :30 in Africa/Tripoli', async () => {
-    expect((await registered()).map((s) => s.job)).not.toContain('process_nps');
-    vi.clearAllMocks();
+  it('NPS Score runs once a night: inside the 02:00 full_all, never also on its own schedule', async () => {
     process.env.ETL_SCHEDULE_PROCESS_NPS_ENABLED = 'true';
-    expect((await registered()).at(-1)).toEqual({ cron: '30 */3 * * *', timezone: 'Africa/Tripoli', job: 'process_nps', mode: 'nps' });
-    expect(getEtlConfig().schedule.processNpsCron).toBe('30 */3 * * *');
+    const jobs = (await registered()).map((s) => s.job);
+    expect(jobs).not.toContain('process_nps');
+    expect(jobs.filter((j) => j === 'full_all')).toHaveLength(1);
+    expect(npsRefresh(getEtlConfig().schedule)).toEqual({ via: 'full_all', cron: '0 2 * * *' });
+  });
+
+  it('with the full schedule off, process_nps alone at 02:00 Africa/Tripoli as a full reload', async () => {
+    process.env.ETL_SCHEDULE_FULL_ENABLED = 'false';
+    process.env.ETL_SCHEDULE_PROCESS_NPS_ENABLED = 'true';
+    const all = await registered();
+    expect(all.at(-1)).toEqual({ cron: '0 2 * * *', timezone: 'Africa/Tripoli', job: 'process_nps', mode: 'nps' });
+    expect((enqueue.mock.calls.at(-1) as unknown as [{ loadMode: string }])[0].loadMode).toBe('full');
+    expect(all.map((s) => s.job)).not.toContain('full_all');
+    expect(npsRefresh(getEtlConfig().schedule)).toEqual({ via: 'own', cron: '0 2 * * *' });
+  });
+
+  it('NPS is off when its own schedule is off and there is no nightly full_all', async () => {
+    process.env.ETL_SCHEDULE_FULL_ENABLED = 'false';
+    expect((await registered()).map((s) => s.job)).not.toContain('process_nps');
+    expect(npsRefresh(getEtlConfig().schedule)).toEqual({ via: 'off', cron: null });
+    expect(getEtlConfig().schedule.processNpsCron).toBe('0 2 * * *');
   });
 });

@@ -6,6 +6,13 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Process: NPS Score refreshes once a night, 2026-10-19)
+- `process_nps` runs once a night as a full reload (ratings + WhatsApp messages): the last step of the 02:00
+  `full_all`, under the same lock as sales and finance. Its own schedule (`ETL_SCHEDULE_PROCESS_NPS_CRON`, now
+  `0 2 * * *`) is registered only when the full schedule is off, so it never runs twice. The Control Center shows which
+  applies; the "NPS Score" run-now button stays.
+- The page shows "Data refreshed: <last successful process_nps run, Tripoli time>".
+
 ### Added (Process: NPS Score WhatsApp reach goes live, 2026-10-19; runbook docs/nps-etl.md section 8)
 - **Source profiled** (`profile_nps_source.py --reach-only`): `whatsapp_outbound_messages`, `create_date` in UTC,
   `updated_at` moves with the state, only failed messages before 2026-10-03.

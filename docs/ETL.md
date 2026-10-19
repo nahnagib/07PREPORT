@@ -37,7 +37,7 @@ transforms, which the sales job still reuses. Wherever they disagree with this s
 | `sales_incremental` | sales | every `fact_sales_*` / `dim_sales_*` mart, swapped in at once after every orphan check passes | inside `main` |
 | `sales_full` | sales | the same marts, as an explicit full run | inside `full_all` |
 | `finance_receivables` | finance | receivable snapshot of today (`fact_finance_receivable_snapshot`, `dim_finance_*`); runbook `docs/receivables-etl.md` | inside `full_all` (02:00); alone `ETL_SCHEDULE_FINANCE_CRON` (15:00) / "Receivables Snapshot" |
-| `process_nps` | process | NPS Score: the NPS developer's MySQL (SSH tunnel) → `raw_nps_*` → `fact_process_nps_response` / `_comment`; runbook `docs/nps-etl.md` | inside `full_all` (last, optional); alone `ETL_SCHEDULE_PROCESS_NPS_CRON` (every 3 h at :30, off unless enabled) / "NPS Score"; not run while `NPS_ENABLED` is not true |
+| `process_nps` | process | NPS Score: the NPS developer's MySQL (SSH tunnel) → `raw_nps_*` → `fact_process_nps_response` / `_comment`; runbook `docs/nps-etl.md` | inside `full_all` (last, optional); once a night, full reload: inside the 02:00 `full_all`; alone at `ETL_SCHEDULE_PROCESS_NPS_CRON` (02:00) ONLY when the full schedule is off / "NPS Score" run-now; not run while `NPS_ENABLED` is not true |
 | `platform_selfcheck` | — | diagnostics, never logged as a refresh | — |
 
 **Pipelines and schedules** (all crons in `ETL_SCHEDULE_TIMEZONE`, else `APP_TIMEZONE`, Africa/Tripoli): every 3 h
@@ -400,7 +400,7 @@ to Odoo as the `write_date`/`create_date` lower bound; the SQL window cutoff is 
 |---|---|---|---|
 | Scheduled incremental | cron `ETL_SCHEDULE_INCREMENTAL_CRON` (default `50 8,11,14,17,20 * * *`), `ETL_SCHEDULE_INCREMENTAL_ENABLED=true` | `scheduled` | `scheduled-incremental` |
 | Scheduled full | cron `ETL_SCHEDULE_FULL_CRON` (default `0 2 * * *`), `ETL_SCHEDULE_FULL_ENABLED=true` | `scheduled` | `scheduled-full` |
-| Scheduled NPS Score | cron `ETL_SCHEDULE_PROCESS_NPS_CRON` (default `30 */3 * * *`), `ETL_SCHEDULE_PROCESS_NPS_ENABLED=true` (default false) | `scheduled` | `scheduled-nps` |
+| Scheduled NPS Score | cron `ETL_SCHEDULE_PROCESS_NPS_CRON` (default `0 2 * * *`), `ETL_SCHEDULE_PROCESS_NPS_ENABLED=true` (default false); registered only when `ETL_SCHEDULE_FULL_ENABLED=false` (else NPS is the last step of `full_all`) | `scheduled` | `scheduled-nps` |
 | Admin UI | Control Center buttons (Admin role) | `manual` | `manual-incremental`, `manual-full`, `manual-sql`, `manual-excel` |
 | CLI (queued) | `docker compose exec backend npm run etl:run` (`-- --full`) | `development` | label of the command |
 | CLI (`--sync`) or `python -m sales_pipeline.main` | inline; not in `etl_job_runs` | — | `cli` |
@@ -483,7 +483,7 @@ BullMQ retries a failed run twice (30 s, 60 s exponential); a *cancelled* run is
 | `ETL_SCHEDULE_INCREMENTAL_CRON` / `_ENABLED` | Incremental schedule | `50 8,11,14,17,20 * * *` / `true` | no | |
 | `ETL_SCHEDULE_FULL_CRON` / `_ENABLED` | Full schedule | `0 2 * * *` / `true` | no | |
 | `ETL_SCHEDULE_FINANCE_CRON` / `_ENABLED` | Receivables snapshot alone | `0 15 * * *` / `true` | no | |
-| `ETL_SCHEDULE_PROCESS_NPS_CRON` / `_ENABLED` | NPS Score alone; enable together with the ETL's `NPS_ENABLED` | `30 */3 * * *` / `false` | no | |
+| `ETL_SCHEDULE_PROCESS_NPS_CRON` / `_ENABLED` | NPS Score alone, once a night; used only when the full schedule is off (else `full_all` runs it); enable together with the ETL's `NPS_ENABLED` | `0 2 * * *` / `false` | no | |
 | `ETL_SCHEDULE_TIMEZONE` | Zone for both crons | server zone (compose: `APP_TIMEZONE`) | no | `Africa/Tripoli` |
 | `REDIS_HOST`, `REDIS_PORT` | BullMQ Redis | `localhost`, `6379` (compose: `redis`) | **yes** | |
 | **`APP_TIMEZONE`** | Business/display zone; zone of the naive `Fact_*` datetimes | `Africa/Tripoli` | no (set it) | `Africa/Tripoli` |

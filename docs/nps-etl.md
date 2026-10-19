@@ -97,7 +97,12 @@ answers to Detractors, Passives and Promoters respectively. The source has no nu
 **Schedule (D7).**
 - The job runs inside the nightly `full_all`, as its last step and optional: its failure leaves the run `partial` and
   never touches sales or finance.
-- It also runs alone every 3 hours at :30 (`ETL_SCHEDULE_PROCESS_NPS_CRON`).
+- **Once a night, full reload (decision 2026-10-19).** The nightly `full_all` starts at 02:00 Africa/Tripoli
+  (`ETL_SCHEDULE_FULL_CRON`) and ends with `process_nps`, which reloads both sources in full (ratings and
+  `whatsapp_outbound_messages`). It runs under the same ETL lock after sales and finance, so it never competes with
+  them. Its own schedule (`ETL_SCHEDULE_PROCESS_NPS_CRON`, default `0 2 * * *`) is registered **only when the full
+  schedule is off**, so it never runs twice a night. The ETL Control Center "NPS Score" button runs it on demand.
+- The page shows **Data refreshed:** the last successful `process_nps` run (inside `full_all` or alone), Tripoli time.
 - There is no watermark: the developer's script reloads the tables as a whole, so `updated_at` is the same on every row.
 
 **Exclusions (D8).** None: the finance Backoffice / Inter Company exclusions do not apply. The step 2 page should use
@@ -172,8 +177,9 @@ python -m etl_platform.run full_all             # nightly: ... -> sales_full -> 
 ```
 
 - **Control Center:** ETL Control Center → **NPS Score** (`POST /admin/etl/start/nps`).
-- **Backend schedule:** `ETL_SCHEDULE_PROCESS_NPS_CRON` (default `30 */3 * * *`). It is off unless
-  `ETL_SCHEDULE_PROCESS_NPS_ENABLED=true`; set it together with `NPS_ENABLED=true` in the ETL.
+- **Backend schedule:** inside the 02:00 `full_all`. `ETL_SCHEDULE_PROCESS_NPS_CRON` (default `0 2 * * *`) applies
+  only when `ETL_SCHEDULE_FULL_ENABLED=false`, and is off unless `ETL_SCHEDULE_PROCESS_NPS_ENABLED=true`; set it together
+  with `NPS_ENABLED=true` in the ETL.
 - **Migrations:** 0046 (ratings), 0047 (group labels), 0048 (permissions), 0049 (message facts/views),
   0050 (last successful message snapshot). Each has a matching script under `data/warehouse/down/`.
 

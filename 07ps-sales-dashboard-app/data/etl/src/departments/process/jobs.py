@@ -3,9 +3,10 @@
   process_nps   NPS Score: the NPS developer's MySQL database (through an SSH tunnel; etl_platform/sources/mysql_ssh.py,
                 credential profile NPS) -> raw_nps_* -> fact_process_nps_response / fact_process_nps_comment -> the
                 v_process_nps_* views (migration 0046) the NPS Score page reads. Depends on core_dims (reused when it
-                succeeded within ETL_CORE_DIMS_FRESH_MINUTES). Runs inside the nightly full_all (an optional step: its
-                failure leaves the run 'partial' and never touches sales or finance) and on its own every 3 hours
-                (ETL_SCHEDULE_PROCESS_NPS_CRON). NPS_ENABLED=false switches it off in an environment without the source
+                succeeded within ETL_CORE_DIMS_FRESH_MINUTES). Runs ONCE a night as a full reload: the last, optional
+                step of the 02:00 full_all (its failure leaves the run 'partial' and never touches sales or finance);
+                alone at ETL_SCHEDULE_PROCESS_NPS_CRON only when the full schedule is off; on demand from the ETL
+                Control Center. NPS_ENABLED=false switches it off in an environment without the source
                 (full_all records it as skipped; run alone, it fails saying so).
 
 Load (docs/nps-etl.md):
@@ -364,5 +365,5 @@ REGISTRY.task(TaskSpec("extract_nps", extract_nps, datasets=(RAW_FULL, RAW_LOW, 
 REGISTRY.task(TaskSpec("load_nps", load_nps, depends_on=("extract_nps",), datasets=(LEVELS, FACT, COMMENTS, FAILURE_GROUPS, MSG_FACT)))
 REGISTRY.job(JobSpec("process_nps", DEPARTMENT, tasks=("extract_nps", "load_nps"), depends_on_jobs=("core_dims",), mode="full",
                      disabled_reason=disabled_reason,
-                     description="NPS Score: the NPS developer's MySQL (SSH tunnel) -> raw_nps_* -> NPS facts; nightly inside "
-                                 "full_all after sales, every 3 h alone."))
+                     description="NPS Score: the NPS developer's MySQL (SSH tunnel) -> raw_nps_* -> NPS facts; once a night "
+                                 "(full reload) as the last step of full_all; on demand alone."))

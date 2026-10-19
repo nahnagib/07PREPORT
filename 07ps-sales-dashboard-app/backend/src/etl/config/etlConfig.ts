@@ -26,8 +26,10 @@ export interface EtlConfig {
      * (full_all) takes one too; the 3-hourly incremental (main) does not. */
     financeCron: string;
     financeEnabled: boolean;
-    /** NPS Score refresh (job process_nps alone; also the last step of full_all): every 3 hours at :30 by default.
-     * Off unless ETL_SCHEDULE_PROCESS_NPS_ENABLED=true -- set it together with the ETL's NPS_ENABLED. */
+    /** NPS Score refresh, once a night as a full reload (decision 2026-10-19): 02:00 by default. The nightly full_all
+     * already ends with process_nps, so this own schedule is registered ONLY when the full schedule is off (see
+     * npsRefresh) -- process_nps never runs twice a night. Off unless ETL_SCHEDULE_PROCESS_NPS_ENABLED=true -- set it
+     * together with the ETL's NPS_ENABLED. */
     processNpsCron: string;
     processNpsEnabled: boolean;
     /** IANA zone every cron expression is read in: ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE (default
@@ -73,7 +75,7 @@ export function getEtlConfig(): EtlConfig {
       fullEnabled: bool('ETL_SCHEDULE_FULL_ENABLED', true),
       financeCron: process.env.ETL_SCHEDULE_FINANCE_CRON || '0 15 * * *',
       financeEnabled: bool('ETL_SCHEDULE_FINANCE_ENABLED', true),
-      processNpsCron: process.env.ETL_SCHEDULE_PROCESS_NPS_CRON || '30 */3 * * *',
+      processNpsCron: process.env.ETL_SCHEDULE_PROCESS_NPS_CRON || '0 2 * * *',
       processNpsEnabled: bool('ETL_SCHEDULE_PROCESS_NPS_ENABLED', false),
       timezone: process.env.ETL_SCHEDULE_TIMEZONE?.trim() || getAppTimezone(),
     },
@@ -87,4 +89,18 @@ export function getEtlConfig(): EtlConfig {
       pollIntervalMs: Number(process.env.ETL_API_POLL_INTERVAL_MS ?? 1000),
     },
   };
+}
+
+/**
+ * How the nightly NPS Score refresh (process_nps, a full reload) runs -- exactly once a night:
+ *   full_all  the full schedule is on: process_nps is the last step of the nightly full_all (after sales, under the
+ *             same ETL lock, so it never competes with sales or finance); its own schedule is not registered
+ *   own       the full schedule is off and ETL_SCHEDULE_PROCESS_NPS_ENABLED=true: process_nps alone at processNpsCron
+ *   off       neither
+ * The ETL Control Center "NPS Score" run-now button works in every case.
+ */
+export function npsRefresh(schedule: EtlConfig['schedule']): { via: 'full_all' | 'own' | 'off'; cron: string | null } {
+  if (schedule.fullEnabled) return { via: 'full_all', cron: schedule.fullCron };
+  if (schedule.processNpsEnabled) return { via: 'own', cron: schedule.processNpsCron };
+  return { via: 'off', cron: null };
 }
