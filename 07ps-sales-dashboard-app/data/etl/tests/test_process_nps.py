@@ -131,6 +131,21 @@ def test_company_comes_from_the_order_then_the_delivery_then_the_company_name_ne
     assert built.fallbacks["fact_process_nps_response.CompanyKey"] == [4]
 
 
+def test_a_matched_document_without_a_company_falls_through_to_the_next_step():
+    # live 2026-10-19: ratings on supplier receipts (WH/IN) whose delivery row has CompanyKey -1 got company -1
+    lookups = tf.Lookups(orders={"P00997": [(5001, -1, -1)]}, deliveries={"WH/IN/05581": [(0, -1, -1)], "TIKA/OUT/7": [(0, 3, 102)]})
+    rows = pd.DataFrame([
+        _row(1, MET, order="P00997", code="WH/IN/05581", partner=None, sp=None, team=None, company="MAJAAL"),
+        _row(2, MET, order="P00997", code="TIKA/OUT/7", partner=102, company="MAJAAL"),
+        _row(3, MET, order=None, code="WH/IN/05581", partner=None, sp=None, team=None, company="OTHER"),
+    ])
+    built = tf.build(rows, pd.DataFrame(columns=["id", "team_branch"]), _maps(), lookups, "Africa/Tripoli")
+    r = built.responses.set_index("response_id")
+    assert r["CompanyKey"].to_dict() == {1: 1, 2: 3, 3: -1}
+    assert r["company_source"].to_dict() == {1: "company_name", 2: "delivery", 3: "none"}
+    assert r.loc[1, "SalesOrderKey"] == 5001  # the order itself still links
+
+
 def test_an_order_name_used_by_two_companies_is_narrowed_by_the_customer_then_the_company():
     built = _build([_row(1, MET, order="S2", partner=102), _row(2, MET, order="S2", partner=None, company="MAJAAL"),
                     _row(3, MET, order="S9", partner=None, company="TIKA"), _row(4, MET, order="S404")])

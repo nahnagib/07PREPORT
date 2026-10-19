@@ -15,6 +15,7 @@ Rules (docs/nps-etl.md; decisions of 2026-10-18):
   (``delivery_code`` = picking name), else ``company_name`` MAJAAL / TIKA mapped to its Odoo company
   (COMPANY_BY_SOURCE_NAME), else -1 with a warning. Order and picking names repeat across companies, so a name with
   several candidates is narrowed by the customer, then by the company name; still not exactly one -> no match.
+  A matched document whose company is -1 (e.g. a supplier receipt WH/IN) never decides: the next step does.
 * SalesOrderKey: the matched order (Odoo sale.order id), -1 when there is none.
 """
 
@@ -121,11 +122,13 @@ def build(full: pd.DataFrame, low: pd.DataFrame, maps: KeyMaps, lookups: Lookups
         order = pick(lookups.orders.get(order_ref, ()), customers[i], hint) if order_ref else None
         if order_ref and order is None:
             (order_ambiguous if lookups.orders.get(order_ref) else order_unmatched).append(rid)
-        if order is not None:
+        # a matched document without a company (e.g. a supplier receipt WH/IN with CompanyKey -1) never decides the
+        # company: the next step does (decision 2026-10-19)
+        if order is not None and order[1] != UNKNOWN:
             company, src = order[1], "order"
         else:
             delivery = pick(lookups.deliveries.get(code, ()), customers[i], hint) if code else None
-            if delivery is not None:
+            if delivery is not None and delivery[1] != UNKNOWN:
                 company, src = delivery[1], "delivery"
             elif hint != UNKNOWN:
                 company, src = hint, "company_name"
