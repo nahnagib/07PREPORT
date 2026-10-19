@@ -33,7 +33,7 @@ export async function buildFollowupExport(pool: Pool, q: FollowupQuery, f: Filte
     sheet.addRow([
       c.caseId, c.ratedAt, STATUS_LABEL[c.status], c.company, c.customer, c.orderRef, c.deliveryCode, c.teamBranch ?? c.salesTeam,
       c.salesperson, c.reasonEn, c.reasonAr, c.ownerName, c.contactedAt, c.solvedAt, c.hoursOpen, c.rootCause, c.actionTaken, c.notes,
-      c.sourceChanged ? `${c.sourceChangeReason ?? 'yes'} (${c.sourceChangedAt ?? ''} UTC)` : '',
+      c.sourceChanged ? `${c.sourceChangeReason ?? 'yes'} (${c.sourceChangedAt ?? ''})` : '',
       ...(withComments ? [c.comment] : []),
     ]);
   }

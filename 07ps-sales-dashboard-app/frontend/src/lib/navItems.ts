@@ -1,4 +1,4 @@
-import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store, ClipboardList, HandCoins, Smile } from 'lucide-react';
+import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store, ClipboardList, HandCoins, Smile, UserCheck } from 'lucide-react';
 
 /** Which department hub (PromotionHubPage/ProductHubPage via DepartmentHubPage) lists a given
  * report card, and which sidebar tab it's grouped under. Normally matches the `href`'s route
@@ -46,6 +46,8 @@ export const NAV_ITEMS = [
   { label: 'Kaizen Board', icon: ClipboardList, href: '/process/kaizen-board', pageKey: 'kaizen_board', department: 'process' },
   // Process department: customers' delivery ratings (ETL job process_nps, docs/nps-etl.md).
   { label: 'NPS Score', icon: Smile, href: '/process/nps-score', pageKey: 'nps_score', department: 'process' },
+  // Process department: one case per detractor rating, followed up by the Excellence Manager (migration 0052).
+  { label: 'Detractor Follow-up', icon: UserCheck, href: '/process/nps-followup', pageKey: 'nps_followup', department: 'process' },
   // Price (Finance) department: open customer receivables from the receivables snapshot (finance ETL, 02:00 + 15:00).
   // Was "Debt Report" at /price/debt-report (that URL redirects here, next.config.mjs); the permission key stays debt_report.
   { label: 'Receivables and Collections', icon: HandCoins, href: '/price/receivables-collections', pageKey: 'debt_report', department: 'price' },
@@ -73,7 +75,10 @@ export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string
 
 /** Routes whose permission page differs from the nav entry they sit under: the Kaizen card entry
  * screens belong to kaizen_cards, not to the kaizen_board report they're nested in. */
-const ROUTE_PAGE_KEYS: { href: string; pageKey: string }[] = [{ href: '/process/kaizen-board/manage', pageKey: 'kaizen_cards' }];
+const ROUTE_PAGE_KEYS: { href: string; pageKey: string }[] = [
+  { href: '/process/kaizen-board/manage', pageKey: 'kaizen_cards' },
+  { href: '/process/nps-followup/reasons', pageKey: 'nps_followup_reasons' },
+];
 
 /** Admin tabs this user may open. */
 export function visibleAdminTabs(canView: (pageKey: string) => boolean, isAdmin: boolean) {

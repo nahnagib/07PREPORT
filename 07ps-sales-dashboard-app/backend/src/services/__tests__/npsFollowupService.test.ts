@@ -110,3 +110,12 @@ describe('filters', () => {
     expect(followupWhere({ search: '50%_' }, {}).params.slice(-4, -1)).toEqual(['%50\\%\\_%', '%50\\%\\_%', '%50\\%\\_%']);
   });
 });
+
+describe('change times', () => {
+  it('UTC columns are shown in Tripoli time', async () => {
+    const { utcToLocal } = await import('../npsFollowupService');
+    expect(utcToLocal('2026-10-19 22:30:00')).toBe('2026-10-20 00:30:00');
+    expect(utcToLocal(new Date('2026-10-19T08:00:00Z'))).toBe('2026-10-19 10:00:00');
+    expect(utcToLocal(null)).toBeNull();
+  });
+});

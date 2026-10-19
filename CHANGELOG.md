@@ -6,6 +6,19 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Added (Process: NPS Detractor Follow-up, 2026-10-19; docs/nps-followup.md)
+- **Cases:** one per detractor rating, created by `process_nps` after each nightly load (new detractors appear the next
+  morning). New from `NPS_FOLLOWUP_START` (ETL setting, the cut-over), Historical before it. Idempotent (unique
+  `response_id`); manual fields are never written by the ETL. A rating that leaves the source or stops being a
+  detractor flags the case ("source changed", audit row, `warn:nps_followup_source_changed`).
+- **Page** Process › Detractor Follow-up: Board (New → Contacted → In progress → Solved (30 days) → Cancelled; time open
+  green < 48 h / yellow 48 h-5 d / red > 5 d) and List (every case, Historical included), global + own filters kept in
+  the URL, Excel export, case details with the rating (read-only), the comment (nps_comments), the follow-up form and
+  its history. Edits carry a version: a stale save is refused (409).
+- **Reasons** (English + Arabic, 8 seeded), managed on the page's Reasons tab; a used reason can't be deleted.
+- **Permissions** `nps_followup` (View / Edit / Export) and `nps_followup_reasons` (CRUD), granted to Admin and the
+  Excellence Manager, who also gets View on `nps_score` and `nps_comments`. Migration 0052 (+ `down/`).
+
 ### Changed (Process: NPS Score CSAT card, 2026-10-19)
 - The CSAT vertical bar is replaced by a card next to the NPS tachometer: the value in its band colour, a status line
   ("Yellow · 0.48 pts below target 95" / "Green · on target"), "Satisfied x of y responders", and a full-width

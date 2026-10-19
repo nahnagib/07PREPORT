@@ -640,3 +640,53 @@ textarea.ps-kaizen-input { min-height: 84px; resize: vertical; }
   .ps-kaizen-charts, .ps-kaizen-form { grid-template-columns: minmax(0, 1fr); }
   .ps-kaizen-filters > .ps-kaizen-field { flex: 1 1 140px; }
 }
+
+/* NPS Detractor Follow-up (app/(departments)/process/nps-followup): the board's status columns, case cards, the case
+   dialog. Theme tokens only (light and dark). On a phone the columns scroll sideways, one column per screen width. */
+.ps-fu-tab { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; border: 1px solid var(--ps-color-border); background: var(--ps-color-surface); color: var(--ps-color-text); }
+.ps-fu-tab[data-active='true'] { background: var(--ps-color-accent); color: var(--ps-color-on-accent); border-color: var(--ps-color-accent); }
+.ps-fu-muted { color: var(--ps-color-muted-text); font-size: 12.5px; }
+.ps-fu-filters { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
+.ps-fu-filters > .ps-kaizen-field { flex: 0 1 170px; }
+.ps-fu-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding-bottom: 8px; }
+.ps-fu-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.ps-fu-board { display: grid; grid-template-columns: repeat(5, minmax(220px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
+.ps-fu-col { display: flex; flex-direction: column; min-width: 0; background: var(--ps-color-muted-bg); border: 1px solid var(--ps-color-border); border-radius: 10px; scroll-snap-align: start; }
+.ps-fu-col-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; font-weight: 700; font-size: 13.5px; border-top: 4px solid; border-radius: 10px 10px 0 0; }
+.ps-fu-count { min-width: 24px; padding: 1px 8px; border-radius: 999px; background: var(--ps-color-surface); border: 1px solid var(--ps-color-border); font-size: 12px; text-align: center; }
+.ps-fu-col-body { display: flex; flex-direction: column; gap: 8px; padding: 0 8px 10px; max-height: 70vh; overflow-y: auto; }
+.ps-fu-empty { text-align: center; padding: 12px 0; }
+.ps-fu-card { all: unset; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; padding: 10px 11px; border-radius: 8px; cursor: pointer; background: var(--ps-card-bg, var(--ps-color-surface)); border: 1px solid var(--ps-color-border); border-inline-start-width: 4px; color: var(--ps-color-text); font-size: 13px; }
+.ps-fu-card:hover, .ps-fu-card:focus-visible { border-color: var(--ps-color-accent); outline: none; }
+.ps-fu-card-top { display: flex; justify-content: space-between; gap: 8px; }
+.ps-fu-card-customer { font-weight: 600; overflow-wrap: anywhere; }
+.ps-fu-card-meta { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.ps-fu-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 2px; }
+.ps-fu-time { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; }
+.ps-fu-flag { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--ps-color-alert); }
+.ps-fu-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.45); display: flex; justify-content: flex-end; }
+.ps-fu-dialog { width: min(720px, 100%); height: 100%; overflow-y: auto; background: var(--ps-card-bg, var(--ps-color-surface)); border-inline-start: 1px solid var(--ps-color-border); padding: 18px 20px 28px; display: flex; flex-direction: column; gap: 16px; color: var(--ps-color-text); }
+.ps-fu-dialog-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.ps-fu-icon-btn { all: unset; cursor: pointer; padding: 4px; border-radius: 6px; color: var(--ps-color-muted-text); }
+.ps-fu-icon-btn:hover { color: var(--ps-color-text); background: var(--ps-color-muted-bg); }
+.ps-fu-h3 { margin: 0 0 10px; font-size: 14px; }
+.ps-fu-label { font-size: 12px; color: var(--ps-color-muted-text); margin-bottom: 3px; }
+.ps-fu-value { font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; text-align: start; }
+.ps-fu-banner { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; font-size: 13px; background: var(--ps-color-alert-bg); color: var(--ps-color-text); border: 1px solid var(--ps-color-alert); margin-bottom: 10px; }
+.ps-fu-error { margin: 10px 0 0; font-size: 13px; color: var(--ps-color-alert); }
+.ps-fu-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.ps-fu-history li { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--ps-color-border); }
+.ps-fu-table-scroll { overflow-x: auto; border: 1px solid var(--ps-color-border); border-radius: 8px; }
+.ps-fu-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ps-fu-table th, .ps-fu-table td { padding: 9px 10px; text-align: start; border-bottom: 1px solid var(--ps-color-border); white-space: nowrap; }
+.ps-fu-table th { font-size: 12px; color: var(--ps-color-muted-text); background: var(--ps-color-muted-bg); }
+.ps-fu-table tbody tr { cursor: pointer; }
+.ps-fu-table tbody tr:hover td { background: var(--ps-color-muted-bg); }
+@media (max-width: 1023px) {
+  .ps-fu-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 767px) {
+  .ps-fu-board { grid-template-columns: repeat(5, 82vw); }
+  .ps-fu-filters > .ps-kaizen-field { flex: 1 1 140px; }
+  .ps-fu-dialog { padding: 14px 16px 24px; }
+}

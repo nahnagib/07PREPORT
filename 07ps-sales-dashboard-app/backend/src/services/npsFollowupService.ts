@@ -14,7 +14,8 @@ import { buildWhereClause, type Filters } from '../measures/filters';
  * (buildWhereClause on alias f). A case whose rating left the source has no view row: it is shown only while no
  * global filter or role scope applies (the filter can't be checked, so it is never shown to a scoped user).
  *
- * Times: rated_at_local, contacted_at, solved_at are Africa/Tripoli wall-clock times ("yyyy-mm-dd hh:mm:ss").
+ * Times: rated_at_local, contacted_at, solved_at are Africa/Tripoli wall-clock times ("yyyy-mm-dd hh:mm:ss"); the UTC
+ * columns (updated_at, source_changed_at, the history's changed_at) are sent converted to Tripoli time too.
  * Time open = rating -> solved (Solved) or -> now (open statuses); none for Cancelled / Historical.
  *   < 48 h green, 48 h .. 5 days yellow, > 5 days red.
  * Every edit carries the version it was made on; an older version is refused (FollowupConflictError, 409). Each
@@ -150,6 +151,12 @@ function asWall(v: unknown): string | null {
   return String(v).slice(0, 19).replace('T', ' ');
 }
 
+/** A UTC DATETIME (updated_at, the history, source_changed_at) as Tripoli wall-clock time. */
+export function utcToLocal(v: unknown): string | null {
+  const s = asWall(v);
+  return s ? DateTime.fromSQL(s, { zone: 'utc' }).setZone(getAppTimezone()).toFormat('yyyy-MM-dd HH:mm:ss') : null;
+}
+
 // -- query parsing ---------------------------------------------------------------------------------------------------------
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -273,10 +280,10 @@ function toCase(r: Record<string, unknown>, now: string): FollowupCase {
     actionTaken: (r.action_taken as string) ?? null,
     notes: (r.notes as string) ?? null,
     sourceChanged: Boolean(Number(r.source_changed)),
-    sourceChangedAt: asWall(r.source_changed_at),
+    sourceChangedAt: utcToLocal(r.source_changed_at),
     sourceChangeReason: (r.source_change_reason as string) ?? null,
     version: Number(r.version),
-    updatedAt: asWall(r.updated_at),
+    updatedAt: utcToLocal(r.updated_at),
     updatedByName: (r.updated_by_name as string) ?? null,
     company: (r.company as string) ?? null,
     customer: (r.customer as string) ?? null,
@@ -385,7 +392,7 @@ export async function fetchCase(pool: Pool, caseId: number, f: Filters, canSeeCo
     ...c,
     comment,
     history: (hist as Record<string, unknown>[]).map((h) => ({
-      changedAt: asWall(h.changed_at) ?? '',
+      changedAt: utcToLocal(h.changed_at) ?? '',
       changedBy: h.changed_by === null ? 'NPS refresh (process_nps)' : ((h.display_name as string) ?? `user #${h.changed_by}`),
       field: String(h.field),
       oldValue: (h.old_value as string) ?? null,
