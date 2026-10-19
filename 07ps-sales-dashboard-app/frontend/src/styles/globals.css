@@ -580,9 +580,9 @@ input:not([type]), input[type='text'], input[type='search'],
 .ps-csat-line { font-size: 13px; color: var(--ps-color-muted-text); }
 .ps-csat-bullet { position: relative; margin-top: 28px; padding-top: 20px; }
 .ps-csat-target-label { position: absolute; top: 0; font-size: 12px; font-weight: 600; color: var(--ps-color-text); white-space: nowrap; }
-.ps-csat-track { position: relative; height: 22px; border-radius: 4px; overflow: hidden; background: var(--ps-color-border); }
-.ps-csat-zone { position: absolute; top: 0; bottom: 0; opacity: 0.28; }
-.ps-csat-fill { position: absolute; left: 0; top: 7px; height: 8px; border-radius: 0 4px 4px 0; }
+.ps-csat-track { position: relative; height: 24px; border-radius: 4px; overflow: hidden; background: var(--ps-color-border); }
+.ps-csat-zone { position: absolute; top: 0; bottom: 0; opacity: 0.45; }
+.ps-csat-fill { position: absolute; left: 0; top: 9px; height: 6px; border-radius: 0 3px 3px 0; box-shadow: 0 0 0 1px var(--ps-color-surface); }
 .ps-csat-target { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; background: var(--ps-color-text); }
 .ps-csat-axis { position: relative; height: 30px; margin-top: 4px; font-size: 11px; color: var(--ps-color-muted-text); font-variant-numeric: tabular-nums; }
 .ps-csat-axis > span { position: absolute; white-space: nowrap; }
