@@ -145,7 +145,7 @@ describe('SQL', () => {
   it('reach: a successful empty snapshot returns real zeros, while an unfiltered request needs no filter label', async () => {
     const { pool } = fakePool((sql) => sql.includes('process_nps_reach_state') ? [{ loaded_at_utc: '2026-10-18 10:00:00' }] : []);
     const result = await fetchNpsReach(pool, parseNpsQuery({}, NOW), {}, { roleCode: 'BI00_EXECUTIVE' });
-    expect(result).toMatchObject({ status: 'ready', companyAndDateOnly: false, errors: [],
+    expect(result).toMatchObject({ status: 'ready', companyAndDateOnly: false, errors: [], reachStart: null,
       totals: { totalReach: 0, delivered: 0, notDelivered: 0, read: 0, error: 0, otherState: 0 } });
   });
 });

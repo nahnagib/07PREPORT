@@ -2802,6 +2802,8 @@ export interface NpsReach {
   dateTo: string;
   companyAndDateOnly: boolean;
   loadedAt: string | null;
+  /** first message date counted (the ETL's NPS_REACH_START), null = all history */
+  reachStart: string | null;
   totals: { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number } | null;
   errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
 }

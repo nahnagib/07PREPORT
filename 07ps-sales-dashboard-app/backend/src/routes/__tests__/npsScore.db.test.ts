@@ -160,4 +160,31 @@ describe.skipIf(!RUN)('NPS Score on the real warehouse (read-only)', () => {
       notDelivered: n(want.not_delivered), error: n(want.error_count), otherState: n(want.other_state) });
     expect(reach.errors.reduce((sum, e) => sum + e.count, 0)).toBe(n(want.error_count));
   });
+
+  it('reach API = the message fact for each company and date filter (after a message load)', async () => {
+    const loaded = await qa('SELECT reach_start FROM process_nps_reach_state WHERE singleton_id = 1');
+    if (!loaded.length) return;
+    const [d] = await qa('SELECT MIN(MessageDateKey) AS f, MAX(MessageDateKey) AS t FROM fact_process_nps_message WHERE in_reach_scope = 1');
+    const iso = (k: number) => `${String(k).slice(0, 4)}-${String(k).slice(4, 6)}-${String(k).slice(6, 8)}`;
+    const weekBefore = new Date(Date.parse(`${iso(n(d.t))}T00:00:00Z`) - 6 * 86_400_000).toISOString().slice(0, 10);
+    const ranges: [string, string][] = [['2020-01-01', '2030-12-31'], [weekBefore, iso(n(d.t))], [iso(n(d.f)), iso(n(d.f))]];
+    for (const company of [null, 1, 3]) {
+      for (const [from, to] of ranges) {
+        const where = `in_reach_scope = 1 AND MessageDateKey BETWEEN ? AND ?${company ? ' AND CompanyKey = ?' : ''}`;
+        const params = [Number(from.replace(/-/g, '')), Number(to.replace(/-/g, '')), ...(company ? [company] : [])];
+        const [want] = await qa(`SELECT COUNT(*) AS total, SUM(box = 'delivered') AS delivered, SUM(box = 'read') AS read_count,
+          SUM(box = 'not_delivered') AS not_delivered, SUM(box = 'error') AS error_count, SUM(box = 'other') AS other_state
+          FROM fact_process_nps_message WHERE ${where}`, params);
+        const groups = await qa(`SELECT failure_group, COUNT(*) AS c FROM fact_process_nps_message WHERE ${where} AND box = 'error'
+          GROUP BY failure_group`, params);
+        const { status, body } = await get(`/nps-score/reach?dateFrom=${from}&dateTo=${to}${company ? `&companyKeys=${company}` : ''}`);
+        expect(status).toBe(200);
+        expect(body.reachStart).toBe(loaded[0].reach_start ? new Date(loaded[0].reach_start).toISOString().slice(0, 10) : null);
+        expect(body.totals, `${company} ${from}..${to}`).toEqual({ totalReach: n(want.total), delivered: n(want.delivered),
+          read: n(want.read_count), notDelivered: n(want.not_delivered), error: n(want.error_count), otherState: n(want.other_state) });
+        expect(Object.fromEntries(body.errors.map((e: Json) => [e.key, e.count])))
+          .toEqual(Object.fromEntries(groups.map((g: Json) => [g.failure_group, n(g.c)])));
+      }
+    }
+  });
 });

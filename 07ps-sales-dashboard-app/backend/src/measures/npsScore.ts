@@ -348,6 +348,8 @@ export interface NpsReach {
   dateTo: string;
   companyAndDateOnly: boolean;
   loadedAt: string | null;
+  /** NPS_REACH_START of the last load (the ETL's setting; no earlier message is counted), null = all history */
+  reachStart: string | null;
   totals: { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number } | null;
   errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
 }
@@ -356,12 +358,12 @@ export async function fetchNpsReach(pool: Pool, q: NpsQuery, f: Filters, user: U
   const base: NpsReach = {
     status: 'waiting', dateFrom: q.dateFrom, dateTo: q.dateTo,
     companyAndDateOnly: REACH_UNSUPPORTED.some((key) => (f[key]?.length ?? 0) > 0),
-    loadedAt: null, totals: null, errors: [],
+    loadedAt: null, reachStart: null, totals: null, errors: [],
   };
   if (user.roleCode === 'SALESPERSON' || user.dataScopeRules?.some((r) => r.dimension !== 'companyKeys')) {
     return { ...base, status: 'restricted' };
   }
-  const [stateRows] = await pool.query('SELECT loaded_at_utc FROM process_nps_reach_state WHERE singleton_id = 1');
+  const [stateRows] = await pool.query('SELECT loaded_at_utc, reach_start FROM process_nps_reach_state WHERE singleton_id = 1');
   const state = (stateRows as Record<string, unknown>[])[0];
   if (!state) return base;
 
@@ -379,7 +381,7 @@ export async function fetchNpsReach(pool: Pool, q: NpsQuery, f: Filters, user: U
       GROUP BY f.failure_group, f.label_en, f.is_fixable, f.hint, f.sort_order ORDER BY f.sort_order`, params);
   const r = (rows as Record<string, unknown>[])[0];
   return {
-    ...base, status: 'ready', loadedAt: asDateTime(state.loaded_at_utc),
+    ...base, status: 'ready', loadedAt: asDateTime(state.loaded_at_utc), reachStart: asDate(state.reach_start),
     totals: {
       totalReach: Number(r?.total_reach ?? 0), delivered: Number(r?.delivered ?? 0),
       notDelivered: Number(r?.not_delivered ?? 0), read: Number(r?.read_count ?? 0),

@@ -72,7 +72,7 @@ vi.mock('../../db/pool', () => ({
   pool: {
     query: async (sql: string, params: unknown[] = []) => {
       queries.push({ sql, params });
-      if (/FROM process_nps_reach_state/.test(sql)) return [reachLoaded ? [{ loaded_at_utc: '2026-10-18 10:00:00' }] : [], []];
+      if (/FROM process_nps_reach_state/.test(sql)) return [reachLoaded ? [{ loaded_at_utc: '2026-10-18 10:00:00', reach_start: new Date('2026-10-03T00:00:00Z') }] : [], []];
       if (/FROM v_process_nps_reach /.test(sql)) return [[{ total_reach: '12', delivered: '3', not_delivered: '2', read_count: '4', error_count: '2', other_state: '1' }], []];
       if (/FROM v_process_nps_message_error /.test(sql)) return [[{ failure_group: 'phone_format', label_en: 'Phone format', is_fixable: 1, hint: 'Correct the number.', errors: '2' }], []];
       if (/COUNT\(\*\) AS n/.test(sql)) return [[{ n: 0 }], []];
@@ -167,14 +167,14 @@ describe('NPS Score access', () => {
 describe('WhatsApp reach', () => {
   it('returns waiting without fabricated zeros before a successful message load', async () => {
     const body = await (await get('/nps-score/reach', 'viewer')).json();
-    expect(body).toMatchObject({ status: 'waiting', totals: null, errors: [], loadedAt: null });
+    expect(body).toMatchObject({ status: 'waiting', totals: null, errors: [], loadedAt: null, reachStart: null });
     expect(queries).toHaveLength(1);
   });
 
   it('keeps company/date filters, labels unsupported UI filters, and exposes only aggregate error groups', async () => {
     reachLoaded = true;
     const body = await (await get('/nps-score/reach?dateFrom=2026-10-01&dateTo=2026-10-18&companyKeys=1&segmentKeys=1&segmentKeys=2&salesTeamKeys=9', 'viewer')).json();
-    expect(body).toMatchObject({ status: 'ready', companyAndDateOnly: true,
+    expect(body).toMatchObject({ status: 'ready', companyAndDateOnly: true, reachStart: '2026-10-03',
       totals: { totalReach: 12, delivered: 3, notDelivered: 2, read: 4, error: 2, otherState: 1 },
       errors: [{ key: 'phone_format', fixable: true, count: 2 }] });
     const aggregates = queries.filter((q) => /FROM v_process_nps_/.test(q.sql));
