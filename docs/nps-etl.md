@@ -72,6 +72,9 @@ answers to Detractors, Passives and Promoters respectively. The source has no nu
 - Else `-1`, with a warning.
 - Order and picking names repeat across companies, so a name with several candidates is narrowed by the customer, then
   by the company name. If it is still not exactly one, there is no match (no guess).
+- A matched order or delivery whose own company is `-1` never decides; the next step does (decision 2026-10-19:
+  ratings 7898 and 14970 point to supplier receipts `WH/IN/...` held with company -1, so they now take MAJAAL from the
+  company name).
 - `company_source` on the fact says which rule applied (`order` / `delivery` / `company_name` / `none`).
 
 **Low ratings (D4).**
@@ -213,6 +216,13 @@ rows, plus independently calculated NPS and CSAT for comparison with the page (u
 **Note on the weekly e-mail.** The e-mail compares the **UTC** `create_date` with local dates, while the dashboard
 converts it to Africa/Tripoli (UTC+2). A rating made between 22:00 and 24:00 UTC (00:00–02:00 in Tripoli) is on the
 next day for us, so a week can differ at its edges; the script lists those ratings.
+
+**Note on the page's default filter.** The NPS Score page opens with the app's default Customer Group filter
+(B2B + B2C). It leaves out ratings whose team, and therefore segment, is unknown (-1) or Backoffice / Inter Company, so
+the page shows fewer responders than the weekly report. To reproduce a report figure, clear the Customer Group filter
+and use the same dates and company. Example (2026-10-19, after the July-September backfill): **Majaal, 12 Jul - 26 Sep
+2026, all customer groups = 177 responders = 124 Promoters / 44 Passives / 9 Detractors, NPS 64.97, CSAT 94.92 (Yellow)**,
+the requirement's example; no other date range gives it, and B2B + B2C alone does not.
 
 - **First local run (2026-10-18):** 152 / 9 rows; 133 responses (50 exceeded, 76 met, 7 below), NPS-style +32.3; 15
   comments, 4 blank. Company came from the order for 145 rows, from the company name for 6, and from the delivery for 1.
