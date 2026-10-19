@@ -567,3 +567,29 @@ and e-mail addresses masked. Personal free text: show it only to permitted roles
 company / team / salesperson / segment / channel / customer: responses, exceeded, met, below, with_comment, nps_style),
 `v_process_nps_trend` (per month and company), `v_process_nps_low_rating`. NPS-style = (exceeded - below) / responses x
 100: always sum the counts first, never average `nps_style` across rows.
+
+## NPS Score WhatsApp reach (migrations 0049-0051, runbook `docs/nps-etl.md` section 8)
+
+### raw_nps_whatsapp_message
+Every column of the source `whatsapp_outbound_messages`; `updated_at` as `_source_write_date` (server clock, UTC+2);
+`create_date` UTC. `mobile_number` (personal) is in this table only. `_deleted_at` = left the source (still counted).
+
+### dim_process_nps_failure_group
+The error groups of `departments/process/whatsapp.py` (key `failure_group`, `label_en`, `is_fixable`, `hint`,
+`sort_order`): 131026 Undeliverable; Meta held back (131049/130472); Customer opted out of marketing (131050); Template
+quality too low (fixable); Phone number missing or invalid (fixable: add the number on the Odoo contact); Meta temporary
+error; Other; "-" not an error.
+
+### fact_process_nps_message (one row per message)
+`message_id` (key), `sent_at_utc` / `sent_at_local` (Tripoli), `MessageDateKey`, `CompanyKey` (MAJAAL 1 / TIKA 3),
+`state`, `box` (delivered / read / not_delivered = sent / error / other), `failure_group`, `template_name`,
+`is_feedback_template`, `is_test_number`, `in_reach_scope` (feedback, not a test number, from `NPS_REACH_START`),
+`deleted_in_source_at` (left the source; still counted).
+
+### process_nps_reach_state
+One row: `loaded_at_utc`, `messages_loaded`, `reach_start` (the `NPS_REACH_START` of the last load), `_run_id`.
+
+### Views
+`v_process_nps_reach` (per date x company, in scope: total_reach, delivered, not_delivered, read_count, error_count,
+other_state) and `v_process_nps_message_error` (per date x company x error group: errors). Counts are messages, not
+people.

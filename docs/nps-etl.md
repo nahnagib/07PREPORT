@@ -240,44 +240,116 @@ Other tools:
 
 ## 8. Message reach
 
-Reach counts **outbound feedback messages**, not people, ratings or unique recipients. Its source is the developer's
-`whatsapp_outbound_messages` table in the same NPS database, not Odoo's `whatsapp.message`. At the handoff on
-2026-10-18 the table had not been supplied (rechecked read-only during continuation). Do not enable it in production until its columns, states, failure values,
-UTC timestamps and `updated_at` behavior have been profiled. Error keyword mapping is provisional.
+Reach counts **outbound WhatsApp feedback messages**, not people, ratings or unique recipients. Its source is the
+developer's `whatsapp_outbound_messages` table in the same NPS database (live since 2026-10-18), not Odoo's
+`whatsapp.message`. Rules and error groups live in `data/etl/src/departments/process/whatsapp.py`; migrations 0049,
+0050 and 0051.
 
-The announced columns are `id`, `create_date`, `company_name`, `template_name`, `state`, `mobile_number`,
-`failure_type`, `failure_reason`, `first_seen_at`, `updated_at`. Rules and error groups live in
-`data/etl/src/departments/process/whatsapp.py`.
+### 8.1 Source table and profile (2026-10-19)
+
+Columns: `id` BIGINT UNSIGNED PK, `create_date`, `company_name`, `template_name`, `state`, `mobile_number`,
+`failure_type`, `failure_reason`, `first_seen_at`, `updated_at`. There is no delivery, order or customer column, so
+reach is filtered by **company and date only**. Profiled read-only with
+`python scripts/process/profile_nps_source.py --reach-only` (output in `scripts/process/output/`, gitignored):
+
+- 6,443 rows, ids 7716–22309 (no duplicates; gaps are messages never copied), `create_date` 2026-07-12 .. today.
+  `first_seen_at` starts 2026-10-18 15:14 (the developer's first sync loaded the history); the sync then runs a few
+  times a day.
+- `company_name`: TIKA 4,434, MAJAAL 1,927 (both map to a company). 14 templates; only `Tika Feedback Message Template`
+  (925) and `Majaal Feedback Message Template` (529) are feedback messages. The table does NOT leave out other
+  templates or the test number (30 rows, 17 of them feedback): the ETL filters both.
+- States: `error` 4,705, `read` 1,155, `delivered` 507, `sent` 76. No other state.
+- **Before 2026-10-03 the table holds only `error` messages**: the first `read` / `delivered` / `sent` is on 2026-10-03
+  (successful messages older than about 15 days were not kept upstream). Hence `NPS_REACH_START=2026-10-03`, and the
+  page says "Reach data from 03 Oct 2026".
+- 3,892 rows have no `mobile_number`; all are `phone_invalid` errors.
+- Timezone: `create_date` is **UTC** (a rating arrives a median of 11 minutes after its message; 140 of 170 matched
+  pairs within 0–2 h, none at −2 h). `first_seen_at` / `updated_at` are the source server's clock, **UTC+2**
+  (`@@system_time_zone` EET); they are copied, never converted.
+- `updated_at` moves on every state change (`ON UPDATE CURRENT_TIMESTAMP`): 28 rows moved `sent` → `delivered`/`read`
+  within hours; no `error` row moved. Two reads 5 minutes apart: nothing new, deleted or changed.
+
+### 8.2 Rules
 
 | ETL variable | Meaning |
 |---|---|
 | `NPS_REACH_ENABLED` | Default false. When true, check for the source table; if missing, log and skip reach while loading ratings normally. |
-| `NPS_REACH_TEMPLATE_MATCH` | Case-insensitive substring of the template name, default `Feedback`. |
-| `NPS_REACH_EXCLUDED_NUMBERS` | Comma-separated test numbers; compare the final nine digits so country-code and leading-zero variants match. Empty by default; configure the confirmed business test numbers. |
-| `NPS_REACH_START` | Inclusive local message start date (`yyyy-mm-dd`); empty means all history. |
+| `NPS_REACH_TEMPLATE_MATCH` | Case-insensitive substring of the template name, `Feedback`. |
+| `NPS_REACH_EXCLUDED_NUMBERS` | Comma-separated test numbers, compared on the last nine digits. Set the agreed business test number in every environment (configuration only, never in code or in the repo). |
+| `NPS_REACH_START` | Inclusive Africa/Tripoli message date (`yyyy-mm-dd`). Agreed: `2026-10-03` in every environment. |
 
-The raw table retains every source column and soft-deletes ids that leave the source. Only raw retains the mobile number.
-The fact stores the Tripoli message date, company (MAJAAL → 1, TIKA → 3), normalized state, error group and scope flags.
-In-scope messages match the feedback template, are not test numbers, and meet the start date.
+- In scope = feedback template, not a test number, Tripoli message date on or after `NPS_REACH_START`.
+- The five boxes are Total Reach (every in-scope message), Delivered (`delivered`), Not Delivered (`sent`), Read
+  (`read`) and Error (`error`), each with its share of Total Reach. These are mutually exclusive current states: Read is
+  separate from Delivered. Any other state stays in Total Reach, is shown separately and warns.
+- A failure text on a message that is not `error` (5 rows: an older attempt, the message got through) is ignored.
+- Error groups (agreed 2026-10-19; every real failure value is a test case in `tests/test_process_nps.py`):
 
-The five boxes are Total Reach (every in-scope message), Delivered (`delivered`), Not Delivered (`sent`), Read (`read`)
-and Error (`error`). These are mutually exclusive current states: Read is separate from Delivered. Any other state
-remains in Total Reach and is shown separately with a warning; it is never silently dropped.
-Errors group into 131026 undeliverable, 131049 ecosystem, template quality, phone format, Meta temporary, and Other.
-Template quality and phone format are flagged fixable. The source's free-text error details are never sent to the page.
+| Group | Matches | Fixable |
+|---|---|---|
+| 131026 Undeliverable | `131026`, "undeliverable" | no |
+| Meta held back (131049/130472) | `131049`, "ecosystem", `130472`, "part of an experiment" | no |
+| Customer opted out of marketing (131050) | `131050`, "stop receiving marketing" | no |
+| Template quality too low | "quality" | yes |
+| Phone number missing or invalid | `phone_invalid` and other "phone"/"format" values; fix: add the phone number on the Odoo contact | yes |
+| Meta temporary error | `whatsapp_recoverable`, "retry", "temporar", `131000`, `130429`, "rate limit" | no |
+| Other | anything else, e.g. `131047` re-engagement message (warns) | no |
 
-`GET /nps-score/reach` reads `v_process_nps_reach` and `v_process_nps_message_error`. Only company and date filters
-apply; ordinary customer-group/channel/branch/salesperson/customer selections leave the numbers visible with
-**Company and date filters only** (including the default B2B+B2C selection). Company role restrictions are enforced.
-Mandatory restrictions on any other dimension, including the salesperson lock, return a restricted state without
-counts because the source cannot enforce them.
+- **Messages that leave the source are never hidden.** Raw gets `_deleted_at`; the fact keeps counting the message
+  with `deleted_in_source_at`; `warn:nps_reach_rows_disappeared` lists them (count = failing rows). A message that comes
+  back is restored. The ratings keep their own rule (a rating that leaves the source leaves the facts).
+- Only raw keeps the mobile number; the free-text failure reason never leaves raw (checks sample the failure type and
+  the leading code only).
 
-Before the first successful message load, the response is `waiting` with null totals. The page shows
-**Waiting for the WhatsApp message data**, without invented numbers. `process_nps_reach_state` is committed with the
-message fact so an initially empty but successfully loaded source can correctly show zero. Skipped or failed loads
-preserve the last snapshot and its displayed UTC refresh timestamp. An unexpectedly empty source after a previous
-nonempty load warns and retains that snapshot. Fixture tests cover states, exclusions, local midnight, missing and
-empty sources, deletion/restoration, serving-view reconciliation and transactional rollback.
+### 8.3 Load mode
+
+`whatsapp_outbound_messages` is read **in full every run** (decision 2026-10-19): a few thousand rows in seconds, and
+one pass picks up both state changes and deletions. Switch to incremental only when a full read gets slow (around
+100,000 rows or more than a minute): read `updated_at > watermark − 1 hour`, keep the watermark as the source's own
+`updated_at` value (the server's UTC+2 clock, never converted to UTC), and add a cheap `SELECT id` of the whole table
+each run so disappeared rows still get `_deleted_at`.
+
+### 8.4 Quality checks (in the load transaction; every result also in the `load_nps` details of `etl_task_log`)
+
+| Check | Severity |
+|---|---|
+| `fail:nps_message_duplicate_source_id` (in the extract, before anything is written; written to `etl_task_log.error_message`) | FAIL |
+| `fail:nps_message_state_missing` (more than 5 messages without a state) | FAIL |
+| `orphan:fact_process_nps_message.*` (company, date, error group) | FAIL |
+| `warn:nps_message_other_state` (a state other than delivered/read/sent/error) | WARN |
+| `warn:nps_message_error_in_other` (an error that fell into Other; failure type + code) | WARN |
+| `warn:nps_message_source_stale` (no in-scope message for 3 days) | WARN |
+| `warn:nps_message_company_unmatched` (`company_name` not MAJAAL / TIKA) | WARN |
+| `warn:nps_reach_rows_disappeared` (messages that left the source, still counted) | WARN |
+
+### 8.5 API and page
+
+`GET /nps-score/reach` reads `v_process_nps_reach` and `v_process_nps_message_error`, and `reach_start` from
+`process_nps_reach_state`. Only company and date filters apply; ordinary customer-group/channel/branch/salesperson/
+customer selections leave the numbers visible with **Company and date filters only** (including the default B2B+B2C
+selection). Company role restrictions are enforced. Mandatory restrictions on any other dimension, including the
+salesperson lock, return a restricted state without counts because the source cannot enforce them. The box tooltips say
+the counts use the message date. Before the first successful message load the response is `waiting` and the page shows
+**Waiting for the WhatsApp message data**. Skipped or failed loads keep the last snapshot; an empty source after a
+non-empty load warns and keeps it.
+
+### 8.6 Reconciliation
+
+`python scripts/process/check_nps_totals.py --from <d> --to <d>` (read-only on both sides) prints MATCH only when, besides
+the ratings checks 1–3: 4 raw = source (ids), 5 fact = raw after the filters (row by row: date, company, box, group,
+scope), 6 the serving views the API sums = the rule per Tripoli date and company, and 7 the weekly e-mail's **LAST 7
+DAYS** section — delivered / read / sent / error per company on the UTC `create_date`, feedback template, test number
+out, from `NPS_REACH_START` — = the warehouse. The API itself is checked against the fact for each company and date
+filter by `npx vitest run -c vitest.nps-db.config.ts` (backend, read-only).
+
+### 8.7 Switching it on in production
+
+1. Apply migrations 0046–0051 (DevOps; never re-run an applied one).
+2. In the ETL environment: the `NPS_*` source values, `NPS_ENABLED=true`, `NPS_REACH_ENABLED=true`,
+   `NPS_REACH_TEMPLATE_MATCH=Feedback`, `NPS_REACH_START=2026-10-03`, `NPS_REACH_EXCLUDED_NUMBERS=<the test number>`.
+   In the backend environment (the scheduler): `ETL_SCHEDULE_PROCESS_NPS_ENABLED=true`.
+3. Run `process_nps` once from the ETL Control Center, then `check_nps_totals.py` for the last 7 days: every line MATCH.
+4. Compare section 7 of its output with the developer's weekly e-mail (LAST 7 DAYS).
 
 ## 9. Detractor follow-up (pending approval)
 

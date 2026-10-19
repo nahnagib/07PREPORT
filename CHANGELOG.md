@@ -6,6 +6,24 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Added (Process: NPS Score WhatsApp reach goes live, 2026-10-19; runbook docs/nps-etl.md section 8)
+- **Source profiled** (`profile_nps_source.py --reach-only`): `whatsapp_outbound_messages`, `create_date` in UTC,
+  `updated_at` moves with the state, only failed messages before 2026-10-03.
+- **Error groups agreed:** "Meta held back (131049/130472)", new "Customer opted out of marketing (131050)",
+  `whatsapp_recoverable` / "retry" → Meta temporary, "Phone number missing or invalid" (fixable: add the number on the
+  Odoo contact); 131047 stays in Other. Every real failure value is a test case. Migration 0051 (+ `down/`).
+- **Messages that leave the source are never hidden:** raw `_deleted_at`, fact `deleted_in_source_at`, still counted;
+  `warn:nps_reach_rows_disappeared` with the count.
+- **Checks:** duplicate source id and more than 5 messages without a state FAIL; error in Other, no new message for
+  3 days, other state and unknown company WARN; every result also in the `load_nps` details of `etl_task_log`.
+- **Load mode:** the table is read in full every run (decided); when to switch to incremental is in the runbook.
+- **Settings** (configuration only): `NPS_REACH_START=2026-10-03` and the test number in `NPS_REACH_EXCLUDED_NUMBERS`
+  in every environment; added to the deploy `etl.env.example` files.
+- **Page:** each reach box shows its share of Total Reach and a tooltip that reach uses the message date; "Reach data
+  from 03 Oct 2026" (from the stored `reach_start`); Errors by reason shows # and %.
+- **Reconciliation:** `check_nps_totals.py` adds fact = raw after filters and the weekly e-mail's LAST 7 DAYS
+  delivered / read / sent / error per company; the backend read-only DB test checks the reach API per company and date.
+
 ### Added (Process: NPS Score data, step 1 -- ETL only, 2026-10-18; runbook docs/nps-etl.md)
 - **Source:** the NPS developer's MySQL (`NPS_DB_NAME`, default `xtremech_nps_dashboard`), read only by the ETL through an
   SSH tunnel. The new generic source is `etl_platform/sources/mysql_ssh.py` (paramiko 3.5.1). It pins the host key,

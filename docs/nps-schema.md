@@ -291,12 +291,67 @@ Anything that rolls rows up must sum `exceeded`, `met`, `below` and `responses` 
 `nps_style` across rows is wrong, and the same note is in the migration header and `DATA_DICTIONARY.md`. Most summary
 rows hold 1 response, so their `nps_style` is +100, 0 or −100.
 
+## WhatsApp message reach (migrations 0049, 0050, 0051)
+
+Source: `whatsapp_outbound_messages` in the NPS database (runbook `docs/nps-etl.md` section 8). Loaded by `process_nps`
+only with `NPS_REACH_ENABLED=true`. No delivery, order or customer link: company and date only.
+
+### raw_nps_whatsapp_message
+
+Every source column except `updated_at`, which is kept as `_source_write_date` (source server clock, UTC+2), plus
+`_extracted_at`, `_run_id`, `_deleted_at`. `id` is the key. `create_date` is UTC. **`mobile_number` stays here only.**
+A row that leaves the source gets `_deleted_at` (cleared if it comes back) and keeps being counted in the fact.
+
+### dim_process_nps_failure_group
+
+`failure_group` (key), `label_en`, `is_fixable`, `hint`, `sort_order`, `updated_at_utc`. Upserted from
+`whatsapp.FAILURE_GROUPS` on every load; seeded by 0049 and corrected by 0051:
+
+| failure_group | label_en | fixable |
+|---|---|---|
+| undeliverable_131026 | 131026 Undeliverable | 0 |
+| ecosystem_131049 | Meta held back (131049/130472) | 0 |
+| opted_out_131050 | Customer opted out of marketing (131050) | 0 |
+| template_quality | Template quality too low | 1 |
+| phone_format | Phone number missing or invalid | 1 |
+| meta_temporary | Meta temporary error | 0 |
+| other | Other | 0 |
+| - | Not an error | 0 |
+
+### fact_process_nps_message (one row per message)
+
+| Column | Meaning |
+|---|---|
+| message_id | `raw_nps_whatsapp_message.id` (key) |
+| sent_at_utc / sent_at_local | `create_date` (UTC) and Africa/Tripoli |
+| MessageDateKey | Tripoli date (`dim_date`), -1 none |
+| CompanyKey | `company_name` MAJAAL 1, TIKA 3, else -1 (the ratings' mapping) |
+| state | source state, lower case, "" when empty |
+| box | delivered, read, not_delivered (state `sent`), error, other |
+| failure_group | the group of an `error` message, "-" otherwise |
+| template_name, is_feedback_template, is_test_number | the filters' inputs (`NPS_REACH_TEMPLATE_MATCH`, `NPS_REACH_EXCLUDED_NUMBERS`) |
+| in_reach_scope | 1 = feedback template, not a test number, on or after `NPS_REACH_START` |
+| deleted_in_source_at | (0051) UTC time the message left the source; still counted |
+
+### process_nps_reach_state (0050, 0051)
+
+One row (`singleton_id` 1): `loaded_at_utc`, `messages_loaded`, `reach_start` (0051: `NPS_REACH_START` of that load),
+`_run_id`. Written in the same transaction as the fact; no row = no message load yet (the page waits).
+
+### v_process_nps_reach / v_process_nps_message_error
+
+Per `MessageDateKey` x `CompanyKey`, in scope only: `total_reach`, `delivered`, `not_delivered`, `read_count`,
+`error_count`, `other_state`; and per date x company x `failure_group` (with label, fixable, hint, sort order): `errors`.
+Messages that left the source are included.
+
 ## Personal data
 
 | Column | Table | Layer | Notes |
 |---|---|---|---|
 | mobile_number (phone) | raw_nps_rating, raw_nps_low_rating | **raw only** | Not in any fact or view. |
 | recipient_email (e-mail) | raw_nps_low_rating | **raw only** | Not in any fact or view. |
+| mobile_number (phone) | raw_nps_whatsapp_message | **raw only** | Compared for the test-number filter; never copied. |
+| failure_reason (free text) | raw_nps_whatsapp_message | **raw only** | Checks sample the leading code only. |
 | body (free text; may contain phones / e-mails) | raw_nps_rating, raw_nps_low_rating | **raw** | |
 | comment_text (the body of comments, masked) | fact_process_nps_comment → v_process_nps_comment | **mart + serving** | Phones and e-mails masked. Still personal free text: only roles with the comments permission (step 2) may see it. |
 | partner_name, created_name, salesperson_name, team_name | raw tables | raw only | Not used by the facts. |
