@@ -2384,8 +2384,9 @@ export interface DebtFreshness {
   department: string;
   lastSuccessUtc: string | null;
   lastSuccessJob: string | null;
-  lastFailureUtc: string | null;
-  lastFailureJob: string | null;
+  /** the failed-run fields: Admin role only on GET /debt-report/meta (missing for everyone else) */
+  lastFailureUtc?: string | null;
+  lastFailureJob?: string | null;
   dataAsOf: string | null;
 }
 
@@ -2419,7 +2420,8 @@ export interface DebtMeta {
     scopes: (DebtOption & { isDefault: boolean; description: string | null })[];
     sizeTiers: (DebtOption & { min: number | null; max: number | null })[];
   };
-  exclusions: DebtExclusions;
+  /** Admin role only (the status strip's "Always excluded"); missing for everyone else. The exclusions apply to all. */
+  exclusions?: DebtExclusions;
   odooBaseUrl: string;
   topCustomers: number;
   /** the credit policy (backend config/creditPolicy.ts): zones of the escalation chart and the table's Aging bucket */

@@ -85,7 +85,8 @@ import {
  *
  * Every label comes from GET /debt-report/meta: Odoo's own labels (English; the "Odoo labels" EN/AR
  * switch was removed 2026-10-13), our scope and aging-bucket names, and the size-tier thresholds from the backend
- * config. The freshness strip shows the FINANCE refresh, never the sales one. Access and the salesperson scope are
+ * config. The freshness strip shows the FINANCE refresh, never the sales one; its other items (snapshot, scope, exclusions,
+ * currency note, a failed run) are for the Admin role only (2026-10-19). Access and the salesperson scope are
  * enforced by the API (routes/debtReport.ts); this page only mirrors them.
  *
  * Cards (2026-10-07): one row per currency, exactly five cards each -- Total debt (Odoo's Amount Due of the open
@@ -104,7 +105,7 @@ import {
 const OPEN_INVOICES_NOTE = 'Total debt = posted invoices with an amount due (Odoo: Unpaid + Posted); draft invoices are not counted';
 
 export default function ReceivablesCollectionsPage() {
-  const { user, token, error: authError, retryAuth, logout, isSalesperson, canView } = useAuth();
+  const { user, token, error: authError, retryAuth, logout, isSalesperson, isAdmin, canView } = useAuth();
   const allowed = canView('debt_report');
   const roleLabel = user?.role.label ?? user?.fullName;
   const [filters, setFilters] = useState<DebtPageFilters>(DEFAULT_DEBT_FILTERS);
@@ -427,29 +428,37 @@ export default function ReceivablesCollectionsPage() {
 
         {meta.error ? <ErrorState message={meta.error} onRetry={meta.retry} /> : null}
 
+        {/* The data context is for the Admin role only (2026-10-19): everyone else sees the finance refresh alone. The API
+            leaves out the exclusions and the failed-run fields for them too (routes/debtReport.ts stripAdminOnlyMeta). */}
         <div style={strip} role="status">
-          <span>
-            Receivables snapshot <strong style={{ color: 'var(--ps-color-text)' }}>{formatDate(snapshotDate)}</strong>
-          </span>
+          {isAdmin ? (
+            <span>
+              Receivables snapshot <strong style={{ color: 'var(--ps-color-text)' }}>{formatDate(snapshotDate)}</strong>
+            </span>
+          ) : null}
           <span>
             Finance refresh <strong style={{ color: 'var(--ps-color-text)' }}>{formatTimestamp(freshness?.lastSuccessUtc ?? null)}</strong>
           </span>
-          {freshness?.lastFailureUtc ? (
-            <span style={{ color: 'var(--ps-color-alert)' }}>Last finance run failed at {formatTimestamp(freshness.lastFailureUtc)}</span>
+          {isAdmin ? (
+            <>
+              {freshness?.lastFailureUtc ? (
+                <span style={{ color: 'var(--ps-color-alert)' }}>Last finance run failed at {formatTimestamp(freshness.lastFailureUtc)}</span>
+              ) : null}
+              <span>
+                Showing{' '}
+                <strong style={{ color: 'var(--ps-color-text)' }}>
+                  {[defaultScope ? scopeLabel(defaultScope.value) : null, filters.includeOther && otherScope ? scopeLabel(otherScope.value) : null].filter(Boolean).join(' + ')}
+                </strong>
+                {filters.includeIntercompany ? ', inter-company included' : ', inter-company excluded'}
+              </span>
+              {exclusionText ? (
+                <span title={exclusionTitle} dir="auto">
+                  Always excluded: <strong style={{ color: 'var(--ps-color-text)' }}>{exclusionText}</strong>
+                </span>
+              ) : null}
+              <span>Amounts per currency; LYD equivalents (≈) are Odoo&apos;s own amounts, at the Odoo rate of each invoice&apos;s date</span>
+            </>
           ) : null}
-          <span>
-            Showing{' '}
-            <strong style={{ color: 'var(--ps-color-text)' }}>
-              {[defaultScope ? scopeLabel(defaultScope.value) : null, filters.includeOther && otherScope ? scopeLabel(otherScope.value) : null].filter(Boolean).join(' + ')}
-            </strong>
-            {filters.includeIntercompany ? ', inter-company included' : ', inter-company excluded'}
-          </span>
-          {exclusionText ? (
-            <span title={exclusionTitle} dir="auto">
-              Always excluded: <strong style={{ color: 'var(--ps-color-text)' }}>{exclusionText}</strong>
-            </span>
-          ) : null}
-          <span>Amounts per currency; LYD equivalents (≈) are Odoo&apos;s own amounts, at the Odoo rate of each invoice&apos;s date</span>
         </div>
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px) clamp(16px, 3vw, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)', minWidth: 0 }}>

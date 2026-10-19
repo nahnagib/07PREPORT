@@ -10,8 +10,9 @@ const mocked = vi.hoisted(() => ({
   result: null as DebtMeta | null,
   stale: false,
   prune: false,
+  isAdmin: false,
 }));
-vi.mock('../../../lib/AuthProvider', () => ({ useAuth: () => ({ canView: () => true, isSalesperson: false }) }));
+vi.mock('../../../lib/AuthProvider', () => ({ useAuth: () => ({ canView: () => true, isSalesperson: false, isAdmin: mocked.isAdmin }) }));
 vi.mock('../../../lib/debt/useUrlCurrency', () => ({ useUrlCurrency: () => ({ currency: null, ready: true, setCurrency: () => {} }) }));
 vi.mock('../../../components/AppHeader', () => ({ AppHeader: () => null }));
 vi.mock('../../../components/BottomNavBar', () => ({ BottomNavBar: () => null }));
@@ -45,6 +46,7 @@ beforeEach(() => {
   mocked.calls = [];
   mocked.stale = false;
   mocked.prune = false;
+  mocked.isAdmin = false;
   mocked.result = {
     snapshotDate: '2026-10-15', snapshots: [{ date: '2026-10-15', lineCount: 1 }],
     options: {
@@ -94,5 +96,48 @@ describe('Receivables filter controls', () => {
     mocked.stale = false;
     view.rerender(<ReceivablesCollectionsPage />);
     await waitFor(() => expect(latest('overview').salespersonKeys).toEqual([]));
+  });
+});
+
+describe('Receivables status strip', () => {
+  const ADMIN_ITEMS = ['Receivables snapshot', 'Showing', 'Always excluded:', 'Amounts per currency; LYD equivalents', 'Last finance run failed'];
+  const items = () => Array.from(screen.getByRole('status').children, (el) => el.textContent ?? '');
+  const withContext = () => {
+    mocked.result = {
+      ...mocked.result!,
+      options: { ...mocked.result!.options, scopes: [{ value: 'customer', labelEn: 'Customer debt', labelAr: null, isDefault: true, description: null }] },
+      exclusions: { segments: ['Backoffice', 'Inter Company'], salesTeams: [], teams: [] },
+      freshness: { department: 'finance', lastSuccessUtc: '2026-10-19T00:02:00.000Z', lastSuccessJob: 'x', lastFailureUtc: '2026-10-19T01:00:00.000Z', lastFailureJob: 'x', dataAsOf: '2026-10-19' },
+    } as DebtMeta;
+  };
+
+  it('shows the Admin role all the data context, in the same order', () => {
+    mocked.isAdmin = true;
+    withContext();
+    render(<ReceivablesCollectionsPage />);
+    const shown = items();
+    expect(shown).toHaveLength(6);
+    expect(shown[0]).toMatch(/^Receivables snapshot /);
+    expect(shown[1]).toMatch(/^Finance refresh /);
+    expect(shown[2]).toMatch(/^Last finance run failed at /);
+    expect(shown[3]).toBe('Showing Customer debt, inter-company excluded');
+    expect(shown[4]).toBe('Always excluded: segments Backoffice, Inter Company');
+    expect(shown[5]).toBe("Amounts per currency; LYD equivalents (≈) are Odoo's own amounts, at the Odoo rate of each invoice's date");
+  });
+
+  it('shows everyone else the finance refresh alone, with nothing else in the strip', () => {
+    withContext(); // even if the fields reached the browser, they would not render
+    render(<ReceivablesCollectionsPage />);
+    const shown = items();
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toMatch(/^Finance refresh \S/);
+    for (const text of ADMIN_ITEMS) expect(screen.getByRole('status').textContent).not.toContain(text);
+  });
+
+  it('handles a non-admin meta without the admin-only fields (as the API sends it)', () => {
+    mocked.result = { ...mocked.result!, freshness: { department: 'finance', lastSuccessUtc: '2026-10-19T00:02:00.000Z', lastSuccessJob: 'x', dataAsOf: '2026-10-19' } } as DebtMeta;
+    render(<ReceivablesCollectionsPage />);
+    expect(items()).toHaveLength(1);
+    expect(items()[0]).toMatch(/^Finance refresh /);
   });
 });
