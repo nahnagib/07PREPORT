@@ -9,7 +9,9 @@ warehouse through DB_*. It checks, and prints MATCH only when all of these hold:
   3. per company x level: the source company_name (MAJAAL / TIKA, mapped as the job does) = the warehouse CompanyKey
      (the order's company); a difference lists the response ids
 Then, for --from/--to (default: the last 7 days), the weekly e-mail's table: counts per company_name and level, from the
-same source rows. NOTE: the e-mail compares the UTC create_date with local dates, while the dashboard converts it to
+same source rows. With NPS_REACH_ENABLED, the WhatsApp reach as well: 4 raw = source, 5 fact = raw after the filters,
+6 the serving views (what the API reads) = the rule per Tripoli date and company, 7 the weekly e-mail's LAST 7 DAYS
+section (delivered / read / sent / error per company on the UTC create_date) = the warehouse. NOTE: the e-mail compares the UTC create_date with local dates, while the dashboard converts it to
 Africa/Tripoli (UTC+2): a rating between 22:00 and 24:00 UTC is on the NEXT day for us, so a week can differ at its
 edges. Those ratings are listed. A run of the job after the source changed shows up as a difference: re-run the job first.
 """
@@ -49,18 +51,41 @@ def _table(title: str, rows: dict, columns: list[str]) -> None:
 
 def reconcile_reach(conn, messages: list[dict], config: wa.ReachConfig, timezone: str,
                     date_from: _dt.date, date_to: _dt.date) -> bool:
-    """Compare source messages to raw ids and serving views; never print personal data or free-text failures."""
+    """Source messages vs raw, fact and serving views, and the weekly e-mail's LAST 7 DAYS table. Never prints personal
+    data or free-text failures. Messages that left the source stay counted (business rule 2026-10-19), so the expected
+    figures are the source rows plus the raw rows marked deleted."""
     raw_ids = {int(r[0]) for r in conn.execute(text("SELECT id FROM raw_nps_whatsapp_message WHERE _deleted_at IS NULL"))}
     source_ids = {int(r["id"]) for r in messages}
     raw_ok = source_ids == raw_ids
     state = conn.execute(text("SELECT loaded_at_utc FROM process_nps_reach_state WHERE singleton_id = 1")).first()
-    print(f"\n4. WhatsApp raw ids: source {len(source_ids)}, warehouse {len(raw_ids)}: {'ok' if raw_ok else 'DIFFERENT'}")
+    print(f"\n4. WhatsApp raw = source (ids): source {len(source_ids)}, warehouse raw not deleted {len(raw_ids)}: "
+          f"{'MATCH' if raw_ok else 'DIFFERENT'}")
     if state is None:
         print("  DIFFERENT: source is available but no successful warehouse message load exists; run process_nps first.")
         return False
     print(f"  Last successful message load: {state[0]} UTC")
-    frame = wa.build_messages(pd.DataFrame(messages, columns=wa.SOURCE_COLUMNS), config, timezone,
-                              lambda name: COMPANY_BY_SOURCE_NAME.get(str(name or '').strip().upper(), -1))
+    gone = pd.read_sql(text(f"SELECT {', '.join(wa.SOURCE_COLUMNS[:-1])}, _deleted_at FROM raw_nps_whatsapp_message "
+                            "WHERE _deleted_at IS NOT NULL"), conn)
+    print(f"  Messages that left the source and are still counted: {len(gone)}")
+    current = pd.DataFrame(messages, columns=wa.SOURCE_COLUMNS).assign(_deleted_at=None)
+    every = pd.concat([current, gone], ignore_index=True) if len(gone) else current
+    every["create_date"] = pd.to_datetime(every["create_date"])
+    frame = wa.build_messages(every, config, timezone, lambda name: COMPANY_BY_SOURCE_NAME.get(str(name or '').strip().upper(), -1))
+
+    # 5. fact = raw after the filters: same rows, same flags, same boxes and groups
+    fact = pd.read_sql(text("SELECT message_id, MessageDateKey, CompanyKey, box, failure_group, in_reach_scope "
+                            "FROM fact_process_nps_message"), conn)
+    cols = ["message_id", "MessageDateKey", "CompanyKey", "box", "failure_group", "in_reach_scope"]
+    want = frame[cols].astype(str).sort_values("message_id").reset_index(drop=True)
+    have = fact[cols].astype(str).sort_values("message_id").reset_index(drop=True)
+    fact_ok = want.equals(have)
+    print(f"5. fact = raw after filters: rows {len(frame)} vs fact {len(fact)}, in scope {int(frame.in_reach_scope.sum())} "
+          f"vs {int(fact.in_reach_scope.sum())}: {'MATCH' if fact_ok else 'DIFFERENT'}")
+    if not fact_ok:
+        diff = want.merge(have, how="outer", indicator=True).query("_merge != 'both'")
+        print(f"  differing message ids: {sorted(set(diff.message_id))[:20]}")
+
+    # 6. serving views (what the API reads) = the rule, per Tripoli date x company, for the period
     lo, hi = (int(d.strftime("%Y%m%d")) for d in (date_from, date_to))
     scope = frame[(frame.in_reach_scope == 1) & frame.MessageDateKey.between(lo, hi)]
     columns = ["total_reach", "delivered", "not_delivered", "read_count", "error_count", "other_state"]
@@ -81,10 +106,34 @@ def reconcile_reach(conn, messages: list[dict], config: wa.ReachConfig, timezone
         "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE MessageDateKey BETWEEN :lo AND :hi"), params)}
     normalized = {key: {column: counts[column] for column in columns} for key, counts in expected.items()}
     boxes_ok, errors_ok = normalized == actual, dict(errors) == actual_errors
-    _table(f"  Reach {date_from}..{date_to} (Tripoli date, company) -- source", normalized, columns)
-    _table("  Reach -- warehouse v_process_nps_reach", actual, columns)
-    print(f"  Reach boxes: {'ok' if boxes_ok else 'DIFFERENT'}; error groups: {'ok' if errors_ok else 'DIFFERENT'}")
-    return raw_ok and boxes_ok and errors_ok
+
+    def by_company(rows):
+        return {c: {k: sum(v[k] for (_, cc), v in rows.items() if cc == c) for k in columns} for c in sorted({cc for _, cc in rows})}
+    _table(f"6. Reach {date_from}..{date_to} (Tripoli dates) per CompanyKey -- the rule on source rows", by_company(normalized), columns)
+    _table("   per CompanyKey -- warehouse v_process_nps_reach (what the API sums)", by_company(actual), columns)
+    print(f"  per date x company: boxes {'MATCH' if boxes_ok else 'DIFFERENT'}; error groups {'MATCH' if errors_ok else 'DIFFERENT'}")
+
+    # 7. the weekly e-mail's LAST 7 DAYS table: Feedback template, test numbers out, from NPS_REACH_START, per
+    #    company x state on the UTC create_date (the e-mail's basis), vs the warehouse fact on sent_at_utc
+    states = ["delivered", "read", "sent", "error"]
+    email: dict[int, collections.Counter] = collections.defaultdict(collections.Counter)
+    for row, at in zip(frame.to_dict("records"), every["create_date"]):
+        if row["in_reach_scope"] and pd.notna(at) and date_from <= at.date() <= date_to:
+            email[int(row["CompanyKey"])][row["state"] if row["state"] in states else "other"] += 1
+    wh: dict[int, collections.Counter] = collections.defaultdict(collections.Counter)
+    for company, st, n in conn.execute(text(
+            "SELECT CompanyKey, state, COUNT(*) FROM fact_process_nps_message WHERE in_reach_scope = 1 "
+            "AND sent_at_utc >= :a AND sent_at_utc < :b GROUP BY CompanyKey, state"),
+            {"a": _dt.datetime.combine(date_from, _dt.time()), "b": _dt.datetime.combine(date_to + _dt.timedelta(days=1), _dt.time())}):
+        wh[int(company)][st if st in states else "other"] += int(n)
+    email_ok = {k: dict(v) for k, v in email.items()} == {k: dict(v) for k, v in wh.items()}
+    names = {v: k for k, v in COMPANY_BY_SOURCE_NAME.items()}
+    _table(f"7. Weekly e-mail LAST 7 DAYS {date_from}..{date_to} (UTC create_date) -- the e-mail rule on source rows",
+           {names.get(k, k): {**dict(v), "total": sum(v.values())} for k, v in email.items()}, [*states, "other", "total"])
+    _table("   same -- warehouse fact_process_nps_message", {names.get(k, k): {**dict(v), "total": sum(v.values())} for k, v in wh.items()},
+           [*states, "other", "total"])
+    print(f"  delivered / read / sent / error per company = the weekly e-mail rule: {'MATCH' if email_ok else 'DIFFERENT'}")
+    return raw_ok and fact_ok and boxes_ok and errors_ok and email_ok
 
 
 def main() -> int:
