@@ -1,6 +1,7 @@
 """Phase 0 (NPS Score): read-only profile of the NPS source database, reached through an SSH tunnel.
 
   python scripts/process/profile_nps_source.py
+  python scripts/process/profile_nps_source.py --reach-only [--recheck-minutes 5]   # whatsapp_outbound_messages only
 
 Throwaway discovery script. It is not part of the ETL, and nothing in src/ imports it.
 - **Source:** reads only, inside a READ ONLY session, and never writes (not even to `sync_state`).
@@ -164,6 +165,12 @@ def tunnel():
 
 # --------------------------------------------------------------------------------------------- profile
 def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--reach-only", action="store_true", help="profile whatsapp_outbound_messages only")
+    parser.add_argument("--recheck-minutes", type=float, default=5, help="minutes between the two reads of the deletion check (0 = skip)")
+    args = parser.parse_args()
     load_dotenv(ROOT / ".env")
     require(["NPS_DB_USER", "NPS_DB_PASSWORD"])
     OUT_DIR.mkdir(exist_ok=True)
@@ -174,7 +181,9 @@ def main() -> int:
         try:
             with src.cursor() as cur:
                 cur.execute("SET SESSION TRANSACTION READ ONLY")
-            profile(src)
+            if not args.reach_only:
+                profile(src)
+            profile_reach(src, args.recheck_minutes)
         finally:
             src.close()
     path = OUT_DIR / f"nps_profile_{_dt.datetime.now():%Y%m%d_%H%M%S}.txt"
@@ -433,6 +442,224 @@ def timestamps(src, full, low) -> None:
         ids = sorted(r["id"] for r in data)
         if ids:
             out(f"    id range {ids[0]}..{ids[-1]}, rows {len(ids)}, gaps (missing ids inside the range) {ids[-1] - ids[0] + 1 - len(ids)}")
+
+
+# --------------------------------------------------------------------------------------------- reach (whatsapp_outbound_messages)
+REACH_TABLE = "whatsapp_outbound_messages"
+REACH_COLUMNS = ("id", "create_date", "company_name", "template_name", "state", "mobile_number", "failure_type",
+                 "failure_reason", "first_seen_at", "updated_at")
+KNOWN_STATES = ("delivered", "read", "sent", "error")
+
+
+def _local(at, tz):
+    return None if not isinstance(at, _dt.datetime) else at.replace(tzinfo=_dt.timezone.utc).astimezone(tz).replace(tzinfo=None)
+
+
+def _hist(values, label) -> None:
+    s = sorted(values)
+    if not s:
+        out(f"    {label}: no values")
+        return
+    out(f"    {label}: n {len(s)}, min {s[0]:.2f}, p10 {s[len(s) // 10]:.2f}, median {s[len(s) // 2]:.2f}, "
+        f"p90 {s[9 * len(s) // 10]:.2f}, max {s[-1]:.2f}")
+
+
+def profile_reach(src, recheck_minutes: float) -> None:
+    """Task A of the reach go-live: read-only profile of whatsapp_outbound_messages. Mobile numbers are compared in
+    memory and counted, never printed."""
+    import time
+    from zoneinfo import ZoneInfo
+
+    from departments.process import whatsapp as wa
+
+    config = PlatformConfig.from_env()
+    tz = ZoneInfo(config.business_timezone)
+    reach = wa.ReachConfig.from_env()
+    if not q(src, "SELECT COUNT(*) n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s", (REACH_TABLE,))[0]["n"]:
+        section(f"R. {REACH_TABLE}: NOT FOUND in the source")
+        return
+
+    section(f"R0. {REACH_TABLE}: schema")
+    cols = q(src, f"SHOW FULL COLUMNS FROM `{REACH_TABLE}`")
+    for c in cols:
+        out(f"    {c['Field']:<16} {c['Type']:<20} null={c['Null']:<3} key={c['Key']:<4} default={c['Default']} extra={c['Extra']}")
+    for idx in q(src, f"SHOW INDEX FROM `{REACH_TABLE}`"):
+        out(f"    index {idx['Key_name']}({idx['Column_name']}) unique={not idx['Non_unique']}")
+    missing = [c for c in REACH_COLUMNS if c not in {x["Field"] for x in cols}]
+    extra = [x["Field"] for x in cols if x["Field"] not in REACH_COLUMNS]
+    out(f"  columns missing vs announced: {missing or 'none'}; extra columns: {extra or 'none'}")
+    out("  server:", q(src, "SELECT @@global.time_zone global_tz, @@session.time_zone session_tz, @@system_time_zone system_tz, "
+                           "NOW() now_, UTC_TIMESTAMP() utc_now, TIMEDIFF(NOW(), UTC_TIMESTAMP()) offset_")[0])
+    out(f"  config: business timezone {config.business_timezone}; NPS_REACH_TEMPLATE_MATCH={reach.template_match!r}; "
+        f"NPS_REACH_EXCLUDED_NUMBERS: {len(reach.excluded_numbers)} configured; NPS_REACH_START={reach.start or '(empty = all)'}")
+
+    rows = q(src, f"SELECT {', '.join(f'`{c}`' for c in REACH_COLUMNS)} FROM `{REACH_TABLE}`")
+    for r in rows:
+        r["_state"] = str(r.get("state") or "").strip().lower()
+        r["_local"] = _local(r.get("create_date"), tz)
+        r["_feedback"] = wa.is_feedback_template(r.get("template_name"), reach.template_match)
+        r["_test"] = wa.is_excluded_number(r.get("mobile_number"), reach.excluded_numbers)
+        r["_scope"] = r["_feedback"] and not r["_test"] and (reach.start is None or (r["_local"] is not None and r["_local"].date() >= reach.start))
+
+    section("R1. counts and dates")
+    out(q(src, f"SELECT COUNT(*) n, COUNT(DISTINCT id) distinct_ids, MIN(id) min_id, MAX(id) max_id, "
+               f"MIN(create_date) min_create, MAX(create_date) max_create, SUM(create_date IS NULL) null_create, "
+               f"MIN(first_seen_at) min_first_seen, MAX(first_seen_at) max_first_seen, "
+               f"MIN(updated_at) min_upd, MAX(updated_at) max_upd FROM `{REACH_TABLE}`")[0])
+    out("  null / blank per column:")
+    for c in REACH_COLUMNS:
+        r = q(src, f"SELECT SUM(`{c}` IS NULL) nulls, SUM(TRIM(CAST(`{c}` AS CHAR)) = '') blanks, COUNT(DISTINCT `{c}`) d FROM `{REACH_TABLE}`")[0]
+        out(f"    {c:<16} nulls {int(r['nulls'] or 0):>7}  blanks {int(r['blanks'] or 0):>7}  distinct {r['d']:>7}")
+    out("  mobile_number shape (length / first 3 chars, counts only):",
+        q(src, f"SELECT CHAR_LENGTH(mobile_number) len, LEFT(mobile_number, 3) p, COUNT(*) n FROM `{REACH_TABLE}` GROUP BY len, p ORDER BY n DESC LIMIT 8"))
+    out(f"  distinct mobile numbers: {len({wa.digits(r.get('mobile_number')) for r in rows})}")
+    latest = max((r["create_date"] for r in rows if isinstance(r.get("create_date"), _dt.datetime)), default=None)
+    if latest:
+        cutoff = (latest - _dt.timedelta(days=30)).date()
+        out(f"  rows per day, last 30 days up to {latest.date()} (create_date as stored):")
+        for r in q(src, f"SELECT DATE(create_date) d, COUNT(*) n FROM `{REACH_TABLE}` WHERE create_date >= %s GROUP BY d ORDER BY d", (cutoff,)):
+            out(f"    {r['d']}: {r['n']}")
+        out("  rows per month before that:")
+        for r in q(src, f"SELECT DATE_FORMAT(create_date, '%%Y-%%m') m, COUNT(*) n FROM `{REACH_TABLE}` WHERE create_date < %s GROUP BY m ORDER BY m", (cutoff,)):
+            out(f"    {r['m']}: {r['n']}")
+    out("  rows per day of first_seen_at (when the developer's sync saw them), last 15 days:")
+    for r in q(src, f"SELECT DATE(first_seen_at) d, COUNT(*) n FROM `{REACH_TABLE}` GROUP BY d ORDER BY d DESC LIMIT 15"):
+        out(f"    {r['d']}: {r['n']}")
+
+    section("R2. company_name and template_name")
+    for c in ("company_name", "template_name"):
+        out(f"  {c}:")
+        for r in q(src, f"SELECT `{c}` v, COUNT(*) n, MIN(create_date) first_, MAX(create_date) last_ FROM `{REACH_TABLE}` GROUP BY `{c}` ORDER BY n DESC"):
+            out(f"    {r['n']:>7}  {mask(r['v'])!r}  ({r['first_']} .. {r['last_']})")
+    out("  company_name -> CompanyKey (transform.COMPANY_BY_SOURCE_NAME):",
+        dict(collections.Counter(f"{mask(r.get('company_name'))!r} -> {COMPANY.get(str(r.get('company_name') or '').strip().upper(), -1)}" for r in rows)))
+
+    section("R3. state")
+    for r in q(src, f"SELECT state v, COUNT(*) n FROM `{REACH_TABLE}` GROUP BY state ORDER BY n DESC"):
+        flag = "" if str(r["v"] or "").strip().lower() in KNOWN_STATES else "   <-- UNEXPECTED"
+        out(f"    {r['n']:>7}  {r['v']!r}{flag}")
+    out("  Feedback messages per month (create_date as stored) x state x failure_type x mobile_number present:")
+    for (m, s, ft, has), n in sorted(collections.Counter(
+            (f"{r['create_date']:%Y-%m}", r["_state"], r.get("failure_type"), r.get("mobile_number") not in (None, ""))
+            for r in rows if r["_feedback"] and isinstance(r.get("create_date"), _dt.datetime)).items(), key=str):
+        out(f"    {m}  {s:<10} {str(ft):<24} mobile={'yes' if has else 'NULL':<4} {n:>6}")
+    out("  first create_date of each state (all templates):",
+        {r["state"]: str(r["f"]) for r in q(src, f"SELECT state, MIN(create_date) f FROM `{REACH_TABLE}` GROUP BY state")})
+    out("  phone_invalid rows by mobile_number present:",
+        q(src, f"SELECT mobile_number IS NOT NULL has_mobile, COUNT(*) n, MIN(create_date) first_, MAX(create_date) last_ "
+               f"FROM `{REACH_TABLE}` WHERE failure_type = 'phone_invalid' GROUP BY has_mobile"))
+    out("  state x template is Feedback:")
+    for (s, f), n in sorted(collections.Counter((r["_state"], r["_feedback"]) for r in rows).items()):
+        out(f"    {s!r:<14} feedback={f!s:<5} {n:>7}")
+
+    section("R4. failure_type / failure_reason and FAILURE_GROUPS")
+    by_value = collections.Counter((r["_state"], r.get("failure_type"), r.get("failure_reason")) for r in rows
+                                   if r["_state"] == "error" or r.get("failure_type") not in (None, "") or r.get("failure_reason") not in (None, ""))
+    groups = collections.Counter()
+    out("  count  state      group                  failure_type | failure_reason")
+    for (s, ft, fr), n in by_value.most_common():
+        g = wa.failure_group(ft, fr, "error")  # the group it would land in as an error
+        if s == "error":
+            groups[g] += n
+        out(f"  {n:>6}  {s:<10} {g if s == 'error' else '(' + g + ' if error)':<22} {mask(ft)!r} | {mask(fr)[:220]!r}")
+    out(f"  error rows per group: {dict(groups)}; in 'other': {groups.get('other', 0)} of {sum(groups.values())}")
+    out(f"  distinct failure_type values: {len({ft for _, ft, _ in by_value})}; distinct failure_reason values: {len({fr for _, _, fr in by_value})}")
+    out("  numeric codes found in the failure text:",
+        dict(collections.Counter(m for (s, ft, fr), n in by_value.items() for m in re.findall(r"(?<!\d)\d{3,6}(?!\d)", f"{ft or ''} {fr or ''}") for _ in range(n)).most_common(20)))
+
+    section("R5. filters: template and test numbers")
+    out(f"  not a Feedback template (would be filtered by NPS_REACH_TEMPLATE_MATCH={reach.template_match!r}): {sum(not r['_feedback'] for r in rows)} of {len(rows)}")
+    out(f"  test numbers (NPS_REACH_EXCLUDED_NUMBERS, {len(reach.excluded_numbers)} configured): {sum(r['_test'] for r in rows)} rows, "
+        f"of which Feedback {sum(r['_test'] and r['_feedback'] for r in rows)}")
+    out(f"  before NPS_REACH_START: {sum(r['_feedback'] and not r['_test'] and not r['_scope'] for r in rows)}")
+    out(f"  in reach scope: {sum(r['_scope'] for r in rows)}")
+    out(f"  numbers that receive more than one Feedback message: "
+        f"{sum(1 for n in collections.Counter(wa.digits(r.get('mobile_number'))[-9:] for r in rows if r['_feedback']).values() if n > 1)}")
+
+    section("R6. timezone of create_date")
+    out("  source clock:", q(src, "SELECT @@session.time_zone tz, NOW() now_, UTC_TIMESTAMP() utc_, TIMEDIFF(NOW(), UTC_TIMESTAMP()) offset_")[0])
+    out(f"  create_date hour-of-day (as stored): {dict(sorted(collections.Counter(r['create_date'].hour for r in rows if isinstance(r.get('create_date'), _dt.datetime)).items()))}")
+    _hist([(r["first_seen_at"] - r["create_date"]).total_seconds() / 3600 for r in rows
+           if isinstance(r.get("first_seen_at"), _dt.datetime) and isinstance(r.get("create_date"), _dt.datetime)],
+          "first_seen_at - create_date (hours); first_seen_at is the MySQL server clock (NOW())")
+    ratings = q(src, "SELECT mobile_number, create_date FROM nps_rating_full_data WHERE create_date IS NOT NULL")
+    sent_to = collections.defaultdict(list)
+    for r in rows:
+        if r["_feedback"] and isinstance(r.get("create_date"), _dt.datetime):
+            sent_to[wa.digits(r.get("mobile_number"))[-9:]].append(r["create_date"])
+    gaps, matched = [], 0
+    for r in ratings:
+        cands = [m for m in sent_to.get(wa.digits(r.get("mobile_number"))[-9:], []) if abs((r["create_date"] - m).total_seconds()) < 3 * 86400]
+        if cands:
+            matched += 1
+            m = min(cands, key=lambda m: abs((r["create_date"] - m).total_seconds()))
+            gaps.append((r["create_date"] - m).total_seconds() / 3600)
+    out(f"  ratings (create_date = UTC, checked on step 1) with a Feedback message to the same number within 3 days: {matched} of {len(ratings)}")
+    _hist(gaps, "rating create_date - nearest message create_date (hours)")
+    out(f"    by whole hour: {dict(sorted(collections.Counter(int(g // 1) for g in gaps).items()))}")
+    out(f"    negative (rating before its message): {sum(g < 0 for g in gaps)}; within 0..2 h: {sum(0 <= g < 2 for g in gaps)}; "
+        f"within -3..-1 h: {sum(-3 <= g < -1 for g in gaps)}")
+
+    section("R7. does updated_at move?")
+    out(q(src, f"SELECT SUM(updated_at > first_seen_at) moved, SUM(updated_at = first_seen_at) same, SUM(updated_at < first_seen_at) before_, "
+               f"COUNT(*) n FROM `{REACH_TABLE}`")[0])
+    for r in q(src, f"SELECT state, SUM(updated_at > first_seen_at) moved, COUNT(*) n FROM `{REACH_TABLE}` GROUP BY state ORDER BY n DESC"):
+        out(f"    {r['state']!r:<14} moved {int(r['moved'] or 0):>7} of {r['n']}")
+    _hist([(r["updated_at"] - r["first_seen_at"]).total_seconds() / 3600 for r in rows
+           if isinstance(r.get("updated_at"), _dt.datetime) and isinstance(r.get("first_seen_at"), _dt.datetime) and r["updated_at"] > r["first_seen_at"]],
+          "updated_at - first_seen_at for moved rows (hours)")
+    out("  updated_at per day, last 15 days:")
+    for r in q(src, f"SELECT DATE(updated_at) d, COUNT(*) n FROM `{REACH_TABLE}` GROUP BY d ORDER BY d DESC LIMIT 15"):
+        out(f"    {r['d']}: {r['n']}")
+    out(f"  distinct updated_at values: {len({r['updated_at'] for r in rows})}; most common: "
+        f"{collections.Counter(str(r['updated_at']) for r in rows).most_common(5)}")
+
+    section("R8. ids, duplicates, gaps, deletions")
+    ids = sorted(r["id"] for r in rows)
+    out(f"  rows {len(ids)}, distinct ids {len(set(ids))}, range {ids[0] if ids else None}..{ids[-1] if ids else None}, "
+        f"missing ids inside the range {(ids[-1] - ids[0] + 1 - len(set(ids))) if ids else 0}")
+    out("  NOTE: the ids look like source (Odoo whatsapp.message) ids, so gaps can be messages of other templates/companies never copied.")
+    if recheck_minutes > 0:
+        before = {r["id"]: (r["_state"], r["updated_at"]) for r in rows}
+        out(f"  second read in {recheck_minutes:g} minutes ...")
+        time.sleep(recheck_minutes * 60)
+        after = {r["id"]: (str(r["state"] or "").strip().lower(), r["updated_at"])
+                 for r in q(src, f"SELECT id, state, updated_at FROM `{REACH_TABLE}`")}
+        changed = [i for i in before.keys() & after.keys() if before[i] != after[i]]
+        out(f"  after {recheck_minutes:g} min: rows {len(after)}; new {len(after.keys() - before.keys())}; "
+            f"gone (deleted) {len(before.keys() - after.keys())}; changed state/updated_at {len(changed)}; "
+            f"state transitions {dict(collections.Counter(f'{before[i][0]}->{after[i][0]}' for i in changed))}")
+
+    section("R9. reconciliation preview (weekly e-mail rule: Feedback template, test numbers out, from NPS_REACH_START)")
+    today = _dt.datetime.now(tz).date()
+    last7 = today - _dt.timedelta(days=7)
+    for label, keep in (("all data in scope", lambda r: True),
+                        (f"last 7 days ({last7} .. {today - _dt.timedelta(days=1)}, Tripoli date)", lambda r: r["_local"] is not None and last7 <= r["_local"].date() < today)):
+        out(f"  {label}:")
+        counts = collections.Counter((str(r.get("company_name") or "").strip().upper() or "(blank)", r["_state"]) for r in rows if r["_scope"] and keep(r))
+        for co in sorted({c for c, _ in counts}):
+            cells = {s: counts.get((co, s), 0) for s in KNOWN_STATES}
+            other = sum(n for (c, s), n in counts.items() if c == co and s not in KNOWN_STATES)
+            out(f"    {co:<8} total {sum(n for (c, _), n in counts.items() if c == co):>6} | " + "  ".join(f"{s} {n:>5}" for s, n in cells.items()) + f"  other {other}")
+
+    section("R10. response-rate preview: Feedback messages in scope vs ratings in fact_process_nps_response, per company and month")
+    wh = create_engine(config.database_url)
+    with wh.connect() as c:
+        rated = collections.Counter((int(k), str(m)) for k, m, n in c.execute(text(
+            "SELECT CompanyKey, DATE_FORMAT(rated_at_local, '%Y-%m'), 1 FROM fact_process_nps_response")))
+    sent = collections.Counter((COMPANY.get(str(r.get("company_name") or "").strip().upper(), -1), f"{r['_local']:%Y-%m}", r["_state"])
+                               for r in rows if r["_scope"] and r["_local"] is not None)
+    out("  company month    | messages delivered read  sent error other | ratings  ratings/(delivered+read)")
+    for co, m in sorted({(k, mm) for k, mm, _ in sent} | set(rated)):
+        st = {s: sent.get((co, m, s), 0) for s in KNOWN_STATES}
+        total = sum(n for (k, mm, _), n in sent.items() if k == co and mm == m)
+        reached = st["delivered"] + st["read"]
+        out(f"  {co:>3} {m}  | {total:>8} {st['delivered']:>9} {st['read']:>4} {st['sent']:>5} {st['error']:>5} {total - sum(st.values()):>5} | "
+            f"{rated.get((co, m), 0):>7}  {(100 * rated.get((co, m), 0) / reached) if reached else float('nan'):6.1f}%"
+            + ("   <-- ratings > delivered+read" if rated.get((co, m), 0) > reached else ""))
+
+
+from departments.process.transform import COMPANY_BY_SOURCE_NAME as COMPANY  # noqa: E402
 
 
 if __name__ == "__main__":
