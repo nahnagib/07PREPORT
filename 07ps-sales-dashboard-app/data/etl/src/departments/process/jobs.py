@@ -17,10 +17,18 @@ Load (docs/nps-etl.md):
    one transaction: level dimension upsert, both facts replaced, quality checks on that transaction -- orphans, a
    duplicate response id or a level outside 1..3 FAIL (everything rolls back); stale source, key fallback rates,
    low-rating table disagreements and deliveries rated more than once WARN.
+3. WhatsApp reach (NPS_REACH_ENABLED, departments/process/whatsapp.py): whatsapp_outbound_messages is read completely
+   every run as well (decision 2026-10-19: a few thousand rows, seconds; state changes and deletions in one pass); a
+   repeated source id FAILS the extract before anything is written (fail:nps_message_duplicate_source_id). A
+   message that leaves the source gets _deleted_at in raw but is NEVER hidden: the fact keeps counting it
+   (deleted_in_source_at) and warn:nps_reach_rows_disappeared reports how many. Checks: an empty state on more than
+   NULL_STATE_MAX rows FAILS; another state, an error in "Other", no new message for STALE_DAYS and a
+   company other than MAJAAL / TIKA WARN. Every check result is also in the load_nps etl_task_log details.
 """
 
 from __future__ import annotations
 
+import collections
 import datetime as _dt
 import os
 from typing import Any
@@ -54,7 +62,8 @@ FULL_COLUMNS = [*COMMON, "updated_at"]
 LOW_COLUMNS = [*COMMON, "team_branch", "recipient_email", "email_notification", "notification_date", "updated_at"]
 ID_COLUMNS = ("company_id", "created_id", "partner_id", "salesperson_id", "team_id")  # FLOAT in the source
 # warnings
-STALE_DAYS = 3  # no new rating for this many days -> the source probably stopped syncing
+STALE_DAYS = 3  # no new rating / feedback message for this many days -> the source probably stopped syncing
+NULL_STATE_MAX = 5  # messages without a state: a few are tolerated (they show as "other"), more fail the load
 MAX_FALLBACK_PCT = {"CustomerKey": 10.0, "SalespersonKey": 10.0, "SalesTeamKey": 10.0}  # company / order: every row warns
 KEY_DIMS = {
     "CompanyKey": ("dim_company", "CompanyKey"), "CustomerKey": ("dim_customer", "CustomerKey"),
@@ -133,6 +142,10 @@ def extract_nps(ctx: RunContext) -> TaskResult:
                                     "AND TABLE_NAME = :t", {"t": wa.SOURCE_TABLE})
             if int(exists[0]["n"] if exists else 0):
                 messages, reach_status = src.read_table_incremental(wa.SOURCE_TABLE, wa.SOURCE_COLUMNS), "loaded"
+                repeated = sorted({i for i, n in collections.Counter(int(m["id"]) for m in messages).items() if n > 1})
+                if repeated:  # the source's primary key is broken: nothing is written (raw would keep one copy)
+                    raise RuntimeError(f"fail:nps_message_duplicate_source_id: {len(repeated)} id(s) repeated in "
+                                       f"{wa.SOURCE_TABLE}, e.g. {repeated[:10]}")
             else:
                 reach_status = f"skipped: {wa.SOURCE_TABLE} does not exist in the source yet"
                 ctx.logger.info("NPS reach %s; the ratings are not affected", reach_status)
@@ -243,10 +256,11 @@ def _checks(stale_before: _dt.datetime) -> list[q.CheckSpec]:
 
 def load_messages(conn, ctx: RunContext, now: _dt.datetime) -> dict[str, Any]:
     """fact_process_nps_message from the raw messages, in the load transaction (only when the source table was read)."""
-    raw = pd.read_sql(text(f"SELECT * FROM {RAW_MSG} WHERE _deleted_at IS NULL"), conn)
+    raw = pd.read_sql(text(f"SELECT * FROM {RAW_MSG}"), conn)  # deleted rows too: a message that left the source still counts
     raw["create_date"] = pd.to_datetime(raw["create_date"])
+    reach = wa.ReachConfig.from_env()
     company_keys = {int(k) for (k,) in conn.execute(text("SELECT CompanyKey FROM dim_company"))}
-    fact = wa.build_messages(raw, wa.ReachConfig.from_env(), ctx.config.business_timezone,
+    fact = wa.build_messages(raw, reach, ctx.config.business_timezone,
                              lambda name: tf.source_company(name, company_keys))
     keys = [int(v) for v in fact["MessageDateKey"].unique() if int(v) > 0]
     if keys:
@@ -255,14 +269,15 @@ def load_messages(conn, ctx: RunContext, now: _dt.datetime) -> dict[str, Any]:
     upsert(conn, FAILURE_GROUPS, wa.group_frame().assign(updated_at_utc=now))
     replace_all(conn, MSG_FACT, _stamped(fact, ctx, now))
     upsert(conn, "process_nps_reach_state", pd.DataFrame([{
-        "singleton_id": 1, "loaded_at_utc": now, "messages_loaded": len(fact), "_run_id": ctx.run_uid,
+        "singleton_id": 1, "loaded_at_utc": now, "messages_loaded": len(fact), "reach_start": reach.start, "_run_id": ctx.run_uid,
     }]))
     scope = fact[fact["in_reach_scope"] == 1]
-    return {"messages": len(fact), "in_scope": len(scope), "by_box": scope["box"].value_counts().to_dict(),
+    return {"messages": len(fact), "in_scope": len(scope), "deleted_in_source": int(fact["deleted_in_source_at"].notna().sum()),
+            "reach_start": str(reach.start) if reach.start else None, "by_box": scope["box"].value_counts().to_dict(),
             "states": fact["state"].value_counts().to_dict(), "error_groups": scope.loc[scope["box"] == "error", "failure_group"].value_counts().to_dict()}
 
 
-def _message_checks() -> list[q.CheckSpec]:
+def _message_checks(stale_before: _dt.datetime) -> list[q.CheckSpec]:
     return [
         q.orphan(MSG_FACT, "CompanyKey", "dim_company", "CompanyKey", name=f"orphan:{MSG_FACT}.CompanyKey"),
         q.orphan(MSG_FACT, "MessageDateKey", "dim_date", "DateKey", name=f"orphan:{MSG_FACT}.MessageDateKey"),
@@ -272,6 +287,20 @@ def _message_checks() -> list[q.CheckSpec]:
                      table=MSG_FACT, severity="warn"),
         q.custom_sql("warn:nps_message_company_unmatched", f"SELECT message_id FROM {MSG_FACT} WHERE CompanyKey = -1",
                      table=MSG_FACT, severity="warn"),
+        q.custom_sql("fail:nps_message_state_missing",
+                     f"SELECT COUNT(*) FROM {MSG_FACT} WHERE state = '' HAVING COUNT(*) > {NULL_STATE_MAX}", table=MSG_FACT),
+        # an error the groups do not know: failure_type and the leading code only (free text is never copied out of raw)
+        q.custom_sql("warn:nps_message_error_in_other",
+                     f"SELECT r.failure_type, SUBSTR(r.failure_reason, 1, 6), COUNT(*) FROM {RAW_MSG} r JOIN {MSG_FACT} f "
+                     "ON f.message_id = r.id WHERE f.failure_group = 'other' GROUP BY r.failure_type, SUBSTR(r.failure_reason, 1, 6)",
+                     table=MSG_FACT, severity="warn"),
+        q.custom_sql("warn:nps_message_source_stale",
+                     f"SELECT MAX(sent_at_utc) FROM {MSG_FACT} WHERE in_reach_scope = 1 "
+                     "HAVING MAX(sent_at_utc) IS NULL OR MAX(sent_at_utc) < :cutoff",
+                     table=MSG_FACT, severity="warn", params={"cutoff": stale_before}),
+        # rows that left whatsapp_outbound_messages: still counted on the page (deleted_in_source_at), listed here
+        q.custom_sql("warn:nps_reach_rows_disappeared", f"SELECT id FROM {RAW_MSG} WHERE _deleted_at IS NOT NULL",
+                     table=RAW_MSG, severity="warn"),
     ]
 
 
@@ -307,11 +336,14 @@ def load_nps(ctx: RunContext) -> TaskResult:
         replace_all(conn, FACT, responses)
         replace_all(conn, COMMENTS, comments)
         reach_stats = load_messages(conn, ctx, now) if ctx.state.get("reach_status") == "loaded" else None
-        checks = _checks(now - _dt.timedelta(days=STALE_DAYS)) + (_message_checks() if reach_stats is not None else [])
+        stale_before = now - _dt.timedelta(days=STALE_DAYS)
+        checks = _checks(stale_before) + (_message_checks(stale_before) if reach_stats is not None else [])
         results = ctx.quality.evaluate(checks, conn, task_name="load_nps")
         q.raise_for_failures(results)  # rolls back the whole mart load
     details = {**built.stats, "responses_loaded": len(responses), "comments_loaded": len(comments),
-               "reach": reach_stats or ctx.state.get("reach_status")}
+               "reach": reach_stats or ctx.state.get("reach_status"),
+               # every check, also in etl_task_log (etl_dq_result holds the samples)
+               "checks": {r.spec.name: f"{r.status} ({r.failing_rows or 0})" for r in results}}
     ctx.logger.info("NPS loaded: %s response(s) %s, NPS-style %s; %s comment(s); %s blank; company from %s",
                     len(responses), details["by_level"], details["nps_style"], len(comments), details["blank"], details["company_source"])
     return TaskResult(rows_loaded=len(responses) + len(comments) + (reach_stats["messages"] if reach_stats is not None else 0), details=details)

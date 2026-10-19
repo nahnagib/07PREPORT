@@ -1,26 +1,29 @@
 """NPS Score -- WhatsApp message reach (step 2, section 4): the ONLY place the reach rules and the error groups live.
 
-Source: the NPS developer's table ``whatsapp_outbound_messages`` in the NPS MySQL database (NOT YET AVAILABLE on
-2026-10-18). Odoo's ``whatsapp.message`` is NOT read: this table replaces that plan. Columns as announced::
+Source: the NPS developer's table ``whatsapp_outbound_messages`` in the NPS MySQL database (live since 2026-10-18;
+profiled 2026-10-19, docs/nps-etl.md "Message reach"). Odoo's ``whatsapp.message`` is NOT read. Columns::
 
     id BIGINT UNSIGNED PK, create_date DATETIME, company_name VARCHAR(100), template_name VARCHAR(255), state VARCHAR(30),
     mobile_number VARCHAR(40), failure_type VARCHAR(100), failure_reason TEXT, first_seen_at DATETIME, updated_at DATETIME
 
 Switch: ``NPS_REACH_ENABLED`` (default false). When it is true, the job checks whether the table exists: if it does not,
-it logs INFO and skips the dataset, leaving the ratings untouched; once the table appears it is loaded with no code
-change. Profile the table (counts, states, failure values, dates, timezone, whether ``updated_at`` moves) and report
-before switching it on in production.
+it logs INFO and skips the dataset, leaving the ratings untouched.
 
-Rules (the developer's weekly e-mail; configurable, never hard-coded):
+Dates: ``create_date`` is UTC (a rating arrives a median of 11 minutes after its message; the ratings are UTC), converted
+to Africa/Tripoli. ``first_seen_at`` / ``updated_at`` are the source server's clock (UTC+2) and are only copied.
+
+Rules (the developer's weekly e-mail; configurable per environment, never hard-coded):
   NPS_REACH_TEMPLATE_MATCH     a feedback message = ``template_name`` contains this text (default "Feedback")
-  NPS_REACH_EXCLUDED_NUMBERS   comma list of test numbers to leave out (compared on digits only); the number is used
-                               here only and never stored outside the raw layer
-  NPS_REACH_START              messages from this date on (yyyy-mm-dd, Tripoli); empty = all
+  NPS_REACH_EXCLUDED_NUMBERS   comma list of test numbers to leave out (compared on the last 9 digits); the number is
+                               used here only and never stored outside the raw layer
+  NPS_REACH_START              messages from this date on (yyyy-mm-dd, Tripoli); empty = all. Agreed value 2026-10-03:
+                               before it the source holds only failed messages (successful ones were never kept)
 The boxes: Delivered = state ``delivered``, Read = ``read``, Not Delivered = ``sent``, Error = ``error``; Total Reach =
 every message in scope. Any other state is kept as it is and reported by a warning (to be placed with the business).
+A failure text on a message that is not in state ``error`` is ignored (an older attempt; the message got through).
 
-The error groups follow the developer's "WhatsApp Error Reference". The keyword rules below are a first mapping, to
-be confirmed against the real failure values when the table is profiled.
+The error groups follow the developer's "WhatsApp Error Reference", confirmed against every failure value of the
+2026-10-19 profile (tests/test_process_nps.py lists them).
 """
 
 from __future__ import annotations
@@ -51,19 +54,23 @@ FAILURE_GROUPS: tuple[FailureGroup, ...] = (
     FailureGroup("undeliverable_131026", "131026 Undeliverable", False,
                  "The number cannot receive the message (not on WhatsApp, old app version, or terms not accepted).", 1,
                  (r"\b131026\b", r"undeliverable")),
-    FailureGroup("ecosystem_131049", "131049 Ecosystem engagement", False,
-                 "Meta did not deliver the marketing message to keep engagement healthy; it may succeed later.", 2,
-                 (r"\b131049\b", r"ecosystem")),
+    FailureGroup("ecosystem_131049", "Meta held back (131049/130472)", False,
+                 "Meta did not deliver the message (healthy ecosystem engagement, or the number is in a Meta experiment); "
+                 "it may succeed later.", 2,
+                 (r"\b131049\b", r"ecosystem", r"\b130472\b", r"part of an experiment")),
+    FailureGroup("opted_out_131050", "Customer opted out of marketing (131050)", False,
+                 "The customer chose to stop receiving marketing messages from the business on WhatsApp.", 3,
+                 (r"\b131050\b", r"stop receiving marketing")),
     FailureGroup("template_quality", "Template quality too low", True,
-                 "The template's quality rating is too low: improve the template text.", 3,
+                 "The template's quality rating is too low: improve the template text.", 4,
                  (r"quality",)),
-    FailureGroup("phone_format", "phone number wrong format", True,
-                 "The customer's mobile number is not in a valid international format: correct it in Odoo.", 4,
+    FailureGroup("phone_format", "Phone number missing or invalid", True,
+                 "The customer has no valid mobile number: add or correct the phone number on the Odoo contact.", 5,
                  (r"phone", r"format", r"invalid (?:number|recipient)", r"\b131021\b")),
     FailureGroup("meta_temporary", "Meta temporary error", False,
-                 "A temporary error on Meta's side; resending later usually works.", 5,
-                 (r"temporar", r"try again", r"\b131000\b", r"\b130429\b", r"rate limit")),
-    FailureGroup("other", "Other", False, "Any other failure value.", 6),
+                 "A temporary error on Meta's side; resending later usually works.", 6,
+                 (r"temporar", r"try again", r"\bretry\b", r"whatsapp_recoverable", r"\b131000\b", r"\b130429\b", r"rate limit")),
+    FailureGroup("other", "Other", False, "Any other failure value (e.g. 131047 re-engagement message).", 7),
 )
 _COMPILED = [(g, [re.compile(p, re.I) for p in g.patterns]) for g in FAILURE_GROUPS]
 
@@ -132,17 +139,23 @@ def is_excluded_number(mobile_number: object, excluded: tuple[str, ...]) -> bool
 validate_groups()
 
 
+def _naive(value: object) -> _dt.datetime | None:
+    return None if value is None or pd.isna(value) else pd.Timestamp(value).to_pydatetime()
+
+
 # -- source and transform ------------------------------------------------------------------------------------------------
 SOURCE_TABLE = "whatsapp_outbound_messages"
 SOURCE_COLUMNS = ["id", "create_date", "company_name", "template_name", "state", "mobile_number", "failure_type",
                   "failure_reason", "first_seen_at", "updated_at"]
 FACT_COLUMNS = ["message_id", "sent_at_utc", "sent_at_local", "MessageDateKey", "CompanyKey", "state", "box", "failure_group",
-                "template_name", "is_feedback_template", "is_test_number", "in_reach_scope"]
+                "template_name", "is_feedback_template", "is_test_number", "in_reach_scope", "deleted_in_source_at"]
 
 
 def build_messages(raw: pd.DataFrame, config: ReachConfig, timezone: str, company_of: "callable") -> pd.DataFrame:
-    """raw_nps_whatsapp_message rows (not deleted) -> fact_process_nps_message rows. ``company_of(company_name)`` is the
-    ratings' company mapping (transform.source_company). The mobile number is only compared, never copied."""
+    """raw_nps_whatsapp_message rows -> fact_process_nps_message rows, INCLUDING rows that left the source: a message that
+    disappears is never hidden, it keeps being counted with ``deleted_in_source_at`` = the raw ``_deleted_at``.
+    ``company_of(company_name)`` is the ratings' company mapping (transform.source_company). The mobile number is only
+    compared, never copied."""
     from zoneinfo import ZoneInfo
 
     tz = ZoneInfo(timezone)
@@ -162,5 +175,6 @@ def build_messages(raw: pd.DataFrame, config: ReachConfig, timezone: str, compan
             "failure_group": failure_group(r.get("failure_type"), r.get("failure_reason"), state) or NOT_AN_ERROR,
             "template_name": r.get("template_name"), "is_feedback_template": int(feedback), "is_test_number": int(test),
             "in_reach_scope": int(feedback and not test and on_or_after_start),
+            "deleted_in_source_at": _naive(r.get("_deleted_at")),
         })
     return pd.DataFrame(out, columns=FACT_COLUMNS)
