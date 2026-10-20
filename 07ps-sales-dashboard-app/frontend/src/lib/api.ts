@@ -2608,7 +2608,8 @@ export interface CreditPolicyZone {
 
 export interface RowCreditZone {
   zone: CreditZoneKey;
-  daysPastDue: number;
+  /** days from the overdue date (due date + 1) to the snapshot date; negative = not yet due */
+  daysOverdue: number;
   daysUntilDue: number;
 }
 
@@ -2628,8 +2629,11 @@ export interface CreditCustomer {
   oldestInvoiceNumber: string | null;
   oldestInvoiceDate: string | null;
   oldestDueDate: string;
+  /** oldestDueDate + 1 day: day 0 of the credit policy (the first day the invoice is late) */
+  oldestOverdueDate: string;
   dueDateSource: 'instalment' | 'invoice' | 'payment_term' | 'invoice_date';
-  daysPastDue: number;
+  /** snapshot date - oldestOverdueDate; negative = not yet due */
+  daysOverdue: number;
   notYetDue: boolean;
   daysUntilDue: number;
   zone: CreditZoneKey;

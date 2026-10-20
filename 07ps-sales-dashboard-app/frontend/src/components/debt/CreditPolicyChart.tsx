@@ -20,7 +20,8 @@ import {
 } from '../../lib/debt/creditPolicy';
 
 /** Four main statuses; BLOCK contains three action ranges with the same owner and colour.
- * Placement uses the oldest unpaid due date, size uses total outstanding, y avoids overlap.
+ * Placement uses the days overdue of the oldest unpaid invoice (from its overdue date = the day after its due date),
+ * size uses total outstanding, y avoids overlap.
  * Hover/focus shows policy details; click/Enter opens the customer's unpaid invoices. */
 
 export interface CreditPolicyChartProps {
@@ -58,7 +59,7 @@ function useWidth<T extends HTMLElement>(): [React.RefObject<T>, number] {
 
 export function CreditPolicyChart({ data, loading, error, onRetry, term, onTermChange, viewLabel, onCustomerClick }: CreditPolicyChartProps) {
   const [hover, setHover] = useState<{ key: number; anchor: Element } | null>(null);
-  const customers = useMemo(() => (data?.customers ?? []).filter((c) => !c.notYetDue && c.daysPastDue >= 0 && c.zone !== 'NOT_YET_DUE'), [data]);
+  const customers = useMemo(() => (data?.customers ?? []).filter((c) => !c.notYetDue && c.daysOverdue >= 0 && c.zone !== 'NOT_YET_DUE'), [data]);
   const approx = data?.allCurrencies ? '≈ ' : '';
   const ccy = data?.currency ?? COMPANY_CURRENCY;
   const money = useCallback((v: number) => `${approx}${formatMoney(ccy, v)}`, [approx, ccy]);
@@ -79,8 +80,8 @@ export function CreditPolicyChart({ data, loading, error, onRetry, term, onTermC
         <div style={{ minWidth: 0, flex: '1 1 440px' }}>
           <h3 style={h3}>Credit Policy Escalation · {viewLabel}</h3>
           <p style={note}>
-            Each dot is a customer, placed by the number of days past due of its oldest unpaid invoice (based on due date). Click a dot for
-            its details.
+            Each dot is a customer, placed by the number of days overdue of its oldest unpaid invoice (counted from the overdue date = day
+            after due date). Click a dot for its details.
           </p>
         </div>
         <div style={{ width: 200, flex: '0 0 200px', maxWidth: '100%' }}>
@@ -104,7 +105,7 @@ export function CreditPolicyChart({ data, loading, error, onRetry, term, onTermC
 
       <div aria-label="Legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
         <span>Dot size = amount outstanding</span>
-        <span>Position = days past due of the oldest unpaid invoice (based on due date)</span>
+        <span>Position = days overdue of the oldest unpaid invoice (from overdue date)</span>
         <span>Each customer appears once</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <svg width="14" height="14" aria-hidden>
@@ -178,7 +179,7 @@ function EscalationTrack({
           ) : null)}
         </div>
         <svg width={cols.width} height={height} viewBox={`0 0 ${cols.width} ${height}`} role="img"
-          aria-label={`Credit Policy Escalation: ${customers.length} customers placed by days past due`}
+          aria-label={`Credit Policy Escalation: ${customers.length} customers placed by days overdue`}
           style={{ display: 'block' }}>
           {zones.map((z, i) => (
             <rect key={z.key} data-zone={z.key} x={cols.zones[i].x0} y={0}
@@ -194,7 +195,7 @@ function EscalationTrack({
               strokeDasharray={internal ? '3 5' : undefined} />;
           })}
           <text x={3} y={bandH + 17} fontSize={10.5} fontWeight={600} textAnchor="start" fill="var(--ps-color-text)">
-            <tspan x={3}>Due Date</tspan><tspan x={3} dy={14}>(Day 0)</tspan>
+            <tspan x={3}>Overdue date</tspan><tspan x={3} dy={14}>(Day 0)</tspan>
           </text>
           {sections.slice(0, -1).map((s, i) => (
             <text key={cols.sections[i].key} x={cols.sections[i].x1} y={bandH + 17} fontSize={10.5}
@@ -248,7 +249,7 @@ function Dot({
   onHover: (c: CreditCustomer | null, anchor?: Element) => void; onClick: (c: CreditCustomer) => void;
 }) {
   const blocked = zone.key === 'BLOCK';
-  const label = `${c.customer} · ${days(c.daysPastDue)} past due · ${zone.label} (${zone.owner}) · ${money(c.totalOutstanding)}${nextText ? ` · ${nextText}` : ''}`;
+  const label = `${c.customer} · ${days(c.daysOverdue)} overdue · ${zone.label} (${zone.owner}) · ${money(c.totalOutstanding)}${nextText ? ` · ${nextText}` : ''}`;
   return (
     <g
       role="button"
@@ -282,8 +283,8 @@ function Dot({
         strokeWidth={active ? 2.5 : blocked ? 1.1 : 0.9}
       />
       {p.overflow && p.r >= 10 ? (
-        <text x={p.x} y={cy + 3.5} fontSize={c.daysPastDue >= 1000 ? 8 : 9.5} textAnchor="middle" fill="var(--ps-credit-ink)" fontWeight={700} pointerEvents="none">
-          {c.daysPastDue}
+        <text x={p.x} y={cy + 3.5} fontSize={c.daysOverdue >= 1000 ? 8 : 9.5} textAnchor="middle" fill="var(--ps-credit-ink)" fontWeight={700} pointerEvents="none">
+          {c.daysOverdue}
         </text>
       ) : null}
     </g>
@@ -330,7 +331,8 @@ function DotTooltip({ c, anchor, zones, money, foreign }: { c: CreditCustomer; a
         <Fact k="Oldest invoice" v={c.oldestInvoiceNumber ?? '—'} />
         <Fact k="Invoice date" v={formatDate(c.oldestInvoiceDate)} />
         <Fact k="Due date" v={formatDate(c.oldestDueDate)} />
-        <Fact k="Days past due" v={<strong style={mono}>{formatNumber(c.daysPastDue)}</strong>} />
+        <Fact k="Overdue date" v={formatDate(c.oldestOverdueDate)} />
+        <Fact k="Days overdue" v={<strong style={mono}>{formatNumber(c.daysOverdue)}</strong>} />
         <Fact k="Payment term" v={<span dir="auto">{c.paymentTerm}</span>} />
         <Fact k="Current Status" v={zone?.label ?? c.zone} />
         <Fact k="Responsible Role" v={c.responsibleRole} />

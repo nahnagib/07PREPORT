@@ -1,6 +1,7 @@
 import type { CreditPolicyZone } from '../../api';
 
-/** Representative API response, including BLOCK's internal action ranges. */
+/** Representative API response, including BLOCK's internal action ranges. minDays / maxDays are DAYS OVERDUE, counted
+ * from the overdue date (= due date + 1 day; day 0 = the first day overdue). */
 export const ZONES: CreditPolicyZone[] = [
   { key: 'GREEN', label: 'GREEN', minDays: 0, maxDays: 15, tone: 'green', owner: 'Sales Manager', action: 'Payment Reminder', edgeLabel: '15 Days' },
   { key: 'YELLOW', label: 'YELLOW', minDays: 16, maxDays: 30, tone: 'amber', owner: 'Sales Director', action: 'Follow-up / Customer Visit', edgeLabel: '30 Days' },

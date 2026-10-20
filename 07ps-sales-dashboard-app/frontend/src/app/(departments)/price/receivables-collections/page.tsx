@@ -72,7 +72,7 @@ import {
  * customer count is customers with an open invoice. Credit notes, unreconciled payments and the two toggles' lines
  * never reach the cards, the charts or the Aging Map: they only show in the customer table (Unapplied credits, Net
  * balance) and its drill-down. Credit Policy Escalation (components/debt/CreditPolicyChart.tsx, GET /debt-report/aging; replaced the
- * term-multiple Aging Map 2026-10-15) places every customer by the days past due of its unpaid invoice with the earliest due date,
+ * term-multiple Aging Map 2026-10-15) places every customer by the days overdue (from the day after the due date) of its unpaid invoice with the earliest due date,
  * in the credit policy's zones (backend config/creditPolicy.ts), in the page's currency (all currencies: every customer once). It
  * ignores the line-level filters (overdue status, aging bucket, delivery status, payment term, invoice size), which would change
  * which invoice decides, and has its own payment-term filter (it only chooses customers). A dot opens the customer's open
@@ -291,7 +291,7 @@ export default function ReceivablesCollectionsPage() {
       key: 'agingBucket',
       header: 'Aging bucket',
       width: 170,
-      // by actual age: credits only (—) < not yet due < days past due of the earliest unpaid due date
+      // by actual age: credits only (—) < not yet due < days overdue of the earliest unpaid due date
       sortValue: (r) => r.bucket.sortValue,
       filterOptions: creditBucketOptions(creditZones),
       render: (r) => <BucketBadge bucket={r.bucket} />,
@@ -665,7 +665,7 @@ export default function ReceivablesCollectionsPage() {
               One row per company, customer and currency, sorted by overdue{currency ? `; ${currency} rows only` : '; amounts in LYD (≈ = converted at Odoo’s booked rate)'}. Open
               invoices, their amounts and Overdue count customer invoices only; Unapplied credits = credit notes + unreconciled payments; Net
               balance = every line (customers with credits only are listed too). Aging bucket = the customer&apos;s credit-policy zone, as on the
-              escalation chart (days past due of the earliest unpaid due date; Not yet due before it, — with credits only). Salesperson, team and segment list every value on the customer’s lines.
+              escalation chart (days overdue of the earliest unpaid invoice, counted from the day after its due date; Not yet due before it, — with credits only). Salesperson, team and segment list every value on the customer’s lines.
               Click a row for every open document behind its net balance.
             </p>
             {customers.error ? (

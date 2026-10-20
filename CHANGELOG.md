@@ -6,6 +6,19 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Receivables and Collections: Credit Policy Escalation counts days OVERDUE, 2026-10-20)
+- **Counting start:** customers are now placed by days overdue, counted from the overdue date (= due date + 1 day, the
+  first day the invoice is late), instead of days past the due date. Day 0 = the first day overdue. An invoice due
+  exactly on the snapshot date is "Not yet due" and is no longer drawn as day 0 / GREEN. The due-date resolution
+  (instalment → invoice → payment term → invoice date) is unchanged, and so are the zone boundaries.
+  - The offset is one constant, `OVERDUE_OFFSET_DAYS` in `backend/src/config/creditPolicy.ts`.
+  - The API field `daysPastDue` is renamed `daysOverdue`, and `oldestOverdueDate` is added next to `oldestDueDate`.
+  - The Customers table's "Aging bucket" uses the same placement, so the table and the chart still agree.
+- **Chart text:** the subtitle, the axis ("Overdue date (Day 0)"), the legend and the dot details ("Due date",
+  "Overdue date", "Days overdue") follow the new definition.
+- **Effect on 20 Oct 2026 (All currencies):** GREEN 82 → 78, YELLOW 25 → 21, RED 16 → 17, BLOCK 174 → 172; 9 customers
+  due that day left the chart (Not yet due).
+
 ### Changed (Receivables and Collections: "Credit Policy Escalation" replaces the Aging Map, 2026-10-15)
 - **Placement:** each customer is placed by days past due of its unpaid invoice with the EARLIEST due date (as of the
   snapshot date), in the credit policy zones. Payment-term multiples (1x / 2x / 3x term, > 4.5x) are gone.
