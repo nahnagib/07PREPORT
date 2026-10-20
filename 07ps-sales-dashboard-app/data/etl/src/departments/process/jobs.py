@@ -25,6 +25,9 @@ Load (docs/nps-etl.md):
    (deleted_in_source_at) and warn:nps_reach_rows_disappeared reports how many. Checks: an empty state on more than
    NULL_STATE_MAX rows FAILS; another state, an error in "Other", no new message for STALE_DAYS and a
    company other than MAJAAL / TIKA WARN. Every check result is also in the load_nps etl_task_log details.
+4. Detractor Follow-up (departments/process/followup.py, migration 0052), in the same transaction: a case is added for
+   every detractor without one (NEW from NPS_FOLLOWUP_START, HISTORICAL before it); a case whose rating left the source
+   or is no longer a detractor is flagged (warn:nps_followup_source_changed). Manual fields are never written.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ from sqlalchemy import bindparam, text
 
 from core.jobs import ensure_date_range
 from core.resolve import KeyMaps
+from departments.process import followup as fu
 from departments.process import nps
 from departments.process import transform as tf
 from departments.process import whatsapp as wa
@@ -197,9 +201,9 @@ def lookups(conn, order_names: set[str], delivery_codes: set[str]) -> tf.Lookups
             orders.setdefault(str(n), []).append((int(k), int(co), int(cu)))
     codes = sorted(delivery_codes)
     for i in range(0, len(codes), 500):
-        for ref, co, cu in conn.execute(text("SELECT DISTINCT DeliveryReference, CompanyKey, CustomerKey FROM fact_sales_deliveries "
-                                             "WHERE DeliveryReference IN :c").bindparams(bindparam("c", expanding=True)), {"c": codes[i:i + 500]}):
-            deliveries.setdefault(str(ref), []).append((0, int(co), int(cu if cu is not None else -1)))
+        for ref, pid, co, cu in conn.execute(text("SELECT DISTINCT DeliveryReference, PickingID, CompanyKey, CustomerKey FROM fact_sales_deliveries "
+                                                  "WHERE DeliveryReference IN :c").bindparams(bindparam("c", expanding=True)), {"c": codes[i:i + 500]}):
+            deliveries.setdefault(str(ref), []).append((int(pid) if pid is not None else -1, int(co), int(cu if cu is not None else -1)))
     return tf.Lookups(orders, deliveries)
 
 
@@ -305,6 +309,13 @@ def _message_checks(stale_before: _dt.datetime) -> list[q.CheckSpec]:
     ]
 
 
+def _followup_checks() -> list[q.CheckSpec]:
+    # a case whose rating left the source or stopped being a detractor: kept with its manual fields, listed here
+    return [q.custom_sql("warn:nps_followup_source_changed",
+                         f"SELECT case_id, source_change_reason FROM {fu.CASES} WHERE source_changed = 1",
+                         table=fu.CASES, severity="warn")]
+
+
 def _stamped(df: pd.DataFrame, ctx: RunContext, now: _dt.datetime) -> pd.DataFrame:
     out = df.assign(loaded_at_utc=now, _run_id=ctx.run_uid)
     return out.astype(object).where(out.notna(), None)
@@ -312,6 +323,7 @@ def _stamped(df: pd.DataFrame, ctx: RunContext, now: _dt.datetime) -> pd.DataFra
 
 def load_nps(ctx: RunContext) -> TaskResult:
     nps.validate_levels()
+    followup_start = fu.followup_start()  # a bad NPS_FOLLOWUP_START fails before anything is read
     with ctx.engine.connect() as conn:
         full = pd.read_sql(text(f"SELECT * FROM {RAW_FULL} WHERE _deleted_at IS NULL"), conn)
         low = pd.read_sql(text(f"SELECT id, team_branch FROM {RAW_LOW} WHERE _deleted_at IS NULL"), conn)
@@ -337,12 +349,15 @@ def load_nps(ctx: RunContext) -> TaskResult:
         replace_all(conn, FACT, responses)
         replace_all(conn, COMMENTS, comments)
         reach_stats = load_messages(conn, ctx, now) if ctx.state.get("reach_status") == "loaded" else None
+        # Detractor Follow-up: add missing cases, flag source changes (never a manual field; followup.py)
+        followup_stats = fu.sync_cases(conn, now, followup_start)
         stale_before = now - _dt.timedelta(days=STALE_DAYS)
-        checks = _checks(stale_before) + (_message_checks(stale_before) if reach_stats is not None else [])
+        checks = (_checks(stale_before) + (_message_checks(stale_before) if reach_stats is not None else [])
+                  + (_followup_checks() if followup_stats["status"] == "synced" else []))
         results = ctx.quality.evaluate(checks, conn, task_name="load_nps")
         q.raise_for_failures(results)  # rolls back the whole mart load
     details = {**built.stats, "responses_loaded": len(responses), "comments_loaded": len(comments),
-               "reach": reach_stats or ctx.state.get("reach_status"),
+               "reach": reach_stats or ctx.state.get("reach_status"), "followup": followup_stats,
                # every check, also in etl_task_log (etl_dq_result holds the samples)
                "checks": {r.spec.name: f"{r.status} ({r.failing_rows or 0})" for r in results}}
     ctx.logger.info("NPS loaded: %s response(s) %s, NPS-style %s; %s comment(s); %s blank; company from %s",

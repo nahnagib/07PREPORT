@@ -32,6 +32,15 @@ export interface RadialGaugeProps {
    * Defaults to true (shows the value) -- unlike the legacy Gauge, RadialGauge is meant to be the
    * single, self-contained KPI visual, so most consumers should leave this on. */
   showValueLabel?: boolean;
+  /**
+   * Optional fixed scale and colour bands, for a measure with its own thresholds instead of the target-relative zones
+   * (e.g. the NPS Score: 0..100, red below 50, yellow below 90, green from 90, target tick at 90). Bounds are inclusive
+   * at the lower end; the needle is clamped to [min, max], so a value below `min` (a negative NPS) pins it at the left
+   * edge and the caller prints the real number. The min / max labels are the band ends, and the target label is drawn
+   * inside the arc so it never runs over the green zone or out of the card. Omitted = the Target x0.5..x1.5 behaviour,
+   * unchanged (the Promotion pages).
+   */
+  bands?: { min: number; max: number; yellowFrom: number; greenFrom: number };
 }
 
 const zoneColorVar: Record<'red' | 'yellow' | 'green', string> = {
@@ -98,6 +107,7 @@ export function RadialGauge({
   valueLabel,
   targetLabel,
   showValueLabel = true,
+  bands,
 }: RadialGaugeProps) {
   const rawId = useId().replace(/[^a-zA-Z0-9]/g, '');
   const shadowId = `rg-shadow-${rawId}`;
@@ -108,20 +118,23 @@ export function RadialGauge({
   const trackWidth = 22;
 
   const hasTarget = targetToDate !== null && targetToDate > 0;
+  // zones are drawn with a target (target-relative) or with fixed bands
+  const hasZones = hasTarget || bands !== undefined;
 
-  const advertisedScaleMin = hasTarget ? (targetToDate as number) * 0.5 : null;
-  const advertisedScaleMax = hasTarget ? (targetToDate as number) * 1.5 : null;
+  const advertisedScaleMin = bands ? bands.min : hasTarget ? (targetToDate as number) * 0.5 : null;
+  const advertisedScaleMax = bands ? bands.max : hasTarget ? (targetToDate as number) * 1.5 : null;
 
-  let scaleMin = hasTarget ? (advertisedScaleMin as number) : 0;
-  let scaleMax = hasTarget ? (advertisedScaleMax as number) : Math.max(actual, 1) * 1.15;
-  if (hasTarget) {
+  let scaleMin = advertisedScaleMin ?? 0;
+  let scaleMax = advertisedScaleMax ?? Math.max(actual, 1) * 1.15;
+  if (hasTarget && !bands) {
     // Safety extension - see Gauge.tsx's original docstring. Never shrinks the range, only grows
     // it outward, and never changes the advertised on-canvas labels.
     if (actual < scaleMin) scaleMin = actual * 0.95;
     if (actual > scaleMax) scaleMax = actual * 1.05;
   }
 
-  const yellowFloor = hasTarget ? (targetToDate as number) * 0.9 : 0;
+  const yellowFloor = bands ? bands.yellowFrom : hasTarget ? (targetToDate as number) * 0.9 : 0;
+  const greenFloor = bands ? bands.greenFrom : (targetToDate ?? 0);
   const needleAngle = valueToAngle(actual, scaleMin, scaleMax);
   const targetAngle = hasTarget ? valueToAngle(targetToDate as number, scaleMin, scaleMax) : null;
 
@@ -133,9 +146,14 @@ export function RadialGauge({
   // needleAngle -- the needle is a separate, independent marker for the actual value; conflating
   // the two was the bug in the previous pass). Radius is just past markerDot's own radius (r + 13)
   // so the label reads as "attached to" the tick, not the needle, regardless of where actual falls.
-  const targetLabelPos = targetAngle !== null ? polarToCartesian(cx, cy, r + 18, targetAngle) : null;
-  const targetLabelAnchor: 'start' | 'middle' | 'end' =
-    targetAngle === null ? 'middle' : targetAngle > 100 ? 'end' : targetAngle < 80 ? 'start' : 'middle';
+  // With fixed bands the target often sits near an end of the arc (NPS 90 of 0..100): outside the arc its label would
+  // overlap the green zone or leave the viewBox, so it goes INSIDE the arc, anchored away from the track.
+  const targetLabelPos = targetAngle !== null ? polarToCartesian(cx, cy, bands ? r - trackWidth - 12 : r + 18, targetAngle) : null;
+  const targetLabelAnchor: 'start' | 'middle' | 'end' = targetAngle === null
+    ? 'middle'
+    : bands
+      ? targetAngle > 100 ? 'start' : targetAngle < 80 ? 'end' : 'middle'
+      : targetAngle > 100 ? 'end' : targetAngle < 80 ? 'start' : 'middle';
   const targetLabelText = targetLabel ?? (hasTarget ? compactAxis(targetToDate as number) : '');
 
   const displayLabel = valueLabel ?? actual.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
@@ -145,7 +163,7 @@ export function RadialGauge({
         hasTarget
           ? `, target-to-date ${(targetToDate as number).toLocaleString(DISPLAY_LOCALE)}, gauge scale ${compactAxis(
               advertisedScaleMin as number,
-            )} to ${compactAxis(advertisedScaleMax as number)} (50% to 150% of target)`
+            )} to ${compactAxis(advertisedScaleMax as number)}${bands ? '' : ' (50% to 150% of target)'}`
           : ''
       }`
     : `${actual.toLocaleString(DISPLAY_LOCALE)}`;
@@ -165,7 +183,7 @@ export function RadialGauge({
       </defs>
 
       <g filter={`url(#${shadowId})`}>
-        {!hasTarget && (
+        {!hasZones && (
           <path
             d={describeArc(cx, cy, r, 180, 0)}
             fill="none"
@@ -174,9 +192,9 @@ export function RadialGauge({
             strokeLinecap="round"
           />
         )}
-        {hasTarget && (
+        {hasZones && (
           <>
-            {/* Red zone: scale min -> 90% of target */}
+            {/* Red zone: scale min -> 90% of target (or -> the bands' yellowFrom) */}
             <path
               d={describeArc(cx, cy, r, 180, valueToAngle(yellowFloor, scaleMin, scaleMax))}
               fill="none"
@@ -184,22 +202,22 @@ export function RadialGauge({
               strokeWidth={trackWidth}
               strokeLinecap="round"
             />
-            {/* Yellow zone: 90% -> 100% of target */}
+            {/* Yellow zone: 90% -> 100% of target (or the bands' yellowFrom -> greenFrom) */}
             <path
               d={describeArc(
                 cx,
                 cy,
                 r,
                 valueToAngle(yellowFloor, scaleMin, scaleMax),
-                valueToAngle(targetToDate as number, scaleMin, scaleMax),
+                valueToAngle(greenFloor, scaleMin, scaleMax),
               )}
               fill="none"
               stroke={zoneColorVar.yellow}
               strokeWidth={trackWidth}
             />
-            {/* Green zone: 100% of target -> scale max */}
+            {/* Green zone: 100% of target (or the bands' greenFrom) -> scale max */}
             <path
-              d={describeArc(cx, cy, r, valueToAngle(targetToDate as number, scaleMin, scaleMax), 0)}
+              d={describeArc(cx, cy, r, valueToAngle(greenFloor, scaleMin, scaleMax), 0)}
               fill="none"
               stroke={zoneColorVar.green}
               strokeWidth={trackWidth}
@@ -235,15 +253,15 @@ export function RadialGauge({
       {/* Scale min/max numbers stay always-visible; the "50%/150% of Target" explanation moves into
           a native hover tooltip on each number (via <title>) instead of permanent caption text
           underneath, keeping the space below the arc clean. Only shown when there's a target. */}
-      {hasTarget && (
+      {hasZones && advertisedScaleMin !== null && advertisedScaleMax !== null && (
         <>
           <text x={cx - r + 4} y={cy + 26} textAnchor="start" fontSize="13" fontWeight={700} fill="var(--ps-color-text)" style={{ cursor: 'help' }}>
-            {compactAxis(advertisedScaleMin as number)}
-            <title>{`Min · 50% of Target (${targetLabelText})`}</title>
+            {compactAxis(advertisedScaleMin)}
+            <title>{bands ? 'Min' : `Min · 50% of Target (${targetLabelText})`}</title>
           </text>
           <text x={cx + r - 4} y={cy + 26} textAnchor="end" fontSize="13" fontWeight={700} fill="var(--ps-color-text)" style={{ cursor: 'help' }}>
-            {compactAxis(advertisedScaleMax as number)}
-            <title>{`Max · 150% of Target (${targetLabelText})`}</title>
+            {compactAxis(advertisedScaleMax)}
+            <title>{bands ? 'Max' : `Max · 150% of Target (${targetLabelText})`}</title>
           </text>
         </>
       )}
@@ -269,9 +287,15 @@ export function RadialGauge({
           x={targetLabelPos.x}
           y={targetLabelPos.y}
           textAnchor={targetLabelAnchor}
+          dominantBaseline={bands ? 'middle' : undefined}
           fontSize="11"
           fontWeight={700}
           fill="var(--ps-neutral-granite)"
+          // inside the arc the needle may pass behind the label: a halo in the card colour keeps it readable
+          stroke={bands ? 'var(--ps-card-bg, var(--ps-color-surface))' : undefined}
+          strokeWidth={bands ? 4 : undefined}
+          paintOrder={bands ? 'stroke' : undefined}
+          data-testid="radial-gauge-target-label"
         >
           {targetLabelText}
         </text>

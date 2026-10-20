@@ -2747,9 +2747,10 @@ export function fetchDebtReport<T>(token: string, endpoint: DebtReportEndpoint, 
 }
 
 // -- NPS Score (Process; backend routes/npsScore.ts, measures/npsScore.ts, config/npsThresholds.ts) -----------------
-export type NpsEndpoint = 'meta' | 'overview' | 'trend' | 'detractors' | 'reach';
+export type NpsEndpoint = 'meta' | 'overview' | 'trend' | 'detractors' | 'reach' | 'response-rate' | 'followup-summary';
 export type NpsBand = 'red' | 'yellow' | 'green';
-export type NpsGrain = 'day' | 'month' | 'year';
+/** week = Sunday..Saturday, named by its Sunday (the Collections week) */
+export type NpsGrain = 'week' | 'month' | 'year';
 /** A visual's bands: yellow from `yellowFrom`, green from `greenFrom` (both inclusive), the target, the drawn scale. */
 export interface NpsBandScale {
   yellowFrom: number;
@@ -2781,7 +2782,7 @@ export interface NpsMeta {
   lastRatingAt: string | null;
   sourceLastSync: string | null;
   minResponders: number;
-  thresholds: { nps: NpsBandScale; csat: NpsBandScale };
+  thresholds: { nps: NpsBandScale; csat: NpsBandScale; responseRate: NpsBandScale };
   canSeeDetractors: boolean;
   /** the "process" department refresh (the same per-department shape as the finance one) */
   freshness: DebtFreshness;
@@ -2794,9 +2795,46 @@ export interface NpsOverview {
 }
 export interface NpsTrend {
   grain: NpsGrain;
+  /** NPS target line (90) */
   target: number;
+  /** CSAT target line (95) */
+  csatTarget: number;
   minResponders: number;
+  /** from the first period with ratings to the end of the range */
   points: ({ period: string } & NpsCounts)[];
+}
+/** responders / (Delivered + Read): company and date only, from NPS_REACH_START (backend measures/npsScore.ts) */
+export interface NpsResponseRate {
+  status: 'waiting' | 'restricted' | 'ready';
+  dateFrom: string;
+  dateTo: string;
+  reachStart: string | null;
+  companyAndDateOnly: boolean;
+  responders: number;
+  delivered: number;
+  read: number;
+  reached: number;
+  totalReach: number;
+  rate: number | null;
+  rateOfReach: number | null;
+  band: NpsBand | null;
+  target: number;
+  variancePts: number | null;
+  weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
+}
+export type NpsFollowupBucket = 'solved_48h' | 'solved_5d' | 'solved_late' | 'pending';
+/** detractors by follow-up status / reason, live from nps_followup_case */
+export interface NpsFollowupSummary {
+  dateFrom: string;
+  dateTo: string;
+  detractors: number;
+  charted: number;
+  cancelled: number;
+  historical: number;
+  noCase: number;
+  byStatus: { key: NpsFollowupBucket; count: number }[];
+  byReason: { reasonId: number | null; label: string; labelAr: string | null; count: number }[];
+  now: string;
 }
 export interface NpsReach {
   status: 'waiting' | 'restricted' | 'ready';
@@ -2827,9 +2865,18 @@ export interface NpsDetractor {
   salesTeam: string | null;
   salesperson: string | null;
   teamBranch: string | null;
-  /** the follow-up status / reason: no source yet (null) */
-  status: string | null;
+  /** the follow-up case (live); null only before process_nps created it */
+  caseId: number | null;
+  status: 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'SOLVED' | 'CANCELLED' | null;
+  /** null = not yet classified */
   reason: string | null;
+  reasonAr: string | null;
+  owner: string | null;
+  hoursOpen: number | null;
+  timeBand: 'green' | 'yellow' | 'red' | null;
+  /** Odoo form links; null without an id (the code is shown without a link) */
+  orderUrl: string | null;
+  deliveryUrl: string | null;
   comment: string | null;
 }
 /** The global filters + the page's date range. */

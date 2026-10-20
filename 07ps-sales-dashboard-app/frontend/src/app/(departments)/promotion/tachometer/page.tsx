@@ -10,12 +10,9 @@ import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import {
   KpiCard,
+  CompactKpiCard,
   PerformanceReportTable,
   EmptyState,
-  Card,
-  SemanticBadge,
-  LoadingSkeleton,
-  Sparkline,
   exportPerformanceTablePdf,
   type PerformanceTablePdfColumn,
   type ReferenceMetric,
@@ -482,97 +479,29 @@ export default function TachometerPage() {
                   from a brief attempt to standardize these onto RadialGauge, since ASP has no
                   natural min/max range the way a currency/volume total does. */}
               <div style={{ gridColumn: '2', gridRow: '1', ...CARD_BOX }}>
-                {overview.loading ? (
-                  <Card style={{ width: '100%' }}>
-                    <LoadingSkeleton variant="kpi" />
-                  </Card>
-                ) : (
-                  <Card style={{ width: '100%', display: 'flex', flexDirection: 'column', padding: 'var(--ps-space-3, 16px)' }}>
-                    {/* Top row: title + status badge */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 'var(--ps-space-2, 8px)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ color: 'var(--ps-color-muted-text)', display: 'flex', flexShrink: 0 }}>
-                          <TrendingUp size={16} />
-                        </span>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>
-                          YTD Actual ASP
-                        </span>
-                      </div>
-                      <SemanticBadge status={toSemanticStatus(data?.aspYtd.status ?? 'no_target')} />
-                    </div>
-
-                    {/* Headline value */}
-                    <div style={{ fontSize: 32, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 'var(--ps-space-3, 16px)' }}>
-                      {formatAsp(data?.aspYtd.actualAsp ?? null)}
-                    </div>
-
-                    {/* Stats row: Target + Variance */}
-                    {data && aspCardToReferenceMetrics(data.aspYtd.actualAsp, data.aspYtd.targetAsp, data.aspYtd.lastYearAsp).length > 0 && (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-2, 8px)', marginBottom: 'var(--ps-space-3, 16px)', borderTop: '1px solid var(--ps-color-border)', paddingTop: 'var(--ps-space-2, 8px)' }}>
-                        {aspCardToReferenceMetrics(data.aspYtd.actualAsp, data.aspYtd.targetAsp, data.aspYtd.lastYearAsp).map((m) => (
-                          <div key={m.label} style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-text)' }}>{m.value}</div>
-                            <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{m.label}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Sparkline - pinned to bottom, enlarged to fill width */}
-                    {aspTrendValues && aspTrendValues.length > 1 && (
-                      <div style={{ marginTop: 'auto', paddingTop: 'var(--ps-space-2, 8px)' }}>
-                        <Sparkline values={aspTrendValues} status={toSemanticStatus(data?.aspYtd.status ?? 'no_target')} label="YTD Actual ASP trend" width={200} height={40} />
-                      </div>
-                    )}
-                  </Card>
-                )}
+                <CompactKpiCard
+                  title="YTD Actual ASP"
+                  icon={TrendingUp}
+                  status={toSemanticStatus(data?.aspYtd.status ?? 'no_target')}
+                  valueLabel={formatAsp(data?.aspYtd.actualAsp ?? null)}
+                  referenceMetrics={data ? aspCardToReferenceMetrics(data.aspYtd.actualAsp, data.aspYtd.targetAsp, data.aspYtd.lastYearAsp) : []}
+                  sparklineValues={aspTrendValues}
+                  sparklineLabel="YTD Actual ASP trend"
+                  loading={overview.loading}
+                />
               </div>
 
               <div style={{ gridColumn: '2', gridRow: '2', ...CARD_BOX }}>
-                {overview.loading ? (
-                  <Card style={{ width: '100%' }}>
-                    <LoadingSkeleton variant="kpi" />
-                  </Card>
-                ) : (
-                  <Card style={{ width: '100%', display: 'flex', flexDirection: 'column', padding: 'var(--ps-space-3, 16px)' }}>
-                    {/* Top row: title + status badge */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 'var(--ps-space-2, 8px)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ color: 'var(--ps-color-muted-text)', display: 'flex', flexShrink: 0 }}>
-                          <TrendingUp size={16} />
-                        </span>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>
-                          MTD Actual ASP
-                        </span>
-                      </div>
-                      <SemanticBadge status={toSemanticStatus(data?.aspMtd.status ?? 'no_target')} />
-                    </div>
-
-                    {/* Headline value */}
-                    <div style={{ fontSize: 32, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 'var(--ps-space-3, 16px)' }}>
-                      {formatAsp(data?.aspMtd.actualAsp ?? null)}
-                    </div>
-
-                    {/* Stats row: Target + Variance */}
-                    {data && aspCardToReferenceMetrics(data.aspMtd.actualAsp, data.aspMtd.targetAsp, data.aspMtd.lastYearAsp).length > 0 && (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-2, 8px)', marginBottom: 'var(--ps-space-3, 16px)', borderTop: '1px solid var(--ps-color-border)', paddingTop: 'var(--ps-space-2, 8px)' }}>
-                        {aspCardToReferenceMetrics(data.aspMtd.actualAsp, data.aspMtd.targetAsp, data.aspMtd.lastYearAsp).map((m) => (
-                          <div key={m.label} style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-text)' }}>{m.value}</div>
-                            <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{m.label}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Sparkline - pinned to bottom, enlarged to fill width */}
-                    {aspTrendValues && aspTrendValues.length > 1 && (
-                      <div style={{ marginTop: 'auto', paddingTop: 'var(--ps-space-2, 8px)' }}>
-                        <Sparkline values={aspTrendValues} status={toSemanticStatus(data?.aspMtd.status ?? 'no_target')} label="MTD Actual ASP trend" width={200} height={40} />
-                      </div>
-                    )}
-                  </Card>
-                )}
+                <CompactKpiCard
+                  title="MTD Actual ASP"
+                  icon={TrendingUp}
+                  status={toSemanticStatus(data?.aspMtd.status ?? 'no_target')}
+                  valueLabel={formatAsp(data?.aspMtd.actualAsp ?? null)}
+                  referenceMetrics={data ? aspCardToReferenceMetrics(data.aspMtd.actualAsp, data.aspMtd.targetAsp, data.aspMtd.lastYearAsp) : []}
+                  sparklineValues={aspTrendValues}
+                  sparklineLabel="MTD Actual ASP trend"
+                  loading={overview.loading}
+                />
               </div>
 
               <div style={{ gridColumn: '3', gridRow: '1', ...CARD_BOX }}>

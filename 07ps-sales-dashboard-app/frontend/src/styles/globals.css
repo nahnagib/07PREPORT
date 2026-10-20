@@ -561,35 +561,24 @@ input:not([type]), input[type='text'], input[type='search'],
  * ------------------------------------------------------------------------- */
 .ps-kaizen-board { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
 .ps-kaizen-kpis { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-/* NPS Score (process/nps-score): score row (gauge + CSAT bar), boxes, 3-panel rows; one column on phones */
+/* NPS Score (process/nps-score): the Promotion tachometer row (ps-metrics-grid), boxes, 3-panel rows; one column on phones */
 .ps-nps-main { flex: 1; padding: var(--ps-space-4, 24px); display: flex; flex-direction: column; gap: var(--ps-space-4, 24px); min-width: 0; }
 .ps-nps-freshness { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px var(--ps-space-4, 24px) 0; font-size: 12px; color: var(--ps-color-muted-text); }
 .ps-nps-freshness strong { color: var(--ps-color-text); }
-.ps-nps-score-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; }
 .ps-nps-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .ps-nps-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
-.ps-nps-gauge { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.ps-nps-value { font-size: 30px; font-weight: 700; color: var(--ps-color-text); font-variant-numeric: tabular-nums; }
-.ps-nps-sub { font-size: 12px; color: var(--ps-color-muted-text); text-align: center; }
 .ps-nps-switch { display: flex; gap: 6px; flex-wrap: wrap; }
-/* CSAT card (components/nps/CsatCard.tsx): value, status, satisfied line, horizontal bullet bar 0..100 */
-.ps-nps-score-row > * { height: 100%; box-sizing: border-box; }
-.ps-csat { display: flex; flex-direction: column; gap: 6px; padding: 8px 4px 4px; min-width: 0; }
-.ps-csat-value { font-size: 40px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.ps-csat-status { font-size: 14px; font-weight: 600; }
-.ps-csat-line { font-size: 13px; color: var(--ps-color-muted-text); }
-.ps-csat-bullet { position: relative; margin-top: 28px; padding-top: 20px; }
-.ps-csat-target-label { position: absolute; top: 0; font-size: 12px; font-weight: 600; color: var(--ps-color-text); white-space: nowrap; }
-.ps-csat-track { position: relative; height: 24px; border-radius: 4px; overflow: hidden; background: var(--ps-color-border); }
-.ps-csat-zone { position: absolute; top: 0; bottom: 0; opacity: 0.45; }
-.ps-csat-fill { position: absolute; left: 0; top: 9px; height: 6px; border-radius: 0 3px 3px 0; box-shadow: 0 0 0 1px var(--ps-color-surface); }
-.ps-csat-target { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; background: var(--ps-color-text); }
-.ps-csat-axis { position: relative; height: 30px; margin-top: 4px; font-size: 11px; color: var(--ps-color-muted-text); font-variant-numeric: tabular-nums; }
-.ps-csat-axis > span { position: absolute; white-space: nowrap; }
+/* the trend's period + CSAT buttons may wrap inside ChartPanel's (non-shrinking) header-actions box */
+div:has(> .ps-nps-switch) { flex-shrink: 1 !important; min-width: 0; }
+/* the top row stacks below 1280px (ps-metrics-grid); on phones its cards may not exceed the column */
+@media (max-width: 1279px) {
+  .ps-nps-main .ps-metrics-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .ps-nps-main .ps-metrics-grid > div, .ps-nps-main .ps-metrics-grid .ps-card { min-width: 0; }
+}
 .ps-nps-waiting { min-height: 120px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px;
   font-size: 13px; color: var(--ps-color-muted-text); border: 1px dashed var(--ps-color-border); border-radius: 8px; }
 @media (max-width: 1023px) {
-  .ps-nps-score-row, .ps-nps-row { grid-template-columns: minmax(0, 1fr); }
+  .ps-nps-row { grid-template-columns: minmax(0, 1fr); }
 }
 .ps-kaizen-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .ps-kaizen-span-all { grid-column: 1 / -1; }
@@ -639,4 +628,54 @@ textarea.ps-kaizen-input { min-height: 84px; resize: vertical; }
 @media (max-width: 767px) {
   .ps-kaizen-charts, .ps-kaizen-form { grid-template-columns: minmax(0, 1fr); }
   .ps-kaizen-filters > .ps-kaizen-field { flex: 1 1 140px; }
+}
+
+/* NPS Detractor Follow-up (app/(departments)/process/nps-followup): the board's status columns, case cards, the case
+   dialog. Theme tokens only (light and dark). On a phone the columns scroll sideways, one column per screen width. */
+.ps-fu-tab { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; border: 1px solid var(--ps-color-border); background: var(--ps-color-surface); color: var(--ps-color-text); }
+.ps-fu-tab[data-active='true'] { background: var(--ps-color-accent); color: var(--ps-color-on-accent); border-color: var(--ps-color-accent); }
+.ps-fu-muted { color: var(--ps-color-muted-text); font-size: 12.5px; }
+.ps-fu-filters { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
+.ps-fu-filters > .ps-kaizen-field { flex: 0 1 170px; }
+.ps-fu-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding-bottom: 8px; }
+.ps-fu-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.ps-fu-board { display: grid; grid-template-columns: repeat(5, minmax(220px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
+.ps-fu-col { display: flex; flex-direction: column; min-width: 0; background: var(--ps-color-muted-bg); border: 1px solid var(--ps-color-border); border-radius: 10px; scroll-snap-align: start; }
+.ps-fu-col-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; font-weight: 700; font-size: 13.5px; border-top: 4px solid; border-radius: 10px 10px 0 0; }
+.ps-fu-count { min-width: 24px; padding: 1px 8px; border-radius: 999px; background: var(--ps-color-surface); border: 1px solid var(--ps-color-border); font-size: 12px; text-align: center; }
+.ps-fu-col-body { display: flex; flex-direction: column; gap: 8px; padding: 0 8px 10px; max-height: 70vh; overflow-y: auto; }
+.ps-fu-empty { text-align: center; padding: 12px 0; }
+.ps-fu-card { all: unset; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; padding: 10px 11px; border-radius: 8px; cursor: pointer; background: var(--ps-card-bg, var(--ps-color-surface)); border: 1px solid var(--ps-color-border); border-inline-start-width: 4px; color: var(--ps-color-text); font-size: 13px; }
+.ps-fu-card:hover, .ps-fu-card:focus-visible { border-color: var(--ps-color-accent); outline: none; }
+.ps-fu-card-top { display: flex; justify-content: space-between; gap: 8px; }
+.ps-fu-card-customer { font-weight: 600; overflow-wrap: anywhere; }
+.ps-fu-card-meta { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.ps-fu-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 2px; }
+.ps-fu-time { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; }
+.ps-fu-flag { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--ps-color-alert); }
+.ps-fu-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.45); display: flex; justify-content: flex-end; }
+.ps-fu-dialog { width: min(720px, 100%); height: 100%; overflow-y: auto; background: var(--ps-card-bg, var(--ps-color-surface)); border-inline-start: 1px solid var(--ps-color-border); padding: 18px 20px 28px; display: flex; flex-direction: column; gap: 16px; color: var(--ps-color-text); }
+.ps-fu-dialog-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.ps-fu-icon-btn { all: unset; cursor: pointer; padding: 4px; border-radius: 6px; color: var(--ps-color-muted-text); }
+.ps-fu-icon-btn:hover { color: var(--ps-color-text); background: var(--ps-color-muted-bg); }
+.ps-fu-h3 { margin: 0 0 10px; font-size: 14px; }
+.ps-fu-label { font-size: 12px; color: var(--ps-color-muted-text); margin-bottom: 3px; }
+.ps-fu-value { font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; text-align: start; }
+.ps-fu-banner { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; font-size: 13px; background: var(--ps-color-alert-bg); color: var(--ps-color-text); border: 1px solid var(--ps-color-alert); margin-bottom: 10px; }
+.ps-fu-error { margin: 10px 0 0; font-size: 13px; color: var(--ps-color-alert); }
+.ps-fu-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.ps-fu-history li { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--ps-color-border); }
+.ps-fu-table-scroll { overflow-x: auto; border: 1px solid var(--ps-color-border); border-radius: 8px; }
+.ps-fu-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ps-fu-table th, .ps-fu-table td { padding: 9px 10px; text-align: start; border-bottom: 1px solid var(--ps-color-border); white-space: nowrap; }
+.ps-fu-table th { font-size: 12px; color: var(--ps-color-muted-text); background: var(--ps-color-muted-bg); }
+.ps-fu-table tbody tr { cursor: pointer; }
+.ps-fu-table tbody tr:hover td { background: var(--ps-color-muted-bg); }
+@media (max-width: 1023px) {
+  .ps-fu-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 767px) {
+  .ps-fu-board { grid-template-columns: repeat(5, 82vw); }
+  .ps-fu-filters > .ps-kaizen-field { flex: 1 1 140px; }
+  .ps-fu-dialog { padding: 14px 16px 24px; }
 }

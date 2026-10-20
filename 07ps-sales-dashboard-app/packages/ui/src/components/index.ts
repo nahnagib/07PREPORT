@@ -38,3 +38,4 @@ export * from './PerformanceReportTable';
 export * from './Button';
 export * from './TextInput';
 export * from './ConfirmDialog';
+export * from './CompactKpiCard';

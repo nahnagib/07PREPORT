@@ -1,8 +1,11 @@
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
-import { Gauge } from '@07ps/ui';
-import { CsatCard, axisLabels } from '../CsatCard';
+import { Gauge, RadialGauge } from '@07ps/ui';
+import type { NpsCounts, NpsFollowupSummary, NpsResponseRate } from '../../../lib/api';
+import { FollowupCharts } from '../FollowupCharts';
+import { NpsTopRow, ResponseRateCard } from '../NpsTopRow';
+import { OdooLink } from '../OdooLink';
 import { Waiting } from '../Waiting';
 
 afterEach(cleanup);
@@ -26,51 +29,150 @@ describe('the tachometer Gauge with fixed bands (NPS)', () => {
   });
 });
 
-describe('CsatCard', () => {
-  const props = { scale: CSAT, satisfied: 168, responders: 177, belowMinimum: false };
+/** The needle's angle in degrees (0 = right, 180 = left) from the drawn line. */
+function needleAngle(container: HTMLElement): number {
+  const line = [...container.querySelectorAll('line')].find((l) => l.getAttribute('stroke-width') === '5') as SVGLineElement;
+  const [x1, y1, x2, y2] = ['x1', 'y1', 'x2', 'y2'].map((a) => Number(line.getAttribute(a)));
+  return (Math.atan2(y1 - y2, x2 - x1) * 180) / Math.PI;
+}
 
-  it('value in its band colour, status against the target, satisfied line, bullet bar with zones and target', () => {
-    render(<CsatCard {...props} value={94.915} band="yellow" />);
-    expect(screen.getByTestId('csat-value').textContent).toBe('94.92%');
-    expect(screen.getByTestId('csat-value').style.color).toBe('var(--ps-color-watch)');
-    expect(screen.getByTestId('csat-status').textContent).toBe('Yellow · 0.08 pts below target 95');
-    expect(screen.getByTestId('csat-satisfied').textContent).toBe('Satisfied 168 of 177 responders (Passives + Promoters)');
-    expect(screen.getByTestId('csat-zone-red').style.background).toBe('var(--ps-color-alert)');
-    expect(screen.getByTestId('csat-zone-yellow').style.left).toBe('85%');
-    expect(screen.getByTestId('csat-zone-green').style.left).toBe('95%');
-    expect(screen.getByTestId('csat-fill').style.width).toBe('94.915%');
-    expect(screen.getByTestId('csat-target').style.left).toBe('95%');
-    expect(screen.getByTestId('csat-target-label').textContent).toBe('Target 95');
-    // near the right end the label is anchored on its right edge so it never runs out of the card
-    expect(screen.getByTestId('csat-target-label').style.textAlign).toBe('right');
-    for (const t of [0, 85, 95, 100]) expect(screen.getByTestId(`csat-axis-${t}`).textContent).toBe(String(t));
+describe('RadialGauge (the KpiCard gauge) with fixed bands', () => {
+  it('zones red < 50 <= yellow < 90 <= green on 0..100, min / max labels 0 and 100, target tick at 90', () => {
+    const { container } = render(<RadialGauge actual={64.97} targetToDate={90} status="watch" bands={NPS} targetLabel="Target 90" showValueLabel={false} />);
+    const strokes = [...container.querySelectorAll('path')].map((p) => p.getAttribute('stroke'));
+    expect(strokes).toEqual(['var(--ps-color-alert)', 'var(--ps-color-watch)', 'var(--ps-color-success)']);
+    const texts = [...container.querySelectorAll('text')].map((t) => t.childNodes[0]?.textContent);
+    expect(texts).toContain('0');
+    expect(texts).toContain('100');
+    expect(needleAngle(container)).toBeCloseTo(180 - 0.6497 * 180, 0);
   });
 
-  it('95 next to 100 drops to a second axis line; 0, 85 and 100 stay on the first', () => {
-    expect(axisLabels(CSAT).map((l) => [l.value, l.row])).toEqual([[0, 1], [85, 1], [95, 2], [100, 1]]);
+  it('the target label sits INSIDE the arc (never over the green zone or out of the card)', () => {
+    const { container } = render(<RadialGauge actual={64.97} targetToDate={90} status="watch" bands={NPS} targetLabel="Target 90" showValueLabel={false} />);
+    const label = screen.getByTestId('radial-gauge-target-label');
+    expect(label.textContent).toBe('Target 90');
+    expect(label.getAttribute('text-anchor')).toBe('end'); // grows towards the centre, away from the track
+    const [cx, cy] = [130, 128];
+    const dist = Math.hypot(Number(label.getAttribute('x')) - cx, Number(label.getAttribute('y')) - cy);
+    expect(dist).toBeLessThan(100 - 22); // inside the track's inner edge (r - trackWidth)
+    expect(Number(label.getAttribute('x'))).toBeLessThan(260);
+    expect(container.querySelector('svg')?.getAttribute('aria-label')).not.toContain('50% to 150%');
   });
 
-  it('on target: green; a long value fits', () => {
-    render(<CsatCard {...props} value={100} band="green" satisfied={177} />);
-    expect(screen.getByTestId('csat-value').textContent).toBe('100.00%');
-    expect(screen.getByTestId('csat-status').textContent).toBe('Green · on target');
-    expect(screen.getByTestId('csat-fill').style.width).toBe('100%');
+  it('a negative NPS pins the needle at 0 (left), in red', () => {
+    const { container } = render(<RadialGauge actual={-35} targetToDate={90} status="alert" bands={NPS} showValueLabel={false} />);
+    expect(needleAngle(container)).toBeCloseTo(180, 5);
+    const needle = [...container.querySelectorAll('line')].find((l) => l.getAttribute('stroke-width') === '5');
+    expect(needle?.getAttribute('stroke')).toBe('var(--ps-color-alert)');
   });
 
-  it('below the minimum number of responders: grey with n = x', () => {
-    render(<CsatCard {...props} value={75} band="red" satisfied={3} responders={4} belowMinimum />);
-    expect(screen.getByTestId('csat-card').dataset.band).toBe('grey');
-    expect(screen.getByTestId('csat-value').style.color).toBe('var(--ps-color-muted-text)');
-    expect(screen.getByTestId('csat-status').textContent).toBe('n = 4');
-    expect(screen.getByTestId('csat-zone-green').style.background).toBe('var(--ps-color-muted-text)');
+  it('without bands: the Target x0.5..x1.5 scale and the label outside the arc, as on the Promotion page', () => {
+    const { container } = render(<RadialGauge actual={100} targetToDate={200} status="alert" showValueLabel={false} />);
+    const texts = [...container.querySelectorAll('text')].map((t) => t.childNodes[0]?.textContent);
+    expect(texts).toEqual(expect.arrayContaining(['100', '300']));
+    expect(screen.getByTestId('radial-gauge-target-label').getAttribute('text-anchor')).toBe('middle');
+  });
+});
+
+function counts(p: Partial<NpsCounts>): NpsCounts {
+  return { responders: 0, promoters: 0, passives: 0, detractors: 0, promotersPct: null, passivesPct: null, detractorsPct: null,
+    nps: null, csat: null, npsBand: null, csatBand: null, belowMinimum: false, ...p };
+}
+const TOTALS = counts({ responders: 177, promoters: 124, passives: 44, detractors: 9, promotersPct: 70.0564971, passivesPct: 24.858757,
+  detractorsPct: 5.0847457, nps: 64.97175141, csat: 94.915254, npsBand: 'yellow', csatBand: 'yellow' });
+
+const RATE: NpsResponseRate = {
+  status: 'ready', dateFrom: '2026-10-03', dateTo: '2026-10-20', reachStart: '2026-10-03', companyAndDateOnly: true,
+  responders: 120, delivered: 300, read: 350, reached: 650, totalReach: 900, rate: (120 / 650) * 100, rateOfReach: (120 / 900) * 100,
+  band: 'red', target: 30, variancePts: (120 / 650) * 100 - 30,
+  weekly: [{ weekStart: '2026-09-27', responders: 10, reached: 80, rate: 12.5 }, { weekStart: '2026-10-04', responders: 110, reached: 570, rate: 19.3 }],
+};
+const rateState = (data: NpsResponseRate | null, extra: Partial<{ loading: boolean; error: string | null }> = {}) =>
+  ({ data, loading: false, error: null, retry: () => undefined, ...extra });
+
+describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promotion components)', () => {
+  it('NPS and CSAT cards: big value, status pill, Target label, the new footers', () => {
+    render(<NpsTopRow totals={TOTALS} thresholds={{ nps: NPS, csat: CSAT }} rate={rateState(RATE)} />);
+    const nps = screen.getByTestId('nps-card');
+    expect(nps.textContent).toContain('64.97');
+    expect(nps.textContent).toContain('Behind Target');
+    expect(nps.textContent).toContain('Target 90');
+    for (const t of ['Promoters', '70.06%', 'Passives', '24.86%', 'Detractors', '5.08%', 'Responders', '177']) expect(nps.textContent).toContain(t);
+    expect(nps.textContent).not.toMatch(/LYTD|LFY/);
+    expect(nps.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('72'); // 64.97 / 90
+    const csat = screen.getByTestId('csat-card');
+    expect(csat.textContent).toContain('94.92%');
+    for (const t of ['Satisfied', '168', 'Target', '95', 'Variance', '−0.08 pts']) expect(csat.textContent).toContain(t);
+    expect(csat.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100'); // 94.92 / 95 -> 99.9 % rounds to 100
   });
 
-  it('no responders: a dash, no status and no value bar', () => {
-    render(<CsatCard {...props} value={null} band={null} satisfied={0} responders={0} />);
-    expect(screen.getByTestId('csat-value').textContent).toBe('—');
-    expect(screen.queryByTestId('csat-status')).toBeNull();
-    expect(screen.queryByTestId('csat-fill')).toBeNull();
-    expect(screen.getByTestId('csat-satisfied').textContent).toBe('No responders for these filters');
+  it('a red NPS reads Critical; green reads On Track', () => {
+    const { unmount } = render(<NpsTopRow totals={{ ...TOTALS, nps: 27.1, npsBand: 'red' }} thresholds={{ nps: NPS, csat: CSAT }} rate={rateState(RATE)} />);
+    expect(screen.getByTestId('nps-card').textContent).toContain('Critical');
+    unmount();
+    render(<NpsTopRow totals={{ ...TOTALS, nps: 91, npsBand: 'green' }} thresholds={{ nps: NPS, csat: CSAT }} rate={rateState(RATE)} />);
+    expect(screen.getByTestId('nps-card').textContent).toContain('On Track');
+  });
+
+  it('response rate: value, pill, Target 30%, variance, since the reach start, the filter note and the tooltip', () => {
+    render(<ResponseRateCard state={rateState(RATE)} />);
+    const card = screen.getByTestId('rate-card');
+    expect(card.textContent).toContain('18.46%');
+    expect(card.textContent).toContain('Critical');
+    expect(card.textContent).toContain('30%');
+    expect(card.textContent).toContain('−11.54 pts');
+    expect(screen.getByTestId('rate-since').textContent).toBe('since 03 Oct 2026');
+    expect(screen.getByTestId('rate-company-only').textContent).toBe('Company and date filters only');
+    expect(screen.getByTitle(/Responders ÷ Total Reach = 120 ÷ 900 = 13.33%/)).toBeTruthy();
+  });
+
+  it('response rate without the filter note when only company / date filters are set; restricted and waiting say why', () => {
+    const { unmount } = render(<ResponseRateCard state={rateState({ ...RATE, companyAndDateOnly: false })} />);
+    expect(screen.queryByTestId('rate-company-only')).toBeNull();
+    unmount();
+    const r2 = render(<ResponseRateCard state={rateState({ ...RATE, status: 'restricted', rate: null })} />);
+    expect(screen.getByTestId('rate-card').textContent).toContain('Unavailable for your assigned data scope.');
+    r2.unmount();
+    render(<ResponseRateCard state={rateState({ ...RATE, status: 'waiting', rate: null })} />);
+    expect(screen.getByTestId('rate-card').textContent).toContain('Waiting for the WhatsApp message data.');
+  });
+});
+
+const SUMMARY: NpsFollowupSummary = {
+  dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 14, cancelled: 1, historical: 28, noCase: 0,
+  byStatus: [{ key: 'solved_48h', count: 1 }, { key: 'solved_5d', count: 0 }, { key: 'solved_late', count: 0 }, { key: 'pending', count: 13 }],
+  byReason: [{ reasonId: null, label: 'Not yet classified', labelAr: null, count: 12 }, { reasonId: 1, label: 'Late delivery', labelAr: 'تأخر التوصيل', count: 2 }],
+  now: '2026-10-20 12:00:00',
+};
+const fuState = (data: NpsFollowupSummary | null) => ({ data, loading: false, error: null, retry: () => undefined });
+
+describe('follow-up charts (live)', () => {
+  it('status: the four buckets in their colours, Cancelled / Historical counted under the chart', () => {
+    render(<FollowupCharts state={fuState(SUMMARY)} part="status" />);
+    expect(screen.getByTestId('fu-status-solved_48h').textContent).toContain('Solved < 48 h');
+    expect(screen.getByTestId('fu-status-pending').textContent).toContain('13');
+    expect(screen.getByTestId('fu-left-out').textContent).toBe('Cancelled: 1 · Historical: 28');
+    expect(screen.queryByText(/Waiting for the follow-up data source|No follow-up data/)).toBeNull();
+  });
+
+  it('reason: "Not yet classified" for cases without a reason', () => {
+    render(<FollowupCharts state={fuState(SUMMARY)} part="reason" />);
+    expect(screen.getByTestId('fu-reason-none').textContent).toContain('Not yet classified');
+    expect(screen.getByTestId('fu-reason-1').textContent).toContain('Late delivery');
+  });
+});
+
+describe('Odoo links', () => {
+  it('a code with a URL opens Odoo in a new tab; without one it is plain text', () => {
+    const { unmount } = render(<OdooLink href="https://erp.example.com/web#id=7001&model=stock.picking&view_type=form&cids=3">TIKA/OUT/1</OdooLink>);
+    const a = screen.getByRole('link', { name: 'TIKA/OUT/1' });
+    expect(a.getAttribute('href')).toBe('https://erp.example.com/web#id=7001&model=stock.picking&view_type=form&cids=3');
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toContain('noopener');
+    unmount();
+    render(<OdooLink href={null}>WH/OUT/2</OdooLink>);
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('WH/OUT/2')).toBeTruthy();
   });
 });
 

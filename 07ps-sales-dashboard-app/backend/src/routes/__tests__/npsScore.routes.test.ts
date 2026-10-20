@@ -109,12 +109,12 @@ beforeEach(() => {
 const npsQueries = () => queries.filter((q) => /FROM v_process_nps_response /.test(q.sql));
 
 describe('NPS Score access', () => {
-  it.each(['/meta', '/overview', '/trend', '/reach'])('%s: 200 with the page (Admin implicitly, a role by grant)', async (path) => {
+  it.each(['/meta', '/overview', '/trend', '/reach', '/response-rate', '/followup-summary'])('%s: 200 with the page (Admin implicitly, a role by grant)', async (path) => {
     expect((await get(`/nps-score${path}`, 'admin')).status).toBe(200);
     expect((await get(`/nps-score${path}`, 'viewer')).status).toBe(200);
   });
 
-  it.each(['/meta', '/overview', '/trend', '/detractors', '/reach'])('%s: 403 without the page, before any query', async (path) => {
+  it.each(['/meta', '/overview', '/trend', '/detractors', '/reach', '/response-rate', '/followup-summary'])('%s: 403 without the page, before any query', async (path) => {
     for (const who of ['salesperson', 'commentsOnly']) {
       expect((await get(`/nps-score${path}`, who)).status).toBe(403);
     }
@@ -130,7 +130,7 @@ describe('NPS Score access', () => {
     expect((await (await get('/nps-score/meta', 'commentReader')).json()).canSeeDetractors).toBe(true);
   });
 
-  it.each(['/overview', '/trend'])("%s: a salesperson's queries are all locked to their own SalespersonKey", async (path) => {
+  it.each(['/overview', '/trend', '/followup-summary'])("%s: a salesperson's queries are all locked to their own SalespersonKey", async (path) => {
     expect((await get(`/nps-score${path}`, 'salespersonEnabled')).status).toBe(200);
     expect(npsQueries().length).toBeGreaterThan(0);
     for (const q of npsQueries()) {
@@ -149,7 +149,8 @@ describe('NPS Score access', () => {
 
   it('400 on a bad parameter', async () => {
     expect((await get('/nps-score/overview?dateFrom=2026-02-30', 'viewer')).status).toBe(400);
-    expect((await get('/nps-score/trend?grain=week', 'viewer')).status).toBe(400);
+    expect((await get('/nps-score/trend?grain=day', 'viewer')).status).toBe(400);
+    expect((await get('/nps-score/trend?grain=week', 'viewer')).status).toBe(200);
     expect((await get('/nps-score/detractors?pageSize=1000', 'commentReader')).status).toBe(400);
     expect((await get('/nps-score/reach?dateFrom=bad', 'viewer')).status).toBe(400);
   });
@@ -198,5 +199,25 @@ describe('WhatsApp reach', () => {
     expect((await (await get('/nps-score/reach', 'company')).json()).status).toBe('ready');
     for (const q of queries.filter((q) => /FROM v_process_nps_/.test(q.sql))) expect(q.params.slice(-1)).toEqual([3]);
     expect((await get('/nps-score/reach?companyKeys=1', 'company')).status).toBe(403);
+  });
+});
+
+describe('Response rate', () => {
+  it('company and date only on both sides, from NPS_REACH_START; the other filters are labelled, never applied', async () => {
+    reachLoaded = true;
+    const body = await (await get('/nps-score/response-rate?dateFrom=2026-01-01&dateTo=2026-10-18&companyKeys=1&segmentKeys=1&salespersonKeys=49', 'viewer')).json();
+    expect(body).toMatchObject({ status: 'ready', dateFrom: '2026-10-03', reachStart: '2026-10-03', companyAndDateOnly: true, target: 30 });
+    const data = queries.filter((q) => /FROM v_process_nps_(response|reach) /.test(q.sql));
+    expect(data).toHaveLength(2);
+    for (const q of data) {
+      expect(q.params).toEqual([20261003, 20261018, 1]);
+      expect(q.sql).not.toMatch(/SegmentKey|SalespersonKey|salesperson_admin_profile/);
+    }
+  });
+
+  it.each(['b2b', 'salespersonEnabled'])('%s: no figure for a non-company role scope (never filtered ratings / unfiltered messages)', async (who) => {
+    reachLoaded = true;
+    expect(await (await get('/nps-score/response-rate', who)).json()).toMatchObject({ status: 'restricted', rate: null });
+    expect(queries).toHaveLength(0);
   });
 });
