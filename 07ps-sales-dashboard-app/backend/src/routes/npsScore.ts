@@ -5,7 +5,17 @@ import { requirePasswordChangeCleared, requirePermission } from '../middleware/p
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import { allows, getRequestPermissions } from '../services/permissionService';
 import type { Filters } from '../measures/filters';
-import { NpsQueryError, fetchNpsDetractors, fetchNpsMeta, fetchNpsOverview, fetchNpsReach, fetchNpsTrend, parseNpsQuery } from '../measures/npsScore';
+import {
+  NpsQueryError,
+  fetchNpsDetractors,
+  fetchNpsFollowupSummary,
+  fetchNpsMeta,
+  fetchNpsOverview,
+  fetchNpsReach,
+  fetchNpsResponseRate,
+  fetchNpsTrend,
+  parseNpsQuery,
+} from '../measures/npsScore';
 
 /**
  * NPS Score (Process department; measures/npsScore.ts), permission page `nps_score`:
@@ -15,15 +25,22 @@ import { NpsQueryError, fetchNpsDetractors, fetchNpsMeta, fetchNpsOverview, fetc
  *                               source's last sync, whether the caller may see the detractor list, process freshness
  *   GET /nps-score/overview?dateFrom=&dateTo=
  *                               NPS, CSAT, responders, promoters / passives / detractors (# and %)
- *   GET /nps-score/trend?dateFrom=&dateTo=&grain=day|month|year
- *                               NPS and responders per period for the active filters
+ *   GET /nps-score/trend?dateFrom=&dateTo=&grain=week|month|year
+ *                               NPS, CSAT and responders per period for the active filters, from the first period
+ *                               with ratings (weeks = Sunday..Saturday, named by their Sunday)
+ *   GET /nps-score/response-rate?dateFrom=&dateTo=
+ *                               responders / (Delivered + Read): company and date only, from NPS_REACH_START, with a
+ *                               weekly series; the same role restriction as /reach
+ *   GET /nps-score/followup-summary?dateFrom=&dateTo=
+ *                               detractors by follow-up status bucket and by reason, read LIVE from nps_followup_case
  *   GET /nps-score/reach?dateFrom=&dateTo=
  *                               WhatsApp message counts and error groups; company/date only. Unsupported role scopes
  *                               receive no counts. Waiting until the first successful message snapshot.
  *   GET /nps-score/detractors?dateFrom=&dateTo=&page=&pageSize=
- *                               the detractor list with the customers' comments -- ONLY with View on `nps_comments`
+ *                               the detractor list with the customers' comments, the live follow-up case (status,
+ *                               reason, owner, time open) and the Odoo links -- ONLY with View on `nps_comments`
  *
- * Reads only the v_process_nps_* views (and fact_process_nps_comment) in the warehouse pool; there are no NPS credentials
+ * Reads only the v_process_nps_* views, fact_process_nps_comment and the follow-up tables (nps_followup_*) in the warehouse pool; there are no NPS credentials
  * in the backend. Same middleware chain as every report: View on nps_score, then resolveScopedFilters (the role's data
  * scope + the salesperson lock). The global filters are the usual companyKeys / segmentKeys / channelKeys /
  * salesTeamKeys / salespersonKeys / customerKeys parameters; a bad parameter is a 400.
@@ -61,6 +78,10 @@ npsScoreRouter.get('/overview', handle((req) => fetchNpsOverview(pool, query(req
 npsScoreRouter.get('/trend', handle((req) => fetchNpsTrend(pool, query(req), scoped(req))));
 
 npsScoreRouter.get('/reach', handle((req) => fetchNpsReach(pool, query(req), scoped(req), req.userContext!)));
+
+npsScoreRouter.get('/response-rate', handle((req) => fetchNpsResponseRate(pool, query(req), scoped(req), req.userContext!)));
+
+npsScoreRouter.get('/followup-summary', handle((req) => fetchNpsFollowupSummary(pool, query(req), scoped(req))));
 
 npsScoreRouter.get(
   '/detractors',

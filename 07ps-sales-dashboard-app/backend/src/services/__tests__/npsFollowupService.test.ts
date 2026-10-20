@@ -18,7 +18,7 @@ function aCase(over: Partial<FollowupCase> = {}): FollowupCase {
     ownerUserId: null, ownerName: null, contactedAt: null, solvedAt: null, rootCause: null, actionTaken: null, notes: null,
     sourceChanged: false, sourceChangedAt: null, sourceChangeReason: null, version: 1, updatedAt: null, updatedByName: null,
     company: 'MAJAAL', customer: 'x', orderRef: 'S1', deliveryCode: 'WH/OUT/1', salesTeam: null, salesperson: null, teamBranch: null,
-    hasComment: false, hoursOpen: null, timeBand: null, ...over,
+    hasComment: false, orderUrl: null, deliveryUrl: null, hoursOpen: null, timeBand: null, ...over,
   };
 }
 

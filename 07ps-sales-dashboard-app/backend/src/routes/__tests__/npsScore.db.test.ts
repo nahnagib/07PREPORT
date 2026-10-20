@@ -11,7 +11,7 @@ import type { AddressInfo } from 'node:net';
  * The real router, scope middleware and pool; only the user is faked. Every expectation is computed here with its own
  * SQL on the fact, independently of measures/npsScore.ts:
  *   - the overview = the fact's counts per group over the range; NPS and CSAT from those counts;
- *   - the daily / monthly / yearly trend adds up to the overview, and each period's NPS is its own counts;
+ *   - the weekly / monthly / yearly trend adds up to the overview, and each period's NPS is its own counts;
  *   - every filter = the same condition on the fact; the detractor list = the level-1 responses;
  *   - a salesperson (page enabled) sees exactly their own responses.
  */
@@ -88,11 +88,6 @@ describe.skipIf(!RUN)('NPS Score on the real warehouse (read-only)', () => {
     const [s] = await qa('SELECT SalespersonKey AS k FROM fact_process_nps_response WHERE SalespersonKey <> -1 GROUP BY SalespersonKey ORDER BY COUNT(*) DESC LIMIT 1');
     USERS.salespersonEnabled.salespersonKey = s ? n(s.k) : null;
   });
-  afterAll(async () => {
-    server?.close();
-    await pool?.end();
-  });
-
   it('there is data to check (run process_nps first)', async () => {
     expect((await factCounts()).responders).toBeGreaterThan(0);
   });
@@ -106,7 +101,7 @@ describe.skipIf(!RUN)('NPS Score on the real warehouse (read-only)', () => {
     expect(body.totals.csat).toBeCloseTo(csat(want), 9);
   });
 
-  it.each(['day', 'month', 'year'])('the %s trend adds up to the overview, and each period is its own counts', async (grain) => {
+  it.each(['week', 'month', 'year'])('the %s trend adds up to the overview, and each period is its own counts', async (grain) => {
     const want = await factCounts();
     const { status, body } = await get(`/nps-score/trend?dateFrom=2026-01-01&dateTo=2026-12-31&grain=${grain}`);
     expect(status).toBe(200);
@@ -187,4 +182,69 @@ describe.skipIf(!RUN)('NPS Score on the real warehouse (read-only)', () => {
       }
     }
   });
+});
+
+describe.skipIf(!RUN)('NPS page consistency, YTD, default B2B + B2C filter and all filters cleared (real warehouse)', () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Tripoli', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const ytd = `dateFrom=${today.slice(0, 4)}-01-01&dateTo=${today}`;
+  const key = (iso: string) => Number(iso.replace(/-/g, ''));
+
+  it.each([['default B2B + B2C', '&segmentKeys=1&segmentKeys=2'], ['all filters cleared', '']])('%s: every visual agrees', async (_label, filters) => {
+    const q = `${ytd}${filters}`;
+    const o = (await get(`/nps-score/overview?${q}`)).body.totals;
+    // responders box = tachometer denominator = sum of the trend bars; P + Pa + D = R; satisfied + D = R
+    expect(o.promoters + o.passives + o.detractors).toBe(o.responders);
+    expect(o.promoters + o.passives + o.detractors - o.detractors).toBe(o.promoters + o.passives);
+    expect(o.nps).toBeCloseTo((100 * o.promoters) / o.responders - (100 * o.detractors) / o.responders, 9);
+    for (const grain of ['week', 'month', 'year']) {
+      const t = (await get(`/nps-score/trend?${q}&grain=${grain}`)).body;
+      expect(sum(t.points, 'responders'), grain).toBe(o.responders);
+      expect(t.points[0]?.responders ?? 0, `${grain} starts at the first period with ratings`).toBeGreaterThan(0);
+    }
+    // Detractors box = detractor list = follow-up cases (+ Historical shown apart)
+    const list = (await get(`/nps-score/detractors?${q}&pageSize=500`)).body;
+    const fu = (await get(`/nps-score/followup-summary?${q}`)).body;
+    expect(list.total).toBe(o.detractors);
+    expect(fu.detractors).toBe(o.detractors);
+    expect(fu.charted + fu.cancelled + fu.historical + fu.noCase).toBe(o.detractors);
+    expect(sum(fu.byStatus, 'count')).toBe(fu.charted);
+    expect(sum(fu.byReason, 'count')).toBe(fu.charted);
+    const [hist] = await qa(`SELECT COUNT(*) AS n FROM nps_followup_case c JOIN fact_process_nps_response f ON f.response_id = c.response_id
+      WHERE c.status = 'HISTORICAL' AND f.nps_level = 1 AND f.RatingDateKey BETWEEN ? AND ?${filters ? ' AND f.SegmentKey IN (1, 2)' : ''}`,
+    [key(`${today.slice(0, 4)}-01-01`), key(today)]);
+    expect(fu.historical).toBe(n(hist.n));
+    // the reach boxes add up; errors by reason = the Error box
+    const r = (await get(`/nps-score/reach?${q}`)).body;
+    if (r.status === 'ready') {
+      const t = r.totals;
+      expect(t.delivered + t.read + t.notDelivered + t.error + t.otherState).toBe(t.totalReach);
+      expect(t.otherState).toBe(0);
+      expect(sum(r.errors, 'count')).toBe(t.error);
+    }
+  });
+
+  it('response rate = plain SQL: ratings by rating date / (delivered + read) by message date, company only, from NPS_REACH_START', async () => {
+    const [state] = await qa('SELECT reach_start FROM process_nps_reach_state WHERE singleton_id = 1');
+    if (!state) return;
+    const start = new Date(state.reach_start).toISOString().slice(0, 10);
+    for (const company of [null, 1, 3]) {
+      const c = company ? ' AND CompanyKey = ?' : '';
+      const p = company ? [company] : [];
+      const [ratings] = await qa(`SELECT COUNT(*) AS n FROM fact_process_nps_response WHERE RatingDateKey BETWEEN ? AND ?${c}`, [key(start), key(today), ...p]);
+      const [msgs] = await qa(`SELECT SUM(box IN ('delivered', 'read')) AS reached, COUNT(*) AS total FROM fact_process_nps_message
+        WHERE in_reach_scope = 1 AND MessageDateKey BETWEEN ? AND ?${c}`, [key(start), key(today), ...p]);
+      // a segment filter is ignored (labelled), never applied to the ratings only
+      const body = (await get(`/nps-score/response-rate?${ytd}&segmentKeys=1&segmentKeys=2${company ? `&companyKeys=${company}` : ''}`)).body;
+      expect(body).toMatchObject({ status: 'ready', dateFrom: start, companyAndDateOnly: true, responders: n(ratings.n), reached: n(msgs.reached), totalReach: n(msgs.total) });
+      expect(body.rate).toBeCloseTo((100 * n(ratings.n)) / n(msgs.reached), 9);
+      expect(sum(body.weekly, 'responders')).toBe(n(ratings.n));
+      expect(sum(body.weekly, 'reached')).toBe(n(msgs.reached));
+    }
+  });
+});
+
+// one server and one pool for both blocks, closed after the last test
+afterAll(async () => {
+  server?.close();
+  await pool?.end();
 });

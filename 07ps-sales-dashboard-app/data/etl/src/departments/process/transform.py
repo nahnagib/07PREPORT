@@ -17,6 +17,9 @@ Rules (docs/nps-etl.md; decisions of 2026-10-18):
   several candidates is narrowed by the customer, then by the company name; still not exactly one -> no match.
   A matched document whose company is -1 (e.g. a supplier receipt WH/IN) never decides: the next step does.
 * SalesOrderKey: the matched order (Odoo sale.order id), -1 when there is none.
+* PickingID: the Odoo stock.picking of the matched delivery -- the same match as the company rule (``pick`` on the
+  delivery's company and customer), looked up even when the order decided the company; -1 when no single picking of
+  that company and customer carries the name (migration 0053; the page links the delivery code to it in Odoo).
 """
 
 from __future__ import annotations
@@ -38,18 +41,18 @@ COMPANY_BY_SOURCE_NAME: dict[str, int] = {"MAJAAL": 1, "TIKA": 3}
 
 RESPONSE_COLUMNS = ["response_id", "delivery_code", "order_ref", "rated_at_utc", "rated_at_local", "RatingDateKey", "DeliveryDateKey",
                     "CompanyKey", "company_source", "CustomerKey", "SalespersonKey", "SalesTeamKey", "SegmentKey", "ChannelKey",
-                    "SalesOrderKey", "nps_level", "is_low_rating", "in_low_rating_table", "team_branch", "has_comment"]
+                    "SalesOrderKey", "PickingID", "nps_level", "is_low_rating", "in_low_rating_table", "team_branch", "has_comment"]
 COMMENT_COLUMNS = ["comment_id", "response_id", "delivery_code", "commented_at_utc", "commented_at_local", "CommentDateKey",
                    "CompanyKey", "CustomerKey", "SalespersonKey", "SalesTeamKey", "SegmentKey", "ChannelKey", "comment_text"]
 
-Candidate = tuple[int, int, int]  # (SalesOrderKey or 0, CompanyKey, CustomerKey)
+Candidate = tuple[int, int, int]  # (SalesOrderKey or PickingID, CompanyKey, CustomerKey)
 
 
 @dataclass
 class Lookups:
     """Warehouse lookups by NAME of document (the only link the source has to an Odoo order / picking)."""
     orders: Mapping[str, Sequence[Candidate]]  # order_number -> (SalesOrderKey, CompanyKey, CustomerKey)
-    deliveries: Mapping[str, Sequence[Candidate]]  # DeliveryReference -> (0, CompanyKey, CustomerKey)
+    deliveries: Mapping[str, Sequence[Candidate]]  # DeliveryReference -> (PickingID, CompanyKey, CustomerKey)
 
 
 @dataclass
@@ -89,6 +92,16 @@ def pick(candidates: Sequence[Candidate], customer_key: int, company_hint: int) 
     return found[0] if len(found) == 1 else None
 
 
+def pick_delivery(candidates: Sequence[Candidate], customer_key: int, company_hint: int) -> tuple[Candidate | None, int]:
+    """The matched delivery (company, customer) -- narrowed exactly as before the picking id was kept, so the company
+    rule is unchanged -- and its Odoo picking id: the one picking of that company and customer, else -1."""
+    match = pick([(0, co, cu) for _, co, cu in candidates], customer_key, company_hint)
+    if match is None:
+        return None, UNKNOWN
+    ids = {int(p) for p, co, cu in candidates if (co, cu) == (match[1], match[2]) and p is not None and int(p) > 0}
+    return match, (ids.pop() if len(ids) == 1 else UNKNOWN)
+
+
 def _text(v: Any) -> str:
     return "" if v is None or (not isinstance(v, str) and pd.isna(v)) else str(v).strip()
 
@@ -120,21 +133,20 @@ def build(full: pd.DataFrame, low: pd.DataFrame, maps: KeyMaps, lookups: Lookups
         hint = source_company(r.get("company_name"), maps.company_keys)
         order_ref, code = _text(r.get("order_id")), _text(r.get("delivery_code"))
         order = pick(lookups.orders.get(order_ref, ()), customers[i], hint) if order_ref else None
+        delivery, picking_id = pick_delivery(lookups.deliveries.get(code, ()), customers[i], hint) if code else (None, UNKNOWN)
         if order_ref and order is None:
             (order_ambiguous if lookups.orders.get(order_ref) else order_unmatched).append(rid)
         # a matched document without a company (e.g. a supplier receipt WH/IN with CompanyKey -1) never decides the
         # company: the next step does (decision 2026-10-19)
         if order is not None and order[1] != UNKNOWN:
             company, src = order[1], "order"
+        elif delivery is not None and delivery[1] != UNKNOWN:
+            company, src = delivery[1], "delivery"
+        elif hint != UNKNOWN:
+            company, src = hint, "company_name"
         else:
-            delivery = pick(lookups.deliveries.get(code, ()), customers[i], hint) if code else None
-            if delivery is not None and delivery[1] != UNKNOWN:
-                company, src = delivery[1], "delivery"
-            elif hint != UNKNOWN:
-                company, src = hint, "company_name"
-            else:
-                company, src = UNKNOWN, "none"
-                company_fell.append(rid)
+            company, src = UNKNOWN, "none"
+            company_fell.append(rid)
         by_source[src] += 1
         keys_of[rid] = {"CompanyKey": int(company), "CustomerKey": int(customers[i]), "SalespersonKey": int(people[i]),
                         "SalesTeamKey": str(teams[i]), "SegmentKey": int(segments[i]), "ChannelKey": int(channels[i])}
@@ -150,6 +162,7 @@ def build(full: pd.DataFrame, low: pd.DataFrame, maps: KeyMaps, lookups: Lookups
                              "RatingDateKey": date_key(at_local.date() if at_local else None),
                              "DeliveryDateKey": date_key(delivered.date() if delivered else None),
                              **keys_of[rid], "company_source": src, "SalesOrderKey": int(order[0]) if order else UNKNOWN,
+                             "PickingID": int(picking_id),
                              "nps_level": int(level), "is_low_rating": int(level == nps.LOW_RATING_LEVEL),
                              "in_low_rating_table": int(rid in low_branch), "team_branch": low_branch.get(rid), "has_comment": 0})
         elif kinds[i] == nps.KIND_COMMENT:

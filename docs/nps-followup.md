@@ -25,7 +25,8 @@ One case per detractor rating (★, "أقل من المتوقع"), followed up o
     "Source changed only".
   - The filters are kept in the address, so a link opens the same view.
 - **A case** (click a card or a row) shows:
-  - the rating, read-only: rated at, company, customer, order, delivery, branch, salesperson;
+  - the rating, read-only: rated at, company, customer, order, delivery, branch, salesperson; the order and the
+    delivery open their Odoo form in a new tab (no link when no single Odoo picking matched the delivery code);
   - the customer's comment, only for roles with View on *NPS Score detractor list and comments*;
   - the follow-up fields: status, reason, owner, contacted at, solved at, root cause, action taken, notes;
   - the history: who changed what, and when.
@@ -36,6 +37,9 @@ One case per detractor rating (★, "أقل من المتوقع"), followed up o
   - Dates can't be before the rating or in the future.
   - If someone else saved the case while you were editing, your save is refused and their version is shown; make
     your change again.
+- **The NPS Score page follows your edits at once:** its Detractors table (status, reason, owner, time open), *Detractors
+  by reason* and *Detractors by status* read the cases live, so a saved change shows on the next page load. A row of
+  that table opens the case here.
 - **Source changed:** the rating left the NPS source or is no longer a detractor. The case and its follow-up are kept
   and marked ⚠; the history says when.
 - **Reasons** (tab, for roles with *Detractor Follow-up reasons*):

@@ -3,6 +3,7 @@ import { ChartPanel, EmptyState, ErrorState, KpiTile, LoadingSkeleton } from '@0
 import type { NpsReach as ReachData } from '../../lib/api';
 import { formatDate, formatNumber } from '../../lib/format';
 import { pct } from '../../lib/nps/view';
+import { BarList } from './BarList';
 import { Waiting } from './Waiting';
 
 export type ReachState = { data: ReachData | null; loading: boolean; error: string | null; retry: () => void };
@@ -47,23 +48,9 @@ export function NpsReach({ state, part }: { state: ReachState; part: 'boxes' | '
     );
   } else if (data.errors.length === 0) body = <EmptyState message="No message errors for these companies and dates." />;
   else {
-    const total = data.errors.reduce((sum, e) => sum + e.count, 0);
-    const max = Math.max(...data.errors.map((e) => e.count));
     body = (
-      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }} aria-label="Message errors by reason">
-        {data.errors.map((e) => (
-          <li key={e.key} style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', flexWrap: 'wrap' }}>
-              <span>{e.label}{e.fixable ? ' · Fixable' : ''}</span>
-              <span><strong>{formatNumber(e.count)}</strong> <span style={{ color: 'var(--ps-color-neutral-text)' }}>({share(e.count, total)})</span></span>
-            </div>
-            <div role="img" aria-label={`${e.label}: ${e.count} (${share(e.count, total)})`} style={{ marginTop: 6, height: 8, background: 'var(--ps-color-border)', borderRadius: 4 }}>
-              <div style={{ width: `${max ? e.count / max * 100 : 0}%`, height: '100%', background: 'var(--ps-color-alert)', borderRadius: 4 }} />
-            </div>
-            <p style={{ fontSize: 12, margin: '6px 0', color: 'var(--ps-color-neutral-text)' }}>{e.hint}</p>
-          </li>
-        ))}
-      </ul>
+      <BarList ariaLabel="Message errors by reason" testId="reach-errors"
+        items={data.errors.map((e) => ({ key: e.key, label: e.label, suffix: e.fixable ? ' · Fixable' : undefined, count: e.count, color: 'var(--ps-color-alert)', hint: e.hint }))} />
     );
   }
   const ready = data?.status === 'ready';

@@ -3,6 +3,7 @@ import type { Pool, PoolConnection } from 'mysql2/promise';
 import { ValidationError } from '../lib/errors';
 import { getAppTimezone } from '../lib/timezone';
 import { buildWhereClause, type Filters } from '../measures/filters';
+import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 
 /**
  * NPS Detractor Follow-up (Process department; routes/npsFollowup.ts; docs/nps-followup.md). Schema and rationale:
@@ -86,6 +87,9 @@ export interface FollowupCase {
   salesperson: string | null;
   teamBranch: string | null;
   hasComment: boolean;
+  /** Odoo form links (lib/odooLinks.ts) of the sale order and the matched picking; null without an id or an Odoo URL setting */
+  orderUrl: string | null;
+  deliveryUrl: string | null;
   /** hours from the rating to solved / now; null for Cancelled and Historical */
   hoursOpen: number | null;
   timeBand: TimeBand | null;
@@ -212,7 +216,8 @@ const SELECT = `
   SELECT c.case_id, c.response_id, c.rated_at_local, c.status, c.reason_id, r.name_en AS reason_en, r.name_ar AS reason_ar,
          c.owner_user_id, o.display_name AS owner_name, c.contacted_at, c.solved_at, c.root_cause, c.action_taken, c.notes,
          c.source_changed, c.source_changed_at, c.source_change_reason, c.version, c.updated_at, u.display_name AS updated_by_name,
-         f.company, f.customer, f.order_ref, f.delivery_code, f.sales_team, f.salesperson, f.team_branch, f.has_comment
+         f.company, f.customer, f.order_ref, f.delivery_code, f.sales_team, f.salesperson, f.team_branch,
+         f.CompanyKey, f.SalesOrderKey, f.PickingID, f.has_comment
     FROM nps_followup_case c
     LEFT JOIN v_process_nps_response f ON f.response_id = c.response_id
     LEFT JOIN nps_followup_reason r ON r.reason_id = c.reason_id
@@ -263,7 +268,11 @@ export function followupWhere(q: Partial<FollowupQuery>, f: Filters): Where {
   return { sql: parts.join(' AND '), params };
 }
 
+const idOrNull = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+
 function toCase(r: Record<string, unknown>, now: string): FollowupCase {
+  const odoo = odooConfiguredBaseUrl();
+  const companyKey = idOrNull(r.CompanyKey);
   const base = {
     caseId: Number(r.case_id),
     responseId: Number(r.response_id),
@@ -293,6 +302,8 @@ function toCase(r: Record<string, unknown>, now: string): FollowupCase {
     salesperson: (r.salesperson as string) ?? null,
     teamBranch: (r.team_branch as string) ?? null,
     hasComment: Boolean(Number(r.has_comment ?? 0)),
+    orderUrl: odooFormUrl(odoo, 'sale.order', idOrNull(r.SalesOrderKey), companyKey),
+    deliveryUrl: odooFormUrl(odoo, 'stock.picking', idOrNull(r.PickingID), companyKey),
   };
   const hours = hoursOpen(base, now);
   return { ...base, hoursOpen: hours === null ? null : Math.round(hours * 10) / 10, timeBand: timeBand(hours) };

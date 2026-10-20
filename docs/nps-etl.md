@@ -206,7 +206,7 @@ rows, the company rule used, and every key fallback with sample ids.
 ## 6. How to verify
 
 ```sh
-python scripts/process/check_nps_totals.py --from 2026-10-11 --to 2026-10-17
+python scripts/process/check_nps_totals.py --from 2026-10-11 --to 2026-10-17 [--api http://localhost:14000]
 ```
 
 Read-only on both sides. It prints `MATCH` when all available checks agree:
@@ -215,6 +215,13 @@ Read-only on both sides. It prints `MATCH` when all available checks agree:
 3. Per company × level: the source `company_name` = our `CompanyKey`.
 4. When reach is enabled and the source table exists: source message ids = active raw ids, then date × company reach
    boxes and error groups = the two serving views for the requested period. Otherwise reach is explicitly `SKIPPED`.
+8. **YTD** (the page's default period, 1 January → today, Tripoli), per company (all, Majaal, Tika), with the default
+   B2B + B2C filter and with every filter cleared: plain SQL on the fact tables (responders, groups, NPS, CSAT, reach
+   boxes, error groups, response rate) vs the API (overview, weekly and monthly trend, reach, response-rate,
+   followup-summary, detractor list), plus the page's consistency rules (section 12). The segment filter uses the app's
+   rule (a salesperson's admin segment override wins), written as a plain JOIN; ratings it moves in or out of
+   B2B + B2C are listed. The API part needs `--api` and `NPS_CHECK_API_TOKEN` (the Bearer token of a user with the NPS
+   page and the detractor list; never printed); without them only the SQL side and its rules run.
 
 It then prints the **weekly e-mail's table** for the period: counts per `company_name` and level, from the same source
 rows, plus independently calculated NPS and CSAT for comparison with the page (use the same date/company filters).
@@ -340,6 +347,15 @@ each run so disappeared rows still get `_deleted_at`.
 
 ### 8.5 API and page
 
+**Response rate** (`GET /nps-score/response-rate`, the narrow card of the top row) = responders ÷ (Delivered + Read)
+× 100: a customer can only answer a message that reached them; the tooltip also shows responders ÷ Total Reach. The
+messages have no delivery, order or customer, so **both** sides use the company and date filters only: ratings by
+rating date, messages by message date, the same period, starting no earlier than `NPS_REACH_START` (03 Oct 2026; the
+card says "since 03 Oct 2026"). Any team / salesperson / segment / customer filter is ignored for this card on both
+sides and the card says **Company and date filters only**; the same role restriction as the reach panel applies.
+Target 30 %: On Track from 30, Behind Target from 25, Critical below 25 (`backend/src/config/npsThresholds.ts`). The
+sparkline is the rate per business week (Sunday–Saturday).
+
 `GET /nps-score/reach` reads `v_process_nps_reach` and `v_process_nps_message_error`, and `reach_start` from
 `process_nps_reach_state`. Only company and date filters apply; ordinary customer-group/channel/branch/salesperson/
 customer selections leave the numbers visible with **Company and date filters only** (including the default B2B+B2C
@@ -360,23 +376,22 @@ filter by `npx vitest run -c vitest.nps-db.config.ts` (backend, read-only).
 
 ### 8.7 Switching it on in production
 
-1. Apply migrations 0046–0051 (DevOps; never re-run an applied one).
+1. Apply migrations 0046–0053 (DevOps; never re-run an applied one). 0053 adds the Odoo picking id; run `process_nps`
+   once afterwards so the delivery links fill in.
 2. In the ETL environment: the `NPS_*` source values, `NPS_ENABLED=true`, `NPS_REACH_ENABLED=true`,
    `NPS_REACH_TEMPLATE_MATCH=Feedback`, `NPS_REACH_START=2026-10-03`, `NPS_REACH_EXCLUDED_NUMBERS=<the test number>`.
    In the backend environment (the scheduler): `ETL_SCHEDULE_PROCESS_NPS_ENABLED=true`.
 3. Run `process_nps` once from the ETL Control Center, then `check_nps_totals.py` for the last 7 days: every line MATCH.
 4. Compare section 7 of its output with the developer's weekly e-mail (LAST 7 DAYS).
 
-## 9. Detractor follow-up (pending approval)
+## 9. Detractor follow-up
 
-Read-only Odoo discovery found no helpdesk module, open follow-up activities, `rating.rating` rows or relevant complaint
-fields. Chatter was automated rating notifications, apart from one employee note whose content was not read.
-No reliable follow-up reason or resolution timestamp exists in the current source.
-
-The proposed workflow creates one case per detractor through ETL, with an admin-managed reason list, owner, status,
-`solved_at`, notes and a separate `nps_followup` permission. This requires business approval before implementation.
-Until approved, the reason/status charts show waiting messages and the list shows no follow-up data. No solved times,
-reasons or statuses are inferred from rating messages.
+Built on the Detractor Follow-up page (`docs/nps-followup.md`, migration 0052): one case per detractor, created by
+`process_nps`; people set status, reason, owner and times there. The NPS Score page reads the cases **live** at request
+time (not from the nightly ETL): the Detractors table (Status, Reason, Owner, Time open / Solved in), **Detractors by
+reason** ("Not yet classified" = a case without a reason) and **Detractors by status** (Solved < 48 h green, 48 h – 5
+days yellow, > 5 days red, Pending black). Historical (rated before `NPS_FOLLOWUP_START`) and Cancelled cases are left
+out of both charts and counted under them. A row opens its case card on the follow-up page.
 
 ## 10. Continuation verification (2026-10-18)
 
@@ -400,3 +415,104 @@ For Windows reconciliation, the ETL `.env` may use Docker's `host.docker.interna
 warehouse `DB_*` settings from `backend/.env` into the process first; keep the NPS source profile from `data/etl/.env`.
 The source remains read-only. Local browser checks use frontend port 3100 and backend 4100, with 3100 in the backend's
 process-local `FRONTEND_ORIGIN`; all ETL schedules are disabled for that preview.
+
+## 11. NPS page, round 4 (2026-10-20)
+
+- **Period:** year-to-date by default, 1 January → today in Tripoli time, for every visual; the label next to "Data
+  refreshed" reads `YTD · 01 Jan – 20 Oct 2026`, or the chosen range when the date filter changes.
+- **Top row:** the Promotion tachometer layout and components: NPS tachometer (KpiCard gauge with fixed bands
+  red < 50 / yellow 50–< 90 / green 90–100, target tick 90 labelled inside the arc, 0 and 100 at the ends; a negative
+  NPS pins the needle at 0 in red with the real value printed; footer Promoters % · Passives % · Detractors % ·
+  Responders; progress bar = NPS ÷ 90) · Response Rate (the "YTD Actual ASP" card, now the shared `CompactKpiCard`) ·
+  CSAT tachometer (red < 85 / yellow 85–< 95 / green 95–100, target 95; footer Satisfied · Responders · Target ·
+  Variance; progress bar = CSAT ÷ 95).
+- **Trend:** Weekly / Monthly / Yearly (Daily removed). Weeks are the app's business week, **Sunday–Saturday**, the
+  Collections week (`backend/src/lib/businessWeek.ts` = `debtCollections.periodStart`), labelled by their Sunday. The
+  axis starts at the first period with ratings. CSAT is a second line (toggle) with its target 95.
+- **Odoo links:** the Delivery code opens the `stock.picking` form and the Order the `sale.order` form, in a new tab,
+  as `<ODOO_URL>/web#id=<id>&model=<model>&view_type=form&cids=<company>` (the finance pages' format plus the company).
+  The base comes only from `ODOO_WEB_BASE_URL` / `ODOO_URL`; with neither set there is no link. The picking is the
+  delivery matched by the company rule (`fact_process_nps_response.PickingID`, migration 0053); a rating with no single
+  matching picking shows its code without a link (31 of 707 on 2026-10-20). Same links on the follow-up case card.
+
+## 12. Data check (2026-10-20)
+
+Local warehouse after a fresh `process_nps` run; `check_nps_totals.py --api http://localhost:14000` printed **MATCH**
+for every section (source = warehouse, weekly e-mail LAST 7 DAYS 14–20 Oct per company, YTD API = plain SQL).
+
+**a) Consistency, YTD (01 Jan – 20 Oct), from the API**
+
+| Rule | Default B2B + B2C | All filters cleared |
+| --- | --- | --- |
+| Responders box = tachometer denominator = Σ weekly bars = Σ monthly bars | 644 = 644 = 644 = 644 | 707 = 707 = 707 = 707 |
+| Promoters + Passives + Detractors = Responders | 348 + 259 + 37 = 644 | 392 + 272 + 43 = 707 |
+| CSAT satisfied + Detractors = Responders | 607 + 37 = 644 | 664 + 43 = 707 |
+| Detractors box = table rows = follow-up cases + Historical | 37 = 37 = 14 + 23 (0 cancelled, 0 without a case) | 43 = 43 = 15 + 28 |
+| Delivered + Read + Not Delivered + Error = Total Reach | 227 + 507 + 42 + 125 = 901 (other states 0) | same (company/date only) |
+| Σ Errors by reason = Error box | 125 = 125 | 125 = 125 |
+
+The trend starts at the week of 12 Jul / Jul 2026 (no empty Jan–Jun). Status chart: Solved > 5 days 1, Pending 13 (14
+cleared); reasons: Not yet classified 13 (14), Driver behaviour 1.
+
+**b) Independent SQL vs API, YTD** (all MATCH; NPS / CSAT unrounded, shown to 2 decimals)
+
+| Company | Filter | Responders | P / Pa / D | NPS | CSAT | Reach | Delivered | Read | Not del. | Error | Response rate |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| All | B2B + B2C | 644 | 348 / 259 / 37 | 48.29 | 94.25 | 901 | 227 | 507 | 42 | 125 | 23.84 % |
+| Majaal | B2B + B2C | 247 | 153 / 83 / 11 | 57.49 | 95.55 | 287 | 72 | 158 | 10 | 47 | 26.96 % |
+| Tika | B2B + B2C | 397 | 195 / 176 / 26 | 42.57 | 93.45 | 614 | 155 | 349 | 32 | 78 | 22.42 % |
+| All | cleared | 707 | 392 / 272 / 43 | 49.36 | 93.92 | 901 | 227 | 507 | 42 | 125 | 23.84 % |
+| Majaal | cleared | 260 | 161 / 86 / 13 | 56.92 | 95.00 | 287 | 72 | 158 | 10 | 47 | 26.96 % |
+| Tika | cleared | 447 | 231 / 186 / 30 | 44.97 | 93.29 | 614 | 155 | 349 | 32 | 78 | 22.42 % |
+
+Response rate = 175 ratings (03–20 Oct, company/date only) ÷ (227 + 507) = 23.84 % (Critical, −6.16 pts); responders
+÷ Total Reach = 175 ÷ 901 = 19.42 %. Reach and the rate ignore the segment filter, so both filter rows agree.
+
+**c) Weekly e-mail, LAST 7 DAYS (14–20 Oct):** MAJAAL 18 delivered / 52 read / 3 sent / 17 error (90), TIKA 68 / 116
+/ 15 / 30 (229), source rule = warehouse: MATCH. Ratings 14–20 Oct: MAJAAL 7 / 13 / 2, TIKA 11 / 24 / 6, the same on
+both time bases.
+
+**d) The monthly drop.** The page (default B2B + B2C, segment overrides applied) shows Jul 71.8 · Aug 76.4 · Sep 38.5
+· Oct 26.1 on 20 Oct (27.1 was an earlier October load). Counts per company, all customer groups:
+
+| Month | Company | Responders | Promoters | Passives | Detractors | Comments | NPS |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Jul | Majaal | 42 | 34 | 5 | 3 | 4 | 73.8 |
+| Aug | Majaal | 72 | 59 | 9 | 4 | 11 | 76.4 |
+| Aug | Tika | 149 | 125 | 13 | 11 | 9 | 76.5 |
+| Sep | Majaal | 80 | 42 | 36 | 2 | 5 | 50.0 |
+| Sep | Tika | 174 | 66 | 100 | 8 | 26 | 33.3 |
+| Oct | Majaal | 66 | 26 | 36 | 4 | 8 | 33.3 |
+| Oct | Tika | 124 | 40 | 73 | 11 | 19 | 23.4 |
+
+B2B / B2C share of the B2B + B2C ratings (effective segment): Jul 15 % / 85 % (6 / 33), Aug 35 % / 65 % (67 / 124),
+Sep 34 % / 66 % (80 / 154), Oct 27 % / 73 % (48 / 132). The mix barely moves from August, and both segments drop the
+same way: B2B NPS 73.1 (Aug) → 46.3 (Sep) → 33.3 (Oct), B2C 78.2 → 34.4 → 23.5. So it is not a B2B / B2C mix effect.
+
+**It is a real change in the answers, not a data effect.** Evidence:
+- *Where:* only the Passive share moves. Before 1 Sep 10.3 % Passives (27 of 263), from 2 Sep 55.2 % (245 of 444);
+  Detractors stay at 6.8 % → 5.6 %. By week: 7–16 % Passives up to the week of 23 Aug, 40 % in the week of 30 Aug,
+  51–61 % every week since. By day the step is between 31 Aug (0 of 5) and 2 Sep (7 of 18); there are no ratings on
+  1 Sep. Both companies and both segments step on the same day.
+- *Classification:* exactly three answer texts exist in every month, each mapped to one level; no new or changed text.
+- *Duplicates:* 1, 1 and 4 ratings per month share a delivery with another rating (7 deliveries rated twice or three
+  times, the ETL warning) -- far too few to move 109 Passives a month.
+- *Company mapping:* the source is the order for 92–94 % of ratings every month; the fall-backs carry 1–6 Passives a
+  month.
+- *Backfill:* July–August were written to the source in bulk on 2 and 8 Sep, but the 8 Sep batch holds both sides of
+  the step (26–31 Aug low, 2–8 Sep high), so the import does not cause it.
+- *Same customers:* the 53 customers (phone numbers) who rated both before and after 1 Sep answered 72 / 8 / 7
+  (Promoters / Passives / Detractors) before and 59 / 42 / 5 after.
+- *Template:* the feedback template has kept the same name since July (Majaal and Tika); its text or button order is not
+  in our data.
+
+An overnight move of the same customers from "exceeded" to "met", with no rise in complaints and almost no comments on
+Passives, fits a change in how the question was asked from ~1 Sep (template wording or button order, edited under the
+same name) better than a sudden service drop. **To confirm with the NPS developer / the Meta template history**; the
+numbers on the page are correct either way.
+
+**e) Hidden by the default B2B + B2C filter, YTD: 63 of 707 ratings** -- 58 with an unknown segment (the source row has
+no salesperson, team or customer, so the segment, which follows the team, is -1), 2 Backoffice and 3 Inter Company.
+Rating 9133 has segment -1 in the fact but its salesperson's admin override makes it B2C, so the page (and the check)
+count it inside the default filter.
+

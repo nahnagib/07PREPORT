@@ -146,6 +146,28 @@ def test_a_matched_document_without_a_company_falls_through_to_the_next_step():
     assert r.loc[1, "SalesOrderKey"] == 5001  # the order itself still links
 
 
+def test_picking_id_is_the_matched_delivery_of_the_company_rule_and_never_changes_the_company():
+    # migration 0053: the page links the delivery code to its Odoo picking; same match (customer, then company name)
+    lookups = tf.Lookups(orders={"S1": [(5001, 1, 100)]},
+                         deliveries={"MAJ/OUT/1": [(7001, 1, 100)],
+                                     "OUT/2": [(7002, 1, 100), (7003, 3, 102)],          # same name in two companies
+                                     "OUT/3": [(7004, 3, 102), (7005, 3, 102)],          # two pickings of one customer
+                                     "WH/IN/9": [(-1, -1, -1)]})
+    rows = pd.DataFrame([
+        _row(1, MET, order="S1", code="MAJ/OUT/1"),                       # the order decides; the picking still links
+        _row(2, MET, order=None, code="OUT/2", partner=102),             # narrowed by the customer -> Tika's picking
+        _row(3, MET, order=None, code="OUT/3", partner=102),             # one company+customer, two pickings: no link
+        _row(4, MET, order=None, code="WH/IN/9", partner=None, sp=None, team=None, company="MAJAAL"),
+        _row(5, MET, order="S1", code=None),                             # no delivery code
+    ])
+    built = tf.build(rows, pd.DataFrame(columns=["id", "team_branch"]), _maps(), lookups, "Africa/Tripoli")
+    r = built.responses.set_index("response_id")
+    assert r["PickingID"].to_dict() == {1: 7001, 2: 7003, 3: -1, 4: -1, 5: -1}
+    assert r["CompanyKey"].to_dict() == {1: 1, 2: 3, 3: 3, 4: 1, 5: 1}
+    assert r["company_source"].to_dict() == {1: "order", 2: "delivery", 3: "delivery", 4: "company_name", 5: "order"}
+    assert tf.pick_delivery([], 100, 1) == (None, -1)
+
+
 def test_an_order_name_used_by_two_companies_is_narrowed_by_the_customer_then_the_company():
     built = _build([_row(1, MET, order="S2", partner=102), _row(2, MET, order="S2", partner=None, company="MAJAAL"),
                     _row(3, MET, order="S9", partner=None, company="TIKA"), _row(4, MET, order="S404")])
@@ -284,7 +306,7 @@ SYNC = [{"source": "odoo", "last_successful_sync": _dt.datetime.now(_dt.timezone
 @pytest.fixture
 def npsjob(platform_engine, platform_config, tmp_path, monkeypatch):
     for m in ("0029_core_dimensions.sql", "0030_core_team_map.sql", "0031_sales_mart.sql", "0032_core_odoo_labels.sql", "0046_process_nps.sql",
-              "0049_process_nps_reach.sql", "0050_process_nps_reach_state.sql", "0051_process_nps_reach_live.sql"):
+              "0049_process_nps_reach.sql", "0050_process_nps_reach_state.sql", "0051_process_nps_reach_live.sql", "0053_process_nps_picking.sql"):
         apply_migration_sqlite(platform_engine, m)
     with platform_engine.begin() as conn:
         conn.execute(text("INSERT INTO dim_sales_order (SalesOrderKey, order_number, CompanyKey, CustomerKey) VALUES (4000, 'S001', 1, 100)"))

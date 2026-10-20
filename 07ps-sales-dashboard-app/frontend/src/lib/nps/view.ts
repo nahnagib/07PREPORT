@@ -1,4 +1,4 @@
-import type { NpsBand, NpsBandScale, NpsCounts, NpsTrend } from '../api';
+import type { NpsBand, NpsCounts, NpsFollowupBucket, NpsResponseRate, NpsTrend } from '../api';
 
 /**
  * NPS Score page helpers (app/(departments)/process/nps-score). Pure, so they are unit tested. Every figure comes from
@@ -22,11 +22,6 @@ export const GROUP_COLOR: Record<GroupKey, string> = {
   detractors: 'var(--ps-color-alert)',
 };
 
-export const BAND_COLOR: Record<NpsBand, string> = {
-  red: 'var(--ps-color-alert)',
-  yellow: 'var(--ps-color-watch)',
-  green: 'var(--ps-color-success)',
-};
 export const BAND_STATUS: Record<NpsBand, 'alert' | 'watch' | 'success'> = { red: 'alert', yellow: 'watch', green: 'success' };
 
 /** The page's info text (business context, decision of 2026-10-18). */
@@ -58,35 +53,9 @@ export function npsBreakdown(counts: Pick<NpsCounts, 'promotersPct' | 'detractor
   return `Promoters ${pct(counts.promotersPct)} − Detractors ${pct(counts.detractorsPct)}`;
 }
 
-/** The gauge is drawn 0..100: a negative NPS pins the needle at 0 (the real number is printed below). */
-export function gaugeValue(nps: number | null, scale: NpsBandScale): number {
-  if (nps === null) return scale.min;
-  return Math.max(scale.min, Math.min(scale.max, nps));
-}
-
-const BAND_NAME: Record<NpsBand, string> = { red: 'Red', yellow: 'Yellow', green: 'Green' };
-
-/**
- * The CSAT card's status line: "Yellow · 0.48 pts below target 95", or "Green · on target" from the target up. The band
- * comes from the API (config/npsThresholds.ts); the gap is measured on the value as shown (2 decimals), and a value that
- * rounds up to the target but is still below it reads "0.01 pts below", never "0.00". No value: null.
- */
-export function csatStatus(value: number | null, band: NpsBand | null, target: number): string | null {
-  if (value === null || band === null) return null;
-  if (value >= target) return `${BAND_NAME[band]} · on target`;
-  const gap = Math.max(0.01, Math.round((target - value) * 100) / 100);
-  return `${BAND_NAME[band]} · ${gap.toFixed(2)} pts below target ${target}`;
-}
-
-/** Position (0 = start, 1 = end) of a value on a min..max bar. */
-export function barRatio(value: number, scale: NpsBandScale): number {
-  const span = scale.max - scale.min;
-  return span > 0 ? Math.max(0, Math.min(1, (value - scale.min) / span)) : 0;
-}
-
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** "2026-10-05" -> "05 Oct", "2026-10" -> "Oct 2026", "2026" -> "2026" (fixed names: browsers disagree on "Sep"). */
+/** "2026-10-04" (a week, named by its Sunday) -> "04 Oct", "2026-10" -> "Oct 2026", "2026" -> "2026" (fixed names: browsers disagree on "Sep"). */
 export function periodLabel(period: string): string {
   const [y, m, d] = period.split('-');
   if (d) return `${d} ${MONTHS[Number(m) - 1]}`;
@@ -94,17 +63,123 @@ export function periodLabel(period: string): string {
   return y;
 }
 
+const round2 = (v: number | null) => (v === null ? null : Math.round(v * 100) / 100);
+
 /**
- * Trend points for ComboChart: responders (bars), NPS (line), the same NPS faded where the period is below the minimum
- * number of responders (a separate, muted series), and the target line.
+ * Trend points for ComboChart: responders (bars), NPS and CSAT (lines), the same values faded where the period is below
+ * the minimum number of responders (separate, muted series), and the two target lines.
  */
-export function trendPoints(trend: Pick<NpsTrend, 'points' | 'target'>) {
+export function trendPoints(trend: Pick<NpsTrend, 'points' | 'target' | 'csatTarget'>) {
   return trend.points.map((p) => ({
     label: periodLabel(p.period),
     period: p.period,
     responders: p.responders,
-    nps: p.belowMinimum ? null : p.nps === null ? null : Math.round(p.nps * 100) / 100,
-    npsSmall: p.belowMinimum && p.nps !== null ? Math.round(p.nps * 100) / 100 : null,
+    nps: p.belowMinimum ? null : round2(p.nps),
+    npsSmall: p.belowMinimum ? round2(p.nps) : null,
     target: trend.target,
+    csat: p.belowMinimum ? null : round2(p.csat),
+    csatSmall: p.belowMinimum ? round2(p.csat) : null,
+    csatTarget: trend.csatTarget,
   }));
 }
+
+// -- the period (YTD by default, Tripoli time) ---------------------------------------------------------------------------
+export const BUSINESS_TIME_ZONE = 'Africa/Tripoli';
+
+/** Today in Tripoli, yyyy-mm-dd. */
+export function tripoliToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: BUSINESS_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+}
+
+/**
+ * The page's period. The shared date filter starts as Jan 1 -> today in UTC; untouched, it is replaced by the YTD in
+ * Tripoli time (1 January -> today, Tripoli), so the first hours of a Tripoli day (still yesterday in UTC) are included.
+ * A range the user chose is kept as it is.
+ */
+export function npsPeriod(dateFrom: string, dateTo: string, now: Date = new Date()): { dateFrom: string; dateTo: string; ytd: boolean } {
+  const utcToday = now.toISOString().slice(0, 10);
+  const today = tripoliToday(now);
+  if (dateFrom === `${utcToday.slice(0, 4)}-01-01` && dateTo === utcToday) return { dateFrom: `${today.slice(0, 4)}-01-01`, dateTo: today, ytd: true };
+  return { dateFrom, dateTo, ytd: dateFrom === `${dateTo.slice(0, 4)}-01-01` && dateTo === today };
+}
+
+const dayMonth = (iso: string) => `${iso.slice(8, 10)} ${MONTHS[Number(iso.slice(5, 7)) - 1]}`;
+const dayMonthYear = (iso: string) => `${dayMonth(iso)} ${iso.slice(0, 4)}`;
+
+/** "YTD · 01 Jan – 20 Oct 2026"; a chosen range "01 Aug – 15 Sep 2026" or "15 Dec 2025 – 10 Jan 2026". */
+export function periodCaption(p: { dateFrom: string; dateTo: string; ytd: boolean }): string {
+  const sameYear = p.dateFrom.slice(0, 4) === p.dateTo.slice(0, 4);
+  const range = `${sameYear ? dayMonth(p.dateFrom) : dayMonthYear(p.dateFrom)} – ${dayMonthYear(p.dateTo)}`;
+  return p.ytd ? `YTD · ${range}` : range;
+}
+
+/** "03 Oct 2026". */
+export const longDate = (iso: string | null | undefined): string => (iso ? dayMonthYear(iso.slice(0, 10)) : '—');
+
+// -- the top row ----------------------------------------------------------------------------------------------------------
+/** "+1.25 pts" / "−11.54 pts" (a real minus sign); "—" without a value. */
+export function fmtPts(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  const r = Math.round(value * 100) / 100;
+  return `${r > 0 ? '+' : r < 0 ? '−' : ''}${Math.abs(r).toFixed(2)} pts`;
+}
+
+/** The tachometer pill: the API's band -> Critical / Behind Target / On Track; no value -> No Target (grey). */
+export const bandStatus = (band: NpsBand | null | undefined): 'alert' | 'watch' | 'success' | 'neutral' => (band ? BAND_STATUS[band] : 'neutral');
+
+export interface FooterMetric {
+  label: string;
+  value: string;
+  fullValue?: string;
+}
+
+/** NPS card footer (no last-year data exists, so no LYTD / LFY): Promoters % · Passives % · Detractors % · Responders. */
+export function npsFooter(t: Pick<NpsCounts, 'promoters' | 'passives' | 'detractors' | 'responders' | 'promotersPct' | 'passivesPct' | 'detractorsPct'>): FooterMetric[] {
+  return [
+    { label: 'Promoters', value: pct(t.promotersPct), fullValue: `${t.promoters} of ${t.responders} responders` },
+    { label: 'Passives', value: pct(t.passivesPct), fullValue: `${t.passives} of ${t.responders} responders` },
+    { label: 'Detractors', value: pct(t.detractorsPct), fullValue: `${t.detractors} of ${t.responders} responders` },
+    { label: 'Responders', value: String(t.responders) },
+  ];
+}
+
+/** CSAT card footer: Satisfied (# Passives + Promoters) · Responders · Target · Variance (pts). */
+export function csatFooter(t: Pick<NpsCounts, 'promoters' | 'passives' | 'responders' | 'csat'>, target: number): FooterMetric[] {
+  return [
+    { label: 'Satisfied', value: String(t.promoters + t.passives), fullValue: 'Passives + Promoters' },
+    { label: 'Responders', value: String(t.responders) },
+    { label: 'Target', value: String(target) },
+    { label: 'Variance', value: fmtPts(t.csat === null ? null : t.csat - target), fullValue: `CSAT − target ${target}` },
+  ];
+}
+
+/** Response-rate card stat row: "Target 30%" and the variance in points. */
+export function responseRateMetrics(r: Pick<NpsResponseRate, 'target' | 'variancePts'>): FooterMetric[] {
+  return [
+    { label: 'Target', value: `${r.target}%` },
+    { label: 'Variance', value: fmtPts(r.variancePts) },
+  ];
+}
+
+/** The hover text of the response rate: the formula with its counts, and responders / Total Reach. */
+export function responseRateTooltip(r: Pick<NpsResponseRate, 'responders' | 'delivered' | 'read' | 'reached' | 'totalReach' | 'rate' | 'rateOfReach'>): string {
+  return [
+    `Responders ÷ (Delivered + Read) = ${r.responders} ÷ (${r.delivered} + ${r.read}) = ${pct(r.rate)}`,
+    `Responders ÷ Total Reach = ${r.responders} ÷ ${r.totalReach} = ${pct(r.rateOfReach)}`,
+    'Customers can only answer a message that reached them.',
+  ].join('\n');
+}
+
+// -- follow-up charts -----------------------------------------------------------------------------------------------------
+/** Detractors by status: solved < 48 h green, 48 h – 5 days yellow, > 5 days red, pending black (the text colour, so it
+ * stays visible in dark mode). */
+export const FOLLOWUP_BUCKETS: readonly { key: NpsFollowupBucket; label: string; color: string }[] = [
+  { key: 'solved_48h', label: 'Solved < 48 h', color: 'var(--ps-color-success)' },
+  { key: 'solved_5d', label: 'Solved 48 h – 5 days', color: 'var(--ps-color-watch)' },
+  { key: 'solved_late', label: 'Solved > 5 days', color: 'var(--ps-color-alert)' },
+  { key: 'pending', label: 'Pending', color: 'var(--ps-color-text)' },
+];
+
+/** The follow-up page's case card (?case=ID); a Historical case opens over the List view (the board hides them). */
+export const followupCaseHref = (caseId: number, historical = false): string =>
+  `/process/nps-followup?${historical ? 'view=list&' : ''}case=${caseId}`;

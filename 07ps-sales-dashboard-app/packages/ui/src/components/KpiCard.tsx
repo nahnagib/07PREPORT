@@ -55,6 +55,9 @@ export interface KpiCardProps {
   /** When true, uses the full-width metric card theme (larger gauge, no maxWidth constraint) for
    * drill-down detail pages where the gauge should dominate the viewport. */
   fullWidth?: boolean;
+  /** Fixed gauge scale and colour bands (RadialGauge `bands`), for a measure with its own thresholds, e.g. the NPS
+   * Score 0..100 with red / yellow / green at 50 / 90. Omitted = the Target x0.5..x1.5 gauge, unchanged. */
+  bands?: { min: number; max: number; yellowFrom: number; greenFrom: number };
 }
 
 const trendColorVar: Record<KpiTrend['direction'], string> = {
@@ -129,6 +132,7 @@ export function KpiCard({
   onRetry,
   onClick,
   fullWidth = false,
+  bands,
 }: KpiCardProps) {
   // Use full-width theme values when rendering on a detail page, else use standard metric card theme
   const activeTheme = fullWidth ? theme.metricCardFullWidth : theme.metricCard;
@@ -264,6 +268,7 @@ export function KpiCard({
             showValueLabel={false}
             targetLabel={targetLabel}
             size={activeTheme.gaugeSize}
+            bands={bands}
           />
         )}
       </div>

@@ -1,6 +1,6 @@
 """Reconciles the NPS Score warehouse data with the NPS source, and reproduces the developer's weekly e-mail figures.
 
-  python scripts/process/check_nps_totals.py [--from 2026-10-11 --to 2026-10-17]
+  python scripts/process/check_nps_totals.py [--from 2026-10-11 --to 2026-10-17] [--api http://localhost:14000]
 
 Read-only on both sides: the source through the NPS credential profile (NPS_* in data/etl/.env, SSH tunnel), the
 warehouse through DB_*. It checks, and prints MATCH only when all of these hold:
@@ -14,6 +14,11 @@ same source rows. With NPS_REACH_ENABLED, the WhatsApp reach as well: 4 raw = so
 section (delivered / read / sent / error per company on the UTC create_date) = the warehouse. NOTE: the e-mail compares the UTC create_date with local dates, while the dashboard converts it to
 Africa/Tripoli (UTC+2): a rating between 22:00 and 24:00 UTC is on the NEXT day for us, so a week can differ at its
 edges. Those ratings are listed. A run of the job after the source changed shows up as a difference: re-run the job first.
+8 YTD (the NPS page's default period, 1 January -> today, Tripoli): per company (all, Majaal, Tika), with the default
+B2B + B2C filter and with every filter cleared, plain SQL on the fact tables (responders, groups, NPS, CSAT, reach
+boxes, error groups, response rate = responders / (Delivered + Read) from NPS_REACH_START) vs the API (overview, weekly
+and monthly trend, reach, response-rate, followup-summary, detractor list), plus the page's consistency rules. The API
+part needs --api and NPS_CHECK_API_TOKEN (the Bearer token of a logged-in user with the NPS page; never printed).
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from __future__ import annotations
 import argparse
 import collections
 import datetime as _dt
+import os
 import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -136,10 +142,146 @@ def reconcile_reach(conn, messages: list[dict], config: wa.ReachConfig, timezone
     return raw_ok and fact_ok and boxes_ok and errors_ok and email_ok
 
 
+# -- 8. YTD: plain SQL on the fact tables vs the API (the NPS page's default period) -----------------------------------------
+B2B_B2C = [1, 2]  # the dashboard's default Customer Group filter (FilterProvider)
+# the dashboard's segment rule (backend measures/filters.ts effectiveSegmentExpr): an admin override of the salesperson's
+# segment wins over the row's own SegmentKey -- written here as a plain LEFT JOIN, independently of the API code
+EFFECTIVE_SEGMENT = "COALESCE(sap.segment_key_override, f.SegmentKey)"
+FACT_WITH_OVERRIDE = ("fact_process_nps_response f LEFT JOIN salesperson_admin_profile sap "
+                      "ON sap.salesperson_key = f.SalespersonKey")
+
+
+def _api_get(base: str, token: str, path: str, params: list[tuple[str, str]]) -> dict:
+    """GET the NPS Score API as the logged-in user of the token (never printed)."""
+    import json
+    import urllib.parse
+    import urllib.request
+    req = urllib.request.Request(f"{base.rstrip('/')}/nps-score/{path}?{urllib.parse.urlencode(params)}",
+                                 headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=60) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+
+def _fact_counts(conn, lo: int, hi: int, company: int | None, segments: list[int] | None) -> dict:
+    """Responders and groups straight from fact_process_nps_response (no view, no API code)."""
+    where = "f.RatingDateKey BETWEEN :lo AND :hi"
+    params: dict = {"lo": lo, "hi": hi}
+    if company is not None:
+        where += " AND f.CompanyKey = :c"
+        params["c"] = company
+    if segments:
+        where += f" AND {EFFECTIVE_SEGMENT} IN ({', '.join(str(int(s)) for s in segments)})"
+    p, m, d = (int(v or 0) for v in conn.execute(text(
+        f"SELECT SUM(f.nps_level = 3), SUM(f.nps_level = 2), SUM(f.nps_level = 1) FROM {FACT_WITH_OVERRIDE} WHERE {where}"), params).first())
+    n = p + m + d
+    return {"responders": n, "promoters": p, "passives": m, "detractors": d,
+            "nps": None if n == 0 else 100 * p / n - 100 * d / n, "csat": None if n == 0 else 100 * (p + m) / n}
+
+
+def _fact_reach(conn, lo: int, hi: int, company: int | None) -> dict:
+    where = "in_reach_scope = 1 AND MessageDateKey BETWEEN :lo AND :hi"
+    params: dict = {"lo": lo, "hi": hi}
+    if company is not None:
+        where += " AND CompanyKey = :c"
+        params["c"] = company
+    row = conn.execute(text(f"SELECT COUNT(*), SUM(box = 'delivered'), SUM(box = 'read'), SUM(box = 'not_delivered'), SUM(box = 'error'), "
+                            f"SUM(box = 'other') FROM fact_process_nps_message WHERE {where}"), params).first()
+    total, delivered, read, not_delivered, error, other = (int(v or 0) for v in row)
+    groups = {str(g): int(n) for g, n in conn.execute(text(
+        f"SELECT failure_group, COUNT(*) FROM fact_process_nps_message WHERE {where} AND box = 'error' GROUP BY failure_group"), params)}
+    return {"totalReach": total, "delivered": delivered, "read": read, "notDelivered": not_delivered, "error": error,
+            "otherState": other, "groups": groups}
+
+
+def _close(a, b) -> bool:
+    return (a is None and b is None) or (a is not None and b is not None and abs(a - b) < 1e-9)
+
+
+def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None) -> bool:
+    """YTD (1 January -> today, Tripoli): per company (all, Majaal 1, Tika 3), with the default B2B + B2C filter and with
+    every filter cleared, the plain-SQL figures vs the API, plus the page's consistency rules on the API's own answers."""
+    start = today.replace(month=1, day=1)
+    lo, hi = int(start.strftime("%Y%m%d")), int(today.strftime("%Y%m%d"))
+    state = conn.execute(text("SELECT reach_start FROM process_nps_reach_state WHERE singleton_id = 1")).first()
+    reach_start = state[0] if state and state[0] else None
+    rr_from = max(start, reach_start) if reach_start else start
+    rr_lo = int(rr_from.strftime("%Y%m%d"))
+    print(f"\n8. YTD {start}..{today} (Tripoli) -- plain SQL on the fact tables vs the API"
+          f"{'' if token and api_base else ' (API NOT CHECKED: set NPS_CHECK_API_TOKEN and --api)'}")
+    print(f"   response rate period {rr_from}..{today} (NPS_REACH_START {reach_start})")
+    ok = True
+    for label, segments in (("default B2B + B2C", B2B_B2C), ("all filters cleared", None)):
+        print(f"\n   {label}")
+        print(f"   {'company':<8}{'resp':>6}{'prom':>6}{'pass':>6}{'detr':>6}{'NPS':>9}{'CSAT':>9}{'reach':>7}{'deliv':>7}{'read':>6}"
+              f"{'notdel':>7}{'error':>6}{'rate':>8}  result")
+        for company in (None, 1, 3):
+            want = _fact_counts(conn, lo, hi, company, segments)
+            reach = _fact_reach(conn, lo, hi, company)
+            rr_resp = _fact_counts(conn, rr_lo, hi, company, None)["responders"]
+            rr_reach = _fact_reach(conn, rr_lo, hi, company)
+            reached = rr_reach["delivered"] + rr_reach["read"]
+            rate = None if reached == 0 else 100 * rr_resp / reached
+            checks: list[tuple[str, bool]] = []
+            # rules that hold on the plain SQL itself
+            checks.append(("P+Pa+D=R", want["promoters"] + want["passives"] + want["detractors"] == want["responders"]))
+            checks.append(("satisfied+D=R", (want["promoters"] + want["passives"]) + want["detractors"] == want["responders"]))
+            checks.append(("boxes=reach", reach["delivered"] + reach["read"] + reach["notDelivered"] + reach["error"] + reach["otherState"] == reach["totalReach"]))
+            checks.append(("errors=box", sum(reach["groups"].values()) == reach["error"]))
+            if token and api_base:
+                params = [("dateFrom", str(start)), ("dateTo", str(today))]
+                if company is not None:
+                    params.append(("companyKeys", str(company)))
+                for s in segments or []:
+                    params.append(("segmentKeys", str(s)))
+                o = _api_get(api_base, token, "overview", params)["totals"]
+                checks.append(("overview", all(o[k] == want[k] for k in ("responders", "promoters", "passives", "detractors"))
+                               and _close(o["nps"], want["nps"]) and _close(o["csat"], want["csat"])))
+                for grain in ("week", "month"):
+                    t = _api_get(api_base, token, "trend", [*params, ("grain", grain)])
+                    checks.append((f"trend {grain} sum", sum(p["responders"] for p in t["points"]) == want["responders"]))
+                r = _api_get(api_base, token, "reach", params)
+                if r["status"] == "ready":
+                    t = r["totals"]
+                    checks.append(("reach", all(t[k] == reach[k] for k in ("totalReach", "delivered", "read", "notDelivered", "error", "otherState"))))
+                    checks.append(("errors", {e["key"]: e["count"] for e in r["errors"]} == reach["groups"]))
+                rr = _api_get(api_base, token, "response-rate", params)
+                checks.append(("rate", rr["status"] == "ready" and rr["responders"] == rr_resp and rr["reached"] == reached and _close(rr["rate"], rate)))
+                fu = _api_get(api_base, token, "followup-summary", params)
+                checks.append(("followup", fu["detractors"] == want["detractors"]
+                               and fu["charted"] + fu["cancelled"] + fu["historical"] + fu["noCase"] == fu["detractors"]))
+                try:
+                    dl = _api_get(api_base, token, "detractors", [*params, ("pageSize", "500")])
+                    checks.append(("detractor list", dl["total"] == want["detractors"]))
+                except Exception as err:  # noqa: BLE001 -- the list needs nps_comments; say so instead of failing
+                    print(f"     (detractor list not checked: {err})")
+            bad = [name for name, good in checks if not good]
+            ok &= not bad
+            fmt = lambda v: "—" if v is None else f"{v:.2f}"  # noqa: E731
+            print(f"   {('all' if company is None else company):<8}{want['responders']:>6}{want['promoters']:>6}{want['passives']:>6}"
+                  f"{want['detractors']:>6}{fmt(want['nps']):>9}{fmt(want['csat']):>9}{reach['totalReach']:>7}{reach['delivered']:>7}"
+                  f"{reach['read']:>6}{reach['notDelivered']:>7}{reach['error']:>6}{fmt(rate):>8}  "
+                  f"{'MATCH' if not bad else 'DIFFERENT: ' + ', '.join(bad)}")
+    hidden = conn.execute(text(f"SELECT {EFFECTIVE_SEGMENT} AS seg, COUNT(*) FROM {FACT_WITH_OVERRIDE} WHERE f.RatingDateKey BETWEEN :lo AND :hi "
+                               f"AND {EFFECTIVE_SEGMENT} NOT IN (1, 2) GROUP BY seg ORDER BY seg"), {"lo": lo, "hi": hi}).all()
+    print(f"\n   hidden by the default B2B + B2C filter: {sum(int(n) for _, n in hidden)} rating(s) "
+          f"({', '.join(f'segment {int(k)}: {int(n)}' for k, n in hidden) or 'none'})")
+    moved = conn.execute(text(f"SELECT f.response_id, f.SegmentKey, sap.segment_key_override FROM {FACT_WITH_OVERRIDE} "
+                              "WHERE f.RatingDateKey BETWEEN :lo AND :hi AND sap.segment_key_override IS NOT NULL "
+                              "AND sap.segment_key_override <> f.SegmentKey AND (f.SegmentKey IN (1, 2)) <> (sap.segment_key_override IN (1, 2))"),
+                         {"lo": lo, "hi": hi}).all()
+    if moved:
+        print(f"   moved in or out of B2B + B2C by a salesperson's segment override (response_id, fact segment, override): "
+              f"{[tuple(int(v) for v in r) for r in moved][:20]}")
+    print(f"   YTD: {'MATCH' if ok else 'DIFFERENT'}")
+    return ok
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--from", dest="date_from", help="weekly e-mail period start (yyyy-mm-dd), default 7 days ago")
     ap.add_argument("--to", dest="date_to", help="weekly e-mail period end, inclusive (default today)")
+    ap.add_argument("--api", help="backend base URL for the YTD check against the API, e.g. http://localhost:14000 "
+                                  "(the token comes from NPS_CHECK_API_TOKEN)")
     args = ap.parse_args()
     config = PlatformConfig.from_env()  # also loads data/etl/.env
     tz = ZoneInfo(config.business_timezone)
@@ -227,6 +369,8 @@ def main() -> int:
             ok &= reconcile_reach(c, messages, reach_config, config.business_timezone, d_from, d_to)
     else:
         print("\n4. WhatsApp reach: SKIPPED (NPS_REACH_ENABLED is false or the source table is not available).")
+    with wh.connect() as c:
+        ok &= reconcile_ytd(c, today, args.api, os.environ.get("NPS_CHECK_API_TOKEN"))
     wh.dispose()
     print("\nMATCH" if ok else "\nDIFFERENCE (see above and the docstring)")
     return 0 if ok else 1

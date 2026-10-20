@@ -561,35 +561,24 @@ input:not([type]), input[type='text'], input[type='search'],
  * ------------------------------------------------------------------------- */
 .ps-kaizen-board { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
 .ps-kaizen-kpis { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-/* NPS Score (process/nps-score): score row (gauge + CSAT bar), boxes, 3-panel rows; one column on phones */
+/* NPS Score (process/nps-score): the Promotion tachometer row (ps-metrics-grid), boxes, 3-panel rows; one column on phones */
 .ps-nps-main { flex: 1; padding: var(--ps-space-4, 24px); display: flex; flex-direction: column; gap: var(--ps-space-4, 24px); min-width: 0; }
 .ps-nps-freshness { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px var(--ps-space-4, 24px) 0; font-size: 12px; color: var(--ps-color-muted-text); }
 .ps-nps-freshness strong { color: var(--ps-color-text); }
-.ps-nps-score-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; }
 .ps-nps-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .ps-nps-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
-.ps-nps-gauge { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.ps-nps-value { font-size: 30px; font-weight: 700; color: var(--ps-color-text); font-variant-numeric: tabular-nums; }
-.ps-nps-sub { font-size: 12px; color: var(--ps-color-muted-text); text-align: center; }
 .ps-nps-switch { display: flex; gap: 6px; flex-wrap: wrap; }
-/* CSAT card (components/nps/CsatCard.tsx): value, status, satisfied line, horizontal bullet bar 0..100 */
-.ps-nps-score-row > * { height: 100%; box-sizing: border-box; }
-.ps-csat { display: flex; flex-direction: column; gap: 6px; padding: 8px 4px 4px; min-width: 0; }
-.ps-csat-value { font-size: 40px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.ps-csat-status { font-size: 14px; font-weight: 600; }
-.ps-csat-line { font-size: 13px; color: var(--ps-color-muted-text); }
-.ps-csat-bullet { position: relative; margin-top: 28px; padding-top: 20px; }
-.ps-csat-target-label { position: absolute; top: 0; font-size: 12px; font-weight: 600; color: var(--ps-color-text); white-space: nowrap; }
-.ps-csat-track { position: relative; height: 24px; border-radius: 4px; overflow: hidden; background: var(--ps-color-border); }
-.ps-csat-zone { position: absolute; top: 0; bottom: 0; opacity: 0.45; }
-.ps-csat-fill { position: absolute; left: 0; top: 9px; height: 6px; border-radius: 0 3px 3px 0; box-shadow: 0 0 0 1px var(--ps-color-surface); }
-.ps-csat-target { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; background: var(--ps-color-text); }
-.ps-csat-axis { position: relative; height: 30px; margin-top: 4px; font-size: 11px; color: var(--ps-color-muted-text); font-variant-numeric: tabular-nums; }
-.ps-csat-axis > span { position: absolute; white-space: nowrap; }
+/* the trend's period + CSAT buttons may wrap inside ChartPanel's (non-shrinking) header-actions box */
+div:has(> .ps-nps-switch) { flex-shrink: 1 !important; min-width: 0; }
+/* the top row stacks below 1280px (ps-metrics-grid); on phones its cards may not exceed the column */
+@media (max-width: 1279px) {
+  .ps-nps-main .ps-metrics-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .ps-nps-main .ps-metrics-grid > div, .ps-nps-main .ps-metrics-grid .ps-card { min-width: 0; }
+}
 .ps-nps-waiting { min-height: 120px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px;
   font-size: 13px; color: var(--ps-color-muted-text); border: 1px dashed var(--ps-color-border); border-radius: 8px; }
 @media (max-width: 1023px) {
-  .ps-nps-score-row, .ps-nps-row { grid-template-columns: minmax(0, 1fr); }
+  .ps-nps-row { grid-template-columns: minmax(0, 1fr); }
 }
 .ps-kaizen-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .ps-kaizen-span-all { grid-column: 1 / -1; }

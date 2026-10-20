@@ -201,9 +201,9 @@ def lookups(conn, order_names: set[str], delivery_codes: set[str]) -> tf.Lookups
             orders.setdefault(str(n), []).append((int(k), int(co), int(cu)))
     codes = sorted(delivery_codes)
     for i in range(0, len(codes), 500):
-        for ref, co, cu in conn.execute(text("SELECT DISTINCT DeliveryReference, CompanyKey, CustomerKey FROM fact_sales_deliveries "
-                                             "WHERE DeliveryReference IN :c").bindparams(bindparam("c", expanding=True)), {"c": codes[i:i + 500]}):
-            deliveries.setdefault(str(ref), []).append((0, int(co), int(cu if cu is not None else -1)))
+        for ref, pid, co, cu in conn.execute(text("SELECT DISTINCT DeliveryReference, PickingID, CompanyKey, CustomerKey FROM fact_sales_deliveries "
+                                                  "WHERE DeliveryReference IN :c").bindparams(bindparam("c", expanding=True)), {"c": codes[i:i + 500]}):
+            deliveries.setdefault(str(ref), []).append((int(pid) if pid is not None else -1, int(co), int(cu if cu is not None else -1)))
     return tf.Lookups(orders, deliveries)
 
 

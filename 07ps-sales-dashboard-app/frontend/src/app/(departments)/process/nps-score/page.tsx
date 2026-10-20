@@ -1,27 +1,41 @@
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
-import { CsatCard } from '../../../../components/nps/CsatCard';
+import { FollowupCharts } from '../../../../components/nps/FollowupCharts';
 import { NpsReach } from '../../../../components/nps/NpsReach';
-import { Waiting } from '../../../../components/nps/Waiting';
+import { NpsTopRow } from '../../../../components/nps/NpsTopRow';
+import { OdooLink } from '../../../../components/nps/OdooLink';
+import { StatusPill, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useNpsScore } from '../../../../lib/hooks';
-import type { NpsDetractor, NpsGrain, NpsMeta, NpsOverview, NpsPage, NpsReach as ReachData, NpsScope, NpsTrend } from '../../../../lib/api';
-import { formatDate, formatNumber, formatTimestamp } from '../../../../lib/format';
+import type {
+  NpsDetractor,
+  NpsFollowupSummary,
+  NpsGrain,
+  NpsMeta,
+  NpsOverview,
+  NpsPage,
+  NpsReach as ReachData,
+  NpsResponseRate,
+  NpsScope,
+  NpsTrend,
+} from '../../../../lib/api';
+import { formatNumber, formatTimestamp } from '../../../../lib/format';
 import {
-  BAND_STATUS,
   GROUPS,
   GROUP_COLOR,
   NPS_CONTEXT,
   fmt2,
-  gaugeValue,
-  npsBreakdown,
+  followupCaseHref,
+  longDate,
+  npsPeriod,
   pct,
-  smallSample,
+  periodCaption,
   trendPoints,
 } from '../../../../lib/nps/view';
 import {
@@ -31,7 +45,6 @@ import {
   DataGrid,
   EmptyState,
   ErrorState,
-  Gauge,
   KpiTile,
   LoadingSkeleton,
   type DataGridColumn,
@@ -39,16 +52,19 @@ import {
 
 /**
  * NPS Score (Process department). Data: the ETL job process_nps loads the NPS developer's ratings into the warehouse
- * (docs/nps-etl.md); the page reads backend /nps-score, which reads only the v_process_nps_* views. The formulas are in
- * backend measures/npsScore.ts and the colour bands in backend config/npsThresholds.ts (sent here through /meta).
+ * (docs/nps-etl.md); the page reads backend /nps-score, which reads the v_process_nps_* views and, live, the follow-up
+ * cases. The formulas are in backend measures/npsScore.ts and the colour bands in backend config/npsThresholds.ts (sent
+ * here through /meta).
  *
- * Row 1 the score: the NPS tachometer (the Promotion pages' Gauge with fixed bands) + the CSAT bar.
+ * Period: year-to-date by default (1 January -> today, Tripoli time), the same for every visual; the date filter can
+ * change it (the label above then shows the chosen range).
+ * Row 1 the Promotion tachometer layout: NPS tachometer · Response Rate (narrow) · CSAT tachometer.
  * Row 2 responders: Total · Promoters · Passives · Detractors (# and % of responders).
- * Row 3 WhatsApp message reach: company/date only; waiting until the first message load.
- * Row 4 the NPS trend: Daily / Monthly / Yearly; target line; periods below the minimum faded.
- * Row 5 Errors by reason (with the message data) · Detractors by reason · Detractors by status (waiting for the
- *       follow-up data source -- no data is invented).
- * Row 6 the detractor list with the customers' comments: only with the nps_comments permission.
+ * Row 3 WhatsApp message reach: company/date only.
+ * Row 4 the trend: Weekly (Sunday..Saturday) / Monthly / Yearly from the first period with ratings; NPS and CSAT lines
+ *       with their targets; periods below the minimum faded.
+ * Row 5 Errors by reason · Detractors by reason · Detractors by status (live from the follow-up cases).
+ * Row 6 the detractor list with the follow-up case and the customers' comments: only with the nps_comments permission.
  * Every rating visual filters on the rating date (Tripoli time), the global filters and the role's data scope.
  */
 export default function NpsScorePage() {
@@ -59,7 +75,7 @@ export default function NpsScorePage() {
   );
 }
 
-const GRAIN_LABEL: Record<NpsGrain, string> = { day: 'Daily', month: 'Monthly', year: 'Yearly' };
+const GRAIN_LABEL: Record<NpsGrain, string> = { week: 'Weekly', month: 'Monthly', year: 'Yearly' };
 const LIST_PAGE = 100;
 
 function NpsScoreBody() {
@@ -69,15 +85,19 @@ function NpsScoreBody() {
   const { effectiveFilters, onFiltersChange, anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
   const filterOptions = useScopedFilterOptions();
   const [grain, setGrain] = useState<NpsGrain>('month');
+  const [showCsat, setShowCsat] = useState(true);
   const [listPages, setListPages] = useState(1);
 
-  const scope: NpsScope = useMemo(() => ({ ...effectiveFilters, dateFrom: dateFromDate, dateTo: dateToDate }), [effectiveFilters, dateFromDate, dateToDate]);
+  const period = useMemo(() => npsPeriod(dateFromDate, dateToDate), [dateFromDate, dateToDate]);
+  const scope: NpsScope = useMemo(() => ({ ...effectiveFilters, dateFrom: period.dateFrom, dateTo: period.dateTo }), [effectiveFilters, period]);
   useEffect(() => setListPages(1), [scope]);
 
   const meta = useNpsScore<NpsMeta>(token, authError, retryAuth, 'meta', scope, undefined, allowed);
   const overview = useNpsScore<NpsOverview>(token, authError, retryAuth, 'overview', scope, undefined, allowed);
   const trend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { grain }, allowed);
   const reach = useNpsScore<ReachData>(token, authError, retryAuth, 'reach', scope, undefined, allowed);
+  const rate = useNpsScore<NpsResponseRate>(token, authError, retryAuth, 'response-rate', scope, undefined, allowed);
+  const followup = useNpsScore<NpsFollowupSummary>(token, authError, retryAuth, 'followup-summary', scope, undefined, allowed);
   const canSeeDetractors = meta.data?.canSeeDetractors === true;
   const detractors = useNpsScore<NpsPage<NpsDetractor>>(token, authError, retryAuth, 'detractors', scope,
     { page: 1, pageSize: LIST_PAGE * listPages }, allowed && canSeeDetractors);
@@ -109,8 +129,10 @@ function NpsScoreBody() {
 
       <div className="ps-nps-freshness" data-testid="nps-freshness">
         <span title="The last successful NPS Score load (once a night, full reload), Tripoli time">Data refreshed: <strong>{formatTimestamp(freshness?.lastSuccessUtc ?? null)}</strong></span>
+        <span title="Every visual on this page covers this period (rating date / message date, Tripoli time)" data-testid="nps-period"><strong>{periodCaption(period)}</strong></span>
         <span>Latest rating <strong>{meta.data?.lastRatingAt ? `${meta.data.lastRatingAt.slice(0, 16)} (Tripoli)` : '—'}</strong></span>
-        <span>Ratings since <strong>{meta.data?.firstRatingDate ? formatDate(meta.data.firstRatingDate) : '—'}</strong></span>
+        <span>Ratings since <strong>{longDate(meta.data?.firstRatingDate)}</strong></span>
+        <span>Reach since <strong>{longDate(rate.data?.reachStart)}</strong></span>
         {freshness?.lastFailureUtc ? <span style={{ color: 'var(--ps-color-alert)' }}>Last NPS run failed at {formatTimestamp(freshness.lastFailureUtc)}</span> : null}
       </div>
 
@@ -122,30 +144,8 @@ function NpsScoreBody() {
         ) : (
           <>
             {totals.responders === 0 && <EmptyState message="No ratings for these filters and dates." />}
-            {/* Row 1: the score */}
-            <section className="ps-nps-score-row" aria-label="NPS and CSAT">
-              <ChartPanel title="NPS Score" infoText={NPS_CONTEXT}>
-                <div className="ps-nps-gauge" style={{ opacity: totals.belowMinimum ? 0.45 : 1 }} data-testid="nps-gauge">
-                  <Gauge
-                    actual={gaugeValue(totals.nps, thresholds.nps)}
-                    targetToDate={thresholds.nps.target}
-                    targetLabel={`Target ${thresholds.nps.target}`}
-                    status={totals.npsBand ? BAND_STATUS[totals.npsBand] : 'neutral'}
-                    bands={thresholds.nps}
-                    showValueLabel={false}
-                    label="NPS Score"
-                    size={240}
-                  />
-                  <div className="ps-nps-value" data-testid="nps-value">{fmt2(totals.nps)}</div>
-                  <div className="ps-nps-sub">{npsBreakdown(totals)}</div>
-                  {smallSample(totals) && <div className="ps-nps-sub">{smallSample(totals)} (below {meta.data?.minResponders} responders)</div>}
-                </div>
-              </ChartPanel>
-              <ChartPanel title="CSAT" infoText={`Satisfied = (Passives + Promoters) / Responders. Red below ${thresholds.csat.yellowFrom}, yellow from ${thresholds.csat.yellowFrom}, green from ${thresholds.csat.greenFrom}; target ${thresholds.csat.target}.`}>
-                <CsatCard value={totals.csat} band={totals.csatBand} scale={thresholds.csat} belowMinimum={totals.belowMinimum}
-                  satisfied={totals.promoters + totals.passives} responders={totals.responders} />
-              </ChartPanel>
-            </section>
+            {/* Row 1: NPS · Response Rate · CSAT (the Promotion tachometer layout) */}
+            <NpsTopRow totals={totals} thresholds={thresholds} rate={rate} />
 
             {/* Row 2: responders */}
             <section className="ps-nps-boxes" aria-label="Responders">
@@ -168,7 +168,11 @@ function NpsScoreBody() {
             <ChartPanel
               title="NPS trend"
               wrapHeader
-              infoText={`Line: NPS per period, with the target line at ${trend.data?.target ?? thresholds.nps.target}. Bars: responders. A period below ${meta.data?.minResponders} responders is shown faded.`}
+              infoText={[
+                NPS_CONTEXT,
+                `Line: NPS per period, target line at ${trend.data?.target ?? thresholds.nps.target}; CSAT (toggle) with its target ${trend.data?.csatTarget ?? thresholds.csat.target}. Bars: responders. A period below ${meta.data?.minResponders} responders is shown faded.`,
+                'Weeks run Sunday to Saturday and are named by their Sunday. The axis starts at the first period with ratings.',
+              ].join('\n')}
               headerActions={
                 <div className="ps-nps-switch" role="group" aria-label="Trend period">
                   {(Object.keys(GRAIN_LABEL) as NpsGrain[]).map((g) => (
@@ -176,6 +180,9 @@ function NpsScoreBody() {
                       {GRAIN_LABEL[g]}
                     </Button>
                   ))}
+                  <Button variant={showCsat ? 'primary' : 'secondary'} onClick={() => setShowCsat((v) => !v)} aria-pressed={showCsat} data-testid="trend-csat-toggle">
+                    CSAT
+                  </Button>
                 </div>
               }
             >
@@ -183,6 +190,8 @@ function NpsScoreBody() {
                 <ErrorState message={trend.error} onRetry={trend.retry} />
               ) : !trend.data ? (
                 <LoadingSkeleton variant="chart" />
+              ) : trend.data.points.length === 0 ? (
+                <EmptyState message="No ratings for these filters and dates." />
               ) : (
                 <ComboChart
                   showTitle={false}
@@ -191,7 +200,14 @@ function NpsScoreBody() {
                   lines={[
                     { key: 'nps', name: 'NPS', color: 'var(--ps-color-accent)', yAxisId: 'right', labelFormatter: (v) => fmt2(v) },
                     { key: 'npsSmall', name: `NPS (n < ${trend.data.minResponders})`, color: 'var(--ps-color-neutral-text)', yAxisId: 'right' },
-                    { key: 'target', name: `Target ${trend.data.target}`, color: 'var(--ps-color-success)', yAxisId: 'right' },
+                    { key: 'target', name: `NPS target ${trend.data.target}`, color: 'var(--ps-color-success)', yAxisId: 'right' },
+                    ...(showCsat
+                      ? [
+                          { key: 'csat', name: 'CSAT', color: 'var(--ps-color-gold)', yAxisId: 'right' as const },
+                          { key: 'csatSmall', name: `CSAT (n < ${trend.data.minResponders})`, color: 'var(--ps-color-muted-text)', yAxisId: 'right' as const },
+                          { key: 'csatTarget', name: `CSAT target ${trend.data.csatTarget}`, color: 'var(--ps-color-watch)', yAxisId: 'right' as const },
+                        ]
+                      : []),
                   ]}
                   leftAxisFormatter={(v) => formatNumber(v)}
                   rightAxisFormatter={(v) => String(Math.round(v))}
@@ -200,21 +216,17 @@ function NpsScoreBody() {
               )}
             </ChartPanel>
 
-            {/* Row 5: reasons and follow-up */}
+            {/* Row 5: reasons and follow-up (live from the follow-up cases) */}
             <section className="ps-nps-row" aria-label="Reasons and follow-up">
               <NpsReach state={reach} part="errors" />
-              <ChartPanel title="Detractors by reason" infoText="The reason each detractor gave or the team recorded. No data source exists yet (see docs/nps-etl.md, follow-up).">
-                <Waiting message="Waiting for the follow-up data source" />
-              </ChartPanel>
-              <ChartPanel title="Detractors by status" infoText="Solved in under 48 hours (green), in 48 hours to 5 days (yellow), in more than 5 days (red), or pending (black), from the rating time to the time the case was solved. No data source exists yet.">
-                <Waiting message="Waiting for the follow-up data source" />
-              </ChartPanel>
+              <FollowupCharts state={followup} part="reason" />
+              <FollowupCharts state={followup} part="status" />
             </section>
 
             {/* Row 6: the detractor list (nps_comments) */}
             {canSeeDetractors && (
               <ChartPanel title={`Detractors (${formatNumber(detractors.data?.total ?? totals.detractors)})`}
-                infoText="Every ★ rating, newest first, with the customer's comments (phone numbers and e-mail addresses masked). Visible only with the NPS Score detractor list permission.">
+                infoText="Every ★ rating of the period, newest first, with its follow-up case (status, reason, owner and time open, live from the Detractor Follow-up page) and the customer's comments (phone numbers and e-mail addresses masked). Click a row to open the case; the order and delivery codes open in Odoo. Visible only with the NPS Score detractor list permission.">
                 <DetractorList state={detractors} onMore={() => setListPages((p) => p + 1)} />
               </ChartPanel>
             )}
@@ -229,6 +241,7 @@ function NpsScoreBody() {
 type ListState = { data: NpsPage<NpsDetractor> | null; loading: boolean; error: string | null; retry: () => void };
 
 function DetractorList({ state, onMore }: { state: ListState; onMore: () => void }) {
+  const router = useRouter();
   if (state.error) return <ErrorState message={state.error} onRetry={state.retry} />;
   if (!state.data) return <LoadingSkeleton variant="table" />;
   if (state.data.total === 0) return <EmptyState message="No detractors for these filters and dates." />;
@@ -236,17 +249,23 @@ function DetractorList({ state, onMore }: { state: ListState; onMore: () => void
   const columns: DataGridColumn<Row>[] = [
     { key: 'ratedAt', header: 'Date (Tripoli)', width: 140, render: (r) => r.ratedAt?.slice(0, 16) ?? '—' },
     { key: 'customer', header: 'Customer', width: 200, render: (r) => <span dir="auto">{r.customer ?? '—'}</span> },
-    { key: 'orderRef', header: 'Order', render: (r) => <span dir="auto">{r.orderRef ?? '—'}</span> },
+    { key: 'orderRef', header: 'Order', render: (r) => (r.orderRef ? <OdooLink href={r.orderUrl}>{r.orderRef}</OdooLink> : '—'), rawValue: (r) => r.orderRef ?? '' },
+    { key: 'deliveryCode', header: 'Delivery', render: (r) => (r.deliveryCode ? <OdooLink href={r.deliveryUrl}>{r.deliveryCode}</OdooLink> : '—'), rawValue: (r) => r.deliveryCode ?? '' },
     { key: 'salesTeam', header: 'Team', render: (r) => <span dir="auto">{r.salesTeam ?? '—'}</span> },
     { key: 'salesperson', header: 'Salesperson', render: (r) => r.salesperson ?? '—' },
-    { key: 'status', header: 'Status', render: (r) => r.status ?? 'No follow-up data', rawValue: (r) => r.status ?? '' },
-    { key: 'reason', header: 'Reason', render: (r) => r.reason ?? 'No follow-up data', rawValue: (r) => r.reason ?? '' },
+    { key: 'status', header: 'Status', render: (r) => (r.status ? <StatusPill status={r.status} /> : 'Not yet a case'), rawValue: (r) => r.status ?? '' },
+    { key: 'reason', header: 'Reason', render: (r) => <span title={r.reasonAr ?? undefined}>{r.reason ?? 'Not yet classified'}</span>, rawValue: (r) => r.reason ?? '' },
+    { key: 'owner', header: 'Owner', render: (r) => r.owner ?? '—', rawValue: (r) => r.owner ?? '' },
+    { key: 'hoursOpen', header: 'Time open / Solved in', width: 150,
+      render: (r) => (r.status && r.hoursOpen !== null && r.timeBand ? <TimeOpen c={{ status: r.status, hoursOpen: r.hoursOpen, timeBand: r.timeBand }} /> : '—'),
+      rawValue: (r) => r.hoursOpen ?? '' },
     { key: 'comment', header: 'Comment', width: 280, render: (r) => <span dir="auto" style={{ whiteSpace: 'pre-line' }}>{r.comment ?? '—'}</span>,
       rawValue: (r) => r.comment ?? '' },
   ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <DataGrid columns={columns} rows={state.data.rows as Row[]} getRowId={(r) => String(r.responseId)} fileName="nps-score-detractors" pageSize={25} />
+      <DataGrid columns={columns} rows={state.data.rows as Row[]} getRowId={(r) => String(r.responseId)} fileName="nps-score-detractors" pageSize={25}
+        onRowClick={(r) => r.caseId !== null && router.push(followupCaseHref(r.caseId, r.status === 'HISTORICAL'))} />
       {state.data.rows.length < state.data.total && (
         <div>
           <Button variant="secondary" onClick={onMore} disabled={state.loading}>

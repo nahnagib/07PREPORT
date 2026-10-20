@@ -6,6 +6,25 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Process: NPS Score page, round 4, 2026-10-20; docs/nps-etl.md sections 11-12)
+- **Year-to-date by default** (1 January → today, Tripoli) for every visual, with a `YTD · 01 Jan – 20 Oct 2026` label
+  next to "Data refreshed" (the chosen range when the date filter changes).
+- **Top row in the Promotion tachometer layout**, with its own components: NPS tachometer (fixed bands 50 / 90, target
+  tick 90 labelled inside the arc, footer Promoters / Passives / Detractors % and Responders) · **Response Rate**
+  (responders ÷ (Delivered + Read), company and date only, since `NPS_REACH_START`, target 30 %: On Track ≥ 30, Behind
+  Target 25–< 30, Critical < 25, weekly sparkline) · CSAT tachometer (bands 85 / 95, target 95; replaces the CSAT
+  card). Shared UI: `KpiCard` / `RadialGauge` take optional fixed `bands`; the Promotion page's ASP card is now the
+  shared `CompactKpiCard` (no visual change there).
+- **Trend:** Weekly (Sunday–Saturday, the Collections week, labelled by the Sunday) / Monthly / Yearly, from the first
+  period with ratings; CSAT line (toggle) with target 95. Daily removed.
+- **Follow-up drives the page live:** the Detractors table (Status, Reason, Owner, Time open / Solved in; a row opens
+  the case), Detractors by reason ("Not yet classified") and Detractors by status (Solved < 48 h / 48 h–5 d / > 5 d,
+  Pending; Cancelled and Historical counted under the charts) read `nps_followup_case` at request time.
+- **Odoo links** on the delivery (stock.picking) and order (sale.order) codes, here and on the follow-up case card, from
+  `ODOO_URL` with the company (`cids`); migration **0053** stores the matched picking id (`PickingID`).
+- `check_nps_totals.py` gains a YTD section (plain SQL vs the API, `--api` + `NPS_CHECK_API_TOKEN`); new opt-in backend
+  test `vitest.nps-live.config.ts` (edits a case through the API, checks the NPS endpoints, restores it).
+
 ### Added (Process: NPS Detractor Follow-up, 2026-10-19; docs/nps-followup.md)
 - **Cases:** one per detractor rating, created by `process_nps` after each nightly load (new detractors appear the next
   morning). New from `NPS_FOLLOWUP_START` (ETL setting, the cut-over), Historical before it. Idempotent (unique

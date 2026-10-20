@@ -64,6 +64,9 @@ export interface FollowupCase {
   salesperson: string | null;
   teamBranch: string | null;
   hasComment: boolean;
+  /** Odoo form links of the sale order / the matched picking; null without an id */
+  orderUrl: string | null;
+  deliveryUrl: string | null;
   hoursOpen: number | null;
   timeBand: TimeBand | null;
 }

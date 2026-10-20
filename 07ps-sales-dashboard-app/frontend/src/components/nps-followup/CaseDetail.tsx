@@ -19,6 +19,7 @@ import {
   type FollowupStatus,
 } from '../../lib/nps/followup';
 import { StatusPill, TimeOpen } from './FollowupBits';
+import { OdooLink } from '../nps/OdooLink';
 
 interface Form {
   status: FollowupStatus;
@@ -170,8 +171,8 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
                 {fact('Rated at (Tripoli)', detail.ratedAt?.slice(0, 16))}
                 {fact('Company', detail.company)}
                 {fact('Customer', detail.customer, true)}
-                {fact('Order', detail.orderRef)}
-                {fact('Delivery', detail.deliveryCode)}
+                {fact('Order', detail.orderRef ? <OdooLink href={detail.orderUrl}>{detail.orderRef}</OdooLink> : null)}
+                {fact('Delivery', detail.deliveryCode ? <OdooLink href={detail.deliveryUrl}>{detail.deliveryCode}</OdooLink> : null)}
                 {fact('Branch', detail.teamBranch ?? detail.salesTeam)}
                 {fact('Salesperson', detail.salesperson)}
                 {detail.comment !== null && fact("Customer's comment", detail.comment, true)}
