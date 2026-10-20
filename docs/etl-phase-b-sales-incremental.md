@@ -68,7 +68,13 @@ segment, company). The sales step runs right after it in the same refresh job.
 
 Large changes: if one shared-list change touches more than `ETL_SALES_MAX_INCREMENTAL_ROWS` (default 50,000) sales rows
 (e.g. a team re-mapped in SalesTeam.xlsx), the cycle does not try it incrementally: it queues an immediate full sales
-rebuild (the legacy path) and logs why.
+rebuild (the legacy path) and logs why. Conditions (2026-10-20):
+* it must NOT block the other modules: the rebuild runs as its own job on a second queue (`etl-long`, its own worker,
+  concurrency 1) and takes a SALES lock, not the global one; the 30-minute refresh keeps running receivables,
+  collections, NPS and the shared lists (it skips only the sales module while the sales lock is held). The global ETL lock
+  is split into per-module locks for this (core, sales, finance, process); the 02:00 full refresh takes all of them.
+* the ETL Control Center shows "Full sales rebuild in progress -- started <time>" while that job runs (from etl_job_runs,
+  job_type `sales_rebuild`), and its result afterwards.
 
 ## 5. Columns computed across several records (addition 5)
 
@@ -84,7 +90,7 @@ rebuild (the legacy path) and logs why.
 | fact_sales_product_daily (all measures) | product_daily | company x product x date x salesperson x segment x channel x team x intercompany x mapped x UoM | per affected (company, product, date) |
 | ASP_LY, ASP_ThisYear | targets | salesperson x team x company x month (from lines) | per affected (salesperson, month); targets themselves on SalesTeam/sales_targets.xlsx change |
 | BCG classes, product dashboard / group (FirstSaleDate, LastSaleDate, YTD/LYTD values, lifecycle, stock band) | bcg, product_dashboard, product_group | company (all its products) | per affected company if it adds < ~1 min, else nightly only (measured, reported) |
-| Avg_Daily_Sales, DOH, Velocity_Class, StockClass | inventory snapshot | product x company (lookback window) | per affected product; all at 02:00 |
+| Avg_Daily_Sales, DOH, Velocity_Class, StockClass | inventory snapshot | product x company (lookback window) | in the SAME cycle for every product whose quants, cost or sales lines changed (they mix the calendar with Odoo data -- decision 2026-10-20); all products again at 02:00 |
 
 Date-relative columns (they change with the calendar, not with Odoo): LeadAgeDays, OpportunityAge, DaysSinceUpdate,
 DaysSinceLastQuotation, IsInactive, HasRecentActivity, QuotationAge* of open quotations, CustomerStatus windows, inventory
@@ -123,3 +129,19 @@ id check every cycle (Odoo deletes empty quants all the time; ~3k ids).
 * incremental -- the 30-minute cycle upserts the live tables; the 5x/day job is not scheduled. The 02:00 full refresh keeps
   rebuilding the live tables in every mode (the reference).
 Switching = `.env` + `docker compose up -d backend etl-worker etl-api`; no code change, no migration rollback.
+
+## 9. Built so far (no migration needed)
+
+| Piece | Code | Tests |
+|---|---|---|
+| sale.report rebuild library + currency guard + stable row key | `departments/sales/sale_report.py` | `tests/test_sales_sale_report.py`; production gate `scripts/sales/compare_sale_report_rebuild.py` (library output vs the pipeline's own `fetch_sale_report`, frame to frame) |
+| affected-key logic (old + new values, shared-list changes, full-rebuild limit, DOH products) | `departments/sales/affected.py` | `tests/test_sales_affected.py` |
+| change detection in the shared lists (only changed rows written / stamped; deleted map keys in the task log) | `etl_platform/load.py` `upsert_changed` / `replace_changed`, `core/jobs.py` | `tests/test_platform_load_changed.py`, `tests/test_core_dims_job.py` |
+| "what changed since the last sales load" reader | `departments/sales/dim_changes.py` | `tests/test_core_dims_job.py` |
+
+Measured locally: core_dims with no Odoo change 75 s -> 51 s (customer list 30 s -> 12 s, 72k -> 0 rows written). Left for
+the shared-lists step of Phase B: partner company properties (24k rows re-read, 17 s).
+
+Needs the migration (number after the NPS migrations): raw mirror tables, `shd_*` shadow tables, `etl_shadow_diff`, the
+new `fact_sales_lines` key; then the extract / load code, the modes, the comparison job and the Control Center views.
+

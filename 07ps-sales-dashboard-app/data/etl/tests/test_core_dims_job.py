@@ -160,3 +160,64 @@ def test_inconsistent_org_file_fails_and_leaves_dimensions_untouched(core):
     pd.testing.assert_frame_equal(before, _snapshot(engine)["dim_salesperson"], check_dtype=False)
     status = _df(engine, "SELECT status FROM etl_run_log ORDER BY run_id DESC LIMIT 1").iloc[0, 0]
     assert status == "failed"
+
+
+def _details(engine, task):
+    import json
+    raw = _vals(engine, f"SELECT details FROM etl_task_log WHERE task_name = '{task}' ORDER BY task_log_id DESC LIMIT 1")[0][0]
+    return json.loads(raw) if isinstance(raw, str) else raw
+
+
+def test_a_run_without_changes_writes_nothing_and_keeps_every_stamp(core):
+    """Phase B: updated_at_utc means 'really changed then', so the incremental sales step can find what changed."""
+    engine, run, _, _ = core
+    run()
+    stamps = {t: _vals(engine, f"SELECT COUNT(*), MAX(updated_at_utc) FROM {t}")[0] for t in DIMS}
+    run()
+    assert {t: _vals(engine, f"SELECT COUNT(*), MAX(updated_at_utc) FROM {t}")[0] for t in DIMS} == stamps
+    for task in ("build_reference_dims", "build_org_dims", "build_customer_dims", "build_product_dims"):
+        changed = _details(engine, task)["changed"]
+        assert all(c["inserted"] == c["updated"] == c["deleted"] == 0 for c in changed.values()), (task, changed)
+
+
+def test_a_changed_partner_restamps_only_its_customer(core):
+    engine, run, _, fake = core
+    run()
+    before = dict(_vals(engine, "SELECT CustomerKey, updated_at_utc FROM dim_customer"))
+    later = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    acme = next(p for p in fake.data["res.partner"] if p["id"] == 100)
+    acme.update(name="ACME Building Co", display_name="ACME Building Co", write_date=later)
+    run()
+    after = dict(_vals(engine, "SELECT CustomerKey, updated_at_utc FROM dim_customer"))
+    assert [k for k in after if after[k] != before[k]] == [100]
+    assert _details(engine, "build_customer_dims")["changed"]["dim_customer"]["updated"] == 1
+
+
+def test_a_removed_user_mapping_is_reported_as_deleted(core):
+    engine, run, inputs, _ = core
+    run()
+    write_inputs(inputs, users=ODOO_USERS[ODOO_USERS["odoo_user_id"] != 12])
+    run()
+    changed = _details(engine, "build_org_dims")["changed"]["map_odoo_user_salesperson"]
+    assert changed["deleted"] == 1 and [k[0] for k in changed["deleted_keys"]] == [12]
+
+
+def test_the_sales_step_reads_what_changed_since_its_last_load(core):
+    from departments.sales.dim_changes import dim_changes_since
+
+    engine, run, inputs, fake = core
+    run()
+    mark = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+    with engine.connect() as conn:
+        nothing, _ = dim_changes_since(conn, mark)
+    assert nothing.empty
+    later = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    next(p for p in fake.data["res.partner"] if p["id"] == 100).update(name="ACME Building Co", display_name="ACME Building Co", write_date=later)
+    write_inputs(inputs, users=ODOO_USERS[ODOO_USERS["odoo_user_id"] != 12])  # user 12 unmapped in SalesTeam.xlsx
+    run()
+    with engine.connect() as conn:
+        changes, info = dim_changes_since(conn, mark)
+    assert changes.customers == {100}
+    assert 12 in changes.odoo_users  # a DELETED map row, read from the task log
+    assert not changes.products and not changes.teams
+    assert info["truncated"] == []
