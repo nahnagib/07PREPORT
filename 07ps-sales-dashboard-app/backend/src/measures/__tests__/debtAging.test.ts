@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CREDIT_POLICY_ZONES,
+  OVERDUE_OFFSET_DAYS,
   approachingNextZone,
   creditZoneForDays,
   creditActionForDays,
@@ -10,7 +11,8 @@ import {
 } from '../../config/creditPolicy';
 import { buildCreditPolicy, daysBetween, invoiceDueDate, parseAgingQuery, placeCustomers, type CreditLine } from '../debtAging';
 
-/** Credit Policy Escalation (2026-10-15): zones by days past due of the unpaid invoice with the earliest due date. */
+/** Credit Policy Escalation (2026-10-15; days overdue since 2026-10-20): zones by days overdue of the unpaid invoice with
+ * the earliest due date, counted from its overdue date (due date + 1 day). */
 
 let lineId = 0;
 function line(p: Partial<CreditLine> & { CustomerKey: number; move_id: number; due_date: string | null; residual: number }): CreditLine {
@@ -27,7 +29,7 @@ describe('the zones (config/creditPolicy.ts)', () => {
   it.each([
     [0, 'GREEN'], [15, 'GREEN'], [16, 'YELLOW'], [30, 'YELLOW'], [31, 'RED'], [44, 'RED'], [45, 'BLOCK'], [60, 'BLOCK'],
     [61, 'BLOCK'], [65, 'BLOCK'], [66, 'BLOCK'], [419, 'BLOCK'],
-  ])('%i days past due -> %s', (days, zone) => {
+  ])('%i days overdue -> %s', (days, zone) => {
     expect(creditZoneForDays(days)?.key).toBe(zone);
   });
 
@@ -63,21 +65,53 @@ describe('the zones (config/creditPolicy.ts)', () => {
   });
 });
 
-describe('placement: days past due of the earliest unpaid due date', () => {
-  it('payment term 30, due 1 Sep, as of 20 Oct = 49 days -> BLOCK (never "1.63x term")', () => {
+describe('placement: days overdue of the earliest unpaid due date', () => {
+  it('the overdue date is the due date + 1 day, in one constant', () => {
+    expect(OVERDUE_OFFSET_DAYS).toBe(1);
+  });
+
+  it('payment term 30, due 1 Sep, overdue 2 Sep, as of 20 Oct = 48 days overdue -> BLOCK (never "1.63x term")', () => {
     const c = [...placeCustomers([line({ CustomerKey: 1, move_id: 10, due_date: '2026-09-01', residual: 100 })], '2026-10-20', false).values()][0];
-    expect(c.daysPastDue).toBe(49);
+    expect(c.oldestDueDate).toBe('2026-09-01');
+    expect(c.oldestOverdueDate).toBe('2026-09-02');
+    expect(c.daysOverdue).toBe(48);
     expect(c.zone).toBe('BLOCK');
     expect(c.responsibleRole).toBe('GCEO + CFO');
     expect(c.requiredAction).toBe('Management Escalation');
     expect(c).not.toHaveProperty('position');
   });
 
-  it('due tomorrow = NOT YET DUE (not 0 / GREEN); due today = day 0, GREEN', () => {
-    const tomorrow = [...placeCustomers([line({ CustomerKey: 1, move_id: 10, due_date: '2026-10-21', residual: 100 })], '2026-10-20', false).values()][0];
-    expect(tomorrow).toMatchObject({ zone: 'NOT_YET_DUE', notYetDue: true, daysPastDue: -1, daysUntilDue: 1, approachingNextZone: false });
-    const today = [...placeCustomers([line({ CustomerKey: 1, move_id: 10, due_date: '2026-10-20', residual: 100 })], '2026-10-20', false).values()][0];
-    expect(today).toMatchObject({ zone: 'GREEN', notYetDue: false, daysPastDue: 0 });
+  // edge cases as of 20 Oct 2026: due date -> status
+  const placeDue = (due: string) => [...placeCustomers([line({ CustomerKey: 1, move_id: 10, due_date: due, residual: 100 })], '2026-10-20', false).values()][0];
+
+  it('due tomorrow = NOT YET DUE', () => {
+    expect(placeDue('2026-10-21')).toMatchObject({ zone: 'NOT_YET_DUE', notYetDue: true, daysOverdue: -2, daysUntilDue: 1, approachingNextZone: false });
+  });
+
+  it('due today = NOT YET DUE (overdue from tomorrow), never day 0 / GREEN', () => {
+    expect(placeDue('2026-10-20')).toMatchObject({
+      zone: 'NOT_YET_DUE', notYetDue: true, oldestOverdueDate: '2026-10-21', daysOverdue: -1, daysUntilDue: 0, responsibleRole: '—',
+    });
+  });
+
+  it('due yesterday = day 0, GREEN', () => {
+    expect(placeDue('2026-10-19')).toMatchObject({ zone: 'GREEN', notYetDue: false, oldestOverdueDate: '2026-10-20', daysOverdue: 0 });
+  });
+
+  it.each([
+    ['2026-10-04', 15, 'GREEN', 'Payment Reminder'],
+    ['2026-10-03', 16, 'YELLOW', 'Follow-up / Customer Visit'],
+    ['2026-09-05', 44, 'RED', 'CEO Intervention'],
+    ['2026-09-04', 45, 'BLOCK', 'Management Escalation'],
+    ['2026-08-15', 65, 'BLOCK', 'Final Warning + Stop Supply'],
+    ['2026-08-14', 66, 'BLOCK', 'Legal Action'],
+  ])('due %s = %i days overdue -> %s / %s', (due, days, zone, action) => {
+    expect(placeDue(due)).toMatchObject({ daysOverdue: days, zone, requiredAction: action });
+  });
+
+  it('the dashed ring counts days overdue (YELLOW ends at 30)', () => {
+    expect(placeDue('2026-09-28')).toMatchObject({ zone: 'YELLOW', daysOverdue: 21, daysToNextZone: 10, approachingNextZone: false });
+    expect(placeDue('2026-09-25')).toMatchObject({ zone: 'YELLOW', daysOverdue: 24, daysToNextZone: 7, approachingNextZone: true });
   });
 
   it('the invoice with the EARLIEST due date decides, even when another invoice is older', () => {
@@ -95,7 +129,7 @@ describe('placement: days past due of the earliest unpaid due date', () => {
     ][0];
     expect(c.oldestInvoiceMoveId).toBe(2);
     expect(c.oldestDueDate).toBe('2026-08-01');
-    expect(c.daysPastDue).toBe(80);
+    expect(c.daysOverdue).toBe(79);
     expect(c.zone).toBe('BLOCK');
     // one dot per customer, sized by every unpaid invoice
     expect(c.totalOutstanding).toBe(700);
@@ -115,7 +149,7 @@ describe('placement: days past due of the earliest unpaid due date', () => {
       ).values(),
     ][0];
     expect(c.oldestInvoiceMoveId).toBe(2);
-    expect(c.daysPastDue).toBe(10);
+    expect(c.daysOverdue).toBe(9);
     expect(c.totalOutstanding).toBe(250);
   });
 
@@ -145,26 +179,27 @@ describe('placement: days past due of the earliest unpaid due date', () => {
 describe('the chart dataset', () => {
   const lines = [
     line({ CustomerKey: 1, move_id: 1, due_date: '2026-10-25', residual: 100 }), // not yet due
-    line({ CustomerKey: 2, move_id: 2, due_date: '2026-10-10', residual: 200 }), // 10 days, GREEN
-    line({ CustomerKey: 3, move_id: 3, due_date: '2026-09-01', residual: 300, PaymentTermKey: 9, payment_term: '60 Days' }), // 49, BLOCK
-    line({ CustomerKey: 4, move_id: 4, due_date: '2025-08-27', residual: 400 }), // 419, BLOCK
+    line({ CustomerKey: 5, move_id: 5, due_date: '2026-10-20', residual: 50 }), // due today: not yet due either
+    line({ CustomerKey: 2, move_id: 2, due_date: '2026-10-10', residual: 200 }), // 9 days overdue, GREEN
+    line({ CustomerKey: 3, move_id: 3, due_date: '2026-09-01', residual: 300, PaymentTermKey: 9, payment_term: '60 Days' }), // 48, BLOCK
+    line({ CustomerKey: 4, move_id: 4, due_date: '2025-08-27', residual: 400 }), // 418, BLOCK
   ];
   const view = (term: string | null = null) => buildCreditPolicy(lines, { snapshotDate: '2026-10-20', currency: 'LYD', allCurrencies: false, term });
 
-  it('four zone summaries include only due customers and combine all BLOCK actions', () => {
+  it('four zone summaries include only overdue customers (not due today) and combine all BLOCK actions', () => {
     const v = view();
     const zones = Object.fromEntries(v.summary.zones.map((z) => [z.key, [z.customers, z.amount]]));
     expect(zones).toMatchObject({ GREEN: [1, 200], YELLOW: [0, 0], RED: [0, 0], BLOCK: [2, 700] });
     expect(v.summary).not.toHaveProperty('notYetDue');
-    expect(v.customers.every((c) => c.daysPastDue >= 0 && !c.notYetDue)).toBe(true);
+    expect(v.customers.every((c) => c.daysOverdue >= 0 && !c.notYetDue)).toBe(true);
     expect(v.summary.zones.reduce((t, z) => t + z.amount, 0)).toBe(900);
     expect(v.summary.total).toEqual({ customers: 3, amount: 900 });
-    expect(v.customers.map((c) => c.daysPastDue)).toEqual([419, 49, 10]); // most past due first, future-due excluded
+    expect(v.customers.map((c) => c.daysOverdue)).toEqual([418, 48, 9]); // most overdue first; future-due and due-today excluded
   });
 
   it('the payment-term filter only chooses customers: zones and boundaries never move', () => {
     const v = view('9');
-    expect(v.customers.map((c) => [c.customerKey, c.zone, c.daysPastDue])).toEqual([[3, 'BLOCK', 49]]);
+    expect(v.customers.map((c) => [c.customerKey, c.zone, c.daysOverdue])).toEqual([[3, 'BLOCK', 48]]);
     expect(v.zones).toBe(CREDIT_POLICY_ZONES);
     expect(v.terms.map((t) => [t.key, t.customers])).toEqual([['4', 2], ['9', 1]]);
   });
@@ -172,7 +207,7 @@ describe('the chart dataset', () => {
   it('carries every customer-level field the chart needs', () => {
     const c = view().customers[0];
     for (const k of ['customerKey', 'customerCode', 'customer', 'paymentTerm', 'totalOutstanding', 'unpaidInvoiceCount', 'oldestInvoiceNumber',
-      'oldestInvoiceDate', 'oldestDueDate', 'daysPastDue', 'zone', 'responsibleRole', 'requiredAction']) {
+      'oldestInvoiceDate', 'oldestDueDate', 'oldestOverdueDate', 'daysOverdue', 'zone', 'responsibleRole', 'requiredAction']) {
       expect(c, k).toHaveProperty(k);
     }
   });
@@ -199,8 +234,10 @@ describe('status, owner and action at every policy edge', () => {
     [66, 'BLOCK', 'GCEO + CFO', 'Legal Action'],
     [156, 'BLOCK', 'GCEO + CFO', 'Legal Action'],
   ])('%i days -> %s / %s / %s', (days, zone, owner, action) => {
+    // due 1 Jan = overdue from 2 Jan: N days overdue on 2 Jan + N
     const c = [...placeCustomers([line({ CustomerKey: 1, move_id: 1, due_date: '2026-01-01', residual: 100 })],
-      new Date(Date.UTC(2026, 0, 1 + Number(days))).toISOString().slice(0, 10), false).values()][0];
+      new Date(Date.UTC(2026, 0, 2 + Number(days))).toISOString().slice(0, 10), false).values()][0];
+    expect(c.daysOverdue).toBe(days);
     expect(c).toMatchObject({ zone, responsibleRole: owner, requiredAction: action });
   });
 

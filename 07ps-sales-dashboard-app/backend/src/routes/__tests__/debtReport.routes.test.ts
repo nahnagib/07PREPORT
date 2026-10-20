@@ -86,7 +86,10 @@ vi.mock('../../db/pool', () => ({
 }));
 
 vi.mock('../../measures/departmentFreshness', () => ({
-  fetchDepartmentFreshness: async () => ({ department: 'finance', lastSuccessUtc: '2026-10-04T04:30:00.000Z', dataAsOf: '2026-10-04' }),
+  fetchDepartmentFreshness: async () => ({
+    department: 'finance', lastSuccessUtc: '2026-10-04T04:30:00.000Z', lastSuccessJob: 'finance_receivables',
+    lastFailureUtc: '2026-10-04T05:00:00.000Z', lastFailureJob: 'finance_receivables', dataAsOf: '2026-10-04',
+  }),
 }));
 
 let server: Server;
@@ -182,5 +185,27 @@ describe('Debt Report access', () => {
     const body = await (await get('/debt-report/meta', 'gcfo')).json();
     expect(body.freshness.department).toBe('finance');
     expect(body.options.sizeTiers.map((t: { value: string }) => t.value)).toEqual(['large', 'medium', 'small']);
+  });
+
+  it('meta: the Admin role gets the data context (report exclusions, failed finance run)', async () => {
+    const body = await (await get('/debt-report/meta', 'admin')).json();
+    expect(body.exclusions).toMatchObject({ segments: expect.any(Array), salesTeams: expect.any(Array) });
+    expect(body.freshness).toMatchObject({ lastSuccessUtc: '2026-10-04T04:30:00.000Z', lastFailureUtc: '2026-10-04T05:00:00.000Z', lastFailureJob: 'finance_receivables' });
+  });
+
+  it.each(['gcfo', 'b2b', 'salespersonEnabled'])('meta: %s (not Admin) never receives the admin-only fields, only the refresh time', async (who) => {
+    const res = await get('/debt-report/meta', who);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).not.toHaveProperty('exclusions');
+    expect(body.freshness).not.toHaveProperty('lastFailureUtc');
+    expect(body.freshness).not.toHaveProperty('lastFailureJob');
+    expect(body.freshness.lastSuccessUtc).toBe('2026-10-04T04:30:00.000Z');
+    expect(body.snapshotDate).toBeTruthy(); // the page still needs it (Date filter, header band)
+  });
+
+  it('every number still leaves out the report exclusions for a non-admin', async () => {
+    await get('/debt-report/overview', 'gcfo');
+    expect(queries.some((q) => q.sql.includes(EXCLUDED_TEAMS_CONDITION))).toBe(true);
   });
 });

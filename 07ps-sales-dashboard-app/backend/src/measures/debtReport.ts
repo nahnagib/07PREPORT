@@ -30,6 +30,9 @@
  *   intercompany  inter-company lines, any scope (only with `includeIntercompany`): their own row, Net balance only.
  * Net balance = every line. Overdue = invoice lines with days_past_due > 0 (due today is not overdue), so overdue + not
  * yet due = open invoices and both shares sit between 0% and 100%.
+ * days_past_due > 0 is the credit policy's "days overdue >= 0" (overdue from the day after the due date). The Customers
+ * table's "Aging bucket" is NOT computed here: it is the chart's own placement (measures/debtAging.ts attachCreditZones,
+ * days overdue from config/creditPolicy.ts OVERDUE_OFFSET_DAYS), so the table and the chart always agree.
  *
  * Size tiers (config/finance.ts) are the one place the company-currency (LYD) residual is still used: it classifies a
  * document (sum of its open lines) or a company + customer (its open balance) into Large / Medium / Small, on steps

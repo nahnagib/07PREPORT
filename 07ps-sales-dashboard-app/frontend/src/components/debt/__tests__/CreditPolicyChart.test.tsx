@@ -4,12 +4,13 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { CreditPolicyChart } from '../CreditPolicyChart';
 import type { CreditCustomer, DebtAging } from '../../../lib/api';
 import { ZONES } from '../../../lib/__tests__/fixtures/creditZones';
+import { formatDate } from '../../../lib/format';
 
-function customer(p: Partial<CreditCustomer> & { customerKey: number; zone: CreditCustomer['zone']; daysPastDue: number; totalOutstanding: number }): CreditCustomer {
+function customer(p: Partial<CreditCustomer> & { customerKey: number; zone: CreditCustomer['zone']; daysOverdue: number; totalOutstanding: number }): CreditCustomer {
   return {
     customerCode: `C${p.customerKey}`, customer: `Customer ${p.customerKey}`, companyKey: 1, company: 'Majaal', paymentTermKey: 4, paymentTerm: '30 Days',
     totalOutstandingCompany: p.totalOutstanding, unpaidInvoiceCount: 2, oldestInvoiceMoveId: 10, oldestInvoiceNumber: 'INV/2026/0001',
-    oldestInvoiceDate: '2026-08-01', oldestDueDate: '2026-08-31', dueDateSource: 'instalment', notYetDue: p.zone === 'NOT_YET_DUE', daysUntilDue: 0,
+    oldestInvoiceDate: '2026-08-01', oldestDueDate: '2026-08-31', oldestOverdueDate: '2026-09-01', dueDateSource: 'instalment', notYetDue: p.zone === 'NOT_YET_DUE', daysUntilDue: 0,
     responsibleRole: 'GCEO + CFO', requiredAction: 'Management Escalation', nextZone: null, daysToNextZone: null, approachingNextZone: false,
     odooUrl: 'https://x/web#id=10', ...p,
   };
@@ -24,10 +25,10 @@ const data: DebtAging = {
     total: { customers: 3, amount: 900 },
   },
   customers: [
-    customer({ customerKey: 4, zone: 'BLOCK', daysPastDue: 419, totalOutstanding: 400, responsibleRole: 'GCEO + CFO', requiredAction: 'Legal Action' }),
-    customer({ customerKey: 3, zone: 'BLOCK', daysPastDue: 49, totalOutstanding: 300 }),
-    customer({ customerKey: 2, zone: 'GREEN', daysPastDue: 10, totalOutstanding: 200, approachingNextZone: true, nextZone: 'YELLOW', daysToNextZone: 6 }),
-    customer({ customerKey: 1, zone: 'NOT_YET_DUE', daysPastDue: 0, daysUntilDue: 5, totalOutstanding: 100 }),
+    customer({ customerKey: 4, zone: 'BLOCK', daysOverdue: 419, totalOutstanding: 400, responsibleRole: 'GCEO + CFO', requiredAction: 'Legal Action' }),
+    customer({ customerKey: 3, zone: 'BLOCK', daysOverdue: 49, totalOutstanding: 300 }),
+    customer({ customerKey: 2, zone: 'GREEN', daysOverdue: 10, totalOutstanding: 200, approachingNextZone: true, nextZone: 'YELLOW', daysToNextZone: 6 }),
+    customer({ customerKey: 1, zone: 'NOT_YET_DUE', daysOverdue: -6, daysUntilDue: 5, totalOutstanding: 100 }),
   ],
 };
 
@@ -43,8 +44,10 @@ describe('CreditPolicyChart', () => {
       expect(screen.getAllByText(t).length, t).toBeGreaterThan(0);
     }
     expect(document.querySelector('svg')?.textContent ?? document.body.textContent).toBeDefined();
-    expect(document.body.textContent).toContain('Due Date');
+    expect(document.body.textContent).toContain('Overdue date');
+    expect(document.body.textContent).not.toContain('Due Date');
     expect(document.body.textContent).toContain('(Day 0)');
+    expect(document.body.textContent).toContain('placed by the number of days overdue of its oldest unpaid invoice (counted from the overdue date = day');
     expect(screen.getAllByText('>65 Days')).toHaveLength(2);
     expect(screen.getByText('PAYMENT TERM (FILTER)')).toBeTruthy();
     // Counts combine BLOCK ranges; future-due customers have no visible content.
@@ -74,6 +77,12 @@ describe('CreditPolicyChart', () => {
     fireEvent.pointerEnter(dot);
     const tip = screen.getByRole('tooltip');
     for (const t of ['Customer 3', 'Code C3', 'INV/2026/0001', '49', '30 Days', 'Management Escalation', '2']) expect(tip.textContent, t).toContain(t);
+    // both dates, and the count labelled days overdue
+    const terms = [...tip.querySelectorAll('dt')].map((dt) => dt.textContent);
+    for (const t of ['Due date', 'Overdue date', 'Days overdue']) expect(terms, t).toContain(t);
+    expect(terms).not.toContain('Days past due');
+    expect(tip.textContent).toContain(formatDate('2026-09-01'));
+    expect(dot.getAttribute('aria-label')).toContain('49 days overdue');
     fireEvent.click(dot);
     expect(onClick).toHaveBeenCalledWith(expect.objectContaining({ customerKey: 3 }));
     fireEvent.keyDown(dot, { key: 'Enter' });
@@ -95,9 +104,29 @@ describe('CreditPolicyChart', () => {
     expect(document.querySelectorAll('[data-customer]')).toHaveLength(0);
   });
 
+  it('edge cases in days overdue: due today is not drawn; due yesterday = day 0 in GREEN; 15/16/44/45/65/66 land in their zone', () => {
+    const cases: [number, number, CreditCustomer['zone']][] = [
+      [10, 0, 'GREEN'], [11, 15, 'GREEN'], [12, 16, 'YELLOW'], [13, 44, 'RED'], [14, 45, 'BLOCK'], [15, 65, 'BLOCK'], [16, 66, 'BLOCK'],
+    ];
+    const dueToday = customer({ customerKey: 99, zone: 'NOT_YET_DUE', daysOverdue: -1, daysUntilDue: 0, totalOutstanding: 100 });
+    const edge = { ...data, customers: [...cases.map(([customerKey, daysOverdue, zone]) => customer({ customerKey, zone, daysOverdue, totalOutstanding: 100 })), dueToday] };
+    render(<CreditPolicyChart {...props} data={edge} onCustomerClick={() => undefined} />);
+    expect(document.querySelector('[data-customer="99"]')).toBeNull();
+    expect(document.querySelectorAll('[data-customer]')).toHaveLength(cases.length);
+    for (const [key, days, zone] of cases) {
+      const g = document.querySelector(`[data-customer="${key}"]`)!;
+      expect(g.getAttribute('aria-label'), `${days}`).toContain(`${days} day${days === 1 ? '' : 's'} overdue · ${zone}`);
+      const band = document.querySelector(`[data-zone="${zone}"]`)!;
+      const x0 = Number(band.getAttribute('x'));
+      const cx = Number(g.querySelector('circle:not([stroke-dasharray])')!.getAttribute('cx'));
+      expect(cx, `${days} days in ${zone}`).toBeGreaterThanOrEqual(x0);
+      expect(cx, `${days} days in ${zone}`).toBeLessThanOrEqual(x0 + Number(band.getAttribute('width')));
+    }
+  });
+
   it('the legend', () => {
     render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
-    for (const t of ['Dot size = amount outstanding', 'Position = days past due of the oldest unpaid invoice (based on due date)', 'Each customer appears once']) {
+    for (const t of ['Dot size = amount outstanding', 'Position = days overdue of the oldest unpaid invoice (from overdue date)', 'Each customer appears once']) {
       expect(screen.getByText(t)).toBeTruthy();
     }
   });

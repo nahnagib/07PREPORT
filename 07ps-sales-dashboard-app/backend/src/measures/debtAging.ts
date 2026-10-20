@@ -1,7 +1,7 @@
 /**
  * "Credit Policy Escalation" (Receivables and Collections; GET /debt-report/aging, 2026-10-15): where every customer
  * stands in the credit policy. Replaces the term-multiple "Aging Map": no payment-term multiples any more -- a
- * customer is placed by DAYS PAST DUE, in the zones of config/creditPolicy.ts (the one definition of the policy).
+ * customer is placed by DAYS OVERDUE (2026-10-20: counted from the overdue date, not the due date), in the zones of config/creditPolicy.ts (the one definition of the policy).
  *
  * Per customer (and per currency, or over every currency in LYD with `allCurrencies`):
  *   1. lines: the report's own source (linesSource) -- snapshot, report exclusions, scope toggles, the caller's
@@ -14,14 +14,16 @@
  *      receivable line -- what Odoo's aged receivables uses; = invoice_date_due for a single-instalment invoice), else
  *      the invoice's invoice_date_due, else invoice date + the payment term's days (cfg_finance_payment_term_days).
  *      Never the invoice date alone, unless nothing else exists.
- *   4. the deciding invoice: the unpaid invoice with the EARLIEST due date (= the most days past due); ties: the older
+ *   4. the deciding invoice: the unpaid invoice with the EARLIEST due date (= the most days overdue); ties: the older
  *      invoice date, then the lower move id. It can differ from the invoice with the oldest invoice date.
- *   5. days past due = as-of date - its due date, in calendar days (as-of = the snapshot date, i.e. today for the
- *      latest snapshot). Negative = "Not yet due" (never day 0 / GREEN); 0 = due that day.
+ *   5. its overdue date = due date + OVERDUE_OFFSET_DAYS (1: the first day it is late); days overdue = as-of date -
+ *      overdue date, in calendar days (as-of = the snapshot date, i.e. today for the latest snapshot). 0 = the first
+ *      day overdue (due the day before); negative = "Not yet due", incl. due exactly on the as-of date (never GREEN).
  *   6. zone, owner and action: config/creditPolicy.ts. Dot size = the customer's total outstanding (every invoice).
  *
  * The same placement feeds the Customers table's "Aging bucket" (attachCreditZones), so a customer's bucket there is
- * the same policy status (future-due customers are omitted from the chart). The payment-term filter only chooses which customers are shown; it never moves a boundary.
+ * the same policy status (not-yet-due customers are omitted from the chart). The payment-term filter only chooses which
+ * customers are shown; it never moves a boundary.
  */
 import type { Pool } from 'mysql2/promise';
 import { odooWebBaseUrl } from '../config/finance';
@@ -29,6 +31,7 @@ import {
   CREDIT_POLICY_ZONES,
   ESCALATION_WINDOW_DAYS,
   NOT_YET_DUE,
+  OVERDUE_OFFSET_DAYS,
   approachingNextZone,
   creditZoneForDays,
   creditActionForDays,
@@ -140,10 +143,12 @@ export interface CreditCustomer {
   oldestInvoiceDate: string | null;
   oldestDueDate: string;
   dueDateSource: DueDateSource;
-  /** as-of date - oldestDueDate; negative customers are excluded from the chart */
-  daysPastDue: number;
+  /** oldestDueDate + OVERDUE_OFFSET_DAYS: day 0 of the policy (the first day the invoice is late) */
+  oldestOverdueDate: string;
+  /** as-of date - oldestOverdueDate; negative (= not yet due) customers are excluded from the chart */
+  daysOverdue: number;
   notYetDue: boolean;
-  /** days until the earliest due date when not yet due, else 0 */
+  /** days until the earliest due date when not yet due (0 = due on the as-of date), else 0 */
   daysUntilDue: number;
   zone: CreditZoneKey;
   responsibleRole: string;
@@ -224,9 +229,9 @@ export function placeCustomers(lines: CreditLine[], asOf: string, allCurrencies:
         a.due.date.localeCompare(b.due.date) || (a.inv.invoiceDate ?? '').localeCompare(b.inv.invoiceDate ?? '') || a.inv.moveId - b.inv.moveId,
     );
     const { inv, due } = unpaid[0];
-    const raw = daysBetween(due.date, asOf);
-    const notYetDue = raw < 0;
-    const days = raw;
+    const overdueDate = addDays(due.date, OVERDUE_OFFSET_DAYS);
+    const days = daysBetween(overdueDate, asOf);
+    const notYetDue = days < 0;
     const zone = notYetDue ? null : creditZoneForDays(days);
     const next = notYetDue ? null : nextCreditZone(days);
     const first = g.lines[0];
@@ -247,9 +252,10 @@ export function placeCustomers(lines: CreditLine[], asOf: string, allCurrencies:
       oldestInvoiceDate: inv.invoiceDate,
       oldestDueDate: due.date,
       dueDateSource: due.source,
-      daysPastDue: days,
+      oldestOverdueDate: overdueDate,
+      daysOverdue: days,
       notYetDue,
-      daysUntilDue: notYetDue ? -raw : 0,
+      daysUntilDue: notYetDue ? daysBetween(asOf, due.date) : 0,
       zone: zone ? zone.key : NOT_YET_DUE.key,
       responsibleRole: zone ? zone.owner : '—',
       requiredAction: zone ? creditActionForDays(days)?.action ?? zone.action : 'None until the due date',
@@ -274,7 +280,7 @@ export interface CreditZoneSummary {
 
 export interface CreditPolicyView {
   snapshotDate: string | null;
-  /** the date days past due are counted to (the snapshot date) */
+  /** the date days overdue are counted to (the snapshot date) */
   asOf: string | null;
   currency: string | null;
   /** true = every currency together, amounts in LYD (≈) */
@@ -286,9 +292,9 @@ export interface CreditPolicyView {
   escalationWindowDays: number;
   /** payment-term filter options (deciding invoice's term), before the term filter */
   terms: { key: string; label: string; customers: number }[];
-  /** Four main zones, due customers only, after the term filter. */
+  /** Four main zones, overdue customers only, after the term filter. */
   summary: { zones: CreditZoneSummary[]; total: { customers: number; amount: number } };
-  /** Due customers after the term filter, most days past due first. */
+  /** Overdue customers after the term filter, most days overdue first. */
   customers: CreditCustomer[];
 }
 
@@ -306,7 +312,7 @@ export function buildCreditPolicy(
   const currencies = [...perCurrency].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([c]) => c);
   const currency = opts.allCurrencies ? COMPANY_CURRENCY : (opts.currency ?? currencies[0] ?? null);
   const placed = asOf
-    ? [...placeCustomers(opts.allCurrencies ? lines : lines.filter((l) => l.currency === currency), asOf, opts.allCurrencies).values()].filter((c) => !c.notYetDue && c.daysPastDue >= 0)
+    ? [...placeCustomers(opts.allCurrencies ? lines : lines.filter((l) => l.currency === currency), asOf, opts.allCurrencies).values()].filter((c) => !c.notYetDue)
     : [];
 
   const termMap = new Map<string, { key: string; label: string; customers: number }>();
@@ -321,7 +327,7 @@ export function buildCreditPolicy(
   const shown = (opts.term === null ? placed : placed.filter((c) => String(c.paymentTermKey) === opts.term)).sort(
     (a, b) =>
       Number(a.notYetDue) - Number(b.notYetDue) ||
-      b.daysPastDue - a.daysPastDue ||
+      b.daysOverdue - a.daysOverdue ||
       a.daysUntilDue - b.daysUntilDue ||
       b.totalOutstanding - a.totalOutstanding ||
       a.customerKey - b.customerKey,
@@ -364,7 +370,7 @@ export async function fetchDebtAging(pool: Pool, q: AgingQuery, f: Filters): Pro
 /** A table row's credit-policy bucket. */
 export interface RowCreditZone {
   zone: CreditZoneKey;
-  daysPastDue: number;
+  daysOverdue: number;
   daysUntilDue: number;
 }
 
@@ -385,7 +391,7 @@ export async function attachCreditZones<T extends { customerKey: number; currenc
   const lines = snapshotKey === null || !asOf ? [] : await fetchCreditLines(pool, snapshotKey, debt, f);
   const byCurrency = asOf ? placeCustomers(lines, asOf, false) : new Map<string, PlacedCustomer>();
   const byCustomer = asOf ? placeCustomers(lines, asOf, true) : new Map<string, PlacedCustomer>();
-  const pick = (c: PlacedCustomer | undefined): RowCreditZone | null => (c ? { zone: c.zone, daysPastDue: c.daysPastDue, daysUntilDue: c.daysUntilDue } : null);
+  const pick = (c: PlacedCustomer | undefined): RowCreditZone | null => (c ? { zone: c.zone, daysOverdue: c.daysOverdue, daysUntilDue: c.daysUntilDue } : null);
   return {
     ...result,
     rows: result.rows.map((r) => ({

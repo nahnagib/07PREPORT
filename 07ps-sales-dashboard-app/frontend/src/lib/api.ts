@@ -2389,8 +2389,9 @@ export interface DebtFreshness {
   department: string;
   lastSuccessUtc: string | null;
   lastSuccessJob: string | null;
-  lastFailureUtc: string | null;
-  lastFailureJob: string | null;
+  /** the failed-run fields: Admin role only on GET /debt-report/meta (missing for everyone else) */
+  lastFailureUtc?: string | null;
+  lastFailureJob?: string | null;
   dataAsOf: string | null;
 }
 
@@ -2424,7 +2425,8 @@ export interface DebtMeta {
     scopes: (DebtOption & { isDefault: boolean; description: string | null })[];
     sizeTiers: (DebtOption & { min: number | null; max: number | null })[];
   };
-  exclusions: DebtExclusions;
+  /** Admin role only (the status strip's "Always excluded"); missing for everyone else. The exclusions apply to all. */
+  exclusions?: DebtExclusions;
   odooBaseUrl: string;
   topCustomers: number;
   /** the credit policy (backend config/creditPolicy.ts): zones of the escalation chart and the table's Aging bucket */
@@ -2611,7 +2613,8 @@ export interface CreditPolicyZone {
 
 export interface RowCreditZone {
   zone: CreditZoneKey;
-  daysPastDue: number;
+  /** days from the overdue date (due date + 1) to the snapshot date; negative = not yet due */
+  daysOverdue: number;
   daysUntilDue: number;
 }
 
@@ -2631,8 +2634,11 @@ export interface CreditCustomer {
   oldestInvoiceNumber: string | null;
   oldestInvoiceDate: string | null;
   oldestDueDate: string;
+  /** oldestDueDate + 1 day: day 0 of the credit policy (the first day the invoice is late) */
+  oldestOverdueDate: string;
   dueDateSource: 'instalment' | 'invoice' | 'payment_term' | 'invoice_date';
-  daysPastDue: number;
+  /** snapshot date - oldestOverdueDate; negative = not yet due */
+  daysOverdue: number;
   notYetDue: boolean;
   daysUntilDue: number;
   zone: CreditZoneKey;

@@ -72,7 +72,7 @@ import {
  * customer count is customers with an open invoice. Credit notes, unreconciled payments and the two toggles' lines
  * never reach the cards, the charts or the Aging Map: they only show in the customer table (Unapplied credits, Net
  * balance) and its drill-down. Credit Policy Escalation (components/debt/CreditPolicyChart.tsx, GET /debt-report/aging; replaced the
- * term-multiple Aging Map 2026-10-15) places every customer by the days past due of its unpaid invoice with the earliest due date,
+ * term-multiple Aging Map 2026-10-15) places every customer by the days overdue (from the day after the due date) of its unpaid invoice with the earliest due date,
  * in the credit policy's zones (backend config/creditPolicy.ts), in the page's currency (all currencies: every customer once). It
  * ignores the line-level filters (overdue status, aging bucket, delivery status, payment term, invoice size), which would change
  * which invoice decides, and has its own payment-term filter (it only chooses customers). A dot opens the customer's open
@@ -85,7 +85,8 @@ import {
  *
  * Every label comes from GET /debt-report/meta: Odoo's own labels (English; the "Odoo labels" EN/AR
  * switch was removed 2026-10-13), our scope and aging-bucket names, and the size-tier thresholds from the backend
- * config. The freshness strip shows the FINANCE refresh, never the sales one. Access and the salesperson scope are
+ * config. The freshness strip shows the FINANCE refresh, never the sales one; its other items (snapshot, scope, exclusions,
+ * currency note, a failed run) are for the Admin role only (2026-10-19). Access and the salesperson scope are
  * enforced by the API (routes/debtReport.ts); this page only mirrors them.
  *
  * Cards (2026-10-07): one row per currency, exactly five cards each -- Total debt (Odoo's Amount Due of the open
@@ -104,7 +105,7 @@ import {
 const OPEN_INVOICES_NOTE = 'Total debt = posted invoices with an amount due (Odoo: Unpaid + Posted); draft invoices are not counted';
 
 export default function ReceivablesCollectionsPage() {
-  const { user, token, error: authError, retryAuth, logout, isSalesperson, canView } = useAuth();
+  const { user, token, error: authError, retryAuth, logout, isSalesperson, isAdmin, canView } = useAuth();
   const allowed = canView('debt_report');
   const roleLabel = user?.role.label ?? user?.fullName;
   const [filters, setFilters] = useState<DebtPageFilters>(DEFAULT_DEBT_FILTERS);
@@ -290,7 +291,7 @@ export default function ReceivablesCollectionsPage() {
       key: 'agingBucket',
       header: 'Aging bucket',
       width: 170,
-      // by actual age: credits only (—) < not yet due < days past due of the earliest unpaid due date
+      // by actual age: credits only (—) < not yet due < days overdue of the earliest unpaid due date
       sortValue: (r) => r.bucket.sortValue,
       filterOptions: creditBucketOptions(creditZones),
       render: (r) => <BucketBadge bucket={r.bucket} />,
@@ -427,29 +428,37 @@ export default function ReceivablesCollectionsPage() {
 
         {meta.error ? <ErrorState message={meta.error} onRetry={meta.retry} /> : null}
 
+        {/* The data context is for the Admin role only (2026-10-19): everyone else sees the finance refresh alone. The API
+            leaves out the exclusions and the failed-run fields for them too (routes/debtReport.ts stripAdminOnlyMeta). */}
         <div style={strip} role="status">
-          <span>
-            Receivables snapshot <strong style={{ color: 'var(--ps-color-text)' }}>{formatDate(snapshotDate)}</strong>
-          </span>
+          {isAdmin ? (
+            <span>
+              Receivables snapshot <strong style={{ color: 'var(--ps-color-text)' }}>{formatDate(snapshotDate)}</strong>
+            </span>
+          ) : null}
           <span>
             Finance refresh <strong style={{ color: 'var(--ps-color-text)' }}>{formatTimestamp(freshness?.lastSuccessUtc ?? null)}</strong>
           </span>
-          {freshness?.lastFailureUtc ? (
-            <span style={{ color: 'var(--ps-color-alert)' }}>Last finance run failed at {formatTimestamp(freshness.lastFailureUtc)}</span>
+          {isAdmin ? (
+            <>
+              {freshness?.lastFailureUtc ? (
+                <span style={{ color: 'var(--ps-color-alert)' }}>Last finance run failed at {formatTimestamp(freshness.lastFailureUtc)}</span>
+              ) : null}
+              <span>
+                Showing{' '}
+                <strong style={{ color: 'var(--ps-color-text)' }}>
+                  {[defaultScope ? scopeLabel(defaultScope.value) : null, filters.includeOther && otherScope ? scopeLabel(otherScope.value) : null].filter(Boolean).join(' + ')}
+                </strong>
+                {filters.includeIntercompany ? ', inter-company included' : ', inter-company excluded'}
+              </span>
+              {exclusionText ? (
+                <span title={exclusionTitle} dir="auto">
+                  Always excluded: <strong style={{ color: 'var(--ps-color-text)' }}>{exclusionText}</strong>
+                </span>
+              ) : null}
+              <span>Amounts per currency; LYD equivalents (≈) are Odoo&apos;s own amounts, at the Odoo rate of each invoice&apos;s date</span>
+            </>
           ) : null}
-          <span>
-            Showing{' '}
-            <strong style={{ color: 'var(--ps-color-text)' }}>
-              {[defaultScope ? scopeLabel(defaultScope.value) : null, filters.includeOther && otherScope ? scopeLabel(otherScope.value) : null].filter(Boolean).join(' + ')}
-            </strong>
-            {filters.includeIntercompany ? ', inter-company included' : ', inter-company excluded'}
-          </span>
-          {exclusionText ? (
-            <span title={exclusionTitle} dir="auto">
-              Always excluded: <strong style={{ color: 'var(--ps-color-text)' }}>{exclusionText}</strong>
-            </span>
-          ) : null}
-          <span>Amounts per currency; LYD equivalents (≈) are Odoo&apos;s own amounts, at the Odoo rate of each invoice&apos;s date</span>
         </div>
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px) clamp(16px, 3vw, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)', minWidth: 0 }}>
@@ -656,7 +665,7 @@ export default function ReceivablesCollectionsPage() {
               One row per company, customer and currency, sorted by overdue{currency ? `; ${currency} rows only` : '; amounts in LYD (≈ = converted at Odoo’s booked rate)'}. Open
               invoices, their amounts and Overdue count customer invoices only; Unapplied credits = credit notes + unreconciled payments; Net
               balance = every line (customers with credits only are listed too). Aging bucket = the customer&apos;s credit-policy zone, as on the
-              escalation chart (days past due of the earliest unpaid due date; Not yet due before it, — with credits only). Salesperson, team and segment list every value on the customer’s lines.
+              escalation chart (days overdue of the earliest unpaid invoice, counted from the day after its due date; Not yet due before it, — with credits only). Salesperson, team and segment list every value on the customer’s lines.
               Click a row for every open document behind its net balance.
             </p>
             {customers.error ? (

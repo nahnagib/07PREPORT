@@ -45,7 +45,7 @@ export interface CreditBucket {
   /** the filter value: the zone label, "Not yet due" or "—" */
   filterValue: string;
   tone: string | null;
-  /** sorts by actual age: credits only < not yet due (the later the due date, the lower) < days past due */
+  /** sorts by actual age: credits only < not yet due (the later the due date, the lower) < days overdue */
   sortValue: number;
 }
 
@@ -57,8 +57,8 @@ export function creditBucket(z: RowCreditZone | null, zones: CreditPolicyZone[])
   if (z.zone === NOT_YET_DUE) return { label: NOT_YET_DUE_LABEL, filterValue: NOT_YET_DUE_LABEL, tone: 'notdue', sortValue: -1 - z.daysUntilDue };
   const i = zones.findIndex((x) => x.key === z.zone);
   const zone = zones[i];
-  if (!zone) return { label: z.zone, filterValue: z.zone, tone: null, sortValue: z.daysPastDue };
-  return { label: `${zone.label} · ${zoneRange(zone)}`, filterValue: zone.label, tone: zone.tone, sortValue: z.daysPastDue };
+  if (!zone) return { label: z.zone, filterValue: z.zone, tone: null, sortValue: z.daysOverdue };
+  return { label: `${zone.label} · ${zoneRange(zone)}`, filterValue: zone.label, tone: zone.tone, sortValue: z.daysOverdue };
 }
 
 /** The bucket filter's options, in policy order: Not yet due, every zone, then — (credits only). */
@@ -121,7 +121,7 @@ export function dotRadius(amount: number, maxAmount: number, minR = DOT_MIN_R, m
   return Math.max(minR, maxR * Math.sqrt(amount / maxAmount));
 }
 
-/** x of a number of days past due inside its (closed) zone: linear in days between the zone's inner edges. */
+/** x of a number of days overdue inside its (closed) zone: linear in days between the zone's inner edges. */
 export function xOfDays(days: number, zone: Pick<CreditPolicyZone, 'minDays' | 'maxDays'>, col: ZoneColumn, pad = 10): number {
   const lo = zone.minDays;
   const hi = zone.maxDays ?? zone.minDays;
@@ -142,7 +142,7 @@ export interface PlacedCreditDot {
 /** x follows actual days within each action range, including a linear overflow scale above day 65.
  * y is a beeswarm to avoid overlap; radius follows total outstanding. Future-due customers are excluded. */
 export function layoutCreditDots(
-  customers: Pick<CreditCustomer, 'customerKey' | 'zone' | 'daysPastDue' | 'totalOutstanding'>[],
+  customers: Pick<CreditCustomer, 'customerKey' | 'zone' | 'daysOverdue' | 'totalOutstanding'>[],
   zones: CreditPolicyZone[],
   cols: ChartColumns,
   opts: { minR?: number; maxR?: number; gap?: number; maxHeight?: number } = {},
@@ -151,16 +151,16 @@ export function layoutCreditDots(
   const maxR = opts.maxR ?? DOT_MAX_R;
   const gap = opts.gap ?? 1.5;
   const sections = timelineSections(zones);
-  const due = customers.filter((c) => c.zone !== NOT_YET_DUE && c.daysPastDue >= 0);
+  const due = customers.filter((c) => c.zone !== NOT_YET_DUE && c.daysOverdue >= 0);
   const maxAmount = due.reduce((m, c) => Math.max(m, c.totalOutstanding), 0);
-  const maxDays = due.reduce((m, c) => Math.max(m, c.daysPastDue), sections[sections.length - 1].minDays + 1);
+  const maxDays = due.reduce((m, c) => Math.max(m, c.daysOverdue), sections[sections.length - 1].minDays + 1);
   const todo = due
     .map((c) => {
-      const si = sections.findIndex((s) => c.daysPastDue >= s.minDays && (s.maxDays === null || c.daysPastDue <= s.maxDays));
+      const si = sections.findIndex((s) => c.daysOverdue >= s.minDays && (s.maxDays === null || c.daysOverdue <= s.maxDays));
       const section = sections[si];
       const col = cols.sections[si];
       const r = dotRadius(c.totalOutstanding, maxAmount, minR, maxR);
-      const x = xOfDays(c.daysPastDue, { ...section, maxDays: section.maxDays ?? maxDays }, col, maxR + 4);
+      const x = xOfDays(c.daysOverdue, { ...section, maxDays: section.maxDays ?? maxDays }, col, maxR + 4);
       return { id: String(c.customerKey), x, r, overflow: section.maxDays === null };
     })
     .sort((a, b) => b.r - a.r || a.x - b.x || a.id.localeCompare(b.id));

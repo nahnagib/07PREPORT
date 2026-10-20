@@ -23,7 +23,8 @@ import { fetchCollectionsDrilldown, fetchCollectionsTrend, parseCollectionsQuery
  * Debt Report (Finance / Price department; measures/debtReport.ts), permission page `debt_report`:
  *
  *   GET /debt-report/meta       snapshots, filter options (currencies too), labels (en + ar), size tiers, the report
- *                               exclusions, Odoo link base, finance freshness
+ *                               exclusions, Odoo link base, finance freshness (exclusions and the failed-run
+ *                               fields for the Admin role only: stripAdminOnlyMeta)
  *   GET /debt-report/overview   per currency: KPIs, aging distribution, overdue by customer (top 15) / salesperson / team
  *   GET /debt-report/trend      open / overdue / not due per snapshot date and currency (null = no row for the filters
  *                               on that snapshot, e.g. a company not yet extracted then)
@@ -71,13 +72,36 @@ function handle(fn: Handler) {
 
 const scoped = (req: Request): Filters => req.scopedFilters ?? {};
 
+/**
+ * The page's status strip shows the data context (snapshot, scope, report exclusions, currency note, a failed finance
+ * run) to the built-in Admin role only (2026-10-19); everyone else sees just the finance refresh time. So for a
+ * non-admin, meta leaves out the exclusions and the failed-run fields: the browser never receives them. Display only --
+ * the exclusions still apply to every number, for every user.
+ */
+export function stripAdminOnlyMeta<T extends { exclusions?: unknown; freshness: { lastFailureUtc?: unknown; lastFailureJob?: unknown } }>(
+  meta: T,
+  isAdmin: boolean,
+) {
+  if (isAdmin) return meta;
+  const stripped: Partial<T> = { ...meta, freshness: { ...meta.freshness } };
+  delete stripped.exclusions;
+  delete stripped.freshness!.lastFailureUtc;
+  delete stripped.freshness!.lastFailureJob;
+  return stripped;
+}
+
 debtReportRouter.get(
   '/meta',
-  handle(async (req) => ({
-    ...(await fetchDebtMeta(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req),
-      applySalespersonLock(applyRoleDataScope({}, req.userContext?.dataScopeRules ?? []), req.userContext!))),
-    freshness: await fetchDepartmentFreshness(pool, 'finance'),
-  })),
+  handle(async (req) =>
+    stripAdminOnlyMeta(
+      {
+        ...(await fetchDebtMeta(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req),
+          applySalespersonLock(applyRoleDataScope({}, req.userContext?.dataScopeRules ?? []), req.userContext!))),
+        freshness: await fetchDepartmentFreshness(pool, 'finance'),
+      },
+      req.user?.isAdmin === true,
+    ),
+  ),
 );
 
 debtReportRouter.get(

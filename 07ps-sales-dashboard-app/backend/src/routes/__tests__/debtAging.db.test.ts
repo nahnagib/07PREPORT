@@ -10,7 +10,7 @@ import type { AddressInfo } from 'node:net';
  *   DEBT_TEST_DB=1 DB_HOST=... DB_USER=... DB_PASSWORD=... DB_NAME=powerBI_Data npx vitest run -c vitest.debt-db.config.ts
  *
  *   1. GET /debt-report/aging on the real snapshot, every expectation computed with its own SQL on the fact table:
- *      the unpaid invoice with the earliest due date decides, days past due = snapshot date - that due date, zones as in
+ *      the unpaid invoice with the earliest due date decides, days overdue = snapshot date - (that due date + 1 day), zones as in
  *      config/creditPolicy.ts; the Customers table's bucket = the chart's zone for every customer.
  *   2. The Debt Report invariants, per currency and for All currencies (LYD), with the defaults, one company (Majaal)
  *      and both toggles on: Overdue + Not yet due = Total debt (in the invoice currency and in LYD); both shares
@@ -68,6 +68,8 @@ const qa = async (sql: string, params: unknown[] = []): Promise<Json[]> => (awai
 const n = (v: unknown) => Number(v ?? 0);
 const isoOf = (k: number) => `${String(k).slice(0, 4)}-${String(k).slice(4, 6)}-${String(k).slice(6, 8)}`;
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+/** Independent of config/creditPolicy.ts OVERDUE_OFFSET_DAYS on purpose: overdue from the day after the due date. */
+const overdueDays = (due: string, asOf: string) => daysBetween(due, asOf) - 1;
 const ZONES: [string, number, number][] = [['GREEN', 0, 15], ['YELLOW', 16, 30], ['RED', 31, 44], ['BLOCK', 45, Infinity]];
 const zoneOf = (d: number) => (d < 0 ? 'NOT_YET_DUE' : ZONES.find(([, lo, hi]) => d >= lo && d <= hi)![0]);
 
@@ -123,7 +125,7 @@ describe.skipIf(!RUN)('Credit Policy Escalation on the real warehouse (read-only
     return [...by.values()].filter((g) => g.unpaid > 0);
   };
 
-  it('every currency: same customers, same earliest due date, same days past due, zone and outstanding', async () => {
+  it('every currency: same customers, same earliest due date, same days overdue, zone and outstanding', async () => {
     const want = await independent();
     const asOf = isoOf(snap);
     const currencies = [...new Set(want.map((w) => w.currency))];
@@ -131,15 +133,15 @@ describe.skipIf(!RUN)('Credit Policy Escalation on the real warehouse (read-only
       const { status, body } = await get(`/debt-report/aging?currency=${c}`);
       expect(status).toBe(200);
       expect(body.asOf).toBe(asOf);
-      const mine = want.filter((w) => w.currency === c && w.due !== null && daysBetween(w.due, asOf) >= 0);
+      const mine = want.filter((w) => w.currency === c && w.due !== null && overdueDays(w.due, asOf) >= 0);
       expect(body.customers.length, c).toBe(mine.length);
       const got = new Map(body.customers.map((x: Json) => [x.customerKey, x]));
       for (const w of mine) {
         const g = got.get(w.customer) as Json;
         expect(g, `${c} customer ${w.customer}`).toBeTruthy();
-        const days = daysBetween(w.due as string, asOf);
+        const days = overdueDays(w.due as string, asOf);
         expect(g.oldestDueDate, `${c} ${w.customer}`).toBe(w.due);
-        expect(g.daysPastDue).toBe(days);
+        expect(g.daysOverdue).toBe(days);
         expect(g.zone).toBe(zoneOf(days));
         expect(Math.abs(g.totalOutstanding - w.total)).toBeLessThan(0.000001);
         expect(Math.abs(g.totalOutstandingCompany - w.totalCompany)).toBeLessThan(0.000001);
@@ -186,7 +188,7 @@ describe.skipIf(!RUN)('Credit Policy Escalation on the real warehouse (read-only
     expect((await get('/debt-report/aging', 'salesperson')).status).toBe(403);
     const r = await get('/debt-report/aging', 'salespersonEnabled');
     expect(r.status).toBe(200);
-    const want = (await independent('AND f.SalespersonKey = ?', [spKey])).filter((w) => w.currency === r.body.currency && w.due !== null && daysBetween(w.due, isoOf(snap)) >= 0);
+    const want = (await independent('AND f.SalespersonKey = ?', [spKey])).filter((w) => w.currency === r.body.currency && w.due !== null && overdueDays(w.due, isoOf(snap)) >= 0);
     expect(r.body.customers.map((c: Json) => c.customerKey).sort()).toEqual(want.map((w) => w.customer).sort());
     expect((await get('/debt-report/aging?salespersonKeys=999999', 'salespersonEnabled')).status).toBe(403);
   });
@@ -234,7 +236,7 @@ describe.skipIf(!RUN)('Debt Report invariants on the real warehouse (read-only)'
       expect(map.status).toBe(200);
       const s = map.body.summary;
       const dots = map.body.customers;
-      expect(dots.every((x: Json) => x.daysPastDue >= 0 && !x.notYetDue)).toBe(true);
+      expect(dots.every((x: Json) => x.daysOverdue >= 0 && !x.notYetDue)).toBe(true);
       close(s.zones.reduce((t: number, z: Json) => t + z.amount, 0), dots.reduce((t: number, x: Json) => t + x.totalOutstanding, 0), `${tag}: zones = due-customer outstanding`);
       close(s.zones.reduce((t: number, z: Json) => t + z.amountCompany, 0), dots.reduce((t: number, x: Json) => t + x.totalOutstandingCompany, 0), `${tag}: zones in LYD`);
       expect(new Set(dots.map((x: Json) => x.customerKey)).size).toBe(dots.length);
@@ -248,7 +250,7 @@ describe.skipIf(!RUN)('Debt Report invariants on the real warehouse (read-only)'
     expect(allMap.body.allCurrencies).toBe(true);
     const as = allMap.body.summary;
     close(as.zones.reduce((t: number, z: Json) => t + z.amount, 0), allMap.body.customers.reduce((t: number, x: Json) => t + x.totalOutstanding, 0), `${label}: all-currencies zones = due-customer outstanding`);
-    expect(allMap.body.customers.every((x: Json) => x.daysPastDue >= 0 && !x.notYetDue)).toBe(true);
+    expect(allMap.body.customers.every((x: Json) => x.daysOverdue >= 0 && !x.notYetDue)).toBe(true);
     expect(allMap.body.customers.length, `${label}: one dot per customer`).toBeLessThanOrEqual(all.customers);
     close(all.openAmount, overview.body.currencies.reduce((t: number, c: Json) => t + c.kpis.openAmountCompany, 0), `${label} all currencies = sum of LYD`);
     expect(all.openDocuments).toBe(overview.body.currencies.reduce((t: number, c: Json) => t + c.kpis.openDocuments, 0));
