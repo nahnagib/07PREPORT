@@ -2,7 +2,7 @@ import { NextFunction, Request, Response, Router } from 'express';
 import { Job as BullJob } from 'bullmq';
 import { requireAuth } from '../../middleware/auth';
 import { requireAdminRole, requirePasswordChangeCleared } from '../../middleware/permission';
-import { getEtlConfig, npsRefresh } from '../../etl/config/etlConfig';
+import { etlScheduleWarning, getEtlConfig, npsRefresh } from '../../etl/config/etlConfig';
 import { computeNextRunTime } from '../../etl/scheduler/nextRunTime';
 import { EtlAlreadyRunningError, EtlJobData, enqueuePipelineRun, getEtlQueue, hasActiveWorker } from '../../etl/queue/etlQueue';
 import { isQueueReachable } from '../../etl/queue/queueHealth';
@@ -91,6 +91,7 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
         nextFinanceRun: nextFinance,
         nextNpsRun: nextNps,
         schedulerEnabled: on,
+        scheduleWarning: etlScheduleWarning(config),
       });
       return;
     }
@@ -109,6 +110,7 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       nextFinanceRun: nextFinance,
       nextNpsRun: nextNps,
       schedulerEnabled: on,
+      scheduleWarning: etlScheduleWarning(config),
     });
   } catch (err) {
     next(err);
@@ -166,6 +168,7 @@ adminEtlControlRouter.get('/scheduler-config', async (_req, res, next) => {
     };
     res.json({
       schedulerEnabled: config.schedulerEnabled,
+      scheduleWarning: etlScheduleWarning(config),
       refresh: { ...info(config.schedule.refreshCron, config.schedule.refreshEnabled), intervalMinutes: config.schedule.refreshIntervalMinutes },
       incremental: info(config.schedule.incrementalCron, config.schedule.incrementalEnabled),
       full: info(config.schedule.fullCron, config.schedule.fullEnabled),

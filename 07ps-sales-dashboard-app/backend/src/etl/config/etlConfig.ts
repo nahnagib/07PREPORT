@@ -23,6 +23,9 @@ export interface EtlConfig {
   /** ETL_WORKER_ENABLED (default false): `npm run etl:worker` consumes the queue and runs jobs. Off, it stays up idle
    * (no restart loop in Docker) and runs nothing. True ONLY on the production server. */
   workerEnabled: boolean;
+  /** ETL_SCHEDULER_OFF_OK=true: this machine (a laptop, staging) runs no ETL ON PURPOSE. Without it, a production build
+   * (NODE_ENV=production) with either switch off warns loudly -- see etlScheduleWarning. Never set on the server. */
+  schedulerOffAcknowledged: boolean;
   schedule: {
     /** The 30-minute refresh (ETL job refresh_30m: the modules in data/etl ETL_REFRESH_MODULES). Every
      * ETL_REFRESH_INTERVAL_MINUTES (default 30; a divisor of 60, so the ticks fall on :00 / :30), or the explicit
@@ -96,6 +99,7 @@ export function getEtlConfig(): EtlConfig {
     logDir: resolveFromBackend(process.env.ETL_LOG_DIR || './logs/etl'),
     schedulerEnabled: bool('ETL_SCHEDULER_ENABLED', false),
     workerEnabled: bool('ETL_WORKER_ENABLED', false),
+    schedulerOffAcknowledged: bool('ETL_SCHEDULER_OFF_OK', false),
     schedule: {
       refreshCron: process.env.ETL_SCHEDULE_REFRESH_CRON?.trim() || cronForInterval(interval),
       refreshEnabled: bool('ETL_SCHEDULE_REFRESH_ENABLED', true),
@@ -134,4 +138,22 @@ export function npsRefresh(schedule: EtlConfig['schedule']): { via: 'full_all' |
   if (schedule.fullEnabled) return { via: 'full_all', cron: schedule.fullCron };
   if (schedule.processNpsEnabled) return { via: 'own', cron: schedule.processNpsCron };
   return { via: 'off', cron: null };
+}
+
+/**
+ * Fail-safe for the server-only switches: a production build (NODE_ENV=production) where the scheduler or the worker is
+ * off, and that has not said so on purpose (ETL_SCHEDULER_OFF_OK=true), gets this message -- logged as an error at
+ * startup and shown as a red banner in the ETL Control Center -- so a forgotten .env line on the server can never drop
+ * the 02:00 full refresh silently. null = nothing to warn about.
+ */
+export function etlScheduleWarning(config: EtlConfig = getEtlConfig(), nodeEnv = process.env.NODE_ENV): string | null {
+  if (nodeEnv !== 'production' || config.schedulerOffAcknowledged) return null;
+  const off = [
+    !config.schedulerEnabled && 'ETL_SCHEDULER_ENABLED',
+    !config.workerEnabled && 'ETL_WORKER_ENABLED',
+  ].filter(Boolean);
+  if (!off.length) return null;
+  return `No ETL schedule is running on this server: ${off.join(' and ')} ${off.length > 1 ? 'are' : 'is'} not true in backend/.env, `
+    + 'so the 30-minute, sales and 02:00 full refreshes do not run. Add the line(s), then recreate backend and etl-worker '
+    + '(docker compose up -d backend etl-worker). On a laptop or staging copy that must not run ETL, set ETL_SCHEDULER_OFF_OK=true.';
 }

@@ -9,7 +9,7 @@ vi.mock('node-cron', () => ({ default: cron }));
 vi.mock('../../queue/etlQueue', () => ({ enqueuePipelineRun: enqueue, EtlAlreadyRunningError: class extends Error {} }));
 vi.mock('../../services/etlLogger', () => ({ etlLogger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 
-import { cronForInterval, getEtlConfig, npsRefresh, refreshIntervalMinutes } from '../../config/etlConfig';
+import { cronForInterval, etlScheduleWarning, getEtlConfig, npsRefresh, refreshIntervalMinutes } from '../../config/etlConfig';
 import { computeNextRunTime, cronFiresInMinute } from '../nextRunTime';
 import { registerEtlSchedules } from '../registerSchedules';
 
@@ -17,7 +17,7 @@ const SCHEDULE_VARS = [
   'ETL_SCHEDULER_ENABLED', 'ETL_SCHEDULE_REFRESH_CRON', 'ETL_SCHEDULE_REFRESH_ENABLED', 'ETL_REFRESH_INTERVAL_MINUTES',
   'ETL_SCHEDULE_INCREMENTAL_CRON', 'ETL_SCHEDULE_INCREMENTAL_ENABLED', 'ETL_SCHEDULE_FULL_CRON', 'ETL_SCHEDULE_FULL_ENABLED',
   'ETL_SCHEDULE_FINANCE_CRON', 'ETL_SCHEDULE_FINANCE_ENABLED', 'ETL_SCHEDULE_PROCESS_NPS_CRON', 'ETL_SCHEDULE_PROCESS_NPS_ENABLED',
-  'ETL_SCHEDULE_TIMEZONE', 'APP_TIMEZONE', 'ETL_WORKER_ENABLED',
+  'ETL_SCHEDULE_TIMEZONE', 'APP_TIMEZONE', 'ETL_WORKER_ENABLED', 'ETL_SCHEDULER_OFF_OK',
 ];
 let saved: Record<string, string | undefined>;
 
@@ -162,5 +162,29 @@ describe('ETL schedules', () => {
     expect((await registered()).map((s) => s.job)).not.toContain('process_nps');
     expect(npsRefresh(getEtlConfig().schedule)).toEqual({ via: 'off', cron: null });
     expect(getEtlConfig().schedule.processNpsCron).toBe('0 2 * * *');
+  });
+});
+
+describe('fail-safe: a production build with the ETL switches off warns', () => {
+  const base = () => getEtlConfig();
+
+  it('warns on NODE_ENV=production when the scheduler or the worker is off, naming the missing line(s)', () => {
+    delete process.env.ETL_SCHEDULER_ENABLED;
+    delete process.env.ETL_WORKER_ENABLED;
+    const both = etlScheduleWarning(base(), 'production');
+    expect(both).toMatch(/^No ETL schedule is running on this server: ETL_SCHEDULER_ENABLED and ETL_WORKER_ENABLED are not true/);
+    process.env.ETL_SCHEDULER_ENABLED = 'true';
+    expect(etlScheduleWarning(base(), 'production')).toMatch(/ETL_WORKER_ENABLED is not true/);
+  });
+
+  it('is silent on the configured server, in development, and where the machine is off on purpose', () => {
+    process.env.ETL_SCHEDULER_ENABLED = 'true';
+    process.env.ETL_WORKER_ENABLED = 'true';
+    expect(etlScheduleWarning(base(), 'production')).toBeNull();
+    delete process.env.ETL_SCHEDULER_ENABLED;
+    expect(etlScheduleWarning(base(), 'development')).toBeNull();
+    process.env.ETL_SCHEDULER_OFF_OK = 'true';
+    expect(etlScheduleWarning(base(), 'production')).toBeNull();
+    delete process.env.ETL_SCHEDULER_OFF_OK;
   });
 });

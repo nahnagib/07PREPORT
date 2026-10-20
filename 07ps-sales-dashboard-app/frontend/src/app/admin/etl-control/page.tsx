@@ -407,6 +407,24 @@ function EtlControlBody() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
       <style>{`@keyframes ps-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }`}</style>
 
+      {(status?.scheduleWarning || schedulerConfig?.scheduleWarning) && (
+        <div
+          role="alert"
+          data-testid="etl-schedule-warning"
+          style={{
+            padding: '12px 16px',
+            borderRadius: 8,
+            background: 'var(--ps-color-alert-bg, #fdecea)',
+            border: '2px solid var(--ps-color-alert-border, #f0868b)',
+            color: 'var(--ps-color-alert)',
+            fontSize: 14,
+            lineHeight: 1.5,
+          }}
+        >
+          <strong style={{ display: 'block', fontSize: 15 }}>No ETL schedule is running on this server</strong>
+          {status?.scheduleWarning ?? schedulerConfig?.scheduleWarning}
+        </div>
+      )}
       {statusError && <ErrorState message={statusError} onRetry={loadStatus} />}
       {actionError && <ErrorState message={actionError} onRetry={() => setActionError(null)} />}
 

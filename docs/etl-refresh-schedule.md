@@ -16,6 +16,11 @@ with BullMQ, `redis`, `etl-api` running `python -m etl_platform.run`; MySQL is t
 | `ETL_SCHEDULER_ENABLED` | the API registers **no** cron schedule | registers the schedules below |
 | `ETL_WORKER_ENABLED` | `etl-worker` stays up idle and never consumes the queue | runs queued jobs, one at a time |
 
+**Fail-safe.** A production build (`NODE_ENV=production`) with either switch off logs an error at startup ("No ETL
+schedule is running on this server: ...", in the backend and the etl-worker logs) and the ETL Control Center shows a red
+banner with the missing line(s). A laptop or staging copy that runs no ETL on purpose sets `ETL_SCHEDULER_OFF_OK=true`
+to silence it; the server never sets it, so a forgotten line can never stop the 02:00 full refresh silently.
+
 Schedules (Africa/Tripoli):
 
 | Schedule | Job | Modules | When |

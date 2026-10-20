@@ -1309,6 +1309,8 @@ export interface EtlStatusResponse {
   nextNpsRun?: string | null;
   /** false = this machine runs no schedule (ETL_SCHEDULER_ENABLED; only the production server has it). */
   schedulerEnabled?: boolean;
+  /** Set on a production build whose scheduler or worker is off without ETL_SCHEDULER_OFF_OK: shown as a red banner. */
+  scheduleWarning?: string | null;
 }
 
 export interface EtlScheduleInfo {
@@ -1321,6 +1323,7 @@ export interface EtlScheduleInfo {
 
 export interface EtlSchedulerConfigResponse {
   schedulerEnabled?: boolean;
+  scheduleWarning?: string | null;
   refresh?: EtlScheduleInfo & { intervalMinutes: number };
   incremental: EtlScheduleInfo;
   full: EtlScheduleInfo;

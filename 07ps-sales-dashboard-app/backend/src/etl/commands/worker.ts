@@ -5,7 +5,7 @@
  * and the `etl-worker` docker-compose service.
  */
 import 'dotenv/config';
-import { getEtlConfig } from '../config/etlConfig';
+import { etlScheduleWarning, getEtlConfig } from '../config/etlConfig';
 import { startEtlWorker } from '../jobs/runPipelineJob';
 import { etlLogger } from '../services/etlLogger';
 
@@ -15,7 +15,9 @@ const worker = getEtlConfig().workerEnabled ? startEtlWorker() : null;
 if (worker) {
   etlLogger.info('ETL worker started, waiting for jobs...');
 } else {
-  etlLogger.info('ETL worker idle: ETL_WORKER_ENABLED is not true on this machine (only the production server runs ETL jobs)');
+  const warning = etlScheduleWarning();
+  if (warning) etlLogger.error(`ETL worker idle -- ${warning}`);
+  else etlLogger.info('ETL worker idle: ETL_WORKER_ENABLED is not true on this machine (only the production server runs ETL jobs)');
   setInterval(() => undefined, 60 * 60 * 1000);
 }
 
