@@ -22,6 +22,7 @@ run the full history on the server.
 from __future__ import annotations
 
 import argparse
+import functools
 import datetime as _dt
 import sys
 from pathlib import Path
@@ -70,6 +71,9 @@ def month_of(utc_text: pd.Series) -> pd.Series:
     return ts.dt.tz_convert(TZ).dt.strftime("%Y-%m")
 
 
+print = functools.partial(print, flush=True)  # noqa: A001 - progress shows in a redirected log
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="date_from", required=True)
@@ -94,7 +98,9 @@ def main() -> int:
 
     # -- 2. base models ----------------------------------------------------------------------------------------------------
     orders = pd.DataFrame(read_all(client, "sale.order", [("date_order", ">=", lo_utc), ("date_order", "<", hi_utc)], ORDER_FIELDS))
-    lines = pd.DataFrame(read_all(client, "sale.order.line", [("order_id", "in", orders["id"].tolist())], LINE_FIELDS))
+    # by the order's date, not "order_id in [ids]": a long window has ~10^5 orders and the id list would be re-sent per page
+    lines = pd.DataFrame(read_all(client, "sale.order.line", [("order_id.date_order", ">=", lo_utc), ("order_id.date_order", "<", hi_utc)],
+                                  LINE_FIELDS))
     prods = pd.DataFrame(read_ids(client, "product.product", lines["product_id"].map(m2o_id).dropna(), ["id", "uom_id"]))
     uoms = pd.DataFrame(read_ids(client, "uom.uom", set(lines["product_uom"].map(m2o_id).dropna()) | set(prods["uom_id"].map(m2o_id).dropna()),
                                  ["id", "factor"]))
