@@ -1,6 +1,8 @@
 """Run start: a short network/DNS outage is retried with backoff; Odoo's own errors are not."""
 
+import http.client
 import socket
+import ssl
 import xmlrpc.client
 
 import pytest
@@ -75,3 +77,60 @@ def test_window_zero_keeps_the_old_attempt_limit(clock) -> None:
     with pytest.raises(OdooApiError):
         c.authenticate()
     assert c._common.calls == 5
+
+
+# -- model calls (execute_kw) ------------------------------------------------------------------------------------
+class FakeModels:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    def execute_kw(self, *_args):
+        self.calls += 1
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def _rpc_client(models: FakeModels, max_retries: int = 5) -> tuple[OdooClient, list[int]]:
+    c = OdooClient("https://example.odoo.com", "db", "user", "key", max_retries=max_retries)
+    c.uid = 7
+    c._models = models
+    reconnects: list[int] = []
+    c._connect = lambda: reconnects.append(1)  # type: ignore[method-assign]
+    return c, reconnects
+
+
+@pytest.mark.parametrize("error", [
+    http.client.IncompleteRead(b"x" * 10),                       # 2026-10-12 sales_incremental
+    http.client.ResponseNotReady("Request-sent"),                # 2026-10-19 sales_incremental
+    http.client.RemoteDisconnected("Remote end closed connection without response"),
+    ssl.SSLEOFError(8, "EOF occurred in violation of protocol"),  # 2026-10-17
+    socket.gaierror(-5, "No address associated with hostname"),  # 2026-10-19
+])
+def test_transport_errors_are_retried_on_a_new_connection(clock, error) -> None:
+    models = FakeModels([error, error, [{"id": 1}]])
+    c, reconnects = _rpc_client(models)
+    assert c.execute_kw("sale.order", "search_read", [[]], {}) == [{"id": 1}]
+    assert models.calls == 3
+    assert len(reconnects) == 2  # a fresh transport before every retry
+    assert 2 <= clock[0] <= 2.5 and 4 <= clock[1] <= 5  # exponential backoff with <= 25% jitter
+
+
+def test_backoff_is_capped_and_the_last_error_is_named(clock) -> None:
+    models = FakeModels([http.client.IncompleteRead(b"")] * 8)
+    c, _ = _rpc_client(models, max_retries=8)
+    with pytest.raises(OdooApiError, match="failed after 8 attempts: IncompleteRead"):
+        c.execute_kw("stock.move", "search_read", [[]], {})
+    assert models.calls == 8
+    assert len(clock) == 7  # no pointless sleep after the last attempt
+    assert max(clock) <= 60 * 1.25
+
+
+def test_odoo_faults_on_model_calls_are_not_retried(clock) -> None:
+    models = FakeModels([xmlrpc.client.Fault(2, "ValueError: Invalid field")])
+    c, reconnects = _rpc_client(models)
+    with pytest.raises(OdooApiError, match="RPC fault"):
+        c.execute_kw("sale.order", "search_read", [[]], {})
+    assert models.calls == 1 and clock == [] and reconnects == []

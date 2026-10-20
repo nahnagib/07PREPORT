@@ -61,7 +61,7 @@ class PlatformConfig:
     # Useful when access to a new company is granted before its numeric Odoo id is known locally.
     odoo_company_names: tuple[str, ...] = ()
     odoo_timeout_seconds: int = 60
-    odoo_max_retries: int = 3
+    odoo_max_retries: int = 5
     odoo_connect_retry_window_seconds: float = 900.0
     odoo_page_size: int = 2000
     odoo_id_chunk_size: int = 500
@@ -78,8 +78,12 @@ class PlatformConfig:
     # a platform run can never write at the same time while both exist.
     lock_name: str = "sales_pipeline_full_load"
     lock_timeout_seconds: int = 30
-    # A department job skips its core_dims dependency when core_dims succeeded this recently.
-    core_dims_fresh_minutes: int = 180
+    # A department job skips its core_dims dependency when core_dims succeeded this recently. 0 (the default since the
+    # 30-minute refresh) = core_dims runs every time: it is incremental, so a cycle with no Odoo change costs seconds.
+    core_dims_fresh_minutes: int = 0
+    # The modules the 30-minute refresh job (refresh_30m) runs, in this order of preference; a module that is not
+    # registered in this build (process_nps before the NPS branch is merged) is skipped with a log line.
+    refresh_modules: tuple[str, ...] = ("core_dims", "finance_receivables", "process_nps")
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "PlatformConfig":
@@ -98,7 +102,7 @@ class PlatformConfig:
             odoo_company_ids=_int_csv_env("ODOO_COMPANY_IDS"),
             odoo_company_names=_text_csv_env("ODOO_COMPANY_NAMES"),
             odoo_timeout_seconds=settings.rpc_timeout_seconds,
-            odoo_max_retries=int(os.getenv("ETL_ODOO_MAX_RETRIES", "3")),
+            odoo_max_retries=int(os.getenv("ETL_ODOO_MAX_RETRIES", "5")),
             odoo_connect_retry_window_seconds=settings.odoo_connect_retry_window_seconds,
             odoo_page_size=int(os.getenv("ETL_ODOO_PAGE_SIZE", "2000")),
             odoo_id_chunk_size=int(os.getenv("ETL_ODOO_ID_CHUNK_SIZE", "500")),
@@ -107,5 +111,6 @@ class PlatformConfig:
             finance_intercompany_partner_ids=_int_csv_env("FINANCE_INTERCOMPANY_PARTNER_IDS"),
             lock_name=os.getenv("ETL_LOCK_NAME", "sales_pipeline_full_load"),
             lock_timeout_seconds=int(os.getenv("ETL_LOCK_TIMEOUT_SECONDS", "30")),
-            core_dims_fresh_minutes=int(os.getenv("ETL_CORE_DIMS_FRESH_MINUTES", "180")),
+            core_dims_fresh_minutes=int(os.getenv("ETL_CORE_DIMS_FRESH_MINUTES", "0")),
+            refresh_modules=_csv_env("ETL_REFRESH_MODULES", "core_dims,finance_receivables,process_nps"),
         )

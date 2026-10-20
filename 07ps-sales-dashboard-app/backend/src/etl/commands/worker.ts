@@ -5,15 +5,23 @@
  * and the `etl-worker` docker-compose service.
  */
 import 'dotenv/config';
+import { getEtlConfig } from '../config/etlConfig';
 import { startEtlWorker } from '../jobs/runPipelineJob';
 import { etlLogger } from '../services/etlLogger';
 
-const worker = startEtlWorker();
-etlLogger.info('ETL worker started, waiting for jobs...');
+// ETL_WORKER_ENABLED=true only on the production server. Anywhere else the process stays up but idle -- it never
+// consumes the queue -- so `docker compose up` on a laptop cannot run an ETL job, and Docker does not restart-loop it.
+const worker = getEtlConfig().workerEnabled ? startEtlWorker() : null;
+if (worker) {
+  etlLogger.info('ETL worker started, waiting for jobs...');
+} else {
+  etlLogger.info('ETL worker idle: ETL_WORKER_ENABLED is not true on this machine (only the production server runs ETL jobs)');
+  setInterval(() => undefined, 60 * 60 * 1000);
+}
 
 async function shutdown(signal: string) {
   etlLogger.info(`Received ${signal}, shutting down ETL worker gracefully...`);
-  await worker.close();
+  await worker?.close();
   process.exit(0);
 }
 

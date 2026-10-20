@@ -35,13 +35,16 @@ const LIVE_LOG_LINES = 50;
 adminEtlControlRouter.get('/status', async (_req, res, next) => {
   try {
     const config = getEtlConfig();
-    const nextIncremental = config.schedule.incrementalEnabled
+    // Nothing is scheduled on a machine without ETL_SCHEDULER_ENABLED (only the production server has it): no next run.
+    const on = config.schedulerEnabled;
+    const nextRefresh = on && config.schedule.refreshEnabled ? computeNextRunTime(config.schedule.refreshCron, config.schedule.timezone) : null;
+    const nextIncremental = on && config.schedule.incrementalEnabled
       ? computeNextRunTime(config.schedule.incrementalCron, config.schedule.timezone)
       : null;
-    const nextFull = config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null;
-    const nextFinance = config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null;
+    const nextFull = on && config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null;
+    const nextFinance = on && config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null;
     const npsPlan = npsRefresh(config.schedule);
-    const nextNps = npsPlan.cron ? computeNextRunTime(npsPlan.cron, config.schedule.timezone) : null;
+    const nextNps = on && npsPlan.cron ? computeNextRunTime(npsPlan.cron, config.schedule.timezone) : null;
 
     // Checked up front so the UI can tell "queue is genuinely unreachable" apart from "a run is
     // genuinely active" -- those used to be indistinguishable (any queued/running row read as
@@ -82,10 +85,12 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
         queueAvailable,
         workerAvailable,
         elapsedMs: Date.now() - (active.started_at ?? active.queued_at).getTime(),
+        nextRefreshRun: nextRefresh,
         nextIncrementalRun: nextIncremental,
         nextFullRun: nextFull,
         nextFinanceRun: nextFinance,
         nextNpsRun: nextNps,
+        schedulerEnabled: on,
       });
       return;
     }
@@ -98,10 +103,12 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       queueAvailable,
       workerAvailable,
       elapsedMs: null,
+      nextRefreshRun: nextRefresh,
       nextIncrementalRun: nextIncremental,
       nextFullRun: nextFull,
       nextFinanceRun: nextFinance,
       nextNpsRun: nextNps,
+      schedulerEnabled: on,
     });
   } catch (err) {
     next(err);
@@ -127,7 +134,7 @@ adminEtlControlRouter.get('/preflight', async (_req, res, next) => {
 });
 
 const VALID_STATUSES: EtlRunStatus[] = ['queued', 'running', ...FINISHED_RUN_STATUSES];
-const VALID_MODES: EtlMode[] = ['incremental', 'full', 'finance', 'nps', 'sql', 'excel'];
+const VALID_MODES: EtlMode[] = ['incremental', 'full', 'finance', 'nps', 'refresh', 'sql', 'excel'];
 
 adminEtlControlRouter.get('/history', async (req: Request, res, next) => {
   try {
@@ -152,33 +159,30 @@ adminEtlControlRouter.get('/history', async (req: Request, res, next) => {
 adminEtlControlRouter.get('/scheduler-config', async (_req, res, next) => {
   try {
     const config = getEtlConfig();
+    const tz = config.schedule.timezone;
+    const info = (cron: string, enabled: boolean) => {
+      const active = config.schedulerEnabled && enabled;
+      return { cron, enabled: active, nextRun: active ? computeNextRunTime(cron, tz) : null };
+    };
     res.json({
-      incremental: {
-        cron: config.schedule.incrementalCron,
-        enabled: config.schedule.incrementalEnabled,
-        nextRun: config.schedule.incrementalEnabled ? computeNextRunTime(config.schedule.incrementalCron, config.schedule.timezone) : null,
-      },
-      full: {
-        cron: config.schedule.fullCron,
-        enabled: config.schedule.fullEnabled,
-        nextRun: config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null,
-      },
-      finance: {
-        cron: config.schedule.financeCron,
-        enabled: config.schedule.financeEnabled,
-        nextRun: config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null,
-      },
-      // NPS runs once a night: inside full_all when the full schedule is on, else on its own schedule (npsRefresh)
+      schedulerEnabled: config.schedulerEnabled,
+      refresh: { ...info(config.schedule.refreshCron, config.schedule.refreshEnabled), intervalMinutes: config.schedule.refreshIntervalMinutes },
+      incremental: info(config.schedule.incrementalCron, config.schedule.incrementalEnabled),
+      full: info(config.schedule.fullCron, config.schedule.fullEnabled),
+      finance: info(config.schedule.financeCron, config.schedule.financeEnabled),
+      // NPS runs once a night: inside full_all when the full schedule is on, else on its own schedule (npsRefresh);
+      // the 30-minute refresh runs it too (ETL_REFRESH_MODULES)
       nps: (() => {
         const plan = npsRefresh(config.schedule);
+        const active = config.schedulerEnabled && plan.via !== 'off';
         return {
           cron: plan.cron ?? config.schedule.processNpsCron,
-          enabled: plan.via !== 'off',
+          enabled: active,
           via: plan.via,
-          nextRun: plan.cron ? computeNextRunTime(plan.cron, config.schedule.timezone) : null,
+          nextRun: active && plan.cron ? computeNextRunTime(plan.cron, tz) : null,
         };
       })(),
-      timezone: config.schedule.timezone,
+      timezone: tz,
     });
   } catch (err) {
     next(err);
@@ -197,12 +201,13 @@ interface StartConfig {
  * loads the warehouse only (no Excel export) and "sql" was a second name for a sales refresh. Sales Refresh = main
  * (core dims -> sales), Full Refresh = full_all (core dims -> receivables -> sales full -> NPS Score), Receivables
  * Snapshot = the job of the 15:00 schedule (finance_receivables), NPS Score = process_nps (the NPS source must be
- * enabled in the ETL, NPS_ENABLED). All take the same lock / one-run-at-a-time guard. */
-const START_CONFIGS: Record<'incremental' | 'full' | 'finance' | 'nps', StartConfig> = {
+ * enabled in the ETL, NPS_ENABLED), 30-minute Refresh = refresh_30m. All take the same lock / one-run-at-a-time guard. */
+const START_CONFIGS: Record<'incremental' | 'full' | 'finance' | 'nps' | 'refresh', StartConfig> = {
   incremental: { job: 'main', mode: 'incremental', loadMode: 'incremental', outputMode: 'sql', fast: true },
   full: { job: 'full_all', mode: 'full', loadMode: 'full', outputMode: 'sql' },
   finance: { job: 'finance_receivables', mode: 'finance', loadMode: 'full', outputMode: 'sql' },
   nps: { job: 'process_nps', mode: 'nps', loadMode: 'full', outputMode: 'sql' },
+  refresh: { job: 'refresh_30m', mode: 'refresh', loadMode: 'incremental', outputMode: 'sql' },
 };
 
 /** Shared by the start-* routes and retry: preflight checks, then enqueue. Returns true if it

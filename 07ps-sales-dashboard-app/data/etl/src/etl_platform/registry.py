@@ -98,6 +98,13 @@ class JobSpec:
     reuse_within_minutes: int | Literal["config"] | None = None
     # False for diagnostics (platform_selfcheck) that must never show up as a data refresh.
     log_run: bool = True
+    # Umbrella jobs only. ``configurable_modules``: run only the dependency jobs listed in ETL_REFRESH_MODULES
+    # (PlatformConfig.refresh_modules); the others are left out of the run, without a log row. ``isolated``: every
+    # dependency is a separate module -- a failed one never stops another, even one that depends on it (finance still
+    # runs on the shared lists of the previous cycle when core_dims fails); the run is 'partial' when some modules
+    # failed and 'failed' only when none succeeded.
+    configurable_modules: bool = False
+    isolated: bool = False
     # Extra etl_run_log values (e.g. the sales order watermark) read in the SAME transaction that flips the
     # run to success, so the log describes exactly what was loaded.
     on_success: "Callable[[Any], Mapping[str, Any]] | None" = field(default=None, compare=False)

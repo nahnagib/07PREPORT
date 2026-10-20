@@ -9,14 +9,15 @@ vi.mock('node-cron', () => ({ default: cron }));
 vi.mock('../../queue/etlQueue', () => ({ enqueuePipelineRun: enqueue, EtlAlreadyRunningError: class extends Error {} }));
 vi.mock('../../services/etlLogger', () => ({ etlLogger: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } }));
 
-import { getEtlConfig, npsRefresh } from '../../config/etlConfig';
-import { computeNextRunTime } from '../nextRunTime';
+import { cronForInterval, getEtlConfig, npsRefresh, refreshIntervalMinutes } from '../../config/etlConfig';
+import { computeNextRunTime, cronFiresInMinute } from '../nextRunTime';
 import { registerEtlSchedules } from '../registerSchedules';
 
 const SCHEDULE_VARS = [
+  'ETL_SCHEDULER_ENABLED', 'ETL_SCHEDULE_REFRESH_CRON', 'ETL_SCHEDULE_REFRESH_ENABLED', 'ETL_REFRESH_INTERVAL_MINUTES',
   'ETL_SCHEDULE_INCREMENTAL_CRON', 'ETL_SCHEDULE_INCREMENTAL_ENABLED', 'ETL_SCHEDULE_FULL_CRON', 'ETL_SCHEDULE_FULL_ENABLED',
   'ETL_SCHEDULE_FINANCE_CRON', 'ETL_SCHEDULE_FINANCE_ENABLED', 'ETL_SCHEDULE_PROCESS_NPS_CRON', 'ETL_SCHEDULE_PROCESS_NPS_ENABLED',
-  'ETL_SCHEDULE_TIMEZONE', 'APP_TIMEZONE',
+  'ETL_SCHEDULE_TIMEZONE', 'APP_TIMEZONE', 'ETL_WORKER_ENABLED',
 ];
 let saved: Record<string, string | undefined>;
 
@@ -24,34 +25,98 @@ beforeEach(() => {
   vi.clearAllMocks();
   saved = Object.fromEntries(SCHEDULE_VARS.map((k) => [k, process.env[k]]));
   for (const k of SCHEDULE_VARS) delete process.env[k];
+  process.env.ETL_SCHEDULER_ENABLED = 'true'; // the server; the default (off) has its own test
 });
 afterEach(() => {
+  vi.useRealTimers();
   for (const [k, v] of Object.entries(saved)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
 });
 
+type Enqueued = { job: string; mode: string; attempts?: number; queueBehindRefresh?: boolean };
+
 /** Registers the schedules and fires each tick once: cron expression, zone and the ETL job it enqueues. */
 async function registered() {
   registerEtlSchedules();
-  const out: { cron: string; timezone: string; job: string; mode: string }[] = [];
+  const out: ({ cron: string; timezone: string } & Enqueued)[] = [];
   for (const [expr, tick, opts] of cron.schedule.mock.calls as unknown as [string, () => void, { timezone: string }][]) {
     tick();
-    const input = (enqueue.mock.calls.at(-1) as unknown as [{ job: string; mode: string }])[0];
-    out.push({ cron: expr, timezone: opts.timezone, job: input.job, mode: input.mode });
+    const input = (enqueue.mock.calls.at(-1) as unknown as [Enqueued])[0];
+    out.push({
+      cron: expr, timezone: opts.timezone, job: input.job, mode: input.mode, attempts: input.attempts,
+      queueBehindRefresh: input.queueBehindRefresh,
+    });
   }
   return out;
 }
 
+/** Fires the registered refresh tick at a given instant; returns the enqueued job, or null when the tick yielded. */
+function refreshTickAt(utcIso: string): Enqueued | null {
+  cron.schedule.mockClear();
+  registerEtlSchedules();
+  const refreshCron = getEtlConfig().schedule.refreshCron;
+  const call = (cron.schedule.mock.calls as unknown as [string, () => void][]).find(([expr]) => expr === refreshCron);
+  expect(call).toBeTruthy();
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(utcIso));
+  enqueue.mockClear();
+  call![1]();
+  vi.useRealTimers();
+  return enqueue.mock.calls.length ? (enqueue.mock.calls[0] as unknown as [Enqueued])[0] : null;
+}
+
 describe('ETL schedules', () => {
-  it('3-hourly main without finance, 02:00 full_all with finance, 15:00 finance_receivables -- all in Africa/Tripoli', async () => {
-    process.env.ETL_SCHEDULE_INCREMENTAL_CRON = '0 */3 * * *';
+  it('registers nothing unless ETL_SCHEDULER_ENABLED=true (a laptop never starts an ETL run)', () => {
+    delete process.env.ETL_SCHEDULER_ENABLED;
+    registerEtlSchedules();
+    expect(cron.schedule).not.toHaveBeenCalled();
+    process.env.ETL_SCHEDULER_ENABLED = 'false';
+    registerEtlSchedules();
+    expect(cron.schedule).not.toHaveBeenCalled();
+    expect(getEtlConfig().workerEnabled).toBe(false); // the worker is off by default too
+  });
+
+  it('defaults: 30-minute refresh, sales at 08:50 11:50 14:50 17:50 20:50, full 02:00, no 15:00 -- all in Africa/Tripoli', async () => {
     expect(await registered()).toEqual([
-      { cron: '0 */3 * * *', timezone: 'Africa/Tripoli', job: 'main', mode: 'incremental' },
-      { cron: '0 2 * * *', timezone: 'Africa/Tripoli', job: 'full_all', mode: 'full' },
-      { cron: '0 15 * * *', timezone: 'Africa/Tripoli', job: 'finance_receivables', mode: 'finance' },
+      { cron: '*/30 * * * *', timezone: 'Africa/Tripoli', job: 'refresh_30m', mode: 'refresh', attempts: 1, queueBehindRefresh: undefined },
+      { cron: '50 8,11,14,17,20 * * *', timezone: 'Africa/Tripoli', job: 'main', mode: 'incremental', attempts: undefined, queueBehindRefresh: true },
+      { cron: '0 2 * * *', timezone: 'Africa/Tripoli', job: 'full_all', mode: 'full', attempts: undefined, queueBehindRefresh: true },
     ]);
+  });
+
+  it('rollback: refresh off and the 15:00 receivables schedule back on', async () => {
+    process.env.ETL_SCHEDULE_FINANCE_ENABLED = 'true';
+    process.env.ETL_SCHEDULE_REFRESH_ENABLED = 'false';
+    expect((await registered()).map((s) => [s.cron, s.job])).toEqual([
+      ['50 8,11,14,17,20 * * *', 'main'], ['0 2 * * *', 'full_all'], ['0 15 * * *', 'finance_receivables'],
+    ]);
+  });
+
+  it('the interval comes from ETL_REFRESH_INTERVAL_MINUTES (a divisor of 60) or an explicit cron', () => {
+    expect(refreshIntervalMinutes('15')).toBe(15);
+    expect(refreshIntervalMinutes('60')).toBe(60);
+    for (const bad of ['7', '0', '90', 'x', undefined]) expect(refreshIntervalMinutes(bad)).toBe(30);
+    expect(cronForInterval(15)).toBe('*/15 * * * *');
+    expect(cronForInterval(60)).toBe('0 * * * *');
+    process.env.ETL_REFRESH_INTERVAL_MINUTES = '20';
+    expect(getEtlConfig().schedule.refreshCron).toBe('*/20 * * * *');
+    process.env.ETL_SCHEDULE_REFRESH_CRON = '5,35 * * * *';
+    expect(getEtlConfig().schedule.refreshCron).toBe('5,35 * * * *');
+  });
+
+  it('the 02:00 refresh tick yields to the full refresh; 02:30 runs', () => {
+    expect(refreshTickAt('2026-10-21T00:00:00.300Z')).toBeNull(); // 02:00 Tripoli
+    expect(refreshTickAt('2026-10-21T00:30:00.300Z')).toMatchObject({ job: 'refresh_30m' });
+  });
+
+  it('a refresh tick in the same minute as the sales schedule yields to it', () => {
+    process.env.ETL_REFRESH_INTERVAL_MINUTES = '10';
+    expect(refreshTickAt('2026-10-21T06:50:00.100Z')).toBeNull(); // 08:50 Tripoli = sales
+    expect(refreshTickAt('2026-10-21T06:40:00.100Z')).toMatchObject({ job: 'refresh_30m' });
+    process.env.ETL_SCHEDULE_INCREMENTAL_ENABLED = 'false'; // no sales schedule -> nothing to yield to
+    expect(refreshTickAt('2026-10-21T06:50:00.100Z')).toMatchObject({ job: 'refresh_30m' });
   });
 
   it('reads the crons in APP_TIMEZONE when ETL_SCHEDULE_TIMEZONE is unset, never the process zone', async () => {
@@ -67,9 +132,11 @@ describe('ETL schedules', () => {
     expect(next?.getUTCMinutes()).toBe(0);
   });
 
-  it('the finance schedule can be switched off on its own', async () => {
-    process.env.ETL_SCHEDULE_FINANCE_ENABLED = 'false';
-    expect((await registered()).map((s) => s.job)).toEqual(['main', 'full_all']);
+  it('cronFiresInMinute matches the whole minute of a tick, in the schedule zone', () => {
+    expect(cronFiresInMinute('0 2 * * *', new Date('2026-10-21T00:00:59Z'), 'Africa/Tripoli')).toBe(true);
+    expect(cronFiresInMinute('0 2 * * *', new Date('2026-10-21T00:01:00Z'), 'Africa/Tripoli')).toBe(false);
+    expect(cronFiresInMinute('0 2 * * *', new Date('2026-10-21T02:00:00Z'), 'Africa/Tripoli')).toBe(false); // 04:00 local
+    expect(cronFiresInMinute('not a cron', new Date(), 'Africa/Tripoli')).toBe(false);
   });
 
   it('NPS Score runs once a night: inside the 02:00 full_all, never also on its own schedule', async () => {

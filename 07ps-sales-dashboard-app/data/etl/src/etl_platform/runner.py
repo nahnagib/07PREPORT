@@ -14,6 +14,10 @@ Failure rules for a job with dependency jobs:
 * an optional dependency (``JobSpec.optional_jobs``, finance in ``full_all``) fails -> everything else still
   runs and keeps its data, and the job ends ``partial`` with "<department> failed: <error>". Nothing is retried
   inside the run; the next scheduled run tries again.
+* an ``isolated`` umbrella job (``refresh_30m``) treats every dependency as a separate module: a failed module is
+  reported and the others still run -- one that needs it (finance after a core_dims failure) runs on what the
+  previous cycle loaded. The failed module's watermarks did not move (they are saved in its load transaction), so
+  the next cycle re-reads the same window. ``partial`` when some modules failed, ``failed`` when none succeeded.
 
 Progress lines ``Pipeline step <task> started|completed|failed`` match the pattern the Node worker already
 parses (runPipelineJob.ts STAGE_PATTERN), so the ETL Control Center shows task progress unchanged.
@@ -187,6 +191,7 @@ class Runner:
         self._sources: dict[str, Any] = {}
         self._done: dict[str, str] = {}
         self._totals: dict[str, dict[str, int]] = {}
+        self._isolated = False  # the top-level job of the current run() is an isolated umbrella (refresh_30m)
         # status of the top-level job of the last run() (success / partial / failed); run.py maps it to an exit code
         self.last_status: str | None = None
 
@@ -204,6 +209,7 @@ class Runner:
         as_of = as_of or _dt.datetime.now(ZoneInfo(self.config.business_timezone)).date()
         self._done = {}
         self._totals = {}
+        self._isolated = job.isolated
         self.last_status = None
         with run_lock(self.engine, self.config.lock_name, self.config.lock_timeout_seconds):
             self._sync_dataset_registry()
@@ -234,10 +240,15 @@ class Runner:
             # Every dependency is attempted even if an earlier one failed (full_all still runs sales when finance
             # fails); a dependency whose own required dependency failed is skipped, not started.
             dep_failures: list[str] = []
-            for dep_name in job.depends_on_jobs:
-                optional = dep_name in job.optional_jobs
+            for dep_name in self._dependencies(job):
+                optional = dep_name in job.optional_jobs or job.isolated
                 failures = optional_failures if optional else dep_failures
                 if self._done.get(dep_name) in NOT_RUN:
+                    if self._isolated:
+                        # isolated run: the module goes on with what the previous cycle loaded for this dependency
+                        logger.warning("Job %s: dependency %s %s earlier in this run; continuing on its previously loaded data",
+                                       job.name, dep_name, self._done[dep_name])
+                        continue
                     failures.append(f"dependency job '{dep_name}' {self._done[dep_name]} earlier in this run")
                     continue
                 if dep_name in self._done:
@@ -279,6 +290,9 @@ class Runner:
                             totals[key] += value
             if dep_failures:
                 raise DependencyFailed("; ".join(dep_failures + optional_failures))
+            if job.isolated and optional_failures and not job.tasks and not any(
+                    self._done.get(d) in (STATUS_SUCCESS, STATUS_PARTIAL, "reused") for d in self._dependencies(job)):
+                raise DependencyFailed("every module failed: " + "; ".join(optional_failures))
 
             ctx = RunContext(self.engine, self.config, self.registry, run_uid, job, as_of, full_refresh, dataset,
                              allow_large_change, quality, WatermarkStore(self.engine), trigger_source, self._sources)
@@ -314,8 +328,27 @@ class Runner:
                         f"{totals['extracted']:,}", f"{totals['loaded']:,}")
         return run_uid
 
+    def _dependencies(self, job: JobSpec) -> list[str]:
+        """The dependency jobs to run, in their declared order: for a ``configurable_modules`` job only those listed in
+        ETL_REFRESH_MODULES (a listed module this build does not register is reported, never an error)."""
+        if not job.configurable_modules:
+            return list(job.depends_on_jobs)
+        wanted = set(self.config.refresh_modules)
+        chosen = [d for d in job.depends_on_jobs if d in wanted]
+        left_out = [d for d in job.depends_on_jobs if d not in wanted]
+        unknown = [m for m in self.config.refresh_modules if m not in job.depends_on_jobs]
+        if left_out:
+            logger.info("Job %s: module(s) not in ETL_REFRESH_MODULES, not run: %s", job.name, ", ".join(left_out))
+        if unknown:
+            logger.warning("Job %s: ETL_REFRESH_MODULES lists module(s) this job cannot run here: %s (available: %s)",
+                           job.name, ", ".join(unknown), ", ".join(job.depends_on_jobs))
+        return chosen
+
     def _failed_requirement(self, job: JobSpec) -> str | None:
-        """The first required dependency of ``job`` that failed or was skipped earlier in this run, else None."""
+        """The first required dependency of ``job`` that failed or was skipped earlier in this run, else None. Never
+        blocks in an isolated run: the module runs on the dependency's previously loaded data."""
+        if self._isolated:
+            return None
         for dep_name in job.depends_on_jobs:
             if dep_name not in job.optional_jobs and self._done.get(dep_name) in NOT_RUN:
                 return dep_name

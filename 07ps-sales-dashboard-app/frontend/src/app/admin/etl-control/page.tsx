@@ -131,6 +131,7 @@ const MODE_LABEL: Record<EtlMode, string> = {
   full: 'Full Refresh',
   finance: 'Receivables Snapshot',
   nps: 'NPS Score',
+  refresh: '30-minute Refresh',
   sql: 'SQL Mode (before 2026-10)',
   excel: 'Excel Mode (before 2026-10)',
 };
@@ -601,7 +602,13 @@ function EtlControlBody() {
         <Card>
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>Next Scheduled Run</h3>
           <dl style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13.5 }}>
-            <InfoRow label="Next Incremental Refresh" value={formatDateTime(status?.nextIncrementalRun ?? null)} stacked />
+            {status?.schedulerEnabled === false && (
+              <p style={{ margin: 0, color: 'var(--ps-color-muted-text)' }}>
+                No schedule runs on this machine (ETL_SCHEDULER_ENABLED is off): only the production server refreshes the data.
+              </p>
+            )}
+            <InfoRow label="Next 30-minute Refresh" value={formatDateTime(status?.nextRefreshRun ?? null)} stacked />
+            <InfoRow label="Next Sales Refresh" value={formatDateTime(status?.nextIncrementalRun ?? null)} stacked />
             <InfoRow label="Next Full Refresh" value={formatDateTime(status?.nextFullRun ?? null)} stacked />
             <InfoRow label="Next Receivables Snapshot" value={formatDateTime(status?.nextFinanceRun ?? null)} stacked />
             <InfoRow label="Next NPS Score refresh" value={formatDateTime(status?.nextNpsRun ?? null)} stacked />
@@ -712,8 +719,24 @@ function EtlControlBody() {
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>Scheduler Settings</h3>
         {schedulerConfig ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, fontSize: 13.5 }}>
+            {schedulerConfig.refresh && (
+              <div>
+                <strong>30-minute Refresh</strong>
+                <p style={{ margin: '4px 0 0', color: 'var(--ps-color-muted-text)' }}>
+                  {schedulerConfig.refresh.enabled ? (
+                    <>
+                      Cron: <code>{schedulerConfig.refresh.cron}</code>
+                      <br />
+                      Next run: {formatDateTime(schedulerConfig.refresh.nextRun)}
+                    </>
+                  ) : (
+                    'Disabled'
+                  )}
+                </p>
+              </div>
+            )}
             <div>
-              <strong>Incremental Refresh</strong>
+              <strong>Sales Refresh</strong>
               <p style={{ margin: '4px 0 0', color: 'var(--ps-color-muted-text)' }}>
                 {schedulerConfig.incremental.enabled ? (
                   <>
@@ -779,10 +802,17 @@ function EtlControlBody() {
           <LoadingSkeleton variant="kpi" />
         )}
         <p style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', margin: '16px 0 0' }}>
-          Configured via <code>ETL_SCHEDULE_INCREMENTAL_CRON</code> / <code>ETL_SCHEDULE_FULL_CRON</code> /{' '}
-          <code>ETL_SCHEDULE_FINANCE_CRON</code> in <code>backend/.env</code>, read in{' '}
-          {schedulerConfig?.timezone ?? 'Africa/Tripoli'} time. Change and recreate the backend to apply. Incremental =
-          reference data + sales; Full = reference data + receivables + sales; Receivables Snapshot = receivables only.
+          {schedulerConfig?.schedulerEnabled === false && (
+            <>
+              <strong>No schedule runs on this machine</strong> (<code>ETL_SCHEDULER_ENABLED</code> is off): only the
+              production server refreshes the data.{' '}
+            </>
+          )}
+          Configured via <code>ETL_REFRESH_INTERVAL_MINUTES</code> / <code>ETL_SCHEDULE_INCREMENTAL_CRON</code> /{' '}
+          <code>ETL_SCHEDULE_FULL_CRON</code> / <code>ETL_SCHEDULE_FINANCE_CRON</code> in <code>backend/.env</code>, read in{' '}
+          {schedulerConfig?.timezone ?? 'Africa/Tripoli'} time. Change and recreate the backend to apply. 30-minute =
+          reference data + receivables and collections + NPS; Sales = reference data + sales; Full = everything, sales
+          rebuilt; Receivables Snapshot = receivables only (off: the 30-minute refresh covers it).
         </p>
       </Card>
 

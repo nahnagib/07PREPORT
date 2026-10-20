@@ -228,3 +228,13 @@ REGISTRY.job(JobSpec("main", "all", depends_on_jobs=("core_dims", "sales_increme
 REGISTRY.job(JobSpec("full_all", "all", depends_on_jobs=("core_dims", "finance_receivables", "sales_full", "process_nps"),
                      optional_jobs=("finance_receivables", "process_nps"), mode="full",
                      description="Nightly pipeline: core dims -> receivables snapshot -> sales (full rebuild) -> NPS Score."))
+
+# refresh_30m = the 30-minute refresh (ETL_SCHEDULE_REFRESH_*, backend registerSchedules.ts): the modules listed in
+# ETL_REFRESH_MODULES, in this order, each isolated (a failed module never stops the next one; it keeps its watermark
+# and the next cycle retries it). Sales is not a candidate until its write_date incremental exists (Phase B): it keeps
+# its own schedule (main). Candidates are the modules registered in this build ("departments.process.jobs", which
+# registers process_nps, is imported before this module).
+REFRESH_CANDIDATES = ("core_dims", "finance_receivables", "process_nps")
+REGISTRY.job(JobSpec("refresh_30m", "all", depends_on_jobs=tuple(j for j in REFRESH_CANDIDATES if j in REGISTRY.jobs),
+                     mode="incremental", configurable_modules=True, isolated=True,
+                     description="30-minute refresh: shared lists -> receivables and collections -> NPS (ETL_REFRESH_MODULES)."))

@@ -200,3 +200,94 @@ def test_missing_meta_schema_is_reported(platform_config, tmp_path):
     r.job(JobSpec("j", "x"))
     with pytest.raises(MetaSchemaError, match="0028"):
         Runner(r, bare, platform_config).run("j")
+
+
+# -- the 30-minute refresh (refresh_30m): configurable, isolated modules ---------------------------------------------
+def _refresh_registry(calls: list[str], *, fail: set[str] = frozenset()) -> Registry:
+    r = _registry(calls, fail=fail)
+
+    def nps(ctx):
+        calls.append("load_nps")
+        if "load_nps" in fail:
+            raise RuntimeError("load_nps exploded")
+        return TaskResult(rows_extracted=3, rows_loaded=3)
+
+    r.task(TaskSpec("load_nps", nps))
+    r.job(JobSpec("process_nps", "process", tasks=("load_nps",), depends_on_jobs=("core_dims",)))
+    r.job(JobSpec("refresh_30m", "all", depends_on_jobs=("core_dims", "finance_receivables", "process_nps"),
+                  mode="incremental", configurable_modules=True, isolated=True))
+    return r
+
+
+def test_refresh_runs_the_configured_modules_in_order_with_one_row_each(platform_engine, platform_config):
+    calls: list[str] = []
+    runner = Runner(_refresh_registry(calls), platform_engine, replace(platform_config, core_dims_fresh_minutes=0))
+    runner.run("refresh_30m", as_of=AS_OF)
+    assert calls == ["build_customer", "build_company", "load_finance", "load_nps"]
+    status = _rows(platform_engine, "SELECT job_name, department, status, parent_run_uid IS NOT NULL FROM etl_run_log ORDER BY run_id")
+    assert status == [("refresh_30m", "all", "success", 0), ("core_dims", "core", "success", 1),
+                      ("finance_receivables", "finance", "success", 1), ("process_nps", "process", "success", 1)]
+    assert runner.last_status == "success"
+
+
+def test_core_dims_runs_every_cycle_when_the_reuse_window_is_zero(platform_engine, platform_config):
+    calls: list[str] = []
+    runner = Runner(_refresh_registry(calls), platform_engine, replace(platform_config, core_dims_fresh_minutes=0))
+    runner.run("refresh_30m", as_of=AS_OF)
+    calls.clear()
+    runner.run("refresh_30m", as_of=AS_OF)  # right after: no 180-minute skip any more
+    assert calls[:2] == ["build_customer", "build_company"]
+
+
+def test_modules_left_out_of_the_list_do_not_run(platform_engine, platform_config, caplog):
+    calls: list[str] = []
+    caplog.set_level(logging.INFO)
+    config = replace(platform_config, core_dims_fresh_minutes=0, refresh_modules=("core_dims", "process_nps", "sales_full"))
+    Runner(_refresh_registry(calls), platform_engine, config).run("refresh_30m", as_of=AS_OF)
+    assert calls == ["build_customer", "build_company", "load_nps"]
+    assert _rows(platform_engine, "SELECT COUNT(*) FROM etl_run_log WHERE job_name = 'finance_receivables'") == [(0,)]
+    assert "not in ETL_REFRESH_MODULES, not run: finance_receivables" in caplog.text
+    assert "cannot run here: sales_full" in caplog.text  # listed but not a module of this job: reported, not an error
+
+
+def test_a_failed_module_never_stops_the_next_one(platform_engine, platform_config):
+    calls: list[str] = []
+    runner = Runner(_refresh_registry(calls, fail={"load_finance"}), platform_engine, replace(platform_config, core_dims_fresh_minutes=0))
+    runner.run("refresh_30m", as_of=AS_OF)  # partial, not an exception
+    assert "load_nps" in calls
+    assert runner.last_status == "partial"
+    status = dict(_rows(platform_engine, "SELECT job_name, status FROM etl_run_log"))
+    assert status == {"refresh_30m": "partial", "core_dims": "success", "finance_receivables": "failed", "process_nps": "success"}
+    msg = _rows(platform_engine, "SELECT error_message FROM etl_run_log WHERE job_name = 'refresh_30m'")[0][0]
+    assert "finance failed" in msg and "load_finance exploded" in msg
+
+
+def test_failed_shared_lists_do_not_stop_the_modules_in_a_refresh(platform_engine, platform_config):
+    """Unlike full_all (test_failed_core_dims_stops_the_departments_that_need_it): the modules run on the shared lists
+    the previous cycle loaded."""
+    calls: list[str] = []
+    runner = Runner(_refresh_registry(calls, fail={"build_company"}), platform_engine, replace(platform_config, core_dims_fresh_minutes=0))
+    runner.run("refresh_30m", as_of=AS_OF)
+    assert "load_finance" in calls and "load_nps" in calls
+    assert calls.count("build_customer") == 1  # core_dims is not retried by each module
+    status = dict(_rows(platform_engine, "SELECT job_name, status FROM etl_run_log"))
+    assert status == {"refresh_30m": "partial", "core_dims": "failed", "finance_receivables": "success", "process_nps": "success"}
+
+
+def test_refresh_fails_when_every_module_failed(platform_engine, platform_config):
+    calls: list[str] = []
+    runner = Runner(_refresh_registry(calls, fail={"build_company", "load_finance", "load_nps"}), platform_engine,
+                    replace(platform_config, core_dims_fresh_minutes=0))
+    with pytest.raises(DependencyFailed, match="every module failed"):
+        runner.run("refresh_30m", as_of=AS_OF)
+    assert dict(_rows(platform_engine, "SELECT job_name, status FROM etl_run_log"))["refresh_30m"] == "failed"
+
+
+def test_isolation_does_not_leak_into_the_next_full_all(platform_engine, platform_config):
+    calls: list[str] = []
+    runner = Runner(_refresh_registry(calls, fail={"build_company"}), platform_engine, replace(platform_config, core_dims_fresh_minutes=0))
+    runner.run("refresh_30m", as_of=AS_OF)
+    calls.clear()
+    with pytest.raises(DependencyFailed):
+        runner.run("full_all", as_of=AS_OF)  # same Runner object: full_all keeps its strict rule
+    assert "load_sales" not in calls and "load_finance" not in calls

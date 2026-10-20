@@ -2,8 +2,9 @@ import { Queue } from 'bullmq';
 import { pool } from '../../db/pool';
 import { getEtlConfig } from '../config/etlConfig';
 import { etlLogger } from '../services/etlLogger';
-import { platformJobFor, type PlatformJob } from '../services/pythonRunner';
+import { platformJobFor, REFRESH_JOB, type PlatformJob } from '../services/pythonRunner';
 import {
+  activeEtlRunJobTypes,
   createQueuedRun,
   EtlLoadMode,
   EtlMode,
@@ -152,6 +153,18 @@ export interface EnqueuePipelineRunInput {
   triggerSource: EtlTriggerSource;
   triggeredByUserId?: number | null;
   triggeredByUserName?: string | null;
+  /** BullMQ attempts (default 3). The 30-minute refresh uses 1: a retry would hold the lock into the next tick, and
+   * the next tick retries anyway (a failed module keeps its watermark). */
+  attempts?: number;
+  /** A scheduled full / sales tick that lands while only 30-minute refreshes are queued or running is queued behind
+   * them (the worker runs one job at a time) instead of being dropped until its next day / next slot. */
+  queueBehindRefresh?: boolean;
+}
+
+/** True when nothing is active, or (queueBehindRefresh) everything active is a 30-minute refresh. */
+async function mayEnqueue(queueBehindRefresh: boolean | undefined): Promise<boolean> {
+  if (!queueBehindRefresh) return !(await hasActiveEtlRun());
+  return (await activeEtlRunJobTypes()).every((jobType) => jobType === REFRESH_JOB);
 }
 
 /**
@@ -175,7 +188,7 @@ function toBullJobId(runId: number): string {
 
 export async function enqueuePipelineRun(input: EnqueuePipelineRunInput) {
   const runId = await withEnqueueGuard(async () => {
-    if (await hasActiveEtlRun()) throw new EtlAlreadyRunningError();
+    if (!(await mayEnqueue(input.queueBehindRefresh))) throw new EtlAlreadyRunningError();
     return createQueuedRun({
       jobType: platformJobFor(input.loadMode, input.job),
       mode: input.mode,
@@ -209,7 +222,7 @@ export async function enqueuePipelineRun(input: EnqueuePipelineRunInput) {
     const job = await withTimeout(
       getEtlQueue().add(input.label, data, {
         jobId,
-        attempts: 3,
+        attempts: input.attempts ?? 3,
         backoff: { type: 'exponential', delay: 30_000 },
         removeOnComplete: { count: 100 },
         removeOnFail: { count: 200 },

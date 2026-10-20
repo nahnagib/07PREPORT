@@ -4,7 +4,7 @@ import { getAppTimezone, utcSqlDateTimeToDate } from '../../lib/timezone';
 import { etlLogger } from './etlLogger';
 
 /** 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform; new runs use incremental/full/finance. */
-export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel' | 'finance' | 'nps';
+export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel' | 'finance' | 'nps' | 'refresh';
 export type EtlLoadMode = 'full' | 'incremental';
 export type EtlOutputMode = 'sql' | 'excel' | 'both';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';
@@ -143,6 +143,13 @@ export async function finishRun(runId: number, input: FinishRunInput): Promise<v
       runId,
     ],
   );
+}
+
+/** job_type of every queued/running run (empty when idle): lets a scheduled full / sales tick queue behind a 30-minute
+ * refresh instead of being dropped (etlQueue.ts enqueuePipelineRun `queueBehindRefresh`). */
+export async function activeEtlRunJobTypes(): Promise<string[]> {
+  const [rows] = await pool.query(`SELECT job_type FROM etl_job_runs WHERE status IN ('queued', 'running')`);
+  return (rows as { job_type: string }[]).map((r) => r.job_type);
 }
 
 export async function hasActiveEtlRun(): Promise<boolean> {

@@ -1156,7 +1156,7 @@ export const adminApi = {
 export type EtlRunStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'skipped';
 /** What an admin can start. 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform. */
 export type EtlStartMode = 'incremental' | 'full' | 'finance' | 'nps';
-export type EtlMode = EtlStartMode | 'sql' | 'excel';
+export type EtlMode = EtlStartMode | 'refresh' | 'sql' | 'excel';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';
 
 export interface EtlJobRun {
@@ -1299,12 +1299,16 @@ export interface EtlStatusResponse {
    * is true; the backend reports false here too when the queue itself can't be reached. */
   workerAvailable: boolean;
   elapsedMs: number | null;
+  /** The 30-minute refresh (refresh_30m: shared lists, receivables + collections, NPS). */
+  nextRefreshRun?: string | null;
   nextIncrementalRun: string | null;
   nextFullRun: string | null;
-  /** The daily receivables snapshot (finance_receivables alone, 15:00 by default). */
+  /** The old daily receivables snapshot (finance_receivables alone, 15:00): off by default since the 30-minute refresh. */
   nextFinanceRun?: string | null;
   /** The NPS Score refresh (process_nps alone, every 3 h at :30; off unless enabled). */
   nextNpsRun?: string | null;
+  /** false = this machine runs no schedule (ETL_SCHEDULER_ENABLED; only the production server has it). */
+  schedulerEnabled?: boolean;
 }
 
 export interface EtlScheduleInfo {
@@ -1316,6 +1320,8 @@ export interface EtlScheduleInfo {
 }
 
 export interface EtlSchedulerConfigResponse {
+  schedulerEnabled?: boolean;
+  refresh?: EtlScheduleInfo & { intervalMinutes: number };
   incremental: EtlScheduleInfo;
   full: EtlScheduleInfo;
   finance: EtlScheduleInfo;

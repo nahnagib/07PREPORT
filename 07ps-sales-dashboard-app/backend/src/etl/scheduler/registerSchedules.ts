@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { getEtlConfig, npsRefresh } from '../config/etlConfig';
 import { EtlAlreadyRunningError, enqueuePipelineRun } from '../queue/etlQueue';
 import { etlLogger } from '../services/etlLogger';
+import { cronFiresInMinute } from './nextRunTime';
 
 /**
  * Replaces the Windows Task Scheduler + scheduler.py combo: called once from server.ts at API
@@ -10,14 +11,22 @@ import { etlLogger } from '../services/etlLogger';
  * schedules are independently configurable/disable-able via .env (ETL_SCHEDULE_*), matching the
  * "every hour / every 30 minutes / every night" flexibility asked for.
  *
- * Three schedules, all read in config.schedule.timezone (ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE):
- *   incremental  ETL job `main`               core dims -> sales incremental (no finance)    every 3 h
+ * Nothing is registered unless ETL_SCHEDULER_ENABLED=true -- set ONLY in the production server's backend/.env, so a
+ * laptop or a test copy of the app never starts an ETL run by itself (docs/etl-refresh-schedule.md).
+ *
+ * Schedules, all read in config.schedule.timezone (ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE):
+ *   refresh      ETL job `refresh_30m`         shared lists -> receivables + collections -> NPS  every 30 min
+ *                (ETL_REFRESH_MODULES in data/etl; each module isolated). Yields when the full or sales schedule
+ *                fires in the same minute; skipped while any other run is queued or running; one BullMQ attempt.
+ *   incremental  ETL job `main`               core dims -> sales incremental (no finance)    08:50 11:50 14:50 17:50 20:50
  *   full         ETL job `full_all`           core dims -> receivables -> sales full         02:00
- *   finance      ETL job `finance_receivables` core dims (reused when fresh) -> receivables   15:00
- *   nps          ETL job `process_nps`         core dims (reused when fresh) -> NPS Score     02:00, full reload
+ *   finance      ETL job `finance_receivables` core dims -> receivables + collections         15:00, OFF by default
+ *                (the refresh covers it)
+ *   nps          ETL job `process_nps`         core dims -> NPS Score                         02:00, full reload
  *                ONLY when the full schedule is off: full_all already ends with process_nps, so NPS runs exactly
  *                once a night (npsRefresh). Off unless ETL_SCHEDULE_PROCESS_NPS_ENABLED=true; the ETL's NPS_ENABLED
- *                must be true too.
+ *                must be true too. The 30-minute refresh also runs process_nps (ETL_REFRESH_MODULES).
+ * The full and sales ticks queue behind a running refresh instead of being dropped (queueBehindRefresh).
  */
 /** A tick that lands while a run is still active is skipped, not queued behind it (that would build
  * a backlog after any long run) -- the next tick simply tries again. */
@@ -33,6 +42,42 @@ function onScheduledEnqueueError(kind: string) {
 
 export function registerEtlSchedules(): void {
   const config = getEtlConfig();
+
+  if (!config.schedulerEnabled) {
+    etlLogger.info('ETL schedules not registered: ETL_SCHEDULER_ENABLED is not true on this machine (only the production server runs them)');
+    return;
+  }
+
+  if (config.schedule.refreshEnabled) {
+    if (!cron.validate(config.schedule.refreshCron)) {
+      etlLogger.error('Invalid ETL_SCHEDULE_REFRESH_CRON -- 30-minute refresh not registered', { cron: config.schedule.refreshCron });
+    } else {
+      cron.schedule(config.schedule.refreshCron, () => {
+        const now = new Date();
+        const tz = config.schedule.timezone;
+        const yieldsTo = config.schedule.fullEnabled && cronFiresInMinute(config.schedule.fullCron, now, tz) ? 'full refresh'
+          : config.schedule.incrementalEnabled && cronFiresInMinute(config.schedule.incrementalCron, now, tz) ? 'sales refresh'
+            : null;
+        if (yieldsTo) {
+          etlLogger.info(`Scheduled 30-minute refresh tick skipped -- the ${yieldsTo} runs this minute`);
+          return;
+        }
+        etlLogger.info('Scheduled 30-minute refresh tick -- enqueueing job');
+        enqueuePipelineRun({
+          job: 'refresh_30m',
+          mode: 'refresh',
+          loadMode: 'incremental',
+          outputMode: 'sql',
+          label: 'scheduled-refresh',
+          triggerSource: 'scheduled',
+          attempts: 1,
+        }).catch(onScheduledEnqueueError('30-minute refresh'));
+      }, { timezone: config.schedule.timezone });
+      etlLogger.info('Registered 30-minute refresh schedule', { cron: config.schedule.refreshCron, timezone: config.schedule.timezone });
+    }
+  } else {
+    etlLogger.info('30-minute refresh schedule disabled (ETL_SCHEDULE_REFRESH_ENABLED=false)');
+  }
 
   if (config.schedule.incrementalEnabled) {
     if (!cron.validate(config.schedule.incrementalCron)) {
@@ -50,6 +95,7 @@ export function registerEtlSchedules(): void {
           fast: true,
           label: 'scheduled-incremental',
           triggerSource: 'scheduled',
+          queueBehindRefresh: true,
         }).catch(onScheduledEnqueueError('incremental'));
       }, { timezone: config.schedule.timezone });
       etlLogger.info('Registered incremental ETL schedule', { cron: config.schedule.incrementalCron, timezone: config.schedule.timezone });
@@ -73,6 +119,7 @@ export function registerEtlSchedules(): void {
           outputMode: 'sql',
           label: 'scheduled-full',
           triggerSource: 'scheduled',
+          queueBehindRefresh: true,
         }).catch(onScheduledEnqueueError('full'));
       }, { timezone: config.schedule.timezone });
       etlLogger.info('Registered full-refresh ETL schedule', { cron: config.schedule.fullCron, timezone: config.schedule.timezone });
@@ -124,6 +171,7 @@ export function registerEtlSchedules(): void {
           outputMode: 'sql',
           label: 'scheduled-nps',
           triggerSource: 'scheduled',
+          queueBehindRefresh: true,
         }).catch(onScheduledEnqueueError('nps'));
       }, { timezone: config.schedule.timezone });
       etlLogger.info('Registered NPS Score schedule', { cron: config.schedule.processNpsCron, timezone: config.schedule.timezone });

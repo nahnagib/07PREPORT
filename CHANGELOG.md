@@ -6,6 +6,19 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (ETL: 30-minute refresh, Phase A, 2026-10-20; runbook `docs/etl-refresh-schedule.md`)
+- **Server only:** `ETL_SCHEDULER_ENABLED` / `ETL_WORKER_ENABLED` (default false) gate the cron schedules and the queue
+  worker; only the production server's `backend/.env` sets them to true. The retired `data/ingestion/scheduler.py` refuses
+  to start unless `LEGACY_INGESTION_SCHEDULER_ENABLED=true`.
+- **New job `refresh_30m`** every 30 minutes (`ETL_REFRESH_INTERVAL_MINUTES`): shared lists -> receivables + collections
+  -> NPS (`ETL_REFRESH_MODULES`), each module isolated (own run row, a failure never stops the next module). Yields to
+  the 02:00 full and the sales ticks of the same minute; those queue behind a running refresh instead of being dropped.
+  One BullMQ attempt. Sales keeps 08:50 11:50 14:50 17:50 20:50 until Phase B; the 15:00 receivables run is off.
+- **core_dims** runs in every job (`ETL_CORE_DIMS_FRESH_MINUTES` default 180 -> 0).
+- **Odoo retries:** `IncompleteRead`, `ResponseNotReady`, `RemoteDisconnected` and TLS errors are retried too, with
+  exponential backoff (2-60 s + jitter) on a fresh connection; `ETL_ODOO_MAX_RETRIES` default 3 -> 5.
+- ETL Control Center shows the 30-minute refresh (next run, scheduler settings, run history label). User manual refresh
+  table updated (EN + AR sources; the PDFs need a rebuild).
 ### Changed (Process: NPS Score page, round 4, 2026-10-20; docs/nps-etl.md sections 11-12)
 - **Year-to-date by default** (1 January → today, Tripoli) for every visual, with a `YTD · 01 Jan – 20 Oct 2026` label
   next to "Data refreshed" (the chosen range when the date filter changes).

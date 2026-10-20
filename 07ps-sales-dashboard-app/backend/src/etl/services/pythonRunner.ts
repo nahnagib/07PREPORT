@@ -7,9 +7,13 @@ export type OutputMode = 'sql' | 'excel' | 'both';
 
 /** ETL platform jobs (data/etl/src/etl_platform, `python -m etl_platform.run <job>`) the backend starts. `main` = core
  * dims -> sales incremental; `full_all` = core dims -> receivables snapshot -> sales full -> NPS Score;
- * `finance_receivables` = the receivables snapshot alone; `process_nps` = the NPS Score alone (each reuses a fresh
- * core dims). */
-export type PlatformJob = 'main' | 'sales_incremental' | 'sales_full' | 'full_all' | 'core_dims' | 'finance_receivables' | 'process_nps';
+ * `finance_receivables` = the receivables snapshot alone; `process_nps` = the NPS Score alone; `refresh_30m` = the
+ * 30-minute refresh (the modules in ETL_REFRESH_MODULES, each isolated). */
+export type PlatformJob =
+  | 'main' | 'sales_incremental' | 'sales_full' | 'full_all' | 'core_dims' | 'finance_receivables' | 'process_nps' | 'refresh_30m';
+
+/** The job the 30-minute schedule runs: a scheduled full / sales tick may queue behind it (it is short). */
+export const REFRESH_JOB: PlatformJob = 'refresh_30m';
 
 /** Callers that only say full/incremental: full = full_all, incremental = main. */
 export function platformJobFor(loadMode: LoadMode, job?: PlatformJob | null): PlatformJob {
