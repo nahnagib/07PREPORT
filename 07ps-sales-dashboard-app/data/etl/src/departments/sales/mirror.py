@@ -208,6 +208,13 @@ class MirrorStore:
                                    "mirrored_at_utc = excluded.mirrored_at_utc, run_uid = excluded.run_uid"), chunk)
         return changed
 
+    def missing_parents(self, child: str, parent: str) -> list[int]:
+        """Parents referenced by mirrored children but not mirrored themselves (created between the parent read and the
+        child read of the same sync, e.g. during the first fill)."""
+        return [int(r[0]) for r in self.conn.execute(text(
+            "SELECT DISTINCT c.parent_id FROM raw_odoo_mirror c LEFT JOIN raw_odoo_mirror p ON p.model = :p AND p.company_ctx = 0 "
+            "AND p.record_id = c.parent_id WHERE c.model = :c AND c.parent_id IS NOT NULL AND p.record_id IS NULL"), {"p": parent, "c": child})]
+
     def child_ids(self, model: str, parents: Sequence[int]) -> dict[int, int]:
         """child id -> parent id for the mirrored children of ``parents``."""
         out: dict[int, int] = {}
@@ -495,6 +502,12 @@ class MirrorSync:
             unseen = odoo - set(mirrored) - changed_ids.get(child, set())
             if unseen:  # a child of a changed parent that the write_date read did not bring (missed transaction)
                 changed_ids.setdefault(child, set()).update(self._reread(child, unseen, f"{parent} -> {child}"))
+        # a child whose parent is not mirrored (the parent was created after this sync read the parents): read the parent
+        # now, so the mirror never holds lines of an order it does not have
+        for child, (parent, _) in CHILDREN.items():
+            missing = set(self.store.missing_parents(child, parent))
+            if missing:
+                changed_ids.setdefault(parent, set()).update(self._reread(parent, missing, f"{child} -> missing {parent}"))
         # product.template -> its variants (name / display_name come from the template)
         wm, since, started = self._rule_since("product.template")
         if since is not None:

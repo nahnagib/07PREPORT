@@ -237,3 +237,23 @@ def test_rows_read_are_counted_per_model():
     oc._count_rows("sale.order", [{}, {}])
     oc._count_rows("stock.quant", [{}])
     assert oc.rows_read_since(before) == {"sale.order": 2, "stock.quant": 1}
+
+
+def test_a_line_of_an_order_created_after_the_order_read_brings_its_order(engine, odoo):
+    _sync(engine, odoo, 0)
+    real = odoo.search_read
+
+    def racing(model, domain, fields, **kw):
+        # the order and its line are created after this sync read (and id-checked) the orders, before it reads the lines
+        if model == "sale.order.line" and 2 not in odoo.db["sale.order"]:
+            odoo.put("sale.order", id=2, name="S00002", partner_id=[100, "ACME"], company_id=[1, "Majaal"], currency_id=[102, "LYD"],
+                     currency_rate=1.0, state="draft", write_date=_w(25))
+            odoo.put("sale.order.line", id=21, order_id=[2, "S00002"], product_id=[500, "[GR] Grout"], product_uom=[1, "Units"],
+                     write_date=_w(25))
+        return real(model, domain, fields, **kw)
+
+    odoo.search_read = racing
+    res = _sync(engine, odoo, 30)
+    assert _payload(engine, "sale.order.line", 21) is not None
+    assert _payload(engine, "sale.order", 2)["name"] == "S00002"  # never lines of an order the mirror does not have
+    assert res.rule_rereads["sale.order.line -> missing sale.order"] == 1
