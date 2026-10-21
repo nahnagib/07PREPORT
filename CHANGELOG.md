@@ -34,6 +34,22 @@ actually landed in git history plus what's currently uncommitted.
   exponential backoff (2-60 s + jitter) on a fresh connection; `ETL_ODOO_MAX_RETRIES` default 3 -> 5.
 - ETL Control Center shows the 30-minute refresh (next run, scheduler settings, run history label). User manual refresh
   table updated (EN + AR sources; the PDFs need a rebuild).
+
+### Changed (Receivables and Collections: Credit Policy Escalation shows the OVERDUE amount, 2026-10-21)
+- **Overdue amount:** each customer's overdue amount is the sum of its open lines whose overdue date (the line's own
+  due date, else its invoice's resolved due date, + `OVERDUE_OFFSET_DAYS`) is on or before the snapshot date. Lines
+  due that day or later are not counted, and negative lines still lower the amount. In the All-currencies view the
+  amount is in LYD; in a single-currency view it is in that currency.
+  - The API adds `overdueAmount`, `overdueAmountCompany` and `overdueInvoiceCount` (unpaid invoices with at least one
+    overdue open line).
+- **Chart:**
+  - The dot size and the zone header totals now use the overdue amount; the legend reads "Dot size = overdue amount".
+  - The tooltip shows "Overdue amount LYD" (bold) and "Overdue invoices". Below them, a muted "Total open balance LYD"
+    line keeps the old total for reference.
+  - The foreign-currency view also shows the overdue amount and the total open balance in the invoice currency.
+- **Example:** customer 22006 (Majaal, USD invoices), 21 Oct 2026: overdue ≈ LYD 4,880,890 (USD 488,089) of a total
+  open balance of LYD 5,226,790 (USD 522,679). 1 of its 3 unpaid invoices is overdue.
+
 ### Changed (Process: NPS Score page, round 4, 2026-10-20; docs/nps-etl.md sections 11-12)
 - **Year-to-date by default** (1 January → today, Tripoli) for every visual, with a `YTD · 01 Jan – 20 Oct 2026` label
   next to "Data refreshed" (the chosen range when the date filter changes).

@@ -21,7 +21,7 @@ import {
 
 /** Four main statuses; BLOCK contains three action ranges with the same owner and colour.
  * Placement uses the days overdue of the oldest unpaid invoice (from its overdue date = the day after its due date),
- * size uses total outstanding, y avoids overlap.
+ * size uses the overdue amount (zone totals too), y avoids overlap.
  * Hover/focus shows policy details; click/Enter opens the customer's unpaid invoices. */
 
 export interface CreditPolicyChartProps {
@@ -104,7 +104,7 @@ export function CreditPolicyChart({ data, loading, error, onRetry, term, onTermC
       )}
 
       <div aria-label="Legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
-        <span>Dot size = amount outstanding</span>
+        <span>Dot size = overdue amount</span>
         <span>Position = days overdue of the oldest unpaid invoice (from overdue date)</span>
         <span>Each customer appears once</span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -249,7 +249,7 @@ function Dot({
   onHover: (c: CreditCustomer | null, anchor?: Element) => void; onClick: (c: CreditCustomer) => void;
 }) {
   const blocked = zone.key === 'BLOCK';
-  const label = `${c.customer} · ${days(c.daysOverdue)} overdue · ${zone.label} (${zone.owner}) · ${money(c.totalOutstanding)}${nextText ? ` · ${nextText}` : ''}`;
+  const label = `${c.customer} · ${days(c.daysOverdue)} overdue · ${zone.label} (${zone.owner}) · ${money(c.overdueAmount)} overdue${nextText ? ` · ${nextText}` : ''}`;
   return (
     <g
       role="button"
@@ -325,9 +325,12 @@ function DotTooltip({ c, anchor, zones, money, foreign }: { c: CreditCustomer; a
         </div>
       ) : null}
       <dl style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '4px 12px', margin: '8px 0 0' }}>
-        <Fact k="Total Outstanding LYD" v={<strong style={mono}>{formatMoney(COMPANY_CURRENCY, c.totalOutstandingCompany)}</strong>} />
-        {foreign ? <Fact k="Invoice currency" v={<span style={mono}>{money(c.totalOutstanding)}</span>} /> : null}
-        <Fact k="Unpaid invoices" v={<span style={mono}>{formatNumber(c.unpaidInvoiceCount)}</span>} />
+        <Fact k="Overdue amount LYD" v={<strong style={mono}>{formatMoney(COMPANY_CURRENCY, c.overdueAmountCompany)}</strong>} />
+        {foreign ? <Fact k="Overdue, invoice currency" v={<strong style={mono}>{money(c.overdueAmount)}</strong>} /> : null}
+        <Fact k="Overdue invoices" v={<span style={mono}>{formatNumber(c.overdueInvoiceCount)}</span>} />
+        {/* reference only: every open line, overdue or not */}
+        <Fact muted k="Total open balance LYD" v={<span style={mono}>{formatMoney(COMPANY_CURRENCY, c.totalOutstandingCompany)}</span>} />
+        {foreign ? <Fact muted k="Total open, invoice currency" v={<span style={mono}>{money(c.totalOutstanding)}</span>} /> : null}
         <Fact k="Oldest invoice" v={c.oldestInvoiceNumber ?? '—'} />
         <Fact k="Invoice date" v={formatDate(c.oldestInvoiceDate)} />
         <Fact k="Due date" v={formatDate(c.oldestDueDate)} />
@@ -346,11 +349,12 @@ function DotTooltip({ c, anchor, zones, money, foreign }: { c: CreditCustomer; a
   );
 }
 
-function Fact({ k, v }: { k: string; v: React.ReactNode }) {
+function Fact({ k, v, muted }: { k: string; v: React.ReactNode; muted?: boolean }) {
+  const small: React.CSSProperties = muted ? { fontSize: 11, color: 'var(--ps-color-muted-text)' } : {};
   return (
     <>
-      <dt style={{ color: 'var(--ps-color-muted-text)', whiteSpace: 'nowrap' }}>{k}</dt>
-      <dd style={{ margin: 0, minWidth: 0, overflowWrap: 'anywhere' }}>{v}</dd>
+      <dt style={{ color: 'var(--ps-color-muted-text)', whiteSpace: 'nowrap', ...small }}>{k}</dt>
+      <dd style={{ margin: 0, minWidth: 0, overflowWrap: 'anywhere', ...small }}>{v}</dd>
     </>
   );
 }

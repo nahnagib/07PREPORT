@@ -14,7 +14,7 @@ import type { AddressInfo } from 'node:net';
  *      config/creditPolicy.ts; the Customers table's bucket = the chart's zone for every customer.
  *   2. The Debt Report invariants, per currency and for All currencies (LYD), with the defaults, one company (Majaal)
  *      and both toggles on: Overdue + Not yet due = Total debt (in the invoice currency and in LYD); both shares
- *      between 0% and 100%; the chart's four zone totals = due-customer outstanding; the toggles never change them.
+ *      between 0% and 100%; the chart's four zone totals = the dots' overdue amounts; the toggles never change them.
  */
 const RUN = process.env.DEBT_TEST_DB === '1';
 
@@ -100,6 +100,9 @@ describe.skipIf(!RUN)('Credit Policy Escalation on the real warehouse (read-only
   const independent = async (extra = '', params: unknown[] = []) => {
     const invoices = await qa(
       `SELECT cur.currency, f.CustomerKey, f.move_id, SUM(f.residual_doc_ccy) AS residual, SUM(f.residual_company_ccy) AS residual_company,
+              -- overdue: the line's due date (else the invoice's) + 1 day on or before the snapshot date
+              SUM(CASE WHEN COALESCE(f.due_date, i.invoice_final_due_date) < STR_TO_DATE(f.SnapshotDateKey, '%Y%m%d') THEN f.residual_doc_ccy ELSE 0 END) AS overdue,
+              SUM(CASE WHEN COALESCE(f.due_date, i.invoice_final_due_date) < STR_TO_DATE(f.SnapshotDateKey, '%Y%m%d') THEN f.residual_company_ccy ELSE 0 END) AS overdue_company,
               DATE_FORMAT(MIN(CASE WHEN f.residual_doc_ccy > 0 THEN f.due_date END), '%Y-%m-%d') AS due
        FROM fact_finance_receivable_snapshot f
        JOIN dim_currency cur ON cur.CurrencyKey = f.CurrencyKey
@@ -110,12 +113,14 @@ describe.skipIf(!RUN)('Credit Policy Escalation on the real warehouse (read-only
        GROUP BY cur.currency, f.CustomerKey, f.move_id`,
       [snap, ...params],
     );
-    const by = new Map<string, { currency: string; customer: number; total: number; totalCompany: number; due: string | null; unpaid: number }>();
+    const by = new Map<string, { currency: string; customer: number; total: number; totalCompany: number; overdue: number; overdueCompany: number; due: string | null; unpaid: number }>();
     for (const r of invoices) {
       const k = `${r.CustomerKey}|${r.currency}`;
-      const g = by.get(k) ?? { currency: String(r.currency), customer: n(r.CustomerKey), total: 0, totalCompany: 0, due: null, unpaid: 0 };
+      const g = by.get(k) ?? { currency: String(r.currency), customer: n(r.CustomerKey), total: 0, totalCompany: 0, overdue: 0, overdueCompany: 0, due: null, unpaid: 0 };
       g.total += n(r.residual);
       g.totalCompany += n(r.residual_company);
+      g.overdue += n(r.overdue);
+      g.overdueCompany += n(r.overdue_company);
       if (n(r.residual) > 0 && r.due) {
         g.unpaid += 1;
         if (g.due === null || r.due < g.due) g.due = String(r.due);
@@ -145,6 +150,8 @@ describe.skipIf(!RUN)('Credit Policy Escalation on the real warehouse (read-only
         expect(g.zone).toBe(zoneOf(days));
         expect(Math.abs(g.totalOutstanding - w.total)).toBeLessThan(0.000001);
         expect(Math.abs(g.totalOutstandingCompany - w.totalCompany)).toBeLessThan(0.000001);
+        expect(Math.abs(g.overdueAmount - w.overdue), `${c} ${w.customer} overdue`).toBeLessThan(0.000001);
+        expect(Math.abs(g.overdueAmountCompany - w.overdueCompany), `${c} ${w.customer} overdue LYD`).toBeLessThan(0.000001);
         expect(g.unpaidInvoiceCount).toBe(w.unpaid);
       }
     }
@@ -213,7 +220,7 @@ describe.skipIf(!RUN)('Debt Report invariants on the real warehouse (read-only)'
     ['both toggles on', 'includeOther=true&includeIntercompany=true'],
   ];
 
-  it.each(SCOPES)('%s: Overdue + Not yet due = Total debt (invoice currency and LYD), both shares in [0%%, 100%%], escalation zones = due-customer outstanding', async (label, qs) => {
+  it.each(SCOPES)('%s: Overdue + Not yet due = Total debt (invoice currency and LYD), both shares in [0%%, 100%%], escalation zones = overdue amounts', async (label, qs) => {
     const sep = qs ? `?${qs}` : '';
     const overview = await get(`/debt-report/overview${sep}`);
     expect(overview.status).toBe(200);
@@ -237,8 +244,8 @@ describe.skipIf(!RUN)('Debt Report invariants on the real warehouse (read-only)'
       const s = map.body.summary;
       const dots = map.body.customers;
       expect(dots.every((x: Json) => x.daysOverdue >= 0 && !x.notYetDue)).toBe(true);
-      close(s.zones.reduce((t: number, z: Json) => t + z.amount, 0), dots.reduce((t: number, x: Json) => t + x.totalOutstanding, 0), `${tag}: zones = due-customer outstanding`);
-      close(s.zones.reduce((t: number, z: Json) => t + z.amountCompany, 0), dots.reduce((t: number, x: Json) => t + x.totalOutstandingCompany, 0), `${tag}: zones in LYD`);
+      close(s.zones.reduce((t: number, z: Json) => t + z.amount, 0), dots.reduce((t: number, x: Json) => t + x.overdueAmount, 0), `${tag}: zones = overdue amounts`);
+      close(s.zones.reduce((t: number, z: Json) => t + z.amountCompany, 0), dots.reduce((t: number, x: Json) => t + x.overdueAmountCompany, 0), `${tag}: zones in LYD`);
       expect(new Set(dots.map((x: Json) => x.customerKey)).size).toBe(dots.length);
       expect(dots.length).toBeLessThanOrEqual(k.customers);
       expect(s.zones.reduce((t: number, z: Json) => t + z.customers, 0)).toBe(dots.length);
@@ -249,7 +256,7 @@ describe.skipIf(!RUN)('Debt Report invariants on the real warehouse (read-only)'
     const allMap = await get(`/debt-report/aging?allCurrencies=true${qs ? `&${qs}` : ''}`);
     expect(allMap.body.allCurrencies).toBe(true);
     const as = allMap.body.summary;
-    close(as.zones.reduce((t: number, z: Json) => t + z.amount, 0), allMap.body.customers.reduce((t: number, x: Json) => t + x.totalOutstanding, 0), `${label}: all-currencies zones = due-customer outstanding`);
+    close(as.zones.reduce((t: number, z: Json) => t + z.amount, 0), allMap.body.customers.reduce((t: number, x: Json) => t + x.overdueAmount, 0), `${label}: all-currencies zones = overdue amounts`);
     expect(allMap.body.customers.every((x: Json) => x.daysOverdue >= 0 && !x.notYetDue)).toBe(true);
     expect(allMap.body.customers.length, `${label}: one dot per customer`).toBeLessThanOrEqual(all.customers);
     close(all.openAmount, overview.body.currencies.reduce((t: number, c: Json) => t + c.kpis.openAmountCompany, 0), `${label} all currencies = sum of LYD`);

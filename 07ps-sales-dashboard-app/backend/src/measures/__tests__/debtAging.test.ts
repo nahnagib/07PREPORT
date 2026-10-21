@@ -253,3 +253,52 @@ describe('status, owner and action at every policy edge', () => {
     expect(v.summary.zones.find((z) => z.key === 'BLOCK')).toMatchObject({ customers: 1, amount: 100, amountCompany: 650 });
   });
 });
+
+describe('overdue amount (2026-10-21): only lines whose own overdue date is on or before the as-of date', () => {
+  const asOf = '2026-10-20';
+  const one = (ls: CreditLine[]) => [...placeCustomers(ls, asOf, false).values()][0];
+
+  it('one overdue invoice (100) + one not-yet-due invoice (400): overdue 100, total open 500; the zone total uses 100', () => {
+    const ls = [
+      line({ CustomerKey: 1, move_id: 1, due_date: '2026-10-10', residual: 100 }),
+      line({ CustomerKey: 1, move_id: 2, due_date: '2026-11-15', residual: 400 }),
+    ];
+    expect(one(ls)).toMatchObject({ zone: 'GREEN', overdueAmount: 100, overdueAmountCompany: 100, totalOutstanding: 500, totalOutstandingCompany: 500,
+      unpaidInvoiceCount: 2, overdueInvoiceCount: 1 });
+    const v = buildCreditPolicy(ls, { snapshotDate: asOf, currency: 'LYD', allCurrencies: false, term: null });
+    expect(v.summary.zones.find((z) => z.key === 'GREEN')).toMatchObject({ customers: 1, amount: 100, amountCompany: 100 });
+    expect(v.summary.total).toEqual({ customers: 1, amount: 100 });
+  });
+
+  it('instalments: only the first instalment is past due -> only it counts', () => {
+    const ls = [
+      line({ CustomerKey: 2, move_id: 5, due_date: '2026-09-01', residual: 300, invoice_due_date: '2026-11-01' }),
+      line({ CustomerKey: 2, move_id: 5, due_date: '2026-11-01', residual: 300, invoice_due_date: '2026-11-01' }),
+    ];
+    expect(one(ls)).toMatchObject({ zone: 'BLOCK', daysOverdue: 48, overdueAmount: 300, totalOutstanding: 600, unpaidInvoiceCount: 1, overdueInvoiceCount: 1 });
+  });
+
+  it('due today is not overdue; due yesterday is', () => {
+    const ls = [
+      line({ CustomerKey: 3, move_id: 6, due_date: '2026-10-19', residual: 70 }),
+      line({ CustomerKey: 3, move_id: 7, due_date: '2026-10-20', residual: 30 }),
+    ];
+    expect(one(ls)).toMatchObject({ daysOverdue: 0, overdueAmount: 70, totalOutstanding: 100, overdueInvoiceCount: 1 });
+  });
+
+  it('a line without its own due date uses the invoice due date; negative overdue lines lower the amount', () => {
+    const ls = [
+      line({ CustomerKey: 4, move_id: 8, due_date: null, invoice_due_date: '2026-09-15', residual: 500 }),
+      line({ CustomerKey: 4, move_id: 8, due_date: '2026-09-15', residual: -120 }),
+      line({ CustomerKey: 4, move_id: 9, due_date: null, invoice_due_date: '2026-12-01', residual: 200 }),
+    ];
+    expect(one(ls)).toMatchObject({ overdueAmount: 380, totalOutstanding: 580, overdueInvoiceCount: 1 });
+  });
+
+  it('all currencies: overdue in LYD; per currency: in the invoice currency', () => {
+    const usd = { ...line({ CustomerKey: 5, move_id: 10, currency: 'USD', due_date: '2026-09-01', residual: 100 }), residual_company_ccy: 650 };
+    const usdLater = { ...line({ CustomerKey: 5, move_id: 11, currency: 'USD', due_date: '2026-12-01', residual: 50 }), residual_company_ccy: 325 };
+    expect([...placeCustomers([usd, usdLater], asOf, false).values()][0]).toMatchObject({ overdueAmount: 100, overdueAmountCompany: 650, totalOutstanding: 150 });
+    expect([...placeCustomers([usd, usdLater], asOf, true).values()][0]).toMatchObject({ overdueAmount: 650, overdueAmountCompany: 650, totalOutstanding: 975 });
+  });
+});
