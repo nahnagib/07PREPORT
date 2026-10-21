@@ -151,7 +151,7 @@ describe('ETL schedules', () => {
     process.env.ETL_SCHEDULE_FULL_ENABLED = 'false';
     process.env.ETL_SCHEDULE_PROCESS_NPS_ENABLED = 'true';
     const all = await registered();
-    expect(all.at(-1)).toEqual({ cron: '0 2 * * *', timezone: 'Africa/Tripoli', job: 'process_nps', mode: 'nps' });
+    expect(all.at(-1)).toEqual({ cron: '0 2 * * *', timezone: 'Africa/Tripoli', job: 'process_nps', mode: 'nps', attempts: undefined, queueBehindRefresh: true });
     expect((enqueue.mock.calls.at(-1) as unknown as [{ loadMode: string }])[0].loadMode).toBe('full');
     expect(all.map((s) => s.job)).not.toContain('full_all');
     expect(npsRefresh(getEtlConfig().schedule)).toEqual({ via: 'own', cron: '0 2 * * *' });
