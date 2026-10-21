@@ -34,7 +34,7 @@ def make_tracker_with_active_job(status: str = "running", process: FakeProcess |
     job.status = status
     job.process = process
     tracker._jobs[job.job_id] = job
-    tracker._active_job_id = job.job_id
+    tracker._active_job_ids["main"] = job.job_id
     return tracker, job
 
 
@@ -89,3 +89,24 @@ def test_force_reset_allows_a_new_job_to_start_afterward():
         )
         mock_thread.assert_called_once()
     assert started.job_id != "stuck-job"
+
+
+def test_a_sales_build_runs_next_to_a_main_lane_job_but_never_next_to_another_build(monkeypatch):
+    """Two lanes: sales_build (the backend's etl-long queue) may start while the 30-minute refresh runs; a second build or
+    a second main-lane job may not. A fresh tracker: no state shared with other tests."""
+    import pytest
+
+    import job_tracker as jt
+
+    monkeypatch.setattr(jt, "_run_job", lambda job, python_bin: None)  # the job stays "running": no subprocess
+    t = jt.JobTracker()
+    refresh = t.start("incremental", "sql", False, [], "r", "python", job_name="refresh_30m")
+    build = t.start("incremental", "sql", False, [], "b", "python", job_name="sales_build")
+    with pytest.raises(RuntimeError):
+        t.start("incremental", "sql", False, [], "b2", "python", job_name="sales_build")
+    with pytest.raises(RuntimeError):
+        t.start("full", "sql", False, [], "f", "python", job_name="full_all")
+    assert t.active_job("main") is refresh and t.active_job("long") is build
+    assert t.active_job() is not None  # input uploads wait for any run
+    t.force_reset()
+    assert t.active_job() is None

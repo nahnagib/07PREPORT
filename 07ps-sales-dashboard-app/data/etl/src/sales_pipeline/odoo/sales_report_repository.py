@@ -54,6 +54,9 @@ OLD_EXPORT_COLUMN_MAP = {
 # many2one ids kept next to their display names (the ETL historically dropped them).
 EXTRA_ID_FIELDS = {"product_id": "OdooProductID", "partner_id": "OdooPartnerID", "product_uom": "UoMID", "company_id": "OdooCompanyID"}
 EXTRA_ID_COLUMNS = list(EXTRA_ID_FIELDS.values())
+# Read too, appended after the frame above: the group's discount % (part of sale.report's grouping) -> the stable row key
+# SalesLineGroupKey of fact_sales_lines (departments.sales.conform, Phase B).
+EXTRA_VALUE_FIELDS = {"discount": "Discount"}
 
 
 def flatten_many2one(value: Any) -> Any:
@@ -102,21 +105,24 @@ class SalesReportRepository:
         total = self.client.search_count("sale.report", domain)
         self.logger.info("sale.report rows available: %s", f"{total:,}")
         if total == 0:
-            return pd.DataFrame(columns=[c for c in OLD_EXPORT_COLUMN_MAP.values() if c != "OdooOrderRef"] + EXTRA_ID_COLUMNS + ["OdooOrderID"])
+            return pd.DataFrame(columns=[c for c in OLD_EXPORT_COLUMN_MAP.values() if c != "OdooOrderRef"] + EXTRA_ID_COLUMNS + ["OdooOrderID"]
+                                + list(EXTRA_VALUE_FIELDS.values()))
 
         pages = math.ceil(total / self.batch_size)
         rows: list[dict[str, Any]] = []
         for page in range(pages):
             offset = page * self.batch_size
             self.logger.info("Fetching sale.report batch %s/%s offset=%s limit=%s", page + 1, pages, offset, self.batch_size)
-            chunk = self.client.search_read("sale.report", domain, SALE_REPORT_FIELDS, offset=offset, limit=self.batch_size, order="id")
+            chunk = self.client.search_read("sale.report", domain, SALE_REPORT_FIELDS + list(EXTRA_VALUE_FIELDS), offset=offset,
+                                            limit=self.batch_size, order="id")
             rows.extend(self._normalize_records(chunk))
 
-        df = pd.DataFrame(rows, columns=SALE_REPORT_FIELDS + EXTRA_ID_COLUMNS).rename(columns=OLD_EXPORT_COLUMN_MAP)
+        extra = list(EXTRA_VALUE_FIELDS.values())
+        df = pd.DataFrame(rows, columns=SALE_REPORT_FIELDS + EXTRA_ID_COLUMNS + extra).rename(columns=OLD_EXPORT_COLUMN_MAP)
         df["Order Date"] = safe_datetime_to_local(df["Order Date"], self.timezone, self.assume_utc_for_naive)
         df["OdooOrderID"] = pd.to_numeric(df["OdooOrderRef"].astype("string").str.extract(r"^sale\.order,(\d+)$", expand=False), errors="coerce").astype("Int64")
         df = df.drop(columns=["OdooOrderRef"])
-        return df
+        return df[[c for c in df.columns if c not in extra] + extra]
 
     @staticmethod
     def _normalize_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -130,5 +136,8 @@ class SalesReportRepository:
             for field, column in EXTRA_ID_FIELDS.items():
                 value = rec.get(field)
                 row[column] = value[0] if isinstance(value, (list, tuple)) and value else pd.NA
+            for field, column in EXTRA_VALUE_FIELDS.items():
+                value = rec.get(field)
+                row[column] = pd.NA if value is None or value is False else value
             normalized.append(row)
         return normalized

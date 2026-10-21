@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import http.client
 import logging
+import random
+import threading
 import time
 import xmlrpc.client
+from collections import Counter
 from dataclasses import dataclass
 from urllib.parse import urlparse
 from typing import Any
@@ -10,6 +14,34 @@ from typing import Any
 
 class OdooApiError(RuntimeError):
     """Raised when Odoo authentication or RPC calls fail."""
+
+
+# Transport-level failures worth another attempt: DNS / refused / reset / TLS (ssl.SSLError is an OSError), timeouts,
+# HTTP errors, and the http.client states a dropped keep-alive connection leaves behind (IncompleteRead,
+# ResponseNotReady "Request-sent", RemoteDisconnected, BadStatusLine). Odoo's own answers (xmlrpc Fault) never are.
+NETWORK_ERRORS = (OSError, TimeoutError, xmlrpc.client.ProtocolError, http.client.HTTPException)
+
+# Rows returned by search_read / read per Odoo model in this process (every client instance, every thread): the ETL
+# logs "rows read per Odoo model" for each run from the difference before / after (rows_read_totals()).
+_ROWS_LOCK = threading.Lock()
+_ROWS_READ: Counter = Counter()
+
+
+def rows_read_totals() -> dict[str, int]:
+    with _ROWS_LOCK:
+        return dict(_ROWS_READ)
+
+
+def rows_read_since(before: dict[str, int]) -> dict[str, int]:
+    """Rows read per model since ``before`` (a rows_read_totals() snapshot), models with 0 left out, sorted."""
+    now = rows_read_totals()
+    return {m: n - before.get(m, 0) for m, n in sorted(now.items()) if n - before.get(m, 0)}
+
+
+def _count_rows(model: str, result: Any) -> None:
+    if isinstance(result, list):
+        with _ROWS_LOCK:
+            _ROWS_READ[model] += len(result)
 
 
 @dataclass
@@ -26,15 +58,28 @@ class OdooClient:
     connect_retry_window_seconds: float = 900.0
     connect_backoff_initial_seconds: float = 5.0
     connect_backoff_max_seconds: float = 120.0
+    # Model calls (execute_kw): exponential backoff from this many seconds, doubled per attempt, capped, plus up to
+    # 25% random jitter so parallel readers do not retry in lockstep.
+    rpc_backoff_initial_seconds: float = 2.0
+    rpc_backoff_max_seconds: float = 60.0
 
     def __post_init__(self) -> None:
         self.url = self.url.rstrip("/")
         self.uid: int | None = None
+        self._logger = logging.getLogger(__name__)
+        self._connect()
+
+    def _connect(self) -> None:
+        """Fresh proxies on a fresh transport: after a transport error the old keep-alive connection may be half
+        used (ResponseNotReady "Request-sent"), so a retry never reuses it."""
         transport_cls = TimeoutSafeTransport if urlparse(self.url).scheme == "https" else TimeoutTransport
         transport = transport_cls(timeout=self.timeout_seconds)
         self._common = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/common", allow_none=True, transport=transport)
         self._models = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/object", allow_none=True, transport=transport)
-        self._logger = logging.getLogger(__name__)
+
+    def _rpc_backoff(self, attempt: int) -> float:
+        base = min(float(self.rpc_backoff_max_seconds), float(self.rpc_backoff_initial_seconds) * (2 ** (attempt - 1)))
+        return base * (1 + random.uniform(0, 0.25))
 
     def authenticate(self) -> int:
         last_exc: Exception | None = None
@@ -50,8 +95,8 @@ class OdooClient:
                 uid = self._common.authenticate(self.db, self.username, self.api_key, {})
                 connected = True
                 break
-            except (OSError, TimeoutError, xmlrpc.client.ProtocolError) as exc:
-                # Network-level only: DNS (socket.gaierror), refused/reset connections, timeouts, HTTP errors.
+            except NETWORK_ERRORS as exc:
+                # Network-level only: DNS (socket.gaierror), refused/reset connections, TLS, timeouts, HTTP errors.
                 last_exc = exc
                 now = time.monotonic()
                 within_window = now + delay <= deadline
@@ -97,14 +142,19 @@ class OdooClient:
         for attempt in range(1, self.max_retries + 1):
             try:
                 return self._models.execute_kw(self.db, self.uid, self.api_key, model, method, args, kwargs)
-            except (OSError, TimeoutError, xmlrpc.client.ProtocolError) as exc:
+            except NETWORK_ERRORS as exc:
                 last_exc = exc
-                wait_s = min(30, 2 * attempt)
-                self._logger.warning("Odoo RPC %s.%s failed on attempt %s/%s: %s", model, method, attempt, self.max_retries, exc)
+                if attempt >= self.max_retries:
+                    break
+                wait_s = self._rpc_backoff(attempt)
+                self._logger.warning("Odoo RPC %s.%s failed on attempt %s/%s (%s: %s); retrying in %.0fs on a new connection",
+                                     model, method, attempt, self.max_retries, type(exc).__name__, exc, wait_s)
                 time.sleep(wait_s)
+                self._connect()
             except xmlrpc.client.Fault as exc:
                 raise OdooApiError(f"Odoo RPC fault in {model}.{method}: {exc.faultString}") from exc
-        raise OdooApiError(f"Odoo RPC {model}.{method} failed after {self.max_retries} attempts: {last_exc}") from last_exc
+        raise OdooApiError(f"Odoo RPC {model}.{method} failed after {self.max_retries} attempts: "
+                           f"{type(last_exc).__name__}: {last_exc}") from last_exc
 
     def fields_get(self, model: str, attributes: list[str] | None = None) -> dict[str, Any]:
         kwargs: dict[str, Any] = {}
@@ -131,12 +181,21 @@ class OdooClient:
         kwargs: dict[str, Any] = {"fields": fields, "offset": offset, "limit": limit, "order": order}
         if context:
             kwargs["context"] = context
-        return self.execute_kw(
+        result = self.execute_kw(
             model,
             "search_read",
             [domain],
             kwargs,
         )
+        _count_rows(model, result)
+        return result
+
+    def search(self, model: str, domain: list[Any], context: dict[str, Any] | None = None, order: str = "id") -> list[int]:
+        """Ids only (no rows read): the id checks of the Odoo mirror."""
+        kwargs: dict[str, Any] = {"order": order}
+        if context:
+            kwargs["context"] = context
+        return [int(i) for i in self.execute_kw(model, "search", [domain], kwargs)]
 
 
 class TimeoutTransport(xmlrpc.client.Transport):

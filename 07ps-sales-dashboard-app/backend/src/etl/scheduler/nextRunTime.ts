@@ -11,3 +11,18 @@ export function computeNextRunTime(cronExpression: string, timezone?: string): D
     return null;
   }
 }
+
+/** True when `cronExpression` fires in the minute that contains `at` (read in `timezone`): lets the 30-minute refresh
+ * tick see that the full refresh or the sales schedule fires at the same minute, and yield to it. */
+export function cronFiresInMinute(cronExpression: string, at: Date, timezone?: string): boolean {
+  const minuteStart = new Date(Math.floor(at.getTime() / 60_000) * 60_000);
+  try {
+    const interval = parseExpression(cronExpression, {
+      currentDate: new Date(minuteStart.getTime() - 1),
+      ...(timezone ? { tz: timezone } : {}),
+    });
+    return interval.next().toDate().getTime() === minuteStart.getTime();
+  } catch {
+    return false;
+  }
+}

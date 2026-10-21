@@ -4,7 +4,7 @@ import { getAppTimezone, utcSqlDateTimeToDate } from '../../lib/timezone';
 import { etlLogger } from './etlLogger';
 
 /** 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform; new runs use incremental/full/finance. */
-export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel' | 'finance' | 'nps';
+export type EtlMode = 'incremental' | 'full' | 'sql' | 'excel' | 'finance' | 'nps' | 'refresh' | 'sales_build';
 export type EtlLoadMode = 'full' | 'incremental';
 export type EtlOutputMode = 'sql' | 'excel' | 'both';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';
@@ -145,6 +145,13 @@ export async function finishRun(runId: number, input: FinishRunInput): Promise<v
   );
 }
 
+/** job_type of every queued/running run (empty when idle): lets a scheduled full / sales tick queue behind a 30-minute
+ * refresh instead of being dropped (etlQueue.ts enqueuePipelineRun `queueBehindRefresh`). */
+export async function activeEtlRunJobTypes(): Promise<string[]> {
+  const [rows] = await pool.query(`SELECT job_type FROM etl_job_runs WHERE status IN ('queued', 'running')`);
+  return (rows as { job_type: string }[]).map((r) => r.job_type);
+}
+
 export async function hasActiveEtlRun(): Promise<boolean> {
   const [rows] = await pool.query(
     `SELECT 1 FROM etl_job_runs WHERE status IN ('queued', 'running') LIMIT 1`,
@@ -213,21 +220,22 @@ export async function releaseOrphanedPipelineLock(): Promise<{ released: boolean
       `SELECT t.PROCESSLIST_ID AS processId
        FROM performance_schema.metadata_locks mdl
        JOIN performance_schema.threads t ON t.THREAD_ID = mdl.OWNER_THREAD_ID
-       WHERE mdl.OBJECT_TYPE = 'USER LEVEL LOCK' AND mdl.OBJECT_NAME = ?`,
-      [PIPELINE_SQL_LOCK_NAME],
+       WHERE mdl.OBJECT_TYPE = 'USER LEVEL LOCK' AND (mdl.OBJECT_NAME = ? OR mdl.OBJECT_NAME LIKE ?)`,
+      // the per-module locks of the ETL platform are "<name>:<module>" (sales, finance, core, ...)
+      [PIPELINE_SQL_LOCK_NAME, `${PIPELINE_SQL_LOCK_NAME}:%`],
     );
-    const holders = rows as { processId: number | null }[];
-    const holder = holders[0];
-    if (!holder || holder.processId === null) {
-      etlLogger.info('Force-reset: no MySQL session currently holds the pipeline SQL load lock');
+    const holders = [...new Set((rows as { processId: number | null }[]).map((r) => r.processId).filter((p): p is number => p !== null))];
+    if (!holders.length) {
+      etlLogger.info('Force-reset: no MySQL session currently holds a pipeline lock');
       return { released: false, processId: null };
     }
-    const processId = Number(holder.processId);
-    // KILL does not accept a bound parameter for the connection id; processId is validated as a
-    // number straight from PROCESSLIST_ID above, not user input, so this cannot be injected.
-    await pool.query(`KILL ${processId}`);
-    etlLogger.warn('Force-reset: killed MySQL connection holding the pipeline SQL load lock', { processId });
-    return { released: true, processId };
+    for (const id of holders) {
+      // KILL does not accept a bound parameter for the connection id; the id is validated as a
+      // number straight from PROCESSLIST_ID above, not user input, so this cannot be injected.
+      await pool.query(`KILL ${Number(id)}`);
+    }
+    etlLogger.warn('Force-reset: killed MySQL connection(s) holding pipeline locks', { processIds: holders });
+    return { released: true, processId: Number(holders[0]) };
   } catch (err) {
     etlLogger.error('Force-reset: could not release the MySQL pipeline SQL load lock', {
       error: err instanceof Error ? err.message : String(err),
@@ -266,8 +274,32 @@ function normalizeEtlJobRunRow(row: EtlJobRunRow & RawTimestampFields): EtlJobRu
 /** The current queued/running row, if any -- what the status endpoint shows while a run is
  * in flight. */
 export async function getActiveRun(): Promise<EtlJobRunRow | null> {
+  // a sales build (second queue) runs next to the main-queue runs: the "run in progress" panel shows a main-queue run
+  // when there is one; the build has its own line (getActiveSalesBuild)
   const [rows] = await pool.query(
-    `SELECT *${RAW_TIMESTAMP_COLUMNS} FROM etl_job_runs WHERE status IN ('queued', 'running') ORDER BY id DESC LIMIT 1`,
+    `SELECT *${RAW_TIMESTAMP_COLUMNS} FROM etl_job_runs WHERE status IN ('queued', 'running')
+     ORDER BY (job_type = 'sales_build'), id DESC LIMIT 1`,
+  );
+  const row = (rows as (EtlJobRunRow & RawTimestampFields)[])[0];
+  return row ? normalizeEtlJobRunRow(row) : null;
+}
+
+/** The queued / running sales build (second queue), if any. */
+export async function getActiveSalesBuild(): Promise<EtlJobRunRow | null> {
+  const [rows] = await pool.query(
+    `SELECT *${RAW_TIMESTAMP_COLUMNS} FROM etl_job_runs WHERE status IN ('queued', 'running') AND job_type = 'sales_build'
+     ORDER BY id DESC LIMIT 1`,
+  );
+  const row = (rows as (EtlJobRunRow & RawTimestampFields)[])[0];
+  return row ? normalizeEtlJobRunRow(row) : null;
+}
+
+/** The last finished sales build. */
+export async function getLastSalesBuild(): Promise<EtlJobRunRow | null> {
+  const [rows] = await pool.query(
+    `SELECT *${RAW_TIMESTAMP_COLUMNS} FROM etl_job_runs WHERE status IN (?) AND job_type = 'sales_build'
+     ORDER BY finished_at DESC LIMIT 1`,
+    [FINISHED_RUN_STATUSES],
   );
   const row = (rows as (EtlJobRunRow & RawTimestampFields)[])[0];
   return row ? normalizeEtlJobRunRow(row) : null;

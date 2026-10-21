@@ -101,7 +101,10 @@ Values in `docker-compose.yml`'s `environment:` **override** the env files (so `
 | `ETL_API_KEY` | Shared secret with etl-api — **secret** (`openssl rand -base64 32`) | empty | any | CHANGE_ME | CHANGE_ME |
 | `ETL_API_POLL_INTERVAL_MS` | Status polling | `1000` | | | |
 | `ETL_LOG_DIR` (overridden by compose) | Orchestration log directory | `./logs/etl` | | `/var/log/07ps/etl` | `/var/log/07ps/etl` |
+| `ETL_SCHEDULER_ENABLED`, `ETL_WORKER_ENABLED` | Server-only switches (`docs/etl-refresh-schedule.md`) | `false` | `false` | `false` | **`true`** |
+| `ETL_SCHEDULE_REFRESH_ENABLED`, `ETL_REFRESH_INTERVAL_MINUTES` | 30-minute refresh | `true`, `30` | | `false` | `true`, `30` |
 | `ETL_SCHEDULE_INCREMENTAL_CRON`/`_ENABLED`, `ETL_SCHEDULE_FULL_CRON`/`_ENABLED` | Schedules | `50 8,11,14,17,20 * * *` / `0 2 * * *`, `true` | `false` | **`false`** (avoid extra Odoo load) | `true` |
+| `ETL_SCHEDULE_FINANCE_ENABLED` | The 15:00 receivables run | `false` | | `false` | `false` (the refresh covers it) |
 | `ETL_SCHEDULE_TIMEZONE` (overridden by compose) | Zone of the crons | server zone | | `APP_TIMEZONE` | `APP_TIMEZONE` |
 | `REDIS_HOST` (overridden by compose), `REDIS_PORT` | Queue | `localhost`, `6379` | | `redis` | `redis` |
 
@@ -349,7 +352,7 @@ Standard-library Python 3 (works on the host, in CI, and on Windows). Exit code 
 | 1 | **Hosting target** | Existing docs say a "Libyan Spider VPS"; nothing in the repository proves it is final. Sizing and OS in §1 assume a single Linux Docker host. |
 | 2 | **DB host** | MySQL is external. Same host as Docker (`host.docker.internal`) or a separate server? Determines `DB_HOST_FOR_CONTAINERS`, firewall and TLS-to-DB. |
 | 3 | **Domain and URL layout** | `nginx.conf`/compose default: `benmussa-invest.com` + `api.benmussa-invest.com`; `next.config.mjs` comment: `bmh.com.ly/Dashboard`. Pick one; it drives `FRONTEND_ORIGIN`, `NEXT_PUBLIC_API_BASE_URL`, certificates, Nginx `server_name`. |
-| 4 | **Schedule** | Defaults: incremental `50 8,11,14,17,20 * * *`, full `0 2 * * *` (Tripoli time). Confirm against business hours and the downstream refresh times; note the nightly full refresh makes tables briefly unavailable (ETL.md §12). |
+| 4 | **Schedule** | Defaults: 30-minute refresh `*/30 * * * *`, sales `50 8,11,14,17,20 * * *`, full `0 2 * * *` (Tripoli time); `ETL_SCHEDULER_ENABLED=true` and `ETL_WORKER_ENABLED=true` on the server only (`docs/etl-refresh-schedule.md`). Confirm against business hours and the downstream refresh times; note the nightly full refresh makes tables briefly unavailable (ETL.md §12). |
 | 5 | **Timezone** | `Africa/Tripoli` (UTC+2, no DST) assumed everywhere. Changing it later requires a full refresh (business datetimes are stored in it). |
 | 6 | **Owners of the Excel files** and update procedure | Not in the code (ETL.md §3.3). Also: who may write to `ETL_INPUT_HOST_DIR`, and how files reach the server (SFTP, shared folder, sync tool)? |
 | 7 | **Alert routing and on-call** (§9, §11) | Channels and people are unassigned. |

@@ -1,6 +1,5 @@
-import { Job as BullJob } from 'bullmq';
 import { pool } from '../../db/pool';
-import { getEtlQueue, hasActiveWorker, EtlJobData } from '../queue/etlQueue';
+import { getEtlJob, hasActiveWorker } from '../queue/etlQueue';
 import { isQueueReachable } from '../queue/queueHealth';
 import { finishRun } from './etlRunTracker';
 import { etlLogger } from './etlLogger';
@@ -64,7 +63,7 @@ export async function reconcileOrphanedEtlRuns(): Promise<void> {
     }
 
     try {
-      const job = await withTimeout(BullJob.fromId<EtlJobData>(getEtlQueue(), row.job_id), PER_JOB_CHECK_TIMEOUT_MS);
+      const job = await withTimeout(getEtlJob(row.job_id), PER_JOB_CHECK_TIMEOUT_MS);
       if (!job) {
         await finishRun(row.id, {
           status: 'failed',
@@ -155,7 +154,7 @@ export async function reconcileStaleQueuedRuns(): Promise<void> {
     // same cleanup POST /admin/etl/force-reset already does for the same reason.
     if (row.job_id) {
       try {
-        const job = await getEtlQueue().getJob(row.job_id);
+        const job = await getEtlJob(row.job_id);
         await job?.remove();
       } catch (err) {
         etlLogger.error('ETL reconciliation: could not remove underlying queue job for stale run', {

@@ -31,26 +31,34 @@ transforms, which the sales job still reuses. Wherever they disagree with this s
 
 | Job | Department | What it loads | Default schedule (Africa/Tripoli) |
 |---|---|---|---|
-| `core_dims` | core | shared dimensions: company, currency, payment term, customer (commercial partner), salesperson, sales team, channel, segment, product, product master, date, off-days, Odoo selection labels (`dim_odoo_selection_label`, en + ar) | run first by every job when older than `ETL_CORE_DIMS_FRESH_MINUTES` |
-| `main` | all | `core_dims` → `sales_incremental` (one run id, steps as child rows; no finance) | `ETL_SCHEDULE_INCREMENTAL_CRON` (every 3 h); "Sales Refresh"; `npm run etl:incremental` |
+| `core_dims` | core | shared dimensions: company, currency, payment term, customer (commercial partner), salesperson, sales team, channel, segment, product, product master, date, off-days, Odoo selection labels (`dim_odoo_selection_label`, en + ar) | run first by every job (`ETL_CORE_DIMS_FRESH_MINUTES`, default 0 = every time; incremental, seconds when nothing changed) |
+| `refresh_30m` | all | the modules of `ETL_REFRESH_MODULES` (`core_dims` → `finance_receivables` → `process_nps`), each isolated | every 30 min (`ETL_REFRESH_INTERVAL_MINUTES`); runbook `docs/etl-refresh-schedule.md` |
+| `main` | all | `core_dims` → `sales_incremental` (one run id, steps as child rows; no finance) | `ETL_SCHEDULE_INCREMENTAL_CRON` (08:50 11:50 14:50 17:50 20:50); "Sales Refresh"; `npm run etl:incremental` |
 | `full_all` | all | `core_dims` → `finance_receivables` → `sales_full` → `process_nps` | `ETL_SCHEDULE_FULL_CRON` (02:00); "Full Refresh"; `npm run etl:full` |
 | `sales_incremental` | sales | every `fact_sales_*` / `dim_sales_*` mart, swapped in at once after every orphan check passes | inside `main` |
 | `sales_full` | sales | the same marts, as an explicit full run | inside `full_all` |
-| `finance_receivables` | finance | receivable snapshot of today (`fact_finance_receivable_snapshot`, `dim_finance_*`); runbook `docs/receivables-etl.md` | inside `full_all` (02:00); alone `ETL_SCHEDULE_FINANCE_CRON` (15:00) / "Receivables Snapshot" |
-| `process_nps` | process | NPS Score: the NPS developer's MySQL (SSH tunnel) → `raw_nps_*` → `fact_process_nps_response` / `_comment`; runbook `docs/nps-etl.md` | inside `full_all` (last, optional); once a night, full reload: inside the 02:00 `full_all`; alone at `ETL_SCHEDULE_PROCESS_NPS_CRON` (02:00) ONLY when the full schedule is off / "NPS Score" run-now; not run while `NPS_ENABLED` is not true |
+| `finance_receivables` | finance | receivable snapshot of today (`fact_finance_receivable_snapshot`, `dim_finance_*`); runbook `docs/receivables-etl.md` | inside `refresh_30m` (every 30 min) and `full_all` (02:00); alone `ETL_SCHEDULE_FINANCE_CRON` (15:00, off by default) / "Receivables Snapshot" |
+| `sales_mirror` | sales | Phase B: the Odoo records the sales build reads -> `raw_odoo_mirror` by write_date (+ rules, names, id checks); rows read per model logged | inside `refresh_30m` (every 30 min) and `full_all` (02:00: id checks + write_date audit); skipped while `ETL_SALES_MODE=legacy`; runbook `docs/etl-phase-b-sales-incremental.md` §10 |
+| `sales_build` | sales | Phase B: the sales marts from the mirror (same legacy transforms), changed rows only -> `shd_*` (shadow) or live (incremental); seconds when nothing changed | `ETL_SCHEDULE_SALES_BUILD_CRON` (10,40 past the hour) on the second queue `etl-long`; inside `full_all` |
+| `sales_shadow_compare` | sales | Phase B: live vs `shd_*` row by row + line totals -> `etl_shadow_compare` / `etl_shadow_diff` (Control Center card) | inside `full_all`, shadow mode only |
+| `process_nps` | process | NPS Score: the NPS developer's MySQL (SSH tunnel) → `raw_nps_*` → `fact_process_nps_response` / `_comment`; runbook `docs/nps-etl.md` | full reload: inside `refresh_30m` (every 30 min) and the 02:00 `full_all` (last, optional); alone at `ETL_SCHEDULE_PROCESS_NPS_CRON` (02:00) ONLY when the full schedule is off / "NPS Score" run-now; not run while `NPS_ENABLED` is not true |
 | `platform_selfcheck` | — | diagnostics, never logged as a refresh | — |
 
-**Pipelines and schedules** (all crons in `ETL_SCHEDULE_TIMEZONE`, else `APP_TIMEZONE`, Africa/Tripoli): every 3 h
-`main` (core dims → sales, no finance); 02:00 `full_all` (core dims → receivables → sales full); 15:00
-`finance_receivables` alone (its core dims step is reused when it succeeded within `ETL_CORE_DIMS_FRESH_MINUTES`).
+**Pipelines and schedules** (all crons in `ETL_SCHEDULE_TIMEZONE`, else `APP_TIMEZONE`, Africa/Tripoli; registered only
+where `ETL_SCHEDULER_ENABLED=true`, i.e. the production server -- see `docs/etl-refresh-schedule.md`): every 30 min
+`refresh_30m` (core dims → receivables + collections → NPS, each module isolated); 08:50 11:50 14:50 17:50 20:50 `main`
+(core dims → sales, no finance); 02:00 `full_all` (core dims → receivables → sales full); the 15:00
+`finance_receivables` run is off by default (the refresh covers it).
 `main` and `full_all` have no tasks of their own: their top-level `etl_run_log` row holds the run id, and the step
 rows point to it through `parent_run_uid` (the Control Center history shows them as the run's steps). In `full_all`
 finance runs before sales, so Receivables and Collections is fresh minutes into the run. Failure rules
 (`etl_platform/runner.py`): `core_dims` fails → the other steps get `skipped` rows and the run fails; finance fails
 inside `full_all` → core and sales still run and keep their data, the run is `partial` with "finance failed: <error>"
-and the 15:00 run retries; sales fails → the run fails (the snapshot stays). `process_nps` is the last step of
-`full_all` and optional like finance (a failure → `partial`, "process failed: <error>"); where `NPS_ENABLED` is not
-`true` it gets a `skipped` row ("disabled: …") and the run is not affected (`JobSpec.disabled_reason`). Exit codes of `etl_platform.run`:
+and the next 30-minute refresh retries; in `refresh_30m` no module stops another (a failed `core_dims` leaves the
+modules on the previous cycle's shared lists); sales fails → the run fails (the snapshot stays). `process_nps` is the
+last step of `full_all` and optional like finance (a failure → `partial`, "process failed: <error>"); where
+`NPS_ENABLED` is not `true` it gets a `skipped` row ("disabled: …") and the run is not affected
+(`JobSpec.disabled_reason`). Exit codes of `etl_platform.run`:
 0 success, 1 failed, 2 bad arguments, 3 partial, 4 skipped (another run holds the lock; a second trigger waits
 `ETL_LOCK_TIMEOUT_SECONDS`, default 30, then gives up). The whole run holds the MySQL lock.
 
@@ -398,13 +406,16 @@ to Odoo as the `write_date`/`create_date` lower bound; the SQL window cutoff is 
 
 | Trigger | How | `trigger_source` in `etl_job_runs` | `etl_run_log.trigger_source` |
 |---|---|---|---|
-| Scheduled incremental | cron `ETL_SCHEDULE_INCREMENTAL_CRON` (default `50 8,11,14,17,20 * * *`), `ETL_SCHEDULE_INCREMENTAL_ENABLED=true` | `scheduled` | `scheduled-incremental` |
+| Scheduled 30-minute refresh | cron `*/ETL_REFRESH_INTERVAL_MINUTES` (default `*/30 * * * *`) or `ETL_SCHEDULE_REFRESH_CRON`, `ETL_SCHEDULE_REFRESH_ENABLED=true`; one BullMQ attempt; yields to the full / sales tick of the same minute | `scheduled` | `scheduled-refresh` |
+| Scheduled incremental | cron `ETL_SCHEDULE_INCREMENTAL_CRON` (default `50 8,11,14,17,20 * * *`), `ETL_SCHEDULE_INCREMENTAL_ENABLED=true`; queued behind a running refresh | `scheduled` | `scheduled-incremental` |
 | Scheduled full | cron `ETL_SCHEDULE_FULL_CRON` (default `0 2 * * *`), `ETL_SCHEDULE_FULL_ENABLED=true` | `scheduled` | `scheduled-full` |
 | Scheduled NPS Score | cron `ETL_SCHEDULE_PROCESS_NPS_CRON` (default `0 2 * * *`), `ETL_SCHEDULE_PROCESS_NPS_ENABLED=true` (default false); registered only when `ETL_SCHEDULE_FULL_ENABLED=false` (else NPS is the last step of `full_all`) | `scheduled` | `scheduled-nps` |
 | Admin UI | Control Center buttons (Admin role) | `manual` | `manual-incremental`, `manual-full`, `manual-sql`, `manual-excel` |
 | CLI (queued) | `docker compose exec backend npm run etl:run` (`-- --full`) | `development` | label of the command |
 | CLI (`--sync`) or `python -m sales_pipeline.main` | inline; not in `etl_job_runs` | — | `cli` |
 
+* **Server only.** Nothing is scheduled unless `ETL_SCHEDULER_ENABLED=true`, and the worker runs nothing unless `ETL_WORKER_ENABLED=true`; both
+  default to false and are set only in the production server's `backend/.env`.
 * **Schedule ownership.** Cron runs inside the *backend API process* (`server.ts` → `registerEtlSchedules()`), in the zone `ETL_SCHEDULE_TIMEZONE`
   (compose sets it to `APP_TIMEZONE`). With the schedule times chosen to precede the Power-BI-style refresh points at 09:00/12:00/15:00/18:00/21:00
   (`docs/AUTOMATION.md`). Run **one** backend replica: several would each tick (the guard below would make the extras no-ops, but it is wasteful).
@@ -480,7 +491,10 @@ BullMQ retries a failed run twice (30 s, 60 s exponential); a *cancelled* run is
 | `ETL_API_KEY` | Bearer key (**secret**) | empty | **yes** | `CHANGE_ME` |
 | `ETL_API_POLL_INTERVAL_MS` | Status polling | `1000` | no | |
 | `ETL_LOG_DIR` | Orchestration log dir | `./logs/etl` (compose: `/var/log/07ps/etl`) | no | |
-| `ETL_SCHEDULE_INCREMENTAL_CRON` / `_ENABLED` | Incremental schedule | `50 8,11,14,17,20 * * *` / `true` | no | |
+| `ETL_SCHEDULER_ENABLED` / `ETL_WORKER_ENABLED` | Server-only switches: register the crons / consume the queue | `false` / `false` | **yes on the server** | `true` / `true` (server only) |
+| `ETL_SCHEDULE_REFRESH_ENABLED`, `ETL_REFRESH_INTERVAL_MINUTES`, `ETL_SCHEDULE_REFRESH_CRON` | 30-minute refresh | `true`, `30`, (from the interval) | no | |
+| `ETL_SCHEDULE_INCREMENTAL_CRON` / `_ENABLED` | Sales schedule | `50 8,11,14,17,20 * * *` / `true` | no | |
+| `ETL_SCHEDULE_FINANCE_CRON` / `_ENABLED` | Receivables alone | `0 15 * * *` / `false` | no | |
 | `ETL_SCHEDULE_FULL_CRON` / `_ENABLED` | Full schedule | `0 2 * * *` / `true` | no | |
 | `ETL_SCHEDULE_FINANCE_CRON` / `_ENABLED` | Receivables snapshot alone | `0 15 * * *` / `true` | no | |
 | `ETL_SCHEDULE_PROCESS_NPS_CRON` / `_ENABLED` | NPS Score alone, once a night; used only when the full schedule is off (else `full_all` runs it); enable together with the ETL's `NPS_ENABLED` | `0 2 * * *` / `false` | no | |

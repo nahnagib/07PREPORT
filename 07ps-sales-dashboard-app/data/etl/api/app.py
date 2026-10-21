@@ -49,7 +49,7 @@ from config.input_check import (
     inspect_input_dir,
 )
 from input_files import MAX_UPLOAD_BYTES, UploadRejected, describe_slots, replace_file
-from job_tracker import LOAD_MODE_JOBS, tracker  # LOAD_MODE_JOBS: callers that still send only loadMode
+from job_tracker import LOAD_MODE_JOBS, lane_for, tracker  # LOAD_MODE_JOBS: callers that still send only loadMode
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -199,7 +199,7 @@ def etl_run():
     try:
         job = tracker.start(load_mode, output_mode, fast, extra_args, label, app.config["PYTHON_BIN"], job_name=job_name)
     except RuntimeError:
-        active = tracker.active_job()
+        active = tracker.active_job(lane_for(job_name))
         return jsonify({
             "error": "A run is already active",
             "activeJobId": active.job_id if active else None,

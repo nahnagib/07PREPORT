@@ -6,6 +6,35 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Added (ETL: 30-minute refresh, Phase B step 1 -- incremental sales from an Odoo mirror, 2026-10-21; `docs/etl-phase-b-sales-incremental.md` §10)
+- **Migration 0054:** `raw_odoo_mirror` / `_meta` / `raw_odoo_names` (the Odoo records the sales build reads), `shd_*`
+  copies of the 17 sales marts, `etl_shadow_compare` / `etl_shadow_diff`, `fact_sales_lines.SalesLineGroupKey` + `Discount`.
+- **`ETL_SALES_MODE` = legacy | shadow | incremental** (`data/etl/.env`; switching = the line + a container recreate).
+  New jobs `sales_mirror` (in the 30-minute refresh: Odoo -> mirror by write_date, seconds when nothing changed),
+  `sales_build` (second queue `etl-long`: the unchanged legacy transforms on the mirror, changed rows only, to `shd_*` or
+  live; seconds when nothing changed) and `sales_shadow_compare` (after the 02:00 refresh: live vs shadow row by row and per
+  company x currency x month x salesperson; ETL Control Center card). The 02:00 refresh still rebuilds the live tables from
+  Odoo in every mode.
+- **Per-module locks** (`<lock>:sales`, `:finance`, ...) and a second BullMQ queue + worker: a long sales build never holds
+  up receivables, collections or NPS; the Control Center shows "Sales rebuild in progress -- started <time>".
+- **Rows read per Odoo model** are logged for every run (`odoo_rows_read` in the task details).
+- **Shared lists:** partner company properties (credit limit, payment term) are read incrementally (changed partners and
+  changed `ir.property` records; full read at 02:00 or after a changed company default).
+
+### Changed (ETL: 30-minute refresh, Phase A, 2026-10-20; runbook `docs/etl-refresh-schedule.md`)
+- **Server only:** `ETL_SCHEDULER_ENABLED` / `ETL_WORKER_ENABLED` (default false) gate the cron schedules and the queue
+  worker; only the production server's `backend/.env` sets them to true. The retired `data/ingestion/scheduler.py` refuses
+  to start unless `LEGACY_INGESTION_SCHEDULER_ENABLED=true`.
+- **New job `refresh_30m`** every 30 minutes (`ETL_REFRESH_INTERVAL_MINUTES`): shared lists -> receivables + collections
+  -> NPS (`ETL_REFRESH_MODULES`), each module isolated (own run row, a failure never stops the next module). Yields to
+  the 02:00 full and the sales ticks of the same minute; those queue behind a running refresh instead of being dropped.
+  One BullMQ attempt. Sales keeps 08:50 11:50 14:50 17:50 20:50 until Phase B; the 15:00 receivables run is off.
+- **core_dims** runs in every job (`ETL_CORE_DIMS_FRESH_MINUTES` default 180 -> 0).
+- **Odoo retries:** `IncompleteRead`, `ResponseNotReady`, `RemoteDisconnected` and TLS errors are retried too, with
+  exponential backoff (2-60 s + jitter) on a fresh connection; `ETL_ODOO_MAX_RETRIES` default 3 -> 5.
+- ETL Control Center shows the 30-minute refresh (next run, scheduler settings, run history label). User manual refresh
+  table updated (EN + AR sources; the PDFs need a rebuild).
+
 ### Changed (Receivables and Collections: Credit Policy Escalation shows the OVERDUE amount, 2026-10-21)
 - **Overdue amount:** each customer's overdue amount is the sum of its open lines whose overdue date (the line's own
   due date, else its invoice's resolved due date, + `OVERDUE_OFFSET_DAYS`) is on or before the snapshot date. Lines

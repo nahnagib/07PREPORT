@@ -1,9 +1,10 @@
-import { Queue } from 'bullmq';
+import { Job as BullJob, Queue } from 'bullmq';
 import { pool } from '../../db/pool';
 import { getEtlConfig } from '../config/etlConfig';
 import { etlLogger } from '../services/etlLogger';
-import { platformJobFor, type PlatformJob } from '../services/pythonRunner';
+import { LONG_QUEUE_JOBS, platformJobFor, REFRESH_JOB, type PlatformJob } from '../services/pythonRunner';
 import {
+  activeEtlRunJobTypes,
   createQueuedRun,
   EtlLoadMode,
   EtlMode,
@@ -20,6 +21,12 @@ import {
  * job `name` rather than needing their own queue/connection plumbing.
  */
 let queue: Queue | null = null;
+let longQueue: Queue | null = null;
+
+/** The second queue: jobs that take minutes and must not hold up the main queue (LONG_QUEUE_JOBS, the sales build).
+ * Its own worker (concurrency 1) in the same etl-worker process; the platform's per-module locks keep the two apart
+ * where they write the same tables. */
+export const LONG_QUEUE_NAME = 'etl-long';
 
 function connection() {
   const config = getEtlConfig();
@@ -39,6 +46,34 @@ export function getEtlQueue(): Queue {
     );
   }
   return queue;
+}
+
+export function getEtlLongQueue(): Queue {
+  if (!longQueue) {
+    longQueue = new Queue(LONG_QUEUE_NAME, { connection: connection() });
+    longQueue.on('error', (err) =>
+      etlLogger.error('ETL long queue connection error', { error: err.message, code: (err as NodeJS.ErrnoException).code, stack: err.stack }),
+    );
+  }
+  return longQueue;
+}
+
+export function isLongQueueJob(job: string | null | undefined): boolean {
+  return !!job && LONG_QUEUE_JOBS.includes(job);
+}
+
+function queueFor(job: PlatformJob): Queue {
+  return isLongQueueJob(job) ? getEtlLongQueue() : getEtlQueue();
+}
+
+/** A BullMQ job by id, from whichever queue holds it (ids are unique: etl-<etl_job_runs.id>). */
+export async function getEtlJob(jobId: string): Promise<BullJob<EtlJobData> | undefined> {
+  return (await BullJob.fromId<EtlJobData>(getEtlQueue(), jobId)) ?? (await BullJob.fromId<EtlJobData>(getEtlLongQueue(), jobId));
+}
+
+export async function getEtlJobLogs(jobId: string, start: number, end: number): Promise<{ logs: string[]; count: number }> {
+  const main = await BullJob.fromId<EtlJobData>(getEtlQueue(), jobId);
+  return (main ? getEtlQueue() : getEtlLongQueue()).getJobLogs(jobId, start, end);
 }
 
 /** BullMQ's underlying ioredis connection retries forever with no effective per-command cap
@@ -76,9 +111,10 @@ const WORKER_PROBE_TIMEOUT_MS = 5_000;
  * CLIENT LIST-backed API for "which worker processes are currently connected to this queue" and
  * is the only source of truth for this that isn't guessing from job state.
  */
-export async function hasActiveWorker(): Promise<boolean> {
+export async function hasActiveWorker(job?: PlatformJob): Promise<boolean> {
   try {
-    const workers = await withTimeout(getEtlQueue().getWorkers(), WORKER_PROBE_TIMEOUT_MS, 'getWorkers()');
+    const q = job ? queueFor(job) : getEtlQueue();
+    const workers = await withTimeout(q.getWorkers(), WORKER_PROBE_TIMEOUT_MS, 'getWorkers()');
     return workers.length > 0;
   } catch (err) {
     etlLogger.error('ETL worker liveness check failed; assuming no worker is available', {
@@ -152,6 +188,23 @@ export interface EnqueuePipelineRunInput {
   triggerSource: EtlTriggerSource;
   triggeredByUserId?: number | null;
   triggeredByUserName?: string | null;
+  /** BullMQ attempts (default 3). The 30-minute refresh uses 1: a retry would hold the lock into the next tick, and
+   * the next tick retries anyway (a failed module keeps its watermark). */
+  attempts?: number;
+  /** A scheduled full / sales tick that lands while only 30-minute refreshes are queued or running is queued behind
+   * them (the worker runs one job at a time) instead of being dropped until its next day / next slot. */
+  queueBehindRefresh?: boolean;
+}
+
+/** Per queue: a sales build (second queue) may start unless another sales build is queued / running; a main-queue run
+ * when no other main-queue run is active, or (queueBehindRefresh) when every active one is a 30-minute refresh. The two
+ * queues never block each other here: where they write the same tables, the platform's per-module locks decide. */
+async function mayEnqueue(job: PlatformJob, queueBehindRefresh: boolean | undefined): Promise<boolean> {
+  const active = await activeEtlRunJobTypes();
+  if (isLongQueueJob(job)) return !active.includes(job);
+  const mainQueue = active.filter((jobType) => !isLongQueueJob(jobType));
+  if (!queueBehindRefresh) return mainQueue.length === 0;
+  return mainQueue.every((jobType) => jobType === REFRESH_JOB);
 }
 
 /**
@@ -175,7 +228,7 @@ function toBullJobId(runId: number): string {
 
 export async function enqueuePipelineRun(input: EnqueuePipelineRunInput) {
   const runId = await withEnqueueGuard(async () => {
-    if (await hasActiveEtlRun()) throw new EtlAlreadyRunningError();
+    if (!(await mayEnqueue(platformJobFor(input.loadMode, input.job), input.queueBehindRefresh))) throw new EtlAlreadyRunningError();
     return createQueuedRun({
       jobType: platformJobFor(input.loadMode, input.job),
       mode: input.mode,
@@ -207,9 +260,9 @@ export async function enqueuePipelineRun(input: EnqueuePipelineRunInput) {
 
   try {
     const job = await withTimeout(
-      getEtlQueue().add(input.label, data, {
+      queueFor(data.job!).add(input.label, data, {
         jobId,
-        attempts: 3,
+        attempts: input.attempts ?? 3,
         backoff: { type: 'exponential', delay: 30_000 },
         removeOnComplete: { count: 100 },
         removeOnFail: { count: 200 },

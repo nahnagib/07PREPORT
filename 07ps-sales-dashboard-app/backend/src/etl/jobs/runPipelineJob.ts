@@ -172,24 +172,30 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
   }
 }
 
-/** Starts the BullMQ worker that actually executes ETL jobs -- this is the process that needs
- * Python on its PATH (see data/etl and pythonRunner.ts). Call once from commands/worker.ts. */
-export function startEtlWorker(): Worker<EtlJobData> {
+let cancelSubscribed = false;
+
+/** Starts a BullMQ worker that actually executes ETL jobs -- this is the process that needs
+ * Python on its PATH (see data/etl and pythonRunner.ts). commands/worker.ts starts one per queue: 'etl' (every job but
+ * the sales build) and 'etl-long' (the sales build, LONG_QUEUE_JOBS), each one job at a time. */
+export function startEtlWorker(queueName: string = 'etl'): Worker<EtlJobData> {
   const config = getEtlConfig();
-  const worker = new Worker<EtlJobData>('etl', processEtlJob, {
+  const worker = new Worker<EtlJobData>(queueName, processEtlJob, {
     connection: { host: config.redis.host, port: config.redis.port },
-    concurrency: 1, // the pipeline is not designed for concurrent runs against the same DB
+    concurrency: 1, // one job at a time per queue; the platform's per-module locks guard the shared tables
   });
 
-  subscribeToCancelRequests((jobId) => {
-    const controller = activeControllers.get(jobId);
-    if (controller) {
-      etlLogger.info('Cancelling active ETL job', { jobId });
-      controller.abort();
-    } else {
-      etlLogger.info('Cancel request for a job not active on this worker (ignored)', { jobId });
-    }
-  });
+  if (!cancelSubscribed) {
+    cancelSubscribed = true; // one subscription serves every worker of this process (activeControllers is shared)
+    subscribeToCancelRequests((jobId) => {
+      const controller = activeControllers.get(jobId);
+      if (controller) {
+        etlLogger.info('Cancelling active ETL job', { jobId });
+        controller.abort();
+      } else {
+        etlLogger.info('Cancel request for a job not active on this worker (ignored)', { jobId });
+      }
+    });
+  }
 
   worker.on('completed', (job) => {
     etlLogger.info('Job completed', { jobId: job.id, label: job.data.label });

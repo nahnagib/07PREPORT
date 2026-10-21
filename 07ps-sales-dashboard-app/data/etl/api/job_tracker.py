@@ -154,25 +154,36 @@ def _run_job(job: Job, python_bin: str) -> None:
     job.status = "cancelled" if job.cancel_requested else ("completed" if exit_code == 0 else "failed")
 
 
+# Platform jobs that run in the "long" lane: the sales build from the Odoo mirror (minutes) runs next to the jobs of the
+# main lane (the 30-minute refresh, the sales / full runs) -- the backend's second queue (etl-long) sends it. Two jobs of
+# the same lane never run together; what each job may write is guarded by the platform's per-module MySQL locks.
+LONG_LANE_JOBS = frozenset({"sales_build"})
+
+
+def lane_for(job_name: Optional[str]) -> str:
+    return "long" if job_name in LONG_LANE_JOBS else "main"
+
+
 class JobTracker:
     def __init__(self) -> None:
         self._jobs: Dict[str, Job] = {}
-        self._active_job_id: Optional[str] = None
+        self._active_job_ids: Dict[str, Optional[str]] = {"main": None, "long": None}
         self._lock = threading.Lock()
 
-    def active_job(self) -> Optional[Job]:
+    def active_job(self, lane: Optional[str] = None) -> Optional[Job]:
+        """The active job of ``lane``, or of any lane when None (input uploads wait for every run)."""
         with self._lock:
-            return self._active_job_locked()
+            return self._active_job_locked(lane)
 
-    def _active_job_locked(self) -> Optional[Job]:
+    def _active_job_locked(self, lane: Optional[str] = None) -> Optional[Job]:
         """Same as active_job(), but assumes self._lock is already held -- self._lock is a plain
         (non-reentrant) Lock, so callers already inside a `with self._lock:` block (e.g. start())
         must call this instead of active_job() to avoid deadlocking on themselves."""
-        if self._active_job_id is None:
-            return None
-        job = self._jobs.get(self._active_job_id)
-        if job is not None and job.status not in TERMINAL_STATUSES:
-            return job
+        for name in ([lane] if lane else list(self._active_job_ids)):
+            job_id = self._active_job_ids.get(name)
+            job = self._jobs.get(job_id) if job_id else None
+            if job is not None and job.status not in TERMINAL_STATUSES:
+                return job
         return None
 
     def get(self, job_id: str) -> Optional[Job]:
@@ -189,8 +200,9 @@ class JobTracker:
         python_bin: str,
         job_name: Optional[str] = None,
     ) -> Job:
+        lane = lane_for(job_name)
         with self._lock:
-            if self._active_job_locked() is not None:
+            if self._active_job_locked(lane) is not None:
                 raise RuntimeError("A run is already active")
             job_id = str(uuid.uuid4())
             job = Job(
@@ -203,7 +215,7 @@ class JobTracker:
                 label=label,
             )
             self._jobs[job_id] = job
-            self._active_job_id = job_id
+            self._active_job_ids[lane] = job_id
 
         thread = threading.Thread(target=_run_job, args=(job, python_bin), daemon=True)
         thread.start()
@@ -233,22 +245,25 @@ class JobTracker:
         admin invoking this wants the block gone now, not after that thread's next poll.
         """
         with self._lock:
-            job = self._active_job_locked()
-            if job is None:
-                return None
-            job.cancel_requested = True
-            if job.process is not None and job.process.poll() is None:
-                try:
-                    job.process.terminate()
-                except Exception:  # noqa: BLE001 - best effort; tracker state is cleared below regardless
-                    pass
-            if job.status not in TERMINAL_STATUSES:
-                job.status = "cancelled"
-                job.finished_at = datetime.now(timezone.utc)
-            self._active_job_id = None
-            return job
+            first: Optional[Job] = None
+            for lane in list(self._active_job_ids):  # every lane: the admin wants every block gone
+                job = self._active_job_locked(lane)
+                self._active_job_ids[lane] = None
+                if job is None:
+                    continue
+                job.cancel_requested = True
+                if job.process is not None and job.process.poll() is None:
+                    try:
+                        job.process.terminate()
+                    except Exception:  # noqa: BLE001 - best effort; tracker state is cleared below regardless
+                        pass
+                if job.status not in TERMINAL_STATUSES:
+                    job.status = "cancelled"
+                    job.finished_at = datetime.now(timezone.utc)
+                first = first or job
+            return first
 
 
-# Module-level singleton - one Flask process, one tracker, matching the "only one run at a time"
-# invariant the whole system (BullMQ concurrency:1, this tracker) enforces at every layer.
+# Module-level singleton - one Flask process, one tracker: one run at a time per lane, matching the two BullMQ queues
+# (etl and etl-long, each concurrency 1).
 tracker = JobTracker()

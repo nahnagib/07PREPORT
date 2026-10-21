@@ -175,11 +175,13 @@ cd 07ps-sales-dashboard-app/data/etl
 python -m etl_platform.run finance_receivables --trigger-source manual
 ```
 
-- **Schedule** (2026-10-08). Twice a day: inside the nightly `full_all` at 02:00 (after `core_dims`, before sales; a
-  failure leaves that run `partial`), and alone at 15:00 Africa/Tripoli (`ETL_SCHEDULE_FINANCE_CRON`, default
-  `0 15 * * *`; the same job as the Control Center's "Receivables Snapshot"). The 3-hourly `main` run does not take a
-  snapshot. Each run replaces today's snapshot; earlier days are kept.
-- **Dependencies.** It depends on `core_dims`, which is reused when it succeeded within `ETL_CORE_DIMS_FRESH_MINUTES`.
+- **Schedule** (2026-10-20, `docs/etl-refresh-schedule.md`). Every 30 minutes inside `refresh_30m` (after
+  `core_dims`, an isolated module: its failure never stops NPS and the next cycle retries), and inside the nightly
+  `full_all` at 02:00 (after `core_dims`, before sales; a failure leaves that run `partial`). The 15:00 run alone
+  (`ETL_SCHEDULE_FINANCE_CRON`; the Control Center's "Receivables Snapshot") is off by default. The sales `main` run
+  does not take a snapshot. Each run replaces today's snapshot; earlier days are kept (one snapshot per day). The
+  open lines are read in full every run (~1.7 min); a `write_date` version is planned with Phase B (`docs/etl-refresh-schedule.md` §3).
+- **Dependencies.** It depends on `core_dims`, which runs first in every job (`ETL_CORE_DIMS_FRESH_MINUTES`, default 0).
 - **Re-runs.** A re-run on the same day replaces that day's snapshot in one transaction; nothing else changes.
 - **Logged per run** (`etl_task_log.details`):
   - the API mode and Odoo version, and the credential profile used;

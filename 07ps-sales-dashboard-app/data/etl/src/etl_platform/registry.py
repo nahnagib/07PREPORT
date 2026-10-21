@@ -98,6 +98,13 @@ class JobSpec:
     reuse_within_minutes: int | Literal["config"] | None = None
     # False for diagnostics (platform_selfcheck) that must never show up as a data refresh.
     log_run: bool = True
+    # Umbrella jobs only. ``configurable_modules``: run only the dependency jobs listed in ETL_REFRESH_MODULES
+    # (PlatformConfig.refresh_modules); the others are left out of the run, without a log row. ``isolated``: every
+    # dependency is a separate module -- a failed one never stops another, even one that depends on it (finance still
+    # runs on the shared lists of the previous cycle when core_dims fails); the run is 'partial' when some modules
+    # failed and 'failed' only when none succeeded.
+    configurable_modules: bool = False
+    isolated: bool = False
     # Extra etl_run_log values (e.g. the sales order watermark) read in the SAME transaction that flips the
     # run to success, so the log describes exactly what was loaded.
     on_success: "Callable[[Any], Mapping[str, Any]] | None" = field(default=None, compare=False)
@@ -105,7 +112,22 @@ class JobSpec:
     # source that is not configured here), else None. As a dependency of an umbrella job it is then recorded as
     # 'skipped' and the umbrella job is not affected; run on its own it fails with that reason.
     disabled_reason: "Callable[[], str | None] | None" = field(default=None, compare=False)
+    # Per-module locks ("<ETL lock name>:<module>"): the modules this job writes. Default: its department (an umbrella
+    # job, department "all", takes the locks of the jobs it runs). ``lock_wait``: "default" waits
+    # ETL_LOCK_TIMEOUT_SECONDS for busy locks, "full" waits ETL_FULL_LOCK_WAIT_SECONDS (the 02:00 full refresh waits for
+    # a running sales build instead of being lost).
+    # May be a callable read at run time (sales_build locks "sales_shadow" in shadow mode, "sales" in incremental mode).
+    locks: "tuple[str, ...] | Callable[[], tuple[str, ...]] | None" = field(default=None, compare=False)
+    lock_wait: Literal["default", "full"] = "default"
     description: str = ""
+
+    @property
+    def own_locks(self) -> tuple[str, ...]:
+        if callable(self.locks):
+            return tuple(self.locks())
+        if self.locks is not None:
+            return self.locks
+        return () if self.department == "all" else (self.department,)
 
 
 class Registry:
