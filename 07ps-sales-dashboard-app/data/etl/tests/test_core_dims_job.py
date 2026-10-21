@@ -221,3 +221,43 @@ def test_the_sales_step_reads_what_changed_since_its_last_load(core):
     assert 12 in changes.odoo_users  # a DELETED map row, read from the task log
     assert not changes.products and not changes.teams
     assert info["truncated"] == []
+
+
+# -- partner company properties: incremental (Phase B, item 6) ----------------------------------------------------------------
+def _pc_calls(fake):
+    return [c for c in fake.calls if c[0] in ("res.partner", "ir.property") and c[1] != "incremental" and not c[1].startswith("full")]
+
+
+def test_partner_company_reads_everything_first_then_only_what_changed(core):
+    engine, run, _, fake = core
+    run()
+    assert ("res.partner", "all:[1]") in fake.calls and ("res.partner", "all:[3]") in fake.calls  # first run: full read
+    assert _details(engine, "extract_raw_odoo_res_partner_company")["full_read"] == "first read"
+    fake.calls.clear()
+    run()  # nothing changed: no partner read at all
+    assert [c for c in fake.calls if c[0] == "res.partner" and c[1].startswith(("all:", "ids:"))] == []
+    assert _details(engine, "extract_raw_odoo_res_partner_company")["partners_changed"] == 0
+
+
+def test_a_credit_limit_change_is_read_although_the_partner_write_date_did_not_move(core):
+    engine, run, _, fake = core
+    run()
+    later = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    fake.partner_company[1][100]["credit_limit"] = 9000.0
+    fake.properties.append({"res_id": "res.partner,100", "write_date": later})  # ir.property moved, the partner did not
+    fake.calls.clear()
+    run()
+    assert [c for c in fake.calls if c[0] == "res.partner" and c[1].startswith(("all:", "ids:"))] == [
+        ("res.partner", "ids:1:[100]"), ("res.partner", "ids:3:[100]")]
+    assert _vals(engine, "SELECT credit_limit FROM raw_odoo_res_partner_company WHERE partner_id = 100 AND company_id = 1") == [[9000.0]]
+
+
+def test_a_changed_company_default_reads_every_partner(core):
+    engine, run, _, fake = core
+    run()
+    later = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    fake.properties.append({"res_id": False, "write_date": later})  # the company's default payment term
+    fake.calls.clear()
+    run()
+    assert ("res.partner", "all:[1]") in fake.calls
+    assert _details(engine, "extract_raw_odoo_res_partner_company")["full_read"].startswith("a company default")

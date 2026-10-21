@@ -162,3 +162,36 @@ def test_reset_clears_active_job(client):
 def test_404_on_unknown_route(client):
     response = client.get("/nope")
     assert response.status_code == 404
+
+
+def test_a_sales_build_runs_next_to_a_main_lane_job_but_not_next_to_another_build(client, monkeypatch):
+    """Two lanes: sales_build (etl-long queue) may start while the 30-minute refresh runs; a second build may not."""
+    import job_tracker
+
+    class Hold:  # a run that is still active
+        status = "running"
+        job_id = "x"
+
+    started = []
+
+    def fake_start(self, load_mode, output_mode, fast, extra_args, label, python_bin, job_name=None):
+        lane = job_tracker.lane_for(job_name)
+        if self._active_job_locked(lane) is not None:
+            raise RuntimeError("A run is already active")
+        job = job_tracker.Job(job_id=f"j{len(started)}", job_name=job_name or "", load_mode=load_mode, output_mode=output_mode,
+                              fast=fast, extra_args=[], label=label)
+        job.status = "running"
+        self._jobs[job.job_id] = job
+        self._active_job_ids[lane] = job.job_id
+        started.append(job_name)
+        return job
+
+    monkeypatch.setattr(job_tracker.tracker, "_active_job_ids", {"main": None, "long": None})  # restored after the test
+    monkeypatch.setattr(job_tracker.tracker, "_jobs", {})
+    monkeypatch.setattr(job_tracker.JobTracker, "start", fake_start)
+    monkeypatch.setattr("app.platform_jobs", lambda: {"refresh_30m", "sales_build"})
+    assert client.post("/etl/run", json={"job": "refresh_30m"}, headers=AUTH_HEADERS).status_code == 202
+    assert client.post("/etl/run", json={"job": "sales_build"}, headers=AUTH_HEADERS).status_code == 202
+    assert client.post("/etl/run", json={"job": "sales_build"}, headers=AUTH_HEADERS).status_code == 409
+    assert client.post("/etl/run", json={"job": "refresh_30m"}, headers=AUTH_HEADERS).status_code == 409
+    assert started == ["refresh_30m", "sales_build"]

@@ -83,7 +83,24 @@ class PlatformConfig:
     core_dims_fresh_minutes: int = 0
     # The modules the 30-minute refresh job (refresh_30m) runs, in this order of preference; a module that is not
     # registered in this build (process_nps before the NPS branch is merged) is skipped with a log line.
-    refresh_modules: tuple[str, ...] = ("core_dims", "finance_receivables", "process_nps")
+    refresh_modules: tuple[str, ...] = ("core_dims", "sales_mirror", "finance_receivables", "process_nps")
+    # Per-module locks: a job holds "<lock_name>:<module>" for every module it writes (JobSpec.locks), so a long sales
+    # rebuild (lock "sales") never stops the 30-minute refresh of the other modules. A job whose locks are busy waits
+    # lock_timeout_seconds, except the 02:00 full refresh (JobSpec.lock_wait="full"): it waits this long for a running
+    # sales build to finish instead of losing the night's reference rebuild.
+    full_lock_wait_seconds: int = 1800
+    # ETL_SALES_MODE (docs/etl-phase-b-sales-incremental.md section 8):
+    #   legacy       today: the 5x/day sales job + the 02:00 full refresh write the live sales tables; no mirror.
+    #   shadow       the 30-minute refresh keeps the Odoo mirror current (sales_mirror) and sales_build writes the shd_*
+    #                copies; dashboards read the live tables; sales_shadow_compare runs after the 02:00 refresh.
+    #   incremental  sales_build writes the live tables every 30 minutes; the 5x/day sales job is skipped. The 02:00 full
+    #                refresh still rebuilds the live tables from Odoo (the reference).
+    sales_mode: str = "legacy"
+    # Mirror reads: write_date >= (previous read start - this many minutes); covers transactions that commit after the
+    # previous read and clock skew. The daily audit (write_date of records changed in the last mirror_audit_days days
+    # vs the mirror) and the id check catch anything older.
+    mirror_overlap_minutes: int = 10
+    mirror_audit_days: int = 2
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "PlatformConfig":
@@ -112,5 +129,20 @@ class PlatformConfig:
             lock_name=os.getenv("ETL_LOCK_NAME", "sales_pipeline_full_load"),
             lock_timeout_seconds=int(os.getenv("ETL_LOCK_TIMEOUT_SECONDS", "30")),
             core_dims_fresh_minutes=int(os.getenv("ETL_CORE_DIMS_FRESH_MINUTES", "0")),
-            refresh_modules=_csv_env("ETL_REFRESH_MODULES", "core_dims,finance_receivables,process_nps"),
+            refresh_modules=_csv_env("ETL_REFRESH_MODULES", "core_dims,sales_mirror,finance_receivables,process_nps"),
+            full_lock_wait_seconds=int(os.getenv("ETL_FULL_LOCK_WAIT_SECONDS", "1800")),
+            sales_mode=sales_mode_from_env(),
+            mirror_overlap_minutes=int(os.getenv("ETL_MIRROR_OVERLAP_MINUTES", "10")),
+            mirror_audit_days=int(os.getenv("ETL_MIRROR_AUDIT_DAYS", "2")),
         )
+
+
+SALES_MODES = ("legacy", "shadow", "incremental")
+
+
+def sales_mode_from_env() -> str:
+    """ETL_SALES_MODE, validated: a typo must fail loudly, never fall back to a mode nobody chose."""
+    mode = os.getenv("ETL_SALES_MODE", "legacy").strip().lower() or "legacy"
+    if mode not in SALES_MODES:
+        raise ValueError(f"ETL_SALES_MODE={mode!r} is not one of {', '.join(SALES_MODES)}")
+    return mode

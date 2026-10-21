@@ -34,7 +34,7 @@ def make_tracker_with_active_job(status: str = "running", process: FakeProcess |
     job.status = status
     job.process = process
     tracker._jobs[job.job_id] = job
-    tracker._active_job_id = job.job_id
+    tracker._active_job_ids["main"] = job.job_id
     return tracker, job
 
 

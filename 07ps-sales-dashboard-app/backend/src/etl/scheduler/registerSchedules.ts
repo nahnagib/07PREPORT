@@ -179,4 +179,28 @@ export function registerEtlSchedules(): void {
   } else {
     etlLogger.info('NPS Score schedule disabled (ETL_SCHEDULE_PROCESS_NPS_ENABLED is not true)');
   }
+
+  // Phase B: the sales tables from the Odoo mirror, on the second queue (etl-long) -- never waits for, nor holds up, the
+  // main queue. A tick while a build is still running is skipped (the next tick picks up everything).
+  if (config.schedule.salesBuildEnabled) {
+    if (!cron.validate(config.schedule.salesBuildCron)) {
+      etlLogger.error('Invalid ETL_SCHEDULE_SALES_BUILD_CRON -- sales build schedule not registered', { cron: config.schedule.salesBuildCron });
+    } else {
+      cron.schedule(config.schedule.salesBuildCron, () => {
+        etlLogger.info('Scheduled sales build tick -- enqueueing job');
+        enqueuePipelineRun({
+          job: 'sales_build',
+          mode: 'sales_build',
+          loadMode: 'incremental',
+          outputMode: 'sql',
+          label: 'scheduled-sales-build',
+          triggerSource: 'scheduled',
+          attempts: 1,
+        }).catch(onScheduledEnqueueError('sales build'));
+      }, { timezone: config.schedule.timezone });
+      etlLogger.info('Registered sales build schedule (queue etl-long)', { cron: config.schedule.salesBuildCron, timezone: config.schedule.timezone });
+    }
+  } else {
+    etlLogger.info('Sales build schedule disabled (ETL_SCHEDULE_SALES_BUILD_ENABLED is not true)');
+  }
 }

@@ -78,6 +78,7 @@ class FakeOdooSource:
     def __init__(self, data=None, partner_company=None):
         self.data = {k: [dict(r) for r in v] for k, v in (data or ODOO).items()}
         self.partner_company = partner_company or PARTNER_COMPANY
+        self.properties: list[dict] = []  # ir.property changes: {"res_id": "res.partner,100" or False, "write_date": ...}
         self.calls: list[tuple[str, str]] = []
 
     def available_fields(self, model, requested):
@@ -99,7 +100,24 @@ class FakeOdooSource:
         return self._rows(model, fields)
 
     def search_ids(self, model, domain=(), *, include_archived=True):
-        return sorted(r["id"] for r in self.data.get(model, []))
+        since = next((t[2] for t in domain if isinstance(t, tuple) and t[0] == "write_date"), None)
+        return sorted(r["id"] for r in self.data.get(model, []) if since is None or r.get("write_date", WD) >= since)
+
+    def _ctx(self, include_archived, company_ids=None):
+        return {"active_test": not include_archived, "allowed_company_ids": list(company_ids or [])}
+
+    def search_read(self, model, domain, fields, offset=0, limit=0, order="id", context=None):
+        if model == "ir.property":
+            since = next(t[2] for t in domain if t[0] == "write_date")
+            self.calls.append((model, "since"))
+            return [{"id": i, "res_id": p["res_id"]} for i, p in enumerate(self.properties) if p["write_date"] >= since]
+        if model == "res.partner":
+            ids = next(t[2] for t in domain if isinstance(t, tuple) and t[0] == "id")
+            company = (context or {}).get("allowed_company_ids", [None])[0]
+            self.calls.append((model, f"ids:{company}:{list(ids)}"))
+            values = self.partner_company.get(company, {})
+            return [{"id": pid, "write_date": WD, **values[pid]} for pid in sorted(ids) if pid in values]
+        raise NotImplementedError(f"fake search_read {model}")
 
     # -- labels: Odoo's own selection labels per language (fake fields_get) --------------------------------------
     context = {"lang": "en_US"}

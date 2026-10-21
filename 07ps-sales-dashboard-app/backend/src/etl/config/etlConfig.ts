@@ -49,6 +49,9 @@ export interface EtlConfig {
      * together with the ETL's NPS_ENABLED. */
     processNpsCron: string;
     processNpsEnabled: boolean;
+    /** Phase B: the sales build from the Odoo mirror (job sales_build, queue etl-long). Seconds when nothing changed. */
+    salesBuildCron: string;
+    salesBuildEnabled: boolean;
     /** IANA zone every cron expression is read in: ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE (default
      * Africa/Tripoli) -- never the process's own zone, which is UTC in a container without TZ. The displayed
      * "next run" uses the same zone, so the two always agree. */
@@ -112,6 +115,10 @@ export function getEtlConfig(): EtlConfig {
       financeEnabled: bool('ETL_SCHEDULE_FINANCE_ENABLED', false),
       processNpsCron: process.env.ETL_SCHEDULE_PROCESS_NPS_CRON || '0 2 * * *',
       processNpsEnabled: bool('ETL_SCHEDULE_PROCESS_NPS_ENABLED', false),
+      // 10 minutes after each 30-minute refresh tick (which brings the Odoo mirror up to date). Off by default: set true
+      // with ETL_SALES_MODE=shadow or incremental (data/etl/.env); in legacy mode the job ends at once ("skipped").
+      salesBuildCron: process.env.ETL_SCHEDULE_SALES_BUILD_CRON || '10,40 * * * *',
+      salesBuildEnabled: bool('ETL_SCHEDULE_SALES_BUILD_ENABLED', false),
       timezone: process.env.ETL_SCHEDULE_TIMEZONE?.trim() || getAppTimezone(),
     },
     redis: {

@@ -18,6 +18,7 @@ const SCHEDULE_VARS = [
   'ETL_SCHEDULE_INCREMENTAL_CRON', 'ETL_SCHEDULE_INCREMENTAL_ENABLED', 'ETL_SCHEDULE_FULL_CRON', 'ETL_SCHEDULE_FULL_ENABLED',
   'ETL_SCHEDULE_FINANCE_CRON', 'ETL_SCHEDULE_FINANCE_ENABLED', 'ETL_SCHEDULE_PROCESS_NPS_CRON', 'ETL_SCHEDULE_PROCESS_NPS_ENABLED',
   'ETL_SCHEDULE_TIMEZONE', 'APP_TIMEZONE', 'ETL_WORKER_ENABLED', 'ETL_SCHEDULER_OFF_OK',
+  'ETL_SCHEDULE_SALES_BUILD_CRON', 'ETL_SCHEDULE_SALES_BUILD_ENABLED',
 ];
 let saved: Record<string, string | undefined>;
 
@@ -155,6 +156,15 @@ describe('ETL schedules', () => {
     expect((enqueue.mock.calls.at(-1) as unknown as [{ loadMode: string }])[0].loadMode).toBe('full');
     expect(all.map((s) => s.job)).not.toContain('full_all');
     expect(npsRefresh(getEtlConfig().schedule)).toEqual({ via: 'own', cron: '0 2 * * *' });
+  });
+
+  it('the sales build (Phase B) is off by default; on, it runs 10 minutes after each refresh tick, one attempt', async () => {
+    expect((await registered()).map((s) => s.job)).not.toContain('sales_build');
+    vi.clearAllMocks();
+    process.env.ETL_SCHEDULE_SALES_BUILD_ENABLED = 'true';
+    const build = (await registered()).find((s) => s.job === 'sales_build');
+    expect(build).toEqual({ cron: '10,40 * * * *', timezone: 'Africa/Tripoli', job: 'sales_build', mode: 'sales_build', attempts: 1,
+      queueBehindRefresh: undefined });
   });
 
   it('NPS is off when its own schedule is off and there is no nightly full_all', async () => {

@@ -82,17 +82,34 @@ keeps the snapshot exact.
 `ETL_CORE_DIMS_FRESH_MINUTES=0` (the shared lists run in every cycle; before: 180, skipped when fresh),
 `ETL_ODOO_MAX_RETRIES=5`.
 
-## 5. Install on the server (after the merge is approved)
+## 5. Install on the server (after the merge is approved; Phase A + Phase B step 1 in one release)
 
-1. Back up the warehouse: `mysqldump --single-transaction --routines powerBI_Data > db_backups/powerbi_data_<date>_pre_30min.sql`
-   (Phase A has no migration; the backup is the rollback point anyway).
-2. Edit the server's `backend/.env`: add `ETL_SCHEDULER_ENABLED=true` and `ETL_WORKER_ENABLED=true` **before** the
-   new images start (without them the new code runs no schedule at all), plus the refresh lines of §4.
-3. Edit the server's `data/etl/.env`: the lines of §4 (an existing `ETL_ODOO_MAX_RETRIES=3` must become 5).
-4. Deploy: `docker compose up -d --build backend etl-worker etl-api`.
-5. Check: `docker compose logs backend | grep -i "schedule"` shows "Registered 30-minute refresh schedule"; the ETL
-   Control Center shows "Next 30-minute Refresh"; after the next :00/:30 the run history shows a "30-minute Refresh" run
-   with core / finance child rows.
+1. Back up the warehouse: `mysqldump --single-transaction --routines powerBI_Data > db_backups/powerbi_data_<date>_pre_30min.sql`.
+2. Apply migration **0054** (`data/warehouse/migrations/0054_sales_incremental_phase_b.sql`, idempotent; NPS 0046-0053
+   first if they are not applied yet).
+3. Edit the server's `backend/.env`: add `ETL_SCHEDULER_ENABLED=true` and `ETL_WORKER_ENABLED=true` **before** the
+   new images start (without them the new code runs no schedule at all), plus the refresh lines of §4 and
+   `ETL_SCHEDULE_SALES_BUILD_ENABLED=true`.
+4. Edit the server's `data/etl/.env`: the lines of §4 (an existing `ETL_ODOO_MAX_RETRIES=3` must become 5), and
+   `ETL_SALES_MODE=shadow`, `ETL_REFRESH_MODULES=core_dims,sales_mirror,finance_receivables,process_nps`.
+5. Deploy: `docker compose up -d --build backend etl-worker etl-api`.
+6. Check: `docker compose logs backend | grep -i "schedule"` shows "Registered 30-minute refresh schedule" and "Registered
+   sales build schedule (queue etl-long)"; `docker compose logs etl-worker` shows "queues etl and etl-long"; the ETL Control
+   Center shows "Next 30-minute Refresh" and "Next sales build". The first `sales_mirror` reads every mirrored record once
+   (about as long as one sales extraction); the first `sales_build` fills the `shd_*` copies.
+
+## 5a. Phase B: shadow -> incremental, and back
+
+* **shadow** (deployed): the dashboards read the live tables exactly as before; the 30-minute build writes `shd_*`. Each
+  morning the Control Center card "Sales: live vs shadow" shows the comparison of the night (MATCH / DIFF, where).
+* **switch to incremental** (the owner decides after >= 3 working days of MATCH): `data/etl/.env` `ETL_SALES_MODE=incremental`,
+  then `docker compose up -d etl-api etl-worker`. From the next build the live tables are written every 30 minutes (changed
+  rows only) and the 5x/day sales job records "skipped (disabled: ETL_SALES_MODE=incremental)". The 02:00 full refresh
+  still rebuilds the live tables from Odoo every night.
+* **rollback** (from either): `ETL_SALES_MODE=legacy` + the same recreate: the 5x/day job writes the live tables again,
+  the mirror and the build stop (the build records "skipped"). Optionally `ETL_SCHEDULE_SALES_BUILD_ENABLED=false` in
+  `backend/.env` + `docker compose up -d backend`. No code change, no migration to undo; the 0054 tables can stay (the
+  down script `data/warehouse/down/0054_sales_incremental_phase_b_down.sql` removes them if ever wanted).
 
 ## 6. Uninstall / roll back to the old schedule (09-12-15-18-21 slots)
 
@@ -117,6 +134,14 @@ SELECT p.started_at_utc, p.status, p.duration_seconds, c.job_name, c.status AS m
        c.odoo_extract_count AS rows_read, c.rows_processed AS rows_loaded, c.error_message
 FROM etl_run_log p JOIN etl_run_log c ON c.parent_run_uid = p.run_uid
 WHERE p.job_name = 'refresh_30m' ORDER BY p.started_at_utc DESC, c.run_id LIMIT 30;
+
+-- Phase B: the mirror's rows read per Odoo model, and the sales builds (skipped = nothing changed)
+SELECT started_at_utc, JSON_EXTRACT(details, '$.odoo_rows_read') AS rows_read, JSON_EXTRACT(details, '$.changed') AS stored
+FROM etl_task_log WHERE task_name = 'mirror_sync' ORDER BY started_at_utc DESC LIMIT 10;
+SELECT started_at_utc, duration_seconds, rows_loaded, JSON_EXTRACT(details, '$.skipped') AS skipped, JSON_EXTRACT(details, '$.reason') AS reason
+FROM etl_task_log WHERE task_name IN ('build_sales_from_mirror', 'write_sales_from_mirror') ORDER BY started_at_utc DESC LIMIT 10;
+SELECT as_of_date, status, rows_only_live, rows_only_shadow, rows_different, cells_diff, cells_compared, excluded_orders
+FROM etl_shadow_compare ORDER BY started_at_utc DESC LIMIT 7;
 
 -- rows read per Odoo model / per task, with the watermark it moved from and to
 SELECT t.task_name, t.rows_extracted, t.rows_loaded, t.duration_seconds, t.watermark_before, t.watermark_after

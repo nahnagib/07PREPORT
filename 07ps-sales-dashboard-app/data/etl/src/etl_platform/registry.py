@@ -112,7 +112,22 @@ class JobSpec:
     # source that is not configured here), else None. As a dependency of an umbrella job it is then recorded as
     # 'skipped' and the umbrella job is not affected; run on its own it fails with that reason.
     disabled_reason: "Callable[[], str | None] | None" = field(default=None, compare=False)
+    # Per-module locks ("<ETL lock name>:<module>"): the modules this job writes. Default: its department (an umbrella
+    # job, department "all", takes the locks of the jobs it runs). ``lock_wait``: "default" waits
+    # ETL_LOCK_TIMEOUT_SECONDS for busy locks, "full" waits ETL_FULL_LOCK_WAIT_SECONDS (the 02:00 full refresh waits for
+    # a running sales build instead of being lost).
+    # May be a callable read at run time (sales_build locks "sales_shadow" in shadow mode, "sales" in incremental mode).
+    locks: "tuple[str, ...] | Callable[[], tuple[str, ...]] | None" = field(default=None, compare=False)
+    lock_wait: Literal["default", "full"] = "default"
     description: str = ""
+
+    @property
+    def own_locks(self) -> tuple[str, ...]:
+        if callable(self.locks):
+            return tuple(self.locks())
+        if self.locks is not None:
+            return self.locks
+        return () if self.department == "all" else (self.department,)
 
 
 class Registry:

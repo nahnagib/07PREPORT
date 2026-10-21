@@ -3,8 +3,10 @@ from __future__ import annotations
 import http.client
 import logging
 import random
+import threading
 import time
 import xmlrpc.client
+from collections import Counter
 from dataclasses import dataclass
 from urllib.parse import urlparse
 from typing import Any
@@ -18,6 +20,28 @@ class OdooApiError(RuntimeError):
 # HTTP errors, and the http.client states a dropped keep-alive connection leaves behind (IncompleteRead,
 # ResponseNotReady "Request-sent", RemoteDisconnected, BadStatusLine). Odoo's own answers (xmlrpc Fault) never are.
 NETWORK_ERRORS = (OSError, TimeoutError, xmlrpc.client.ProtocolError, http.client.HTTPException)
+
+# Rows returned by search_read / read per Odoo model in this process (every client instance, every thread): the ETL
+# logs "rows read per Odoo model" for each run from the difference before / after (rows_read_totals()).
+_ROWS_LOCK = threading.Lock()
+_ROWS_READ: Counter = Counter()
+
+
+def rows_read_totals() -> dict[str, int]:
+    with _ROWS_LOCK:
+        return dict(_ROWS_READ)
+
+
+def rows_read_since(before: dict[str, int]) -> dict[str, int]:
+    """Rows read per model since ``before`` (a rows_read_totals() snapshot), models with 0 left out, sorted."""
+    now = rows_read_totals()
+    return {m: n - before.get(m, 0) for m, n in sorted(now.items()) if n - before.get(m, 0)}
+
+
+def _count_rows(model: str, result: Any) -> None:
+    if isinstance(result, list):
+        with _ROWS_LOCK:
+            _ROWS_READ[model] += len(result)
 
 
 @dataclass
@@ -157,12 +181,21 @@ class OdooClient:
         kwargs: dict[str, Any] = {"fields": fields, "offset": offset, "limit": limit, "order": order}
         if context:
             kwargs["context"] = context
-        return self.execute_kw(
+        result = self.execute_kw(
             model,
             "search_read",
             [domain],
             kwargs,
         )
+        _count_rows(model, result)
+        return result
+
+    def search(self, model: str, domain: list[Any], context: dict[str, Any] | None = None, order: str = "id") -> list[int]:
+        """Ids only (no rows read): the id checks of the Odoo mirror."""
+        kwargs: dict[str, Any] = {"order": order}
+        if context:
+            kwargs["context"] = context
+        return [int(i) for i in self.execute_kw(model, "search", [domain], kwargs)]
 
 
 class TimeoutTransport(xmlrpc.client.Transport):

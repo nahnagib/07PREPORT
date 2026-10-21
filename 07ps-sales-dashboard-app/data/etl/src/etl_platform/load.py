@@ -326,16 +326,17 @@ def upsert_changed(
 
 def replace_changed(
     conn: Connection, table_name: str, df: pd.DataFrame, *, stamp_column: str | None = DEFAULT_STAMP,
-    now: _dt.datetime | None = None,
+    now: _dt.datetime | None = None, stamp_value: Any = None,
 ) -> ChangeSet:
     """Same final content as ``replace_all`` (the table mirrors ``df``), but written as a diff: rows no longer in ``df``
-    are deleted (their keys are reported), new / changed rows are upserted and stamped, unchanged rows keep their stamp."""
+    are deleted (their keys are reported), new / changed rows are upserted and stamped, unchanged rows keep their stamp.
+    ``stamp_value``: the stamp written instead of ``now`` (the sales marts stamp ``_run_id`` with the run uid)."""
     table = reflect_table(conn, table_name)
     key = _primary_key(table)
     stamp = stamp_column if stamp_column and stamp_column in table.columns else None
     now = now or _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
     if stamp:
-        df = df.assign(**{stamp: now})
+        df = df.assign(**{stamp: now if stamp_value is None else stamp_value})
     _validate(table, df, key)
     compare = [c for c in df.columns if c not in key and c != stamp]
     out = ChangeSet(table_name)

@@ -651,52 +651,75 @@ class PowerBISalesPipeline:
             self._log_runtime(run_context)
             raise
 
-    def build_sheets(self, *, include_qa: bool = False, strict: bool = False) -> "SalesBuild":
+    def build_sheets(self, *, include_qa: bool = False, strict: bool = False, source: Any = None) -> "SalesBuild":
         """The business transforms of a FULL run, with no side effects: extracts from Odoo (read-only), applies
         the unchanged legacy cleaning/enrichment/fact logic, runs the model validations, and returns the sheets
         plus the raw Odoo frames. It writes nothing -- no etl_run_log, staging, sale.report cache, workbook or
         SQL. The ETL platform (departments/sales) conforms the keys and loads the marts.
 
         Same steps, in the same order, as run(load_mode="full"); kept separate so the legacy run() is untouched
-        until it is retired."""
+        until it is retired.
+
+        ``source`` (Phase B, departments.sales.mirror.MirrorSnapshot): the repositories read the Odoo mirror instead of
+        Odoo (same records, same fields, one after another) and sale.report is rebuilt from the mirrored orders and
+        lines; every transform below is the same code. ``odoo_extract_count`` then counts the mirror rows used."""
         run_context = PipelineRunContext(scheduled_refresh_time=None)
         odoo_extract_count = 0
         with run_context.step("validate_config_and_inputs"):
             self._validate_inputs()
             self.settings.validate(require_database=False)
             _ = self.mapper
-        with run_context.step("odoo_authenticate"):
-            client = OdooClient(
-                url=self.settings.odoo_url, db=self.settings.odoo_db, username=self.settings.odoo_user,
-                api_key=self.settings.odoo_api_key, timeout_seconds=self.settings.rpc_timeout_seconds,
-                max_retries=self.settings.max_retries, connect_retry_window_seconds=self.settings.odoo_connect_retry_window_seconds,
-            )
-            client.authenticate()
-        uid, bs = client.uid, self.settings.batch_size
+        if source is None:
+            with run_context.step("odoo_authenticate"):
+                client = OdooClient(
+                    url=self.settings.odoo_url, db=self.settings.odoo_db, username=self.settings.odoo_user,
+                    api_key=self.settings.odoo_api_key, timeout_seconds=self.settings.rpc_timeout_seconds,
+                    max_retries=self.settings.max_retries, connect_retry_window_seconds=self.settings.odoo_connect_retry_window_seconds,
+                )
+                client.authenticate()
+            uid = client.uid
+
+            def new_client():
+                return self._make_odoo_client(uid)
+
+            def fetch_all(tasks, workers=6):
+                return self._parallel_odoo_fetch(tasks, uid=uid, max_workers=workers)
+        else:
+            client = source.client()
+
+            def new_client():
+                return client
+
+            def fetch_all(tasks, workers=6):  # one snapshot connection: one read after another
+                return {k: fn() for k, fn in tasks.items()}
+        bs = self.settings.batch_size
         with run_context.step("extract_product_cost_and_inventory"):
-            product_cost_repo = ProductCostRepository(self._make_odoo_client(uid), bs)
-            inv = [InventoryRepository(self._make_odoo_client(uid), bs) for _ in range(3)]
-            fetched = self._parallel_odoo_fetch({
+            product_cost_repo = ProductCostRepository(new_client(), bs)
+            inv = [InventoryRepository(new_client(), bs) for _ in range(3)]
+            fetched = fetch_all({
                 "product.product": product_cost_repo.fetch_product_costs,
                 "stock.quant": inv[0].fetch_stock_quants,
                 "stock.location": inv[1].fetch_locations,
                 "res.company": inv[2].fetch_companies,
-            }, uid=uid, max_workers=4)
+            }, 4)
             odoo_extract_count += sum(len(df) for df in fetched.values())
         with run_context.step("extract_sale_report"):
-            sales_raw = SalesReportRepository(client=client, batch_size=bs, timezone=self.settings.timezone,
-                                              assume_utc_for_naive=self.settings.assume_utc_for_naive).fetch_sale_report()
+            if source is None:
+                sales_raw = SalesReportRepository(client=client, batch_size=bs, timezone=self.settings.timezone,
+                                                  assume_utc_for_naive=self.settings.assume_utc_for_naive).fetch_sale_report()
+            else:
+                sales_raw = source.sale_report(timezone=self.settings.timezone, assume_utc_for_naive=self.settings.assume_utc_for_naive)
             odoo_extract_count += len(sales_raw)
         with run_context.step("extract_crm_models"):
             repos = {
-                "crm.lead": (CrmRepository(self._make_odoo_client(uid), bs), "fetch_leads"),
-                "crm.stage": (CrmRepository(self._make_odoo_client(uid), bs), "fetch_stages"),
-                "crm.lost.reason": (CrmRepository(self._make_odoo_client(uid), bs), "fetch_lost_reasons"),
-                "sale.order": (SaleOrderRepository(self._make_odoo_client(uid), bs), "fetch_orders"),
-                "stock.picking": (StockPickingRepository(self._make_odoo_client(uid), bs), "fetch_pickings"),
-                "stock.move": (StockMoveRepository(self._make_odoo_client(uid), bs), "fetch_moves"),
+                "crm.lead": (CrmRepository(new_client(), bs), "fetch_leads"),
+                "crm.stage": (CrmRepository(new_client(), bs), "fetch_stages"),
+                "crm.lost.reason": (CrmRepository(new_client(), bs), "fetch_lost_reasons"),
+                "sale.order": (SaleOrderRepository(new_client(), bs), "fetch_orders"),
+                "stock.picking": (StockPickingRepository(new_client(), bs), "fetch_pickings"),
+                "stock.move": (StockMoveRepository(new_client(), bs), "fetch_moves"),
             }
-            crm = self._parallel_odoo_fetch({k: getattr(r, m) for k, (r, m) in repos.items()}, uid=uid)
+            crm = fetch_all({k: getattr(r, m) for k, (r, m) in repos.items()})
             odoo_extract_count += sum(len(df) for df in crm.values())
             field_availability = pd.concat([r.field_availability for r, _ in repos.values()] + [product_cost_repo.field_availability],
                                            ignore_index=True)

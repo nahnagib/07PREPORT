@@ -18,6 +18,7 @@ import {
   EtlRunStatus,
   EtlRunStep,
   EtlSchedulerConfigResponse,
+  EtlShadowCompareResponse,
   EtlStatusResponse,
 } from '../../../lib/api';
 
@@ -132,6 +133,7 @@ const MODE_LABEL: Record<EtlMode, string> = {
   finance: 'Receivables Snapshot',
   nps: 'NPS Score',
   refresh: '30-minute Refresh',
+  sales_build: 'Sales build (from the Odoo mirror)',
   sql: 'SQL Mode (before 2026-10)',
   excel: 'Excel Mode (before 2026-10)',
 };
@@ -143,6 +145,9 @@ const STEP_LABEL: Record<string, string> = {
   process_nps: 'NPS Score',
   sales_incremental: 'Sales (incremental)',
   sales_full: 'Sales (full)',
+  sales_mirror: 'Sales mirror (Odoo)',
+  sales_build: 'Sales build',
+  sales_shadow_compare: 'Live vs shadow comparison',
 };
 
 function stepStatus(status: string): DisplayStatus {
@@ -425,6 +430,26 @@ function EtlControlBody() {
           {status?.scheduleWarning ?? schedulerConfig?.scheduleWarning}
         </div>
       )}
+      {status?.salesBuild?.active && (
+        <div
+          role="status"
+          data-testid="etl-sales-build-active"
+          style={{
+            padding: '10px 16px',
+            borderRadius: 8,
+            background: 'var(--ps-color-info-bg, #e8f1fb)',
+            border: '1px solid var(--ps-color-info-border, #9cc3ea)',
+            fontSize: 14,
+          }}
+        >
+          <strong>
+            {status.salesBuild.active.status === 'queued' ? 'Sales rebuild queued' : 'Sales rebuild in progress'}
+            {' — started '}
+            {formatDateTime(status.salesBuild.active.startedAt ?? status.salesBuild.active.queuedAt)}
+          </strong>
+          . The 30-minute refresh of the shared lists, receivables, collections and NPS keeps running meanwhile.
+        </div>
+      )}
       {statusError && <ErrorState message={statusError} onRetry={loadStatus} />}
       {actionError && <ErrorState message={actionError} onRetry={() => setActionError(null)} />}
 
@@ -630,9 +655,26 @@ function EtlControlBody() {
             <InfoRow label="Next Full Refresh" value={formatDateTime(status?.nextFullRun ?? null)} stacked />
             <InfoRow label="Next Receivables Snapshot" value={formatDateTime(status?.nextFinanceRun ?? null)} stacked />
             <InfoRow label="Next NPS Score refresh" value={formatDateTime(status?.nextNpsRun ?? null)} stacked />
+            <InfoRow
+              label="Next sales build (from the Odoo mirror)"
+              value={formatDateTime(schedulerConfig?.salesBuild?.nextRun ?? null)}
+              stacked
+            />
+            {status?.salesBuild?.last && (
+              <InfoRow
+                label="Last sales build"
+                value={`${STATUS_LABEL[stepStatus(status.salesBuild.last.status)] ?? status.salesBuild.last.status} · ${formatDateTime(
+                  status.salesBuild.last.finishedAt,
+                )}${status.salesBuild.last.durationSeconds !== null ? ` · ${status.salesBuild.last.durationSeconds} s` : ''}`}
+                stacked
+              />
+            )}
           </dl>
         </Card>
       </div>
+
+      {/* --- Phase B: live vs shadow comparison (ETL_SALES_MODE=shadow) --- */}
+      <ShadowCompareCard token={token} />
 
       {/* --- Input files preflight --- */}
       <PreflightCard preflight={preflight} onRecheck={loadPreflight} />
@@ -1092,6 +1134,95 @@ const FILE_STATUS_TEXT: Record<string, string> = {
 };
 
 /** Shows what the ETL service sees in its input folder, before anyone clicks Run. */
+/** The latest live-vs-shadow comparisons of the sales tables (sales_shadow_compare, after each 02:00 refresh in shadow
+ * mode): MATCH means the 30-minute build from the Odoo mirror wrote exactly what the 02:00 rebuild from Odoo wrote. */
+function ShadowCompareCard({ token }: { token: string | null }) {
+  const [data, setData] = useState<EtlShadowCompareResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    const load = () =>
+      adminApi
+        .getEtlShadowCompare(token)
+        .then((res) => {
+          setData(res);
+          setError(null);
+        })
+        .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load the shadow comparison.'));
+    load();
+    const interval = setInterval(load, 5 * 60_000);
+    return () => clearInterval(interval);
+  }, [token]);
+
+  if (!data?.runs.length && !error) return null; // shadow mode never ran here: nothing to show
+  const latest = data?.runs[0];
+  const diffCells = (data?.cells ?? []).filter((c) => c.status === 'DIFF');
+  const color = (ok: boolean) => (ok ? 'var(--ps-color-success, #1e7e34)' : 'var(--ps-color-alert, #c0392b)');
+  return (
+    <Card>
+      <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>Sales: live vs shadow (daily comparison)</h3>
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
+        After each 02:00 full refresh the live sales tables (rebuilt from Odoo) are compared row by row with the shadow copies the
+        30-minute build wrote from the Odoo mirror.
+      </p>
+      {error && <ErrorState message={error} />}
+      {latest && (
+        <div data-testid="etl-shadow-compare" style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13.5 }}>
+          <div>
+            <strong style={{ color: color(latest.status === 'match') }}>{latest.status === 'match' ? 'MATCH' : latest.status.toUpperCase()}</strong>
+            {' · '}
+            {formatDate(latest.asOfDate)} · {latest.tablesCompared} tables · rows live {formatCount(latest.rowsLive)}, shadow{' '}
+            {formatCount(latest.rowsShadow)}
+          </div>
+          <div>
+            Only in live: <strong>{formatCount(latest.rowsOnlyLive)}</strong> · only in shadow: <strong>{formatCount(latest.rowsOnlyShadow)}</strong>{' '}
+            · different: <strong>{formatCount(latest.rowsDifferent)}</strong> · company × currency × month × salesperson cells:{' '}
+            <strong>
+              {formatCount(latest.cellsCompared - latest.cellsDiff)} / {formatCount(latest.cellsCompared)}
+            </strong>{' '}
+            match
+            {latest.excludedOrders > 0 && ` · ${latest.excludedOrders} order(s) changed in Odoo during the comparison left out`}
+          </div>
+          {diffCells.length > 0 && (
+            <table style={{ borderCollapse: 'collapse', fontSize: 12.5 }}>
+              <thead>
+                <tr>
+                  {['Table', 'Cell', 'Measure', 'Live', 'Shadow', 'Diff'].map((h) => (
+                    <th key={h} style={{ textAlign: 'left', padding: '4px 8px', borderBottom: '1px solid var(--ps-color-border)' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {diffCells.slice(0, 50).map((c) => (
+                  <tr key={`${c.tableName}|${c.cellKey}|${c.measure}`}>
+                    <td style={{ padding: '4px 8px' }}>{c.tableName}</td>
+                    <td style={{ padding: '4px 8px' }}>{c.cellKey === '*' ? 'whole table' : c.cellKey}</td>
+                    <td style={{ padding: '4px 8px' }}>{c.measure}</td>
+                    <td style={{ padding: '4px 8px' }}>{c.liveValue ?? '—'}</td>
+                    <td style={{ padding: '4px 8px' }}>{c.shadowValue ?? '—'}</td>
+                    <td style={{ padding: '4px 8px' }}>{c.diff ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {data && data.runs.length > 1 && (
+            <div style={{ color: 'var(--ps-color-muted-text)' }}>
+              Earlier days:{' '}
+              {data.runs.slice(1).map((r) => (
+                <span key={r.compareUid} style={{ marginRight: 10, color: color(r.status === 'match') }}>
+                  {formatDate(r.asOfDate)} {r.status === 'match' ? 'MATCH' : r.status.toUpperCase()}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function PreflightCard({ preflight, onRecheck }: { preflight: EtlPreflightResponse | null; onRecheck: () => void }) {
   const failing = preflight?.available === true && preflight.ok === false;
   return (

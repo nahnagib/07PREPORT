@@ -38,6 +38,9 @@ transforms, which the sales job still reuses. Wherever they disagree with this s
 | `sales_incremental` | sales | every `fact_sales_*` / `dim_sales_*` mart, swapped in at once after every orphan check passes | inside `main` |
 | `sales_full` | sales | the same marts, as an explicit full run | inside `full_all` |
 | `finance_receivables` | finance | receivable snapshot of today (`fact_finance_receivable_snapshot`, `dim_finance_*`); runbook `docs/receivables-etl.md` | inside `refresh_30m` (every 30 min) and `full_all` (02:00); alone `ETL_SCHEDULE_FINANCE_CRON` (15:00, off by default) / "Receivables Snapshot" |
+| `sales_mirror` | sales | Phase B: the Odoo records the sales build reads -> `raw_odoo_mirror` by write_date (+ rules, names, id checks); rows read per model logged | inside `refresh_30m` (every 30 min) and `full_all` (02:00: id checks + write_date audit); skipped while `ETL_SALES_MODE=legacy`; runbook `docs/etl-phase-b-sales-incremental.md` §10 |
+| `sales_build` | sales | Phase B: the sales marts from the mirror (same legacy transforms), changed rows only -> `shd_*` (shadow) or live (incremental); seconds when nothing changed | `ETL_SCHEDULE_SALES_BUILD_CRON` (10,40 past the hour) on the second queue `etl-long`; inside `full_all` |
+| `sales_shadow_compare` | sales | Phase B: live vs `shd_*` row by row + line totals -> `etl_shadow_compare` / `etl_shadow_diff` (Control Center card) | inside `full_all`, shadow mode only |
 | `process_nps` | process | NPS Score: the NPS developer's MySQL (SSH tunnel) → `raw_nps_*` → `fact_process_nps_response` / `_comment`; runbook `docs/nps-etl.md` | full reload: inside `refresh_30m` (every 30 min) and the 02:00 `full_all` (last, optional); alone at `ETL_SCHEDULE_PROCESS_NPS_CRON` (02:00) ONLY when the full schedule is off / "NPS Score" run-now; not run while `NPS_ENABLED` is not true |
 | `platform_selfcheck` | — | diagnostics, never logged as a refresh | — |
 

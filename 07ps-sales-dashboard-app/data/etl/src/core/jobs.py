@@ -12,6 +12,7 @@ reuses a success from the last ETL_CORE_DIMS_FRESH_MINUTES.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import os
 
@@ -98,17 +99,62 @@ def _odoo_task(dataset: str):
     return fn
 
 
+PARTNER_COMPANY_FULL_HOURS = 26  # a full read at least once a day (the 02:00 refresh does one)
+COMPANY_DEPENDENT_FIELDS = ("credit_limit", "property_payment_term_id")
+
+
+def _partner_company_full_reason(ctx: RunContext, wm) -> str | None:
+    if wm.write_date is None:
+        return "first read"
+    if ctx.full_refresh:
+        return "full refresh requested"
+    if ctx.state.get("top_job") == "full_all":
+        return "02:00 full refresh"
+    if wm.last_full_refresh is None or _now() - wm.last_full_refresh > _dt.timedelta(hours=PARTNER_COMPANY_FULL_HOURS):
+        return f"no full read in the last {PARTNER_COMPANY_FULL_HOURS} h"
+    return None
+
+
 def extract_partner_company(ctx: RunContext) -> TaskResult:
     """Company-dependent partner properties (credit limit, default payment term), read once per in-scope
-    company: Odoo returns company-dependent values for the first allowed company of the context."""
+    company: Odoo returns company-dependent values for the first allowed company of the context.
+
+    Incremental (every 30 minutes): only the commercial partners whose own write_date moved, or whose credit limit /
+    payment term property (ir.property, by its own write_date) changed, are read -- a property edit is found whether or not
+    it moves the partner's write_date. A changed company DEFAULT (ir.property without a partner) changes the value of
+    every partner without their own, so it reads everything; so do the 02:00 refresh and any run more than
+    PARTNER_COMPANY_FULL_HOURS after the last full read."""
     spec = PARTNER_COMPANY_SPEC
     source = ctx.odoo(spec.profile)
     fields, skipped = source.available_fields(spec.model, spec.odoo_fields)
-    frames, total = [], 0
     company_ids = ctx.odoo_company_ids(spec.profile)
+    wm = ctx.watermarks.get(spec.dataset)
+    started = _now()
+    reason = _partner_company_full_reason(ctx, wm)
+    changed: set[int] = set()
+    if reason is None:
+        since = (wm.write_date - _dt.timedelta(seconds=ctx.config.incremental_overlap_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+        changed = set(source.search_ids(spec.model, [*spec.domain, ("write_date", ">=", since)]))
+        props = source.client.search_read("ir.property", [("name", "in", list(COMPANY_DEPENDENT_FIELDS)), ("write_date", ">=", since)],
+                                          ["res_id"], offset=0, limit=0, order="id", context={"active_test": False})
+        if any(not p.get("res_id") for p in props):
+            reason = "a company default of credit limit / payment term changed"
+        else:
+            changed |= {int(str(p["res_id"]).split(",")[1]) for p in props if str(p["res_id"]).startswith("res.partner,")}
+    frames, total = [], 0
     for company_id in company_ids:
-        records = source.search_read_all(spec.model, spec.domain, fields, include_archived=True, company_ids=[company_id])
+        if reason is not None:
+            records = source.search_read_all(spec.model, spec.domain, fields, include_archived=True, company_ids=[company_id])
+        else:
+            records = []
+            ids = sorted(changed)
+            for i in range(0, len(ids), ctx.config.odoo_id_chunk_size):
+                chunk = ids[i:i + ctx.config.odoo_id_chunk_size]
+                records += source.client.search_read(spec.model, [*spec.domain, ("id", "in", chunk)], list(fields), offset=0,
+                                                     limit=len(chunk), order="id", context=source._ctx(True, [company_id]))
         total += len(records)
+        if not records:
+            continue
         df = records_to_frame(records, spec, run_uid=ctx.run_uid, extracted_at=_now(), available=fields)
         df = df.rename(columns={"id": "partner_id"})
         df.insert(1, "company_id", company_id)
@@ -116,7 +162,10 @@ def extract_partner_company(ctx: RunContext) -> TaskResult:
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     with ctx.engine.begin() as conn:
         loaded = upsert(conn, spec.table, df) if len(df) else 0
-    return TaskResult(rows_extracted=total, rows_loaded=loaded, details={"companies": list(company_ids), "skipped_fields": skipped})
+        ctx.watermarks.save(dataclasses.replace(wm, write_date=started), run_uid=ctx.run_uid, conn=conn, full_refresh=reason is not None)
+    return TaskResult(rows_extracted=total, rows_loaded=loaded,
+                      details={"companies": list(company_ids), "skipped_fields": skipped, "full_read": reason,
+                               "partners_changed": None if reason is not None else len(changed)})
 
 
 # -- Excel -------------------------------------------------------------------------------------------------------

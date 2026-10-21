@@ -1,8 +1,9 @@
-# Phase B: incremental sales (design)
+# Phase B: incremental sales (design and step 1)
 
-Status: design approved 2026-10-20 with additions 1-5 (this document answers them). Load code not written yet. The
-migration (raw mirrors, shadow tables, diff table, new `fact_sales_lines` key) waits for the NPS PRs #2/#3 so its number
-follows theirs.
+Status: design approved 2026-10-20 with additions 1-5 (sections 1-8 answer them). 2026-10-21: the owner chose to build it
+in two steps (section 10): **step 1** (built) rebuilds the sales tables from a local Odoo mirror with the unchanged legacy
+code and writes only the rows that differ; **step 2** (after shadow has proven step 1) scopes the slowest steps to the
+affected keys of sections 4-5. Migration 0054 (after the NPS migrations 0046-0053).
 
 ## 1. sale.report replacement (the gate)
 
@@ -129,6 +130,10 @@ id check every cycle (Odoo deletes empty quants all the time; ~3k ids).
 * incremental -- the 30-minute cycle upserts the live tables; the 5x/day job is not scheduled. The 02:00 full refresh keeps
   rebuilding the live tables in every mode (the reference).
 Switching = `.env` + `docker compose up -d backend etl-worker etl-api`; no code change, no migration rollback.
+As built (step 1): the mode lives in `data/etl/.env` only (`ETL_SALES_MODE`, validated: a typo fails the run). The backend
+needs `ETL_SCHEDULE_SALES_BUILD_ENABLED=true` for the build's schedule; in legacy mode the build ends at once. The
+receivables / shared-lists modes are not needed yet: the shared lists' contents do not change (only how they are read),
+and receivables stay a full read until their own incremental step.
 
 ## 9. Built so far (no migration needed)
 
@@ -142,6 +147,25 @@ Switching = `.env` + `docker compose up -d backend etl-worker etl-api`; no code 
 Measured locally: core_dims with no Odoo change 75 s -> 51 s (customer list 30 s -> 12 s, 72k -> 0 rows written). Left for
 the shared-lists step of Phase B: partner company properties (24k rows re-read, 17 s).
 
-Needs the migration (number after the NPS migrations): raw mirror tables, `shd_*` shadow tables, `etl_shadow_diff`, the
-new `fact_sales_lines` key; then the extract / load code, the modes, the comparison job and the Control Center views.
+## 10. Step 1: the mirror rebuild (built 2026-10-21)
+
+Why two steps: the last local sales run (2026-10-20 18:00) spent 26.5 min reading Odoo and 11.5 min in the legacy
+transforms (2.4 sales + 3.1 CRM), the key conforming (2.0) and the 611k-row swap (4.0). A local mirror removes the Odoo
+part; scoping the transforms to affected keys (the 1-2 min target) is the larger, riskier refactor of ~7,500 lines, so it
+comes after shadow has shown that the mirror rebuild is identical to the 02:00 rebuild from Odoo.
+
+| Piece | What it does | Code |
+|---|---|---|
+| Odoo mirror (`raw_odoo_mirror`, `_meta`, `raw_odoo_names`) | The 12 models the sales build reads, as search_read records with the union of every reader's fields, kept current by write_date (previous read start - `ETL_MIRROR_OVERLAP_MINUTES`). Rules for values that move without the record's write_date: template -> variants, product cost -> quants, activities -> leads, parent -> children (a removed line moves only the order), partner -> user names. Many2one names from `raw_odoo_names`. Id checks every cycle for orders, pickings, leads, quants; everything + a write_date audit at 02:00. Non-stored fields no rule covers are logged. | `departments/sales/mirror.py` |
+| `sales_mirror` | Module of the 30-minute refresh (lock `sales_mirror`); full check in the 02:00 `full_all`. Logs rows read per Odoo model. | `departments/sales/incremental.py` |
+| `sales_build` | Second queue (`etl-long`, lock `sales_shadow` in shadow mode, `sales` in incremental mode). Skips in seconds unless the mirror, the shared lists, the input workbooks or the business date changed. Otherwise `build_sheets(source=mirror)` (same transforms; sale.report rebuilt by the gate-verified library), the same conform, then `replace_changed` per table (`_run_id` stamps changed rows only) and the full refresh's orphan / min-rows checks in the same transaction. | `incremental.py`, `sales_pipeline/pipeline.py` |
+| `sales_shadow_compare` | After the 02:00 rebuild (shadow mode): every mart row by row (content hash, `_run_id` ignored) + fact_sales_lines totals per company x order currency x month x salesperson; orders edited in Odoo after the live read began are left out (listed). `etl_shadow_compare` / `etl_shadow_diff`, Control Center card. | `incremental.py` |
+| `SalesLineGroupKey`, `Discount` on fact_sales_lines | Filled by both paths with one formula (`conform.line_group_keys`, from sale.report's `discount` read from Odoo at 02:00 and the library every 30 minutes). Unique index now; primary key in step 2 (needs every row filled first). | `conform.py`, `sales_report_repository.py` |
+| Per-module locks | `<lock>:<module>`: a run locks the modules it writes; the isolated refresh locks each module when it starts and skips a busy one; `full_all` waits `ETL_FULL_LOCK_WAIT_SECONDS`. | `etl_platform/runner.py` |
+| Second queue | BullMQ `etl-long` + its worker in the etl-worker process; the Flask API runs one job per lane (main / long); force-reset kills holders of every `<lock>:*`. | backend `etlQueue.ts`, `worker.ts`, `api/job_tracker.py` |
+| Partner company properties | Incremental: partners whose write_date or credit-limit / payment-term `ir.property` changed; a changed company default, the 02:00 run or > 26 h since the last full read -> full read. | `core/jobs.py` |
+
+The sales build reads the dims as they are when it starts (core_dims may refresh them in a parallel cycle; a key that
+disappears fails the orphan check and the next build retries). The live `dim_customer` growth columns stay with the live
+build in shadow mode.
 

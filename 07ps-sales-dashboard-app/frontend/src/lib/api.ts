@@ -870,6 +870,8 @@ export const adminApi = {
   getEtlSchedulerConfig: (token: string): Promise<EtlSchedulerConfigResponse> =>
     request('/admin/etl/scheduler-config', token),
 
+  getEtlShadowCompare: (token: string): Promise<EtlShadowCompareResponse> => request('/admin/etl/shadow-compare', token),
+
   startEtlRun: (token: string, mode: EtlStartMode): Promise<{ ok: boolean; runId: number; jobId: string }> =>
     request(`/admin/etl/start/${mode}`, token, { method: 'POST' }),
 
@@ -1156,7 +1158,7 @@ export const adminApi = {
 export type EtlRunStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'skipped';
 /** What an admin can start. 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform. */
 export type EtlStartMode = 'incremental' | 'full' | 'finance' | 'nps';
-export type EtlMode = EtlStartMode | 'refresh' | 'sql' | 'excel';
+export type EtlMode = EtlStartMode | 'refresh' | 'sales_build' | 'sql' | 'excel';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';
 
 export interface EtlJobRun {
@@ -1311,6 +1313,49 @@ export interface EtlStatusResponse {
   schedulerEnabled?: boolean;
   /** Set on a production build whose scheduler or worker is off without ETL_SCHEDULER_OFF_OK: shown as a red banner. */
   scheduleWarning?: string | null;
+  /** Phase B: the sales build from the Odoo mirror (second queue, runs next to the 30-minute refresh). */
+  salesBuild?: EtlSalesBuildStatus;
+}
+
+export interface EtlSalesBuildStatus {
+  active: { id: number; status: EtlRunStatus; queuedAt: string; startedAt: string | null } | null;
+  last: { id: number; status: EtlRunStatus; finishedAt: string | null; durationSeconds: number | null; error: string | null } | null;
+}
+
+/** One live-vs-shadow comparison (sales_shadow_compare, after the 02:00 refresh in ETL_SALES_MODE=shadow). */
+export interface EtlShadowCompareRun {
+  compareUid: string;
+  module: string;
+  asOfDate: string;
+  startedAtUtc: string;
+  finishedAtUtc: string | null;
+  status: 'match' | 'diff' | 'failed';
+  tablesCompared: number;
+  rowsLive: number;
+  rowsShadow: number;
+  rowsOnlyLive: number;
+  rowsOnlyShadow: number;
+  rowsDifferent: number;
+  cellsCompared: number;
+  cellsDiff: number;
+  excludedOrders: number;
+}
+
+export interface EtlShadowDiffCell {
+  tableName: string;
+  /** company|currency|YYYYMM|salesperson key, or "*" for a whole-table row */
+  cellKey: string;
+  measure: string;
+  liveValue: number | null;
+  shadowValue: number | null;
+  diff: number | null;
+  status: 'MATCH' | 'DIFF';
+}
+
+export interface EtlShadowCompareResponse {
+  runs: EtlShadowCompareRun[];
+  cells: EtlShadowDiffCell[];
+  note?: string;
 }
 
 export interface EtlScheduleInfo {
@@ -1329,6 +1374,8 @@ export interface EtlSchedulerConfigResponse {
   full: EtlScheduleInfo;
   finance: EtlScheduleInfo;
   nps?: EtlScheduleInfo;
+  /** Phase B: the sales build from the Odoo mirror (ETL_SCHEDULE_SALES_BUILD_*). */
+  salesBuild?: EtlScheduleInfo;
   /** IANA zone the crons are read in (ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE). */
   timezone?: string;
 }
