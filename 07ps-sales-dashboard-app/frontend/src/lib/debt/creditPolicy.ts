@@ -140,9 +140,9 @@ export interface PlacedCreditDot {
 }
 
 /** x follows actual days within each action range, including a linear overflow scale above day 65.
- * y is a beeswarm to avoid overlap; radius follows total outstanding. Future-due customers are excluded. */
+ * y is a beeswarm to avoid overlap; radius follows the overdue amount. Future-due customers are excluded. */
 export function layoutCreditDots(
-  customers: Pick<CreditCustomer, 'customerKey' | 'zone' | 'daysOverdue' | 'totalOutstanding'>[],
+  customers: Pick<CreditCustomer, 'customerKey' | 'zone' | 'daysOverdue' | 'overdueAmount'>[],
   zones: CreditPolicyZone[],
   cols: ChartColumns,
   opts: { minR?: number; maxR?: number; gap?: number; maxHeight?: number } = {},
@@ -152,14 +152,14 @@ export function layoutCreditDots(
   const gap = opts.gap ?? 1.5;
   const sections = timelineSections(zones);
   const due = customers.filter((c) => c.zone !== NOT_YET_DUE && c.daysOverdue >= 0);
-  const maxAmount = due.reduce((m, c) => Math.max(m, c.totalOutstanding), 0);
+  const maxAmount = due.reduce((m, c) => Math.max(m, c.overdueAmount), 0);
   const maxDays = due.reduce((m, c) => Math.max(m, c.daysOverdue), sections[sections.length - 1].minDays + 1);
   const todo = due
     .map((c) => {
       const si = sections.findIndex((s) => c.daysOverdue >= s.minDays && (s.maxDays === null || c.daysOverdue <= s.maxDays));
       const section = sections[si];
       const col = cols.sections[si];
-      const r = dotRadius(c.totalOutstanding, maxAmount, minR, maxR);
+      const r = dotRadius(c.overdueAmount, maxAmount, minR, maxR);
       const x = xOfDays(c.daysOverdue, { ...section, maxDays: section.maxDays ?? maxDays }, col, maxR + 4);
       return { id: String(c.customerKey), x, r, overflow: section.maxDays === null };
     })

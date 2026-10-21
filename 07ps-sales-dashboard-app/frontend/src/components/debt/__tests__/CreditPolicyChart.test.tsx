@@ -4,12 +4,13 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { CreditPolicyChart } from '../CreditPolicyChart';
 import type { CreditCustomer, DebtAging } from '../../../lib/api';
 import { ZONES } from '../../../lib/__tests__/fixtures/creditZones';
-import { formatDate } from '../../../lib/format';
+import { formatDate, formatMoney } from '../../../lib/format';
 
 function customer(p: Partial<CreditCustomer> & { customerKey: number; zone: CreditCustomer['zone']; daysOverdue: number; totalOutstanding: number }): CreditCustomer {
   return {
     customerCode: `C${p.customerKey}`, customer: `Customer ${p.customerKey}`, companyKey: 1, company: 'Majaal', paymentTermKey: 4, paymentTerm: '30 Days',
-    totalOutstandingCompany: p.totalOutstanding, unpaidInvoiceCount: 2, oldestInvoiceMoveId: 10, oldestInvoiceNumber: 'INV/2026/0001',
+    totalOutstandingCompany: p.totalOutstanding, unpaidInvoiceCount: 2,
+    overdueAmount: p.totalOutstanding, overdueAmountCompany: p.overdueAmount ?? p.totalOutstanding, overdueInvoiceCount: 2, oldestInvoiceMoveId: 10, oldestInvoiceNumber: 'INV/2026/0001',
     oldestInvoiceDate: '2026-08-01', oldestDueDate: '2026-08-31', oldestOverdueDate: '2026-09-01', dueDateSource: 'instalment', notYetDue: p.zone === 'NOT_YET_DUE', daysUntilDue: 0,
     responsibleRole: 'GCEO + CFO', requiredAction: 'Management Escalation', nextZone: null, daysToNextZone: null, approachingNextZone: false,
     odooUrl: 'https://x/web#id=10', ...p,
@@ -89,6 +90,45 @@ describe('CreditPolicyChart', () => {
     expect(onClick).toHaveBeenCalledTimes(2);
   });
 
+  it('tooltip: overdue amount and overdue invoices; the total open balance only as a muted reference', () => {
+    // one overdue invoice (100) + one not-yet-due invoice (400)
+    const mixed = customer({ customerKey: 7, zone: 'GREEN', daysOverdue: 5, totalOutstanding: 500, overdueAmount: 100, overdueAmountCompany: 100,
+      unpaidInvoiceCount: 2, overdueInvoiceCount: 1 });
+    const one: DebtAging = { ...data, customers: [mixed],
+      summary: { zones: ZONES.map((z) => ({ key: z.key, customers: z.key === 'GREEN' ? 1 : 0, amount: z.key === 'GREEN' ? 100 : 0, amountCompany: z.key === 'GREEN' ? 100 : 0 })),
+        total: { customers: 1, amount: 100 } } };
+    render(<CreditPolicyChart {...props} data={one} onCustomerClick={() => undefined} />);
+    fireEvent.pointerEnter(document.querySelector('[data-customer="7"]') as Element);
+    const rows = Object.fromEntries([...screen.getByRole('tooltip').querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling as HTMLElement]));
+    expect(rows['Overdue amount LYD'].textContent).toBe(formatMoney('LYD', 100));
+    expect(rows['Overdue amount LYD'].querySelector('strong')).toBeTruthy();
+    expect(rows['Overdue invoices'].textContent).toBe('1');
+    expect(rows['Total open balance LYD'].textContent).toBe(formatMoney('LYD', 500));
+    expect(rows['Total open balance LYD'].style.color).toBe('var(--ps-color-muted-text)');
+    expect(rows).not.toHaveProperty('Total Outstanding LYD');
+    expect(rows).not.toHaveProperty('Unpaid invoices');
+    expect(document.querySelector('[data-customer="7"]')?.getAttribute('aria-label')).toContain(`${formatMoney('LYD', 100)} overdue`);
+  });
+
+  it('foreign currency view: overdue in the invoice currency too', () => {
+    const usd = customer({ customerKey: 8, zone: 'BLOCK', daysOverdue: 50, totalOutstanding: 500, overdueAmount: 100, totalOutstandingCompany: 3000, overdueAmountCompany: 600 });
+    render(<CreditPolicyChart {...props} data={{ ...data, allCurrencies: false, currency: 'USD', customers: [usd] }} onCustomerClick={() => undefined} />);
+    fireEvent.pointerEnter(document.querySelector('[data-customer="8"]') as Element);
+    const rows = Object.fromEntries([...screen.getByRole('tooltip').querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]));
+    expect(rows['Overdue amount LYD']).toBe(formatMoney('LYD', 600));
+    expect(rows['Overdue, invoice currency']).toBe(formatMoney('USD', 100));
+    expect(rows['Total open balance LYD']).toBe(formatMoney('LYD', 3000));
+    expect(rows['Total open, invoice currency']).toBe(formatMoney('USD', 500));
+  });
+
+  it('dot size follows the overdue amount, not the total open balance', () => {
+    const big = customer({ customerKey: 20, zone: 'BLOCK', daysOverdue: 50, totalOutstanding: 100, overdueAmount: 100 });
+    const smallOverdue = customer({ customerKey: 21, zone: 'BLOCK', daysOverdue: 55, totalOutstanding: 100000, overdueAmount: 1 });
+    render(<CreditPolicyChart {...props} data={{ ...data, customers: [big, smallOverdue] }} onCustomerClick={() => undefined} />);
+    const r = (k: number) => Number(document.querySelector(`[data-customer="${k}"] circle:not([stroke-dasharray])`)!.getAttribute('r'));
+    expect(r(20)).toBeGreaterThan(r(21));
+  });
+
   it('all BLOCK dots are black with a light outline, including >65 days', () => {
     render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
     for (const id of [3, 4]) {
@@ -126,7 +166,7 @@ describe('CreditPolicyChart', () => {
 
   it('the legend', () => {
     render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
-    for (const t of ['Dot size = amount outstanding', 'Position = days overdue of the oldest unpaid invoice (from overdue date)', 'Each customer appears once']) {
+    for (const t of ['Dot size = overdue amount', 'Position = days overdue of the oldest unpaid invoice (from overdue date)', 'Each customer appears once']) {
       expect(screen.getByText(t)).toBeTruthy();
     }
   });

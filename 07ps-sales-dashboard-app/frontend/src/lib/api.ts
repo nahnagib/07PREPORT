@@ -2630,6 +2630,12 @@ export interface CreditCustomer {
   totalOutstanding: number;
   totalOutstandingCompany: number;
   unpaidInvoiceCount: number;
+  /** lines overdue on the snapshot date (line due date + 1 <= snapshot; negative lines included): dot size and zone
+   * totals, in the view's currency (LYD for all currencies) */
+  overdueAmount: number;
+  overdueAmountCompany: number;
+  /** unpaid invoices with at least one open overdue line */
+  overdueInvoiceCount: number;
   oldestInvoiceMoveId: number;
   oldestInvoiceNumber: string | null;
   oldestInvoiceDate: string | null;
