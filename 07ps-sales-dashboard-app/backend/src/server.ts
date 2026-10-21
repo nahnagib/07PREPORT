@@ -14,6 +14,8 @@ import { pipelineTrendRouter } from './routes/pipelineTrend';
 import { activityMomentumRouter } from './routes/activityMomentum';
 import { PRODUCT_DASHBOARD_PAGES, productDashboardRouter } from './routes/productDashboard';
 import { debtReportRouter } from './routes/debtReport';
+import { npsScoreRouter } from './routes/npsScore';
+import { npsFollowupRouter } from './routes/npsFollowup';
 import { authRouter } from './routes/auth';
 import { adminUsersRouter } from './routes/admin/users';
 import { adminImportRouter } from './routes/admin/import';
@@ -80,6 +82,8 @@ app.use('/pipeline-health', pipelineHealthRouter);
 app.use('/pipeline-trend', pipelineTrendRouter);
 app.use('/activity-momentum', activityMomentumRouter);
 app.use('/debt-report', debtReportRouter);
+app.use('/nps-score', npsScoreRouter);
+app.use('/nps-followup', npsFollowupRouter);
 for (const [path, pageKey] of Object.entries(PRODUCT_DASHBOARD_PAGES)) {
   app.use(`/product-dashboard/${path}`, productDashboardRouter(pageKey));
 }

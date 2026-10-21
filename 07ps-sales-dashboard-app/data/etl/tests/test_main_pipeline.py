@@ -58,9 +58,21 @@ def _registry(sales_gate: dict) -> Registry:
             conn.execute(text("INSERT INTO stub_sales (run_uid) VALUES (:u)"), {"u": ctx.run_uid})
         return TaskResult(rows_extracted=1, rows_loaded=1)
 
+    def load_stub_nps(ctx):
+        if sales_gate.get("nps_fail"):
+            raise RuntimeError("NPS source unreachable")
+        with ctx.engine.begin() as conn:
+            conn.execute(text("INSERT INTO stub_nps (run_uid) VALUES (:u)"), {"u": ctx.run_uid})
+        return TaskResult(rows_extracted=1, rows_loaded=1)
+
     r.task(TaskSpec("load_stub_sales", load_stub_sales))
+    r.task(TaskSpec("load_stub_nps", load_stub_nps))
     for name in ("core_dims", "finance_receivables", "main", "full_all"):
         r.job(REGISTRY.jobs[name])
+    # the NPS source is not configured in these tests: full_all records process_nps as skipped (disabled), unless a
+    # test sets gate["nps"]; then the real process_nps job (same dependencies) runs a stub task that can fail
+    r.job(replace(REGISTRY.jobs["process_nps"], tasks=("load_stub_nps",),
+                  disabled_reason=lambda: None if sales_gate.get("nps") else "NPS_ENABLED is not true"))
     for name, mode in (("sales_incremental", "incremental"), ("sales_full", "full")):
         r.job(JobSpec(name, "sales", tasks=("load_stub_sales",), depends_on_jobs=("core_dims",), mode=mode))
     r.validate()
@@ -75,6 +87,7 @@ def pipe(platform_engine, platform_config, tmp_path):
         apply_migration_sqlite(platform_engine, m)
     with platform_engine.begin() as conn:
         conn.execute(text("CREATE TABLE stub_sales (run_uid VARCHAR(36))"))
+        conn.execute(text("CREATE TABLE stub_nps (run_uid VARCHAR(36))"))
     gate: dict = {}
     registry = _registry(gate)
     config = replace(platform_config, input_dir=write_inputs(tmp_path / "inputs"), odoo_company_ids=(1, 3))
@@ -132,8 +145,9 @@ def test_full_all_runs_core_then_finance_then_sales_under_one_run_id(pipe):
     assert runs[runs.parent_run_uid.isna()].job_name.tolist() == ["full_all"]
     children = runs[runs.parent_run_uid.notna()]
     assert set(children.parent_run_uid) == {uid}
-    assert children.job_name.tolist() == ["core_dims", "finance_receivables", "sales_full"]  # finance before sales
-    assert (children.status == "success").all()
+    assert children.job_name.tolist() == ["core_dims", "finance_receivables", "sales_full", "process_nps"]  # finance before sales
+    assert children.status.tolist() == ["success", "success", "success", "skipped"]  # NPS switched off here: not a failure
+    assert "disabled: NPS_ENABLED is not true" in children.error_message.iloc[-1]
     assert _count(engine, SNAPSHOT) == 6 and _count(engine, "stub_sales") == 1
 
 
@@ -156,7 +170,7 @@ def test_core_dims_failure_skips_finance_and_sales_and_fails_the_run(pipe):
         pipe["run"]("full_all", cfg=replace(pipe["config"], input_dir=empty))
     runs = _runs(engine).set_index("job_name")
     assert runs.status.to_dict() == {"full_all": "failed", "core_dims": "failed", "finance_receivables": "skipped",
-                                     "sales_full": "skipped"}
+                                     "sales_full": "skipped", "process_nps": "skipped"}
     assert "skipped: dependency job 'core_dims' failed" in runs.loc["finance_receivables", "error_message"]
     assert _count(engine, SNAPSHOT) == 0 and _count(engine, "stub_sales") == 0
     assert _count(engine, "etl_task_log WHERE job_name IN ('finance_receivables', 'sales_full')") == 0  # never started
@@ -169,7 +183,7 @@ def test_finance_failure_leaves_full_all_partial_and_keeps_core_and_sales(pipe):
     assert status == STATUS_PARTIAL
     runs = _runs(engine).set_index("job_name")
     assert runs.status.to_dict() == {"full_all": "partial", "core_dims": "success", "finance_receivables": "failed",
-                                     "sales_full": "success"}
+                                     "sales_full": "success", "process_nps": "skipped"}
     assert runs.loc["full_all", "error_message"].startswith("finance failed: RuntimeError: Odoo read of account.move.line timed out")
     assert _count(engine, "dim_customer") > 0  # core data kept
     assert _count(engine, "stub_sales") == 1  # sales still ran after finance failed
@@ -201,8 +215,50 @@ def test_sales_failure_fails_full_all_but_keeps_the_snapshot(pipe):
     with pytest.raises(Exception, match="sales_full"):
         pipe["run"]("full_all")
     assert _runs(engine).set_index("job_name").status.to_dict() == {
-        "full_all": "failed", "core_dims": "success", "finance_receivables": "success", "sales_full": "failed"}
+        "full_all": "failed", "core_dims": "success", "finance_receivables": "success", "sales_full": "failed",
+        "process_nps": "skipped"}
     assert _count(engine, SNAPSHOT) == 6
+
+
+# NPS Score runs once a night as the last, optional step of full_all (decision 2026-10-19): it must still run when
+# sales or finance failed earlier in the run, and its own failure must never mark the other steps failed.
+def test_nps_still_runs_when_sales_fails_earlier_in_full_all(pipe):
+    engine, gate = pipe["engine"], pipe["gate"]
+    gate["nps"], gate["fail"] = True, True
+    with pytest.raises(Exception, match="sales_full"):
+        pipe["run"]("full_all")
+    assert _runs(engine).set_index("job_name").status.to_dict() == {
+        "full_all": "failed", "core_dims": "success", "finance_receivables": "success", "sales_full": "failed",
+        "process_nps": "success"}
+    assert _count(engine, "stub_nps") == 1 and _count(engine, SNAPSHOT) == 6
+
+
+def test_nps_still_runs_when_finance_fails_earlier_in_full_all(pipe):
+    engine, fake = pipe["engine"], pipe["fake"]
+    pipe["gate"]["nps"] = True
+    fake.fail = {"account.move.line"}
+    _, status = pipe["run"]("full_all")
+    assert status == STATUS_PARTIAL
+    runs = _runs(engine).set_index("job_name")
+    assert runs.status.to_dict() == {"full_all": "partial", "core_dims": "success", "finance_receivables": "failed",
+                                     "sales_full": "success", "process_nps": "success"}
+    assert runs.loc["full_all", "error_message"].startswith("finance failed:")
+    assert _count(engine, "stub_nps") == 1 and _count(engine, "stub_sales") == 1
+
+
+def test_nps_failure_leaves_full_all_partial_and_every_other_step_successful(pipe):
+    engine, gate = pipe["engine"], pipe["gate"]
+    gate["nps"], gate["nps_fail"] = True, True
+    uid, status = pipe["run"]("full_all")
+    assert status == STATUS_PARTIAL
+    runs = _runs(engine).set_index("job_name")
+    assert runs.status.to_dict() == {"full_all": "partial", "core_dims": "success", "finance_receivables": "success",
+                                     "sales_full": "success", "process_nps": "failed"}
+    assert runs.loc["full_all", "error_message"] == "process failed: RuntimeError: NPS source unreachable"
+    for job in ("core_dims", "finance_receivables", "sales_full"):
+        assert pd.isna(runs.loc[job, "error_message"])
+    assert _count(engine, "stub_sales") == 1 and _count(engine, SNAPSHOT) == 6  # sales and finance data kept
+    assert _count(engine, "stub_nps") == 0
 
 
 def test_a_second_trigger_while_a_run_holds_the_lock_is_refused(pipe):
@@ -273,6 +329,7 @@ def test_cli_exit_codes(pipe, monkeypatch):
 def test_job_definitions(pipe):
     assert REGISTRY.jobs["main"].depends_on_jobs == ("core_dims", "sales_incremental")
     assert REGISTRY.jobs["main"].optional_jobs == ()
-    assert REGISTRY.jobs["full_all"].depends_on_jobs == ("core_dims", "finance_receivables", "sales_full")
-    assert REGISTRY.jobs["full_all"].optional_jobs == ("finance_receivables",)
+    assert REGISTRY.jobs["full_all"].depends_on_jobs == ("core_dims", "finance_receivables", "sales_full", "process_nps")
+    assert REGISTRY.jobs["full_all"].optional_jobs == ("finance_receivables", "process_nps")
+    assert REGISTRY.jobs["process_nps"].depends_on_jobs == ("core_dims",)
     assert REGISTRY.jobs["finance_receivables"].depends_on_jobs == ("core_dims",)

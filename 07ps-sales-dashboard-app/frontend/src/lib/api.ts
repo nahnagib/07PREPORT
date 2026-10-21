@@ -1155,7 +1155,7 @@ export const adminApi = {
 /** partial = the run loaded but a step failed (the receivables snapshot); skipped = refused, another run held the lock. */
 export type EtlRunStatus = 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'skipped';
 /** What an admin can start. 'sql'/'excel' only appear on runs recorded before the 2026-10 ETL platform. */
-export type EtlStartMode = 'incremental' | 'full' | 'finance';
+export type EtlStartMode = 'incremental' | 'full' | 'finance' | 'nps';
 export type EtlMode = EtlStartMode | 'sql' | 'excel';
 export type EtlTriggerSource = 'scheduled' | 'manual' | 'api' | 'development';
 
@@ -1303,18 +1303,23 @@ export interface EtlStatusResponse {
   nextFullRun: string | null;
   /** The daily receivables snapshot (finance_receivables alone, 15:00 by default). */
   nextFinanceRun?: string | null;
+  /** The NPS Score refresh (process_nps alone, every 3 h at :30; off unless enabled). */
+  nextNpsRun?: string | null;
 }
 
 export interface EtlScheduleInfo {
   cron: string;
   enabled: boolean;
   nextRun: string | null;
+  /** NPS only: inside the nightly full_all, on its own schedule (full schedule off), or off. Runs once a night. */
+  via?: 'full_all' | 'own' | 'off';
 }
 
 export interface EtlSchedulerConfigResponse {
   incremental: EtlScheduleInfo;
   full: EtlScheduleInfo;
   finance: EtlScheduleInfo;
+  nps?: EtlScheduleInfo;
   /** IANA zone the crons are read in (ETL_SCHEDULE_TIMEZONE, else APP_TIMEZONE). */
   timezone?: string;
 }
@@ -2745,4 +2750,156 @@ export interface CollectionsDrilldown {
 export function fetchDebtReport<T>(token: string, endpoint: DebtReportEndpoint, scope: DebtReportScope, extra: Record<string, string | number> = {}, signal?: AbortSignal): Promise<T> {
   const qs = buildDebtReportQuery(scope, extra);
   return request<T>(`/debt-report/${endpoint}${qs ? `?${qs}` : ''}`, token, { signal });
+}
+
+// -- NPS Score (Process; backend routes/npsScore.ts, measures/npsScore.ts, config/npsThresholds.ts) -----------------
+export type NpsEndpoint = 'meta' | 'overview' | 'trend' | 'detractors' | 'reach' | 'response-rate' | 'followup-summary';
+export type NpsBand = 'red' | 'yellow' | 'green';
+/** week = Sunday..Saturday, named by its Sunday (the Collections week) */
+export type NpsGrain = 'week' | 'month' | 'year';
+/** A visual's bands: yellow from `yellowFrom`, green from `greenFrom` (both inclusive), the target, the drawn scale. */
+export interface NpsBandScale {
+  yellowFrom: number;
+  greenFrom: number;
+  target: number;
+  min: number;
+  max: number;
+}
+/** Every figure of a filtered set; percentages 0..100 unrounded; null without responders. */
+export interface NpsCounts {
+  responders: number;
+  promoters: number;
+  passives: number;
+  detractors: number;
+  promotersPct: number | null;
+  passivesPct: number | null;
+  detractorsPct: number | null;
+  nps: number | null;
+  csat: number | null;
+  npsBand: NpsBand | null;
+  csatBand: NpsBand | null;
+  /** fewer responders than the minimum: show greyed with "n = x" */
+  belowMinimum: boolean;
+}
+export interface NpsMeta {
+  levels: { level: number; key: string; labelEn: string; labelAr: string; sourceText: string; stars: number }[];
+  firstRatingDate: string | null;
+  lastRatingDate: string | null;
+  lastRatingAt: string | null;
+  sourceLastSync: string | null;
+  minResponders: number;
+  thresholds: { nps: NpsBandScale; csat: NpsBandScale; responseRate: NpsBandScale };
+  canSeeDetractors: boolean;
+  /** the "process" department refresh (the same per-department shape as the finance one) */
+  freshness: DebtFreshness;
+}
+export interface NpsOverview {
+  dateFrom: string;
+  dateTo: string;
+  totals: NpsCounts & { withComment: number };
+  minResponders: number;
+}
+export interface NpsTrend {
+  grain: NpsGrain;
+  /** NPS target line (90) */
+  target: number;
+  /** CSAT target line (95) */
+  csatTarget: number;
+  minResponders: number;
+  /** from the first period with ratings to the end of the range */
+  points: ({ period: string } & NpsCounts)[];
+}
+/** responders / (Delivered + Read): company and date only, from NPS_REACH_START (backend measures/npsScore.ts) */
+export interface NpsResponseRate {
+  status: 'waiting' | 'restricted' | 'ready';
+  dateFrom: string;
+  dateTo: string;
+  reachStart: string | null;
+  companyAndDateOnly: boolean;
+  responders: number;
+  delivered: number;
+  read: number;
+  reached: number;
+  totalReach: number;
+  rate: number | null;
+  rateOfReach: number | null;
+  band: NpsBand | null;
+  target: number;
+  variancePts: number | null;
+  weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
+}
+export type NpsFollowupBucket = 'solved_48h' | 'solved_5d' | 'solved_late' | 'pending';
+/** detractors by follow-up status / reason, live from nps_followup_case */
+export interface NpsFollowupSummary {
+  dateFrom: string;
+  dateTo: string;
+  detractors: number;
+  charted: number;
+  cancelled: number;
+  historical: number;
+  noCase: number;
+  byStatus: { key: NpsFollowupBucket; count: number }[];
+  byReason: { reasonId: number | null; label: string; labelAr: string | null; count: number }[];
+  now: string;
+}
+export interface NpsReach {
+  status: 'waiting' | 'restricted' | 'ready';
+  dateFrom: string;
+  dateTo: string;
+  companyAndDateOnly: boolean;
+  loadedAt: string | null;
+  /** first message date counted (the ETL's NPS_REACH_START), null = all history */
+  reachStart: string | null;
+  totals: { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number } | null;
+  errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
+}
+export interface NpsPage<T> {
+  rows: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+export interface NpsDetractor {
+  responseId: number;
+  ratedAt: string | null;
+  ratingDate: string | null;
+  company: string | null;
+  customerKey: number;
+  customer: string | null;
+  orderRef: string | null;
+  deliveryCode: string | null;
+  salesTeam: string | null;
+  salesperson: string | null;
+  teamBranch: string | null;
+  /** the follow-up case (live); null only before process_nps created it */
+  caseId: number | null;
+  status: 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'SOLVED' | 'CANCELLED' | null;
+  /** null = not yet classified */
+  reason: string | null;
+  reasonAr: string | null;
+  owner: string | null;
+  hoursOpen: number | null;
+  timeBand: 'green' | 'yellow' | 'red' | null;
+  /** Odoo form links; null without an id (the code is shown without a link) */
+  orderUrl: string | null;
+  deliveryUrl: string | null;
+  comment: string | null;
+}
+/** The global filters + the page's date range. */
+export interface NpsScope extends TachometerFilters {
+  dateFrom: string;
+  dateTo: string;
+}
+
+export function buildNpsQuery(scope: NpsScope, extra: Record<string, string | number> = {}): string {
+  const params = new URLSearchParams(buildQuery('', scope));
+  params.delete('anchorDate');
+  params.set('dateFrom', scope.dateFrom);
+  params.set('dateTo', scope.dateTo);
+  for (const [k, v] of Object.entries(extra)) if (v !== '' && v !== undefined) params.set(k, String(v));
+  return params.toString();
+}
+
+export function fetchNpsScore<T>(token: string, endpoint: NpsEndpoint, scope: NpsScope, extra: Record<string, string | number> = {}, signal?: AbortSignal): Promise<T> {
+  return request<T>(`/nps-score/${endpoint}?${buildNpsQuery(scope, extra)}`, token, { signal });
 }

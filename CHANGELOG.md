@@ -6,6 +6,94 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Process: NPS Score page, round 4, 2026-10-20; docs/nps-etl.md sections 11-12)
+- **Year-to-date by default** (1 January → today, Tripoli) for every visual, with a `YTD · 01 Jan – 20 Oct 2026` label
+  next to "Data refreshed" (the chosen range when the date filter changes).
+- **Top row in the Promotion tachometer layout**, with its own components: NPS tachometer (fixed bands 50 / 90, target
+  tick 90 labelled inside the arc, footer Promoters / Passives / Detractors % and Responders) · **Response Rate**
+  (responders ÷ (Delivered + Read), company and date only, since `NPS_REACH_START`, target 30 %: On Track ≥ 30, Behind
+  Target 25–< 30, Critical < 25, weekly sparkline) · CSAT tachometer (bands 85 / 95, target 95; replaces the CSAT
+  card). Shared UI: `KpiCard` / `RadialGauge` take optional fixed `bands`; the Promotion page's ASP card is now the
+  shared `CompactKpiCard` (no visual change there).
+- **Trend:** Weekly (Sunday–Saturday, the Collections week, labelled by the Sunday) / Monthly / Yearly, from the first
+  period with ratings; CSAT line (toggle) with target 95. Daily removed.
+- **Follow-up drives the page live:** the Detractors table (Status, Reason, Owner, Time open / Solved in; a row opens
+  the case), Detractors by reason ("Not yet classified") and Detractors by status (Solved < 48 h / 48 h–5 d / > 5 d,
+  Pending; Cancelled and Historical counted under the charts) read `nps_followup_case` at request time.
+- **Odoo links** on the delivery (stock.picking) and order (sale.order) codes, here and on the follow-up case card, from
+  `ODOO_URL` with the company (`cids`); migration **0053** stores the matched picking id (`PickingID`).
+- `check_nps_totals.py` gains a YTD section (plain SQL vs the API, `--api` + `NPS_CHECK_API_TOKEN`); new opt-in backend
+  test `vitest.nps-live.config.ts` (edits a case through the API, checks the NPS endpoints, restores it).
+
+### Added (Process: NPS Detractor Follow-up, 2026-10-19; docs/nps-followup.md)
+- **Cases:** one per detractor rating, created by `process_nps` after each nightly load (new detractors appear the next
+  morning). New from `NPS_FOLLOWUP_START` (ETL setting, the cut-over), Historical before it. Idempotent (unique
+  `response_id`); manual fields are never written by the ETL. A rating that leaves the source or stops being a
+  detractor flags the case ("source changed", audit row, `warn:nps_followup_source_changed`).
+- **Page** Process › Detractor Follow-up: Board (New → Contacted → In progress → Solved (30 days) → Cancelled; time open
+  green < 48 h / yellow 48 h-5 d / red > 5 d) and List (every case, Historical included), global + own filters kept in
+  the URL, Excel export, case details with the rating (read-only), the comment (nps_comments), the follow-up form and
+  its history. Edits carry a version: a stale save is refused (409).
+- **Reasons** (English + Arabic, 8 seeded), managed on the page's Reasons tab; a used reason can't be deleted.
+- **Permissions** `nps_followup` (View / Edit / Export) and `nps_followup_reasons` (CRUD), granted to Admin and the
+  Excellence Manager, who also gets View on `nps_score` and `nps_comments`. Migration 0052 (+ `down/`).
+
+### Changed (Process: NPS Score CSAT card, 2026-10-19)
+- The CSAT vertical bar is replaced by a card next to the NPS tachometer: the value in its band colour, a status line
+  ("Yellow · 0.48 pts below target 95" / "Green · on target"), "Satisfied x of y responders", and a full-width
+  horizontal bullet bar 0-100 with red / yellow / green zones, the value bar, the target tick with its label always
+  inside the card, and axis labels 0 / 85 / 95 / 100. Grey with "n = x" below the minimum responders; "—" with none.
+  Bands unchanged (config/npsThresholds.ts).
+
+### Changed (Process: NPS Score refreshes once a night, 2026-10-19)
+- `process_nps` runs once a night as a full reload (ratings + WhatsApp messages): the last step of the 02:00
+  `full_all`, under the same lock as sales and finance. Its own schedule (`ETL_SCHEDULE_PROCESS_NPS_CRON`, now
+  `0 2 * * *`) is registered only when the full schedule is off, so it never runs twice. The Control Center shows which
+  applies; the "NPS Score" run-now button stays.
+- The page shows "Data refreshed: <last successful process_nps run, Tripoli time>".
+
+### Added (Process: NPS Score WhatsApp reach goes live, 2026-10-19; runbook docs/nps-etl.md section 8)
+- **Source profiled** (`profile_nps_source.py --reach-only`): `whatsapp_outbound_messages`, `create_date` in UTC,
+  `updated_at` moves with the state, only failed messages before 2026-10-03.
+- **Error groups agreed:** "Meta held back (131049/130472)", new "Customer opted out of marketing (131050)",
+  `whatsapp_recoverable` / "retry" → Meta temporary, "Phone number missing or invalid" (fixable: add the number on the
+  Odoo contact); 131047 stays in Other. Every real failure value is a test case. Migration 0051 (+ `down/`).
+- **Messages that leave the source are never hidden:** raw `_deleted_at`, fact `deleted_in_source_at`, still counted;
+  `warn:nps_reach_rows_disappeared` with the count.
+- **Checks:** duplicate source id and more than 5 messages without a state FAIL; error in Other, no new message for
+  3 days, other state and unknown company WARN; every result also in the `load_nps` details of `etl_task_log`.
+- **Load mode:** the table is read in full every run (decided); when to switch to incremental is in the runbook.
+- **Settings** (configuration only): `NPS_REACH_START=2026-10-03` and the test number in `NPS_REACH_EXCLUDED_NUMBERS`
+  in every environment; added to the deploy `etl.env.example` files.
+- **Page:** each reach box shows its share of Total Reach and a tooltip that reach uses the message date; "Reach data
+  from 03 Oct 2026" (from the stored `reach_start`); Errors by reason shows # and %.
+- **Reconciliation:** `check_nps_totals.py` adds fact = raw after filters and the weekly e-mail's LAST 7 DAYS
+  delivered / read / sent / error per company; the backend read-only DB test checks the reach API per company and date.
+
+### Added (Process: NPS Score data, step 1 -- ETL only, 2026-10-18; runbook docs/nps-etl.md)
+- **Source:** the NPS developer's MySQL (`NPS_DB_NAME`, default `xtremech_nps_dashboard`), read only by the ETL through an
+  SSH tunnel. The new generic source is `etl_platform/sources/mysql_ssh.py` (paramiko 3.5.1). It pins the host key,
+  runs READ ONLY sessions with SELECT-only helpers, and retries network errors only. Its settings are `NPS_*` in
+  `data/etl/.env`, and missing ones fail the job naming the variables.
+- **ETL job `process_nps`** (after `core_dims`):
+  - Raw `raw_nps_*` → `fact_process_nps_response` (one row per delivery rating) and `fact_process_nps_comment`
+    (masked free text).
+  - Every run reads the whole source, because the source is reloaded as a whole.
+  - It is the last, optional step of `full_all`, so a failure never affects sales or finance. It also runs alone
+    every 3 h (`ETL_SCHEDULE_PROCESS_NPS_CRON`) and from the ETL Control Center ("NPS Score").
+  - `NPS_ENABLED=false` switches it off (recorded as skipped; new `JobSpec.disabled_reason`).
+- **Measure:** the developer's 3-level answer (Exceeded / Met / Below expectations, exact Arabic text rule in
+  `departments/process/nps.py`); NPS-style (3-level) = %Exceeded − %Below, from counts.
+- **Company:** the matched sale order's, else the delivery's, else the source company name. The source `company_id`
+  (a WhatsApp account) is never used. Dates are converted UTC → Africa/Tripoli.
+- **Quality:** orphans, duplicate responses and levels outside 1..3 fail the run. An unmatched company or order,
+  source rows that are not a rating, and no rating for 3 days warn.
+- **Warehouse:** migration 0046 (+ down): raw, `dim_process_nps_level`, both facts, and the views
+  `v_process_nps_response / _comment / _summary / _trend / _low_rating`.
+- **Reconciliation:** `scripts/process/check_nps_totals.py` checks source vs warehouse and reproduces the weekly e-mail's
+  counts per company and level.
+- **Not yet:** the API, permissions and page (step 2).
+
 ### Changed (Receivables and Collections: Credit Policy Escalation counts days OVERDUE, 2026-10-20)
 - **Counting start:** customers are now placed by days overdue, counted from the overdue date (= due date + 1 day, the
   first day the invoice is late), instead of days past the due date. Day 0 = the first day overdue. An invoice due

@@ -2,6 +2,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDataVersion } from '../components/FilterProvider';
 import {
+  type NpsEndpoint,
+  type NpsScope,
+  fetchNpsScore,
   BreakdownGroupBy,
   CriticalNumberMissingTrend,
   CriticalNumberOverview,
@@ -719,6 +722,45 @@ export function useDebtReport<T>(
     const isCurrent = latest.begin();
     fetchDebtReport<T>(token as string, endpoint, scope, extra)
       .then((data) => isCurrent() && setState({ data, loading: false, error: null, scopeKey: JSON.stringify(scope) }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion, token, authError, endpoint, JSON.stringify(scope), JSON.stringify(extra), enabled]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
+/**
+ * One NPS Score endpoint (meta / overview / low-ratings / comments) for the global filters + the page's date range.
+ * Same auth gate / latest-request / data-version reload as every hook; `enabled` false = not requested (e.g. the
+ * comments without the nps_comments permission).
+ */
+export function useNpsScore<T>(
+  token: string | null,
+  authError: string | null,
+  retryAuth: () => void,
+  endpoint: NpsEndpoint,
+  scope: NpsScope,
+  extra: Record<string, string | number> = {},
+  enabled = true,
+) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
+  const [state, setState] = useState<AsyncState<T>>({ data: null, loading: enabled, error: null });
+
+  const load = useCallback(() => {
+    if (!enabled) {
+      setState({ data: null, loading: false, error: null });
+      return;
+    }
+    if (authGate(token, authError, setState)) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
+    fetchNpsScore<T>(token as string, endpoint, scope, extra)
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataVersion, token, authError, endpoint, JSON.stringify(scope), JSON.stringify(extra), enabled]);

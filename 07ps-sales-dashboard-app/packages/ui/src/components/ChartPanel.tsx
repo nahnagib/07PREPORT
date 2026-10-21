@@ -19,6 +19,8 @@ export interface ChartPanelProps<T extends Record<string, unknown>> {
    * title/info icon and the expand-to-table button. Purely additive -- omit for the exact
    * previous header layout. */
   headerActions?: React.ReactNode;
+  /** Allow a report's header controls to move below the title on narrow screens. */
+  wrapHeader?: boolean;
 }
 
 /**
@@ -36,6 +38,7 @@ export function ChartPanel<T extends Record<string, unknown>>({
   getRowId,
   style,
   headerActions,
+  wrapHeader = false,
 }: ChartPanelProps<T>) {
   const [expanded, setExpanded] = useState(false);
   const canFocusTable = !!tableColumns && !!tableRows && !!getRowId;
@@ -49,6 +52,7 @@ export function ChartPanel<T extends Record<string, unknown>>({
           justifyContent: 'space-between',
           marginBottom: 'var(--ps-space-2, 8px)',
           gap: 'var(--ps-space-2, 8px)',
+          flexWrap: wrapHeader ? 'wrap' : undefined,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>

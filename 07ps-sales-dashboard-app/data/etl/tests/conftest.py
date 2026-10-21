@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,18 @@ from sqlalchemy import create_engine
 
 from etl_platform.config import PlatformConfig
 from etl_platform.meta import create_meta_tables
+
+
+# Credential profiles a test must never pick up from a developer's data/etl/.env. api/api_config.py calls load_dotenv() at
+# import, so once tests/test_etl_api.py ran, ODOO_DEBT_* sent finance_receivables to the REAL Odoo (profile "debt")
+# instead of the fake one, and the pipeline tests read live data for minutes. Tests that need a profile set it themselves.
+_PROFILE_PREFIXES = ("ODOO_DEBT_", "NPS_")
+
+
+@pytest.fixture(autouse=True)
+def _no_local_credential_profiles(monkeypatch):
+    for name in [k for k in os.environ if k.startswith(_PROFILE_PREFIXES)]:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
