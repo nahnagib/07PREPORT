@@ -1,6 +1,8 @@
 """Load patterns. All writes are transactional; table schemas are owned by migrations, never by pandas.
 
   upsert            INSERT ... ON DUPLICATE KEY UPDATE on the natural key (raw + core layers)
+  upsert_changed /  the same, writing (and stamping updated_at_utc on) only new or changed rows; replace_changed also
+  replace_changed   deletes rows that left the source. Both return a ChangeSet (shared lists -> incremental sales)
   snapshot_replace  DELETE the partition (e.g. snapshot_date) + INSERT, one transaction (snapshot facts)
   atomic_swap       load ``<t>__new`` (same DDL as ``<t>``), check it, then one RENAME TABLE (mart facts)
   insert_rows       plain INSERT (append-only tables)
@@ -14,8 +16,11 @@ from __future__ import annotations
 
 import datetime as _dt
 import decimal
+import hashlib
+import json
 import logging
 import math
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import pandas as pd
@@ -200,6 +205,164 @@ def replace_all(conn: Connection, table_name: str, df: pd.DataFrame, *, chunk_si
     for chunk in _chunks(rows, chunk_size):
         conn.execute(table.insert(), chunk)
     return deleted, len(rows)
+
+
+# -- change-detecting writes (Phase B: the shared lists tell the incremental sales step what changed) -------------
+DEFAULT_STAMP = "updated_at_utc"
+MAX_KEYS_IN_DETAILS = 5000
+
+
+@dataclass
+class ChangeSet:
+    """What a change-detecting write did to one table. Keys are tuples in the table's primary-key order."""
+
+    table: str
+    inserted: list[tuple] = field(default_factory=list)
+    updated: list[tuple] = field(default_factory=list)
+    deleted: list[tuple] = field(default_factory=list)
+    unchanged: int = 0
+
+    @property
+    def written(self) -> int:
+        return len(self.inserted) + len(self.updated)
+
+    @property
+    def changed_keys(self) -> list[tuple]:
+        return [*self.inserted, *self.updated, *self.deleted]
+
+    def summary(self) -> dict[str, Any]:
+        """For etl_task_log.details. Deleted keys are listed (capped): a deleted row cannot be found later by its
+        updated_at_utc, so the incremental sales step reads them from here."""
+        out: dict[str, Any] = {"inserted": len(self.inserted), "updated": len(self.updated), "deleted": len(self.deleted),
+                               "unchanged": self.unchanged}
+        if self.deleted:
+            out["deleted_keys"] = [list(k) for k in self.deleted[:MAX_KEYS_IN_DETAILS]]
+            out["deleted_keys_truncated"] = len(self.deleted) > MAX_KEYS_IN_DETAILS
+        return out
+
+
+def _norm(value: Any) -> Any:
+    """A comparable, JSON-able form of one cell, the same for a DataFrame value and the value read back from the DB."""
+    value = _py(value)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, decimal.Decimal):
+        value = float(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        return round(value, 9)
+    if isinstance(value, _dt.datetime):
+        return value.replace(tzinfo=None).isoformat(sep=" ", timespec="seconds")
+    if isinstance(value, _dt.date):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray)):
+        return value.hex()
+    return value
+
+
+def _content_hash(values: Sequence[Any]) -> str:
+    return hashlib.sha1(json.dumps([_norm(v) for v in values], default=str, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _key_of(values: Sequence[Any]) -> tuple:
+    return tuple(_norm(v) for v in values)
+
+
+def _diff(conn: Connection, table: Table, df: pd.DataFrame, key: list[str], compare: list[str]) -> tuple[pd.Series, list[tuple], set[tuple], list[tuple]]:
+    """(mask of df rows that are new or changed, their keys, keys of new rows, keys in the table but not in df)."""
+    stored = {}
+    sel = text(f"SELECT {', '.join(conn.dialect.identifier_preparer.quote(c) for c in [*key, *compare])} "
+               f"FROM {conn.dialect.identifier_preparer.quote(table.name)}")
+    typed = records(df[[*key, *compare]], table)
+    for row in conn.execute(sel):
+        stored[_key_of(row[:len(key)])] = _content_hash(row[len(key):])
+    mask, keys, new = [], [], set()
+    seen = set()
+    for rec in typed:
+        k = _key_of([rec[c] for c in key])
+        seen.add(k)
+        old = stored.get(k)
+        changed = old is None or old != _content_hash([rec[c] for c in compare])
+        mask.append(changed)
+        if changed:
+            keys.append(k)
+            if old is None:
+                new.add(k)
+    missing = [k for k in stored if k not in seen]
+    return pd.Series(mask, index=df.index), keys, new, missing
+
+
+def upsert_changed(
+    conn: Connection, table_name: str, df: pd.DataFrame, *, compare_columns: Sequence[str] | None = None,
+    update_columns: Sequence[str] | None = None, stamp_column: str | None = DEFAULT_STAMP, now: _dt.datetime | None = None,
+) -> ChangeSet:
+    """``upsert`` that writes only the rows that are new or whose ``compare_columns`` differ from the stored row (default:
+    every column of ``df`` except the key and the stamp). Only those rows get ``stamp_column`` = now, so the stamp means
+    "this record really changed then". Rows absent from ``df`` are left alone (not deleted)."""
+    table = reflect_table(conn, table_name)
+    key = _primary_key(table)
+    stamp = stamp_column if stamp_column and stamp_column in table.columns else None
+    now = now or _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+    if stamp:
+        df = df.assign(**{stamp: now})  # the stamp may be NOT NULL; it is never compared
+    _validate(table, df, key)
+    compare = [c for c in (compare_columns or [c for c in (update_columns or df.columns)]) if c not in key and c != stamp]
+    out = ChangeSet(table_name)
+    if df.empty:
+        return out
+    mask, keys, new, _ = _diff(conn, table, df, key, compare)
+    out.unchanged = int((~mask).sum())
+    out.inserted = [k for k in keys if k in new]
+    out.updated = [k for k in keys if k not in new]
+    if keys:
+        changed = df.loc[mask].copy()
+        cols = [*(update_columns or [c for c in changed.columns if c not in key]), *([stamp] if stamp else [])]
+        upsert(conn, table_name, changed, update_columns=list(dict.fromkeys(cols)))
+    return out
+
+
+def replace_changed(
+    conn: Connection, table_name: str, df: pd.DataFrame, *, stamp_column: str | None = DEFAULT_STAMP,
+    now: _dt.datetime | None = None, stamp_value: Any = None,
+) -> ChangeSet:
+    """Same final content as ``replace_all`` (the table mirrors ``df``), but written as a diff: rows no longer in ``df``
+    are deleted (their keys are reported), new / changed rows are upserted and stamped, unchanged rows keep their stamp.
+    ``stamp_value``: the stamp written instead of ``now`` (the sales marts stamp ``_run_id`` with the run uid)."""
+    table = reflect_table(conn, table_name)
+    key = _primary_key(table)
+    stamp = stamp_column if stamp_column and stamp_column in table.columns else None
+    now = now or _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+    if stamp:
+        df = df.assign(**{stamp: now if stamp_value is None else stamp_value})
+    _validate(table, df, key)
+    compare = [c for c in df.columns if c not in key and c != stamp]
+    out = ChangeSet(table_name)
+    if df.empty:
+        mask, keys, new = pd.Series([], dtype=bool), [], set()
+        missing = [_key_of(r) for r in conn.execute(text(
+            f"SELECT {', '.join(conn.dialect.identifier_preparer.quote(c) for c in key)} FROM {conn.dialect.identifier_preparer.quote(table_name)}"))]
+    else:
+        mask, keys, new, missing = _diff(conn, table, df, key, compare)
+    for chunk in _chunks(missing, 500):
+        cond = None
+        for k in chunk:
+            one = None
+            for col, v in zip(key, k):
+                part = table.c[col] == v
+                one = part if one is None else (one & part)
+            cond = one if cond is None else (cond | one)
+        conn.execute(delete(table).where(cond))
+    out.deleted = list(missing)
+    out.unchanged = int((~mask).sum()) if len(mask) else 0
+    out.inserted = [k for k in keys if k in new]
+    out.updated = [k for k in keys if k not in new]
+    if keys:
+        changed = df.loc[mask].copy()
+        upsert(conn, table_name, changed)
+    return out
 
 
 # -- snapshot replace ------------------------------------------------------------------------------------------

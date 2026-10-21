@@ -12,6 +12,7 @@ reuses a success from the last ETL_CORE_DIMS_FRESH_MINUTES.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import os
 
@@ -28,7 +29,7 @@ from core.transforms import org
 from core.transforms import product as prod
 from core.transforms import reference as ref
 from etl_platform import quality as q
-from etl_platform.load import replace_all, upsert
+from etl_platform.load import ChangeSet, replace_changed, upsert, upsert_changed
 from etl_platform.notify import notify
 from etl_platform.registry import REGISTRY, DatasetSpec, JobSpec, TaskSpec
 from etl_platform.runner import RunContext, TaskResult
@@ -50,6 +51,12 @@ def _stamp(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["updated_at_utc"] = _now()
     return out
+
+
+def _changes(*sets: ChangeSet) -> dict:
+    """etl_task_log.details["changed"]: per table, rows inserted / updated / deleted / unchanged (+ deleted keys).
+    updated_at_utc moves only on real changes, so the incremental sales step finds changed records by it."""
+    return {cs.table: cs.summary() for cs in sets}
 
 
 # -- Odoo raw specs ----------------------------------------------------------------------------------------------
@@ -92,17 +99,62 @@ def _odoo_task(dataset: str):
     return fn
 
 
+PARTNER_COMPANY_FULL_HOURS = 26  # a full read at least once a day (the 02:00 refresh does one)
+COMPANY_DEPENDENT_FIELDS = ("credit_limit", "property_payment_term_id")
+
+
+def _partner_company_full_reason(ctx: RunContext, wm) -> str | None:
+    if wm.write_date is None:
+        return "first read"
+    if ctx.full_refresh:
+        return "full refresh requested"
+    if ctx.state.get("top_job") == "full_all":
+        return "02:00 full refresh"
+    if wm.last_full_refresh is None or _now() - wm.last_full_refresh > _dt.timedelta(hours=PARTNER_COMPANY_FULL_HOURS):
+        return f"no full read in the last {PARTNER_COMPANY_FULL_HOURS} h"
+    return None
+
+
 def extract_partner_company(ctx: RunContext) -> TaskResult:
     """Company-dependent partner properties (credit limit, default payment term), read once per in-scope
-    company: Odoo returns company-dependent values for the first allowed company of the context."""
+    company: Odoo returns company-dependent values for the first allowed company of the context.
+
+    Incremental (every 30 minutes): only the commercial partners whose own write_date moved, or whose credit limit /
+    payment term property (ir.property, by its own write_date) changed, are read -- a property edit is found whether or not
+    it moves the partner's write_date. A changed company DEFAULT (ir.property without a partner) changes the value of
+    every partner without their own, so it reads everything; so do the 02:00 refresh and any run more than
+    PARTNER_COMPANY_FULL_HOURS after the last full read."""
     spec = PARTNER_COMPANY_SPEC
     source = ctx.odoo(spec.profile)
     fields, skipped = source.available_fields(spec.model, spec.odoo_fields)
-    frames, total = [], 0
     company_ids = ctx.odoo_company_ids(spec.profile)
+    wm = ctx.watermarks.get(spec.dataset)
+    started = _now()
+    reason = _partner_company_full_reason(ctx, wm)
+    changed: set[int] = set()
+    if reason is None:
+        since = (wm.write_date - _dt.timedelta(seconds=ctx.config.incremental_overlap_seconds)).strftime("%Y-%m-%d %H:%M:%S")
+        changed = set(source.search_ids(spec.model, [*spec.domain, ("write_date", ">=", since)]))
+        props = source.client.search_read("ir.property", [("name", "in", list(COMPANY_DEPENDENT_FIELDS)), ("write_date", ">=", since)],
+                                          ["res_id"], offset=0, limit=0, order="id", context={"active_test": False})
+        if any(not p.get("res_id") for p in props):
+            reason = "a company default of credit limit / payment term changed"
+        else:
+            changed |= {int(str(p["res_id"]).split(",")[1]) for p in props if str(p["res_id"]).startswith("res.partner,")}
+    frames, total = [], 0
     for company_id in company_ids:
-        records = source.search_read_all(spec.model, spec.domain, fields, include_archived=True, company_ids=[company_id])
+        if reason is not None:
+            records = source.search_read_all(spec.model, spec.domain, fields, include_archived=True, company_ids=[company_id])
+        else:
+            records = []
+            ids = sorted(changed)
+            for i in range(0, len(ids), ctx.config.odoo_id_chunk_size):
+                chunk = ids[i:i + ctx.config.odoo_id_chunk_size]
+                records += source.client.search_read(spec.model, [*spec.domain, ("id", "in", chunk)], list(fields), offset=0,
+                                                     limit=len(chunk), order="id", context=source._ctx(True, [company_id]))
         total += len(records)
+        if not records:
+            continue
         df = records_to_frame(records, spec, run_uid=ctx.run_uid, extracted_at=_now(), available=fields)
         df = df.rename(columns={"id": "partner_id"})
         df.insert(1, "company_id", company_id)
@@ -110,7 +162,10 @@ def extract_partner_company(ctx: RunContext) -> TaskResult:
     df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
     with ctx.engine.begin() as conn:
         loaded = upsert(conn, spec.table, df) if len(df) else 0
-    return TaskResult(rows_extracted=total, rows_loaded=loaded, details={"companies": list(company_ids), "skipped_fields": skipped})
+        ctx.watermarks.save(dataclasses.replace(wm, write_date=started), run_uid=ctx.run_uid, conn=conn, full_refresh=reason is not None)
+    return TaskResult(rows_extracted=total, rows_loaded=loaded,
+                      details={"companies": list(company_ids), "skipped_fields": skipped, "full_read": reason,
+                               "partners_changed": None if reason is not None else len(changed)})
 
 
 # -- Excel -------------------------------------------------------------------------------------------------------
@@ -144,8 +199,10 @@ def build_reference_dims(ctx: RunContext) -> TaskResult:
     if missing_scope:
         raise RuntimeError(f"Configured Odoo company id(s) {sorted(missing_scope)} not found in res.company")
     with ctx.engine.begin() as conn:
-        n = upsert(conn, "dim_currency", _stamp(currencies)) + upsert(conn, "dim_company", _stamp(companies)) + upsert(conn, "dim_payment_term", _stamp(terms))
-    return TaskResult(rows_loaded=n, details={"companies": len(companies), "currencies": len(currencies), "payment_terms": len(terms)})
+        sets = [upsert_changed(conn, "dim_currency", currencies), upsert_changed(conn, "dim_company", companies),
+                upsert_changed(conn, "dim_payment_term", terms)]
+    return TaskResult(rows_loaded=sum(c.written for c in sets),
+                      details={"companies": len(companies), "currencies": len(currencies), "payment_terms": len(terms), "changed": _changes(*sets)})
 
 
 def _company_maps(ctx: RunContext) -> tuple[dict[int, str], dict[str, int]]:
@@ -186,11 +243,10 @@ def build_org_dims(ctx: RunContext) -> TaskResult:
         notify("WARNING", "Odoo team(s) not in SalesTeam.xlsx OdooTeams (their documents go to team -1): "
                           + ", ".join(f"{i} {n}" for i, n in zip(unlisted["id"], unlisted["name"])))
     with ctx.engine.begin() as conn:
-        n = (upsert(conn, "dim_channel", _stamp(channels)) + upsert(conn, "dim_segment", _stamp(segments))
-             + upsert(conn, "dim_sales_team", _stamp(teams)) + upsert(conn, "dim_salesperson", _stamp(people)))
-        n += replace_all(conn, "map_odoo_user_salesperson", _stamp(user_map))[1]
-        n += replace_all(conn, "map_odoo_team_sales_team", _stamp(team_map))[1]
-    return TaskResult(rows_loaded=n, details={"salespeople": len(people), "teams": len(teams), "odoo_users_mapped": len(user_map),
+        sets = [upsert_changed(conn, "dim_channel", channels), upsert_changed(conn, "dim_segment", segments),
+                upsert_changed(conn, "dim_sales_team", teams), upsert_changed(conn, "dim_salesperson", people),
+                replace_changed(conn, "map_odoo_user_salesperson", user_map), replace_changed(conn, "map_odoo_team_sales_team", team_map)]
+    return TaskResult(rows_loaded=sum(c.written for c in sets), details={"changed": _changes(*sets), "salespeople": len(people), "teams": len(teams), "odoo_users_mapped": len(user_map),
                                               "odoo_teams_mapped": len(team_map),
                                               "inactive_no_team": int((people["assigned_team_key"].isna()).sum()),
                                               "active_status_without_team": stale_active["SalespersonKey"].tolist()})
@@ -211,10 +267,9 @@ def build_customer_dims(ctx: RunContext) -> TaskResult:
         notify("WARNING", f"BlockedCustomers.xlsx: {len(unresolved)} row(s) without a valid CustomerKey are ignored: "
                           + ", ".join(f"row {r} ({n})" for r, n in zip(unresolved["_excel_row"], unresolved["CustomerName"]))[:2000])
     with ctx.engine.begin() as conn:
-        n = upsert(conn, "dim_customer", _stamp(customers), update_columns=[*cust.CORE_CUSTOMER_COLUMNS, "updated_at_utc"])
-        n += upsert(conn, "map_partner_customer", _stamp(partner_map))
-        n += upsert(conn, "dim_customer_company", _stamp(per_company))
-    return TaskResult(rows_loaded=n, details={"customers": len(customers), "is_customer": int(customers["is_customer"].sum()),
+        sets = [upsert_changed(conn, "dim_customer", customers, update_columns=list(cust.CORE_CUSTOMER_COLUMNS)),
+                upsert_changed(conn, "map_partner_customer", partner_map), upsert_changed(conn, "dim_customer_company", per_company)]
+    return TaskResult(rows_loaded=sum(c.written for c in sets), details={"changed": _changes(*sets), "customers": len(customers), "is_customer": int(customers["is_customer"].sum()),
                                               "partners": len(partner_map), "customer_company_rows": len(per_company),
                                               "blocked_unresolved": len(unresolved)})
 
@@ -228,10 +283,11 @@ def build_product_dims(ctx: RunContext) -> TaskResult:
     master_for_map = master.merge(raw_master[["ProductMasterKey", "OdooProductID"]], on="ProductMasterKey", how="left", validate="1:1")
     pm_map = prod.build_product_master_map(products, master_for_map, names)
     with ctx.engine.begin() as conn:
-        n = upsert(conn, "dim_product_master", _stamp(master)) + upsert(conn, "dim_product", _stamp(products))
-        n += replace_all(conn, "map_product_master", _stamp(pm_map))[1]
+        sets = [upsert_changed(conn, "dim_product_master", master), upsert_changed(conn, "dim_product", products),
+                replace_changed(conn, "map_product_master", pm_map)]
     unmatched = int((pm_map["match_status"] == prod.STATUS_NONE).sum())
-    return TaskResult(rows_loaded=n, details={"products": len(products), "master_rows": len(master), "map_rows": len(pm_map), "unmatched": unmatched})
+    return TaskResult(rows_loaded=sum(c.written for c in sets), details={"products": len(products), "master_rows": len(master), "map_rows": len(pm_map),
+                                                                         "unmatched": unmatched, "changed": _changes(*sets)})
 
 
 def dim_date_start() -> _dt.date:
@@ -246,13 +302,13 @@ def load_selection_labels(ctx: RunContext) -> TaskResult:
     if not info["arabic"]:
         notify("WARNING", "No Arabic language is active in Odoo: selection labels are stored in English only (label_ar NULL)")
     with ctx.engine.begin() as conn:
-        replace_all(conn, "dim_odoo_selection_label", _stamp(frame))
-    return TaskResult(rows_extracted=len(frame), rows_loaded=len(frame), details=info)
+        cs = replace_changed(conn, "dim_odoo_selection_label", frame)
+    return TaskResult(rows_extracted=len(frame), rows_loaded=cs.written, details={**info, "changed": _changes(cs)})
 
 
 def ensure_date_range(conn, start: _dt.date, end: _dt.date) -> int:
     """For departments: make sure dim_date covers [start, end] before loading facts. Idempotent."""
-    return upsert(conn, "dim_date", _stamp(cal.build_dates(start, end)))
+    return upsert_changed(conn, "dim_date", cal.build_dates(start, end)).written
 
 
 def build_calendar_dims(ctx: RunContext) -> TaskResult:
@@ -263,8 +319,9 @@ def build_calendar_dims(ctx: RunContext) -> TaskResult:
         n = ensure_date_range(conn, start, end)
         if len(offdays):
             ensure_date_range(conn, min(offdays["Date"]), max(offdays["Date"]))
-        n += replace_all(conn, "dim_offday", _stamp(offdays))[1]
-    return TaskResult(rows_loaded=n, details={"date_range": [str(start), str(end)], "offdays": len(offdays)})
+        cs = replace_changed(conn, "dim_offday", offdays)
+        n += cs.written
+    return TaskResult(rows_loaded=n, details={"date_range": [str(start), str(end)], "offdays": len(offdays), "changed": _changes(cs)})
 
 
 # -- registration ------------------------------------------------------------------------------------------------

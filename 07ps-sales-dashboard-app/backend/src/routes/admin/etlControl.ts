@@ -1,10 +1,10 @@
 import { NextFunction, Request, Response, Router } from 'express';
-import { Job as BullJob } from 'bullmq';
+import { pool } from '../../db/pool';
 import { requireAuth } from '../../middleware/auth';
 import { requireAdminRole, requirePasswordChangeCleared } from '../../middleware/permission';
-import { getEtlConfig, npsRefresh } from '../../etl/config/etlConfig';
+import { etlScheduleWarning, getEtlConfig, npsRefresh } from '../../etl/config/etlConfig';
 import { computeNextRunTime } from '../../etl/scheduler/nextRunTime';
-import { EtlAlreadyRunningError, EtlJobData, enqueuePipelineRun, getEtlQueue, hasActiveWorker } from '../../etl/queue/etlQueue';
+import { EtlAlreadyRunningError, enqueuePipelineRun, getEtlJob, getEtlJobLogs, hasActiveWorker } from '../../etl/queue/etlQueue';
 import { isQueueReachable } from '../../etl/queue/queueHealth';
 import { publishCancelRequest } from '../../etl/queue/etlControlChannel';
 import { etlLogger } from '../../etl/services/etlLogger';
@@ -15,7 +15,9 @@ import {
   FINISHED_RUN_STATUSES,
   forceResetActiveEtlRuns,
   getActiveRun,
+  getActiveSalesBuild,
   getLastFinishedRun,
+  getLastSalesBuild,
   getRunById,
   listRunHistory,
   releaseOrphanedPipelineLock,
@@ -35,13 +37,16 @@ const LIVE_LOG_LINES = 50;
 adminEtlControlRouter.get('/status', async (_req, res, next) => {
   try {
     const config = getEtlConfig();
-    const nextIncremental = config.schedule.incrementalEnabled
+    // Nothing is scheduled on a machine without ETL_SCHEDULER_ENABLED (only the production server has it): no next run.
+    const on = config.schedulerEnabled;
+    const nextRefresh = on && config.schedule.refreshEnabled ? computeNextRunTime(config.schedule.refreshCron, config.schedule.timezone) : null;
+    const nextIncremental = on && config.schedule.incrementalEnabled
       ? computeNextRunTime(config.schedule.incrementalCron, config.schedule.timezone)
       : null;
-    const nextFull = config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null;
-    const nextFinance = config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null;
+    const nextFull = on && config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null;
+    const nextFinance = on && config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null;
     const npsPlan = npsRefresh(config.schedule);
-    const nextNps = npsPlan.cron ? computeNextRunTime(npsPlan.cron, config.schedule.timezone) : null;
+    const nextNps = on && npsPlan.cron ? computeNextRunTime(npsPlan.cron, config.schedule.timezone) : null;
 
     // Checked up front so the UI can tell "queue is genuinely unreachable" apart from "a run is
     // genuinely active" -- those used to be indistinguishable (any queued/running row read as
@@ -63,11 +68,10 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       let recentLog: string[] = [];
       if (active.job_id && queueAvailable) {
         try {
-          const job = await BullJob.fromId<EtlJobData>(getEtlQueue(), active.job_id);
+          const job = await getEtlJob(active.job_id);
           if (job) {
             progress = job.progress;
-            const { logs } = await getEtlQueue().getJobLogs(active.job_id, -LIVE_LOG_LINES, -1);
-            recentLog = logs;
+            recentLog = (await getEtlJobLogs(active.job_id, -LIVE_LOG_LINES, -1)).logs;
           }
         } catch {
           // BullMQ/Redis hiccup reading live progress shouldn't fail the whole status response --
@@ -82,10 +86,14 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
         queueAvailable,
         workerAvailable,
         elapsedMs: Date.now() - (active.started_at ?? active.queued_at).getTime(),
+        nextRefreshRun: nextRefresh,
         nextIncrementalRun: nextIncremental,
         nextFullRun: nextFull,
         nextFinanceRun: nextFinance,
         nextNpsRun: nextNps,
+        schedulerEnabled: on,
+        scheduleWarning: etlScheduleWarning(config),
+        salesBuild: await salesBuildStatus(),
       });
       return;
     }
@@ -98,12 +106,63 @@ adminEtlControlRouter.get('/status', async (_req, res, next) => {
       queueAvailable,
       workerAvailable,
       elapsedMs: null,
+      nextRefreshRun: nextRefresh,
       nextIncrementalRun: nextIncremental,
       nextFullRun: nextFull,
       nextFinanceRun: nextFinance,
       nextNpsRun: nextNps,
+      schedulerEnabled: on,
+      scheduleWarning: etlScheduleWarning(config),
+      salesBuild: await salesBuildStatus(),
     });
   } catch (err) {
+    next(err);
+  }
+});
+
+/** The sales build of the second queue (Phase B): the Control Center shows "Sales rebuild in progress -- started <time>"
+ * while it runs (the 30-minute refresh of the other modules keeps running), and its last result. */
+async function salesBuildStatus() {
+  const [active, last] = await Promise.all([getActiveSalesBuild(), getLastSalesBuild()]);
+  return {
+    active: active ? { id: active.id, status: active.status, queuedAt: active.queued_at, startedAt: active.started_at } : null,
+    last: last
+      ? { id: last.id, status: last.status, finishedAt: last.finished_at, durationSeconds: last.duration_seconds, error: last.error_message }
+      : null,
+  };
+}
+
+/**
+ * Phase B shadow comparison (sales_shadow_compare, after the 02:00 full refresh in ETL_SALES_MODE=shadow): the latest
+ * comparisons (live tables rebuilt from Odoo vs the shd_* copies built from the mirror) and the DIFF cells of the newest.
+ */
+adminEtlControlRouter.get('/shadow-compare', async (_req, res, next) => {
+  try {
+    const [runs] = await pool.query(
+      `SELECT compare_uid AS compareUid, module, as_of_date AS asOfDate, started_at_utc AS startedAtUtc, finished_at_utc AS finishedAtUtc,
+              status, tables_compared AS tablesCompared, rows_live AS rowsLive, rows_shadow AS rowsShadow,
+              rows_only_live AS rowsOnlyLive, rows_only_shadow AS rowsOnlyShadow, rows_different AS rowsDifferent,
+              cells_compared AS cellsCompared, cells_diff AS cellsDiff, excluded_orders AS excludedOrders, summary_json AS summaryJson
+       FROM etl_shadow_compare ORDER BY started_at_utc DESC LIMIT 14`,
+    );
+    const latest = (runs as { compareUid: string }[])[0];
+    let cells: unknown[] = [];
+    if (latest) {
+      const [rows] = await pool.query(
+        `SELECT table_name AS tableName, cell_key AS cellKey, measure, live_value AS liveValue, shadow_value AS shadowValue, diff, status
+         FROM etl_shadow_diff WHERE compare_uid = ? AND (status = 'DIFF' OR cell_key = '*')
+         ORDER BY status = 'DIFF' DESC, table_name, cell_key, measure LIMIT 500`,
+        [latest.compareUid],
+      );
+      cells = rows as unknown[];
+    }
+    res.json({ runs, cells });
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === 'ER_NO_SUCH_TABLE') {
+      res.json({ runs: [], cells: [], note: 'Migration 0054 is not applied on this database.' });
+      return;
+    }
     next(err);
   }
 });
@@ -127,7 +186,7 @@ adminEtlControlRouter.get('/preflight', async (_req, res, next) => {
 });
 
 const VALID_STATUSES: EtlRunStatus[] = ['queued', 'running', ...FINISHED_RUN_STATUSES];
-const VALID_MODES: EtlMode[] = ['incremental', 'full', 'finance', 'nps', 'sql', 'excel'];
+const VALID_MODES: EtlMode[] = ['incremental', 'full', 'finance', 'nps', 'refresh', 'sales_build', 'sql', 'excel'];
 
 adminEtlControlRouter.get('/history', async (req: Request, res, next) => {
   try {
@@ -152,33 +211,32 @@ adminEtlControlRouter.get('/history', async (req: Request, res, next) => {
 adminEtlControlRouter.get('/scheduler-config', async (_req, res, next) => {
   try {
     const config = getEtlConfig();
+    const tz = config.schedule.timezone;
+    const info = (cron: string, enabled: boolean) => {
+      const active = config.schedulerEnabled && enabled;
+      return { cron, enabled: active, nextRun: active ? computeNextRunTime(cron, tz) : null };
+    };
     res.json({
-      incremental: {
-        cron: config.schedule.incrementalCron,
-        enabled: config.schedule.incrementalEnabled,
-        nextRun: config.schedule.incrementalEnabled ? computeNextRunTime(config.schedule.incrementalCron, config.schedule.timezone) : null,
-      },
-      full: {
-        cron: config.schedule.fullCron,
-        enabled: config.schedule.fullEnabled,
-        nextRun: config.schedule.fullEnabled ? computeNextRunTime(config.schedule.fullCron, config.schedule.timezone) : null,
-      },
-      finance: {
-        cron: config.schedule.financeCron,
-        enabled: config.schedule.financeEnabled,
-        nextRun: config.schedule.financeEnabled ? computeNextRunTime(config.schedule.financeCron, config.schedule.timezone) : null,
-      },
-      // NPS runs once a night: inside full_all when the full schedule is on, else on its own schedule (npsRefresh)
+      schedulerEnabled: config.schedulerEnabled,
+      scheduleWarning: etlScheduleWarning(config),
+      refresh: { ...info(config.schedule.refreshCron, config.schedule.refreshEnabled), intervalMinutes: config.schedule.refreshIntervalMinutes },
+      salesBuild: info(config.schedule.salesBuildCron, config.schedule.salesBuildEnabled),
+      incremental: info(config.schedule.incrementalCron, config.schedule.incrementalEnabled),
+      full: info(config.schedule.fullCron, config.schedule.fullEnabled),
+      finance: info(config.schedule.financeCron, config.schedule.financeEnabled),
+      // NPS runs once a night: inside full_all when the full schedule is on, else on its own schedule (npsRefresh);
+      // the 30-minute refresh runs it too (ETL_REFRESH_MODULES)
       nps: (() => {
         const plan = npsRefresh(config.schedule);
+        const active = config.schedulerEnabled && plan.via !== 'off';
         return {
           cron: plan.cron ?? config.schedule.processNpsCron,
-          enabled: plan.via !== 'off',
+          enabled: active,
           via: plan.via,
-          nextRun: plan.cron ? computeNextRunTime(plan.cron, config.schedule.timezone) : null,
+          nextRun: active && plan.cron ? computeNextRunTime(plan.cron, tz) : null,
         };
       })(),
-      timezone: config.schedule.timezone,
+      timezone: tz,
     });
   } catch (err) {
     next(err);
@@ -197,12 +255,15 @@ interface StartConfig {
  * loads the warehouse only (no Excel export) and "sql" was a second name for a sales refresh. Sales Refresh = main
  * (core dims -> sales), Full Refresh = full_all (core dims -> receivables -> sales full -> NPS Score), Receivables
  * Snapshot = the job of the 15:00 schedule (finance_receivables), NPS Score = process_nps (the NPS source must be
- * enabled in the ETL, NPS_ENABLED). All take the same lock / one-run-at-a-time guard. */
-const START_CONFIGS: Record<'incremental' | 'full' | 'finance' | 'nps', StartConfig> = {
+ * enabled in the ETL, NPS_ENABLED), 30-minute Refresh = refresh_30m. All take the same lock / one-run-at-a-time guard. */
+const START_CONFIGS: Record<'incremental' | 'full' | 'finance' | 'nps' | 'refresh' | 'sales_build', StartConfig> = {
   incremental: { job: 'main', mode: 'incremental', loadMode: 'incremental', outputMode: 'sql', fast: true },
   full: { job: 'full_all', mode: 'full', loadMode: 'full', outputMode: 'sql' },
   finance: { job: 'finance_receivables', mode: 'finance', loadMode: 'full', outputMode: 'sql' },
   nps: { job: 'process_nps', mode: 'nps', loadMode: 'full', outputMode: 'sql' },
+  refresh: { job: 'refresh_30m', mode: 'refresh', loadMode: 'incremental', outputMode: 'sql' },
+  // Phase B: the sales tables from the Odoo mirror (second queue); ends at once when nothing changed or in legacy mode
+  sales_build: { job: 'sales_build', mode: 'sales_build', loadMode: 'incremental', outputMode: 'sql' },
 };
 
 /** Shared by the start-* routes and retry: preflight checks, then enqueue. Returns true if it
@@ -226,7 +287,7 @@ async function startConfiguredRun(
   // 'queued', and then nothing ever happens to it -- no worker means no error, just an
   // indefinite "Queued" with zero log lines (see hasActiveWorker's header). Failing here
   // instead turns that silent hang into an honest, immediate error.
-  if (!(await hasActiveWorker())) {
+  if (!(await hasActiveWorker(START_CONFIGS[key].job))) {
     res.status(503).json({
       error: 'No ETL worker process is currently consuming the queue. Starting a run now would '
         + 'queue it with nothing to pick it up. Check that the etl:worker process is running.',
@@ -290,6 +351,7 @@ adminEtlControlRouter.post('/start/incremental', makeStartHandler('incremental')
 adminEtlControlRouter.post('/start/full', makeStartHandler('full'));
 adminEtlControlRouter.post('/start/finance', makeStartHandler('finance'));
 adminEtlControlRouter.post('/start/nps', makeStartHandler('nps'));
+adminEtlControlRouter.post('/start/sales-build', makeStartHandler('sales_build'));
 
 /**
  * Re-runs a failed/cancelled run with the same mode (the newest one if no runId is given). It is a
@@ -356,7 +418,7 @@ adminEtlControlRouter.post('/force-reset', async (req, res, next) => {
           .filter((r): r is { id: number; jobId: string } => r.jobId !== null)
           .map(async ({ jobId }) => {
             try {
-              const job = await getEtlQueue().getJob(jobId);
+              const job = await getEtlJob(jobId);
               await job?.remove();
             } catch (err) {
               etlLogger.error('Force-reset: could not remove underlying queue job (DB reset still applied)', {
@@ -406,7 +468,7 @@ adminEtlControlRouter.get('/runs/:runId/log', async (req, res, next) => {
       return;
     }
     try {
-      const { logs } = await getEtlQueue().getJobLogs(run.job_id, 0, -1);
+      const { logs } = await getEtlJobLogs(run.job_id, 0, -1);
       res.json({ lines: logs });
     } catch (err) {
       etlLogger.error('Could not read persisted log for run (queue unreachable or job evicted)', {
@@ -478,14 +540,14 @@ adminEtlControlRouter.get('/stream/:runId', async (req, res, next) => {
       }
       if (run.job_id) {
         try {
-          const job = await BullJob.fromId<EtlJobData>(getEtlQueue(), run.job_id);
+          const job = await getEtlJob(run.job_id);
           if (job) {
             const progressJson = JSON.stringify(job.progress ?? null);
             if (progressJson !== lastProgressJson) {
               lastProgressJson = progressJson;
               send('progress', job.progress ?? null);
             }
-            const { logs, count } = await getEtlQueue().getJobLogs(run.job_id, seenLineCount, -1);
+            const { logs, count } = await getEtlJobLogs(run.job_id, seenLineCount, -1);
             logs.forEach((line) => send('log', { line, ts: new Date().toISOString() }));
             seenLineCount = count;
           }

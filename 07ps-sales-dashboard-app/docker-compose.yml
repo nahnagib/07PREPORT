@@ -205,10 +205,12 @@ services:
 
   # Legacy ingestion service (data/ingestion, mocked Odoo by default). Not part of the production
   # path documented in docs/DEPLOYMENT.md; start it explicitly with `--profile legacy` if still needed.
+  # RETIRED: scheduler.py exits at once unless LEGACY_INGESTION_SCHEDULER_ENABLED=true (docs/etl-refresh-schedule.md);
+  # restart 'no' so an accidental `--profile legacy up` does not loop.
   ingestion:
     profiles: ['legacy']
     build: ./data/ingestion
-    restart: unless-stopped
+    restart: 'no'
     env_file: ./data/ingestion/.env
     volumes:
       - ${ETL_INPUT_HOST_DIR:-../Input}:/data/Input:ro

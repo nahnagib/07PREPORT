@@ -405,6 +405,22 @@ def check_target_alignment(fact: pd.DataFrame, sheet: pd.DataFrame) -> None:
             raise ValueError(f"Fact_Targets row {i} does not line up with sales_targets.xlsx ({col}: {a.iloc[i]!r} vs {b.iloc[i]!r})")
 
 
+def line_group_keys(lines: pd.DataFrame, sales_raw: pd.DataFrame) -> tuple[list, list]:
+    """(SalesLineGroupKey, Discount) per sales line, from its sale.report row: the same formula on both paths (sale.report
+    read from Odoo at 02:00, rebuilt from the mirror every 30 minutes), so the two builds key identical rows the same."""
+    from departments.sales.sale_report import group_key
+
+    if "Discount" not in sales_raw.columns or "SaleReportLineID" not in lines.columns:
+        return [None] * len(lines), [None] * len(lines)
+    raw = sales_raw.dropna(subset=["SaleReportLineID"])
+    ids = pd.to_numeric(raw["SaleReportLineID"]).astype("int64")
+    keys = dict(zip(ids, (group_key(o, p, u, d) for o, p, u, d in zip(raw["OdooOrderID"], raw["OdooProductID"], raw["UoMID"], raw["Discount"]))))
+    disc = dict(zip(ids, pd.to_numeric(raw["Discount"], errors="coerce").fillna(0.0)))
+    line_ids = pd.to_numeric(lines["SaleReportLineID"], errors="coerce")
+    return ([keys.get(int(i)) if pd.notna(i) else None for i in line_ids],
+            [float(disc[int(i)]) if pd.notna(i) and int(i) in disc else None for i in line_ids])
+
+
 def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -> Conformed:
     """``targets_keys``: sales_targets.xlsx rows with YearMonth, Salesperson, SalesTeamKey, Company, SalespersonKey,
     CompanyKey. ``product_rebuild(lines_with_legacy_product_cols) -> dict`` re-runs the legacy product/BCG builders."""
@@ -425,6 +441,7 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
     lines["ProductMasterKey"] = maps.product_masters(product_keys, lines["CompanyKey"])
     lines["SalesOrderKey"] = [(_int_or_none(v) if _int_or_none(v) is not None else UNKNOWN) for v in _col(lines, "OdooOrderID")]
     lines = _date_keys(lines.drop(columns=["InvoiceKey"], errors="ignore"))
+    lines["SalesLineGroupKey"], lines["Discount"] = line_group_keys(lines, build.sales_raw)
     out.tables["fact_sales_lines"] = lines
 
     # orders, documents ----------------------------------------------------------------------------------------------

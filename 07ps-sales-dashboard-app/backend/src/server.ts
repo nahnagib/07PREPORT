@@ -41,6 +41,7 @@ import { adminKaizenDropdownsRouter } from './routes/admin/kaizenDropdowns';
 import { syncPermissionRegistry } from './services/permissionService';
 import { cleanupExpiredStaged } from './marcom/staging';
 import { registerEtlSchedules } from './etl/scheduler/registerSchedules';
+import { etlScheduleWarning } from './etl/config/etlConfig';
 import { reconcileOrphanedEtlRuns, reconcileStaleQueuedRuns } from './etl/services/etlReconciliation';
 import { etlLogger } from './etl/services/etlLogger';
 import { requestId } from './middleware/requestId';
@@ -178,6 +179,16 @@ async function start(): Promise<void> {
   // etl/scheduler/registerSchedules.ts); the etl:worker process is the one that actually executes
   // them, so this stays cheap even though it runs inside the request-serving process.
   registerEtlSchedules();
+  const scheduleWarning = etlScheduleWarning();
+  if (scheduleWarning) {
+    etlLogger.error(scheduleWarning);
+    // eslint-disable-next-line no-console
+    console.error(`
+${'!'.repeat(100)}
+!! ${scheduleWarning}
+${'!'.repeat(100)}
+`);
+  }
 
   // Runs once per process start, before any new run can be enqueued -- see
   // etlReconciliation.ts's header for why this has to happen here (a dead prior process can orphan

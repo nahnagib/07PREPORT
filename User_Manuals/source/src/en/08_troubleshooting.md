@@ -32,7 +32,7 @@
 ## Frequently asked questions
 
 **Is the data live?**
-No. It is refreshed five times a day (08:50, 11:50, 14:50, 17:50 and 20:50), with a full rebuild every night at 02:00.
+No. Sales data is refreshed five times a day (08:50, 11:50, 14:50, 17:50 and 20:50); Receivables, Collections and NPS every 30 minutes; and everything is rebuilt every night at 02:00.
 
 **Do I need to sign in every day?**
 No. There is no automatic time-out, so you stay signed in on that browser until you click **Log out** (see *Session timeout*). Always sign out on shared computers.

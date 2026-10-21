@@ -11,10 +11,17 @@ process / Docker container), where Windows Task Scheduler doesn't exist anyway.
 Not the deprecated scheduler.py.deprecated (Task-A placeholder, wired to the wrong
 odoo_connector.py/excel_ingest.py modules) - this one calls orchestrator.run_refresh(), which is
 the real, validated extraction+transform+star-schema-load path.
+
+RETIRED: the refresh now runs on the production server only (backend node-cron + BullMQ worker -> ETL platform:
+30-minute refresh + 02:00 full refresh; docs/etl-refresh-schedule.md). This process refuses to start unless
+LEGACY_INGESTION_SCHEDULER_ENABLED=true, so `docker compose --profile legacy up` or a stray `python scheduler.py`
+cannot write to the warehouse by accident.
 """
 from __future__ import annotations
 
 import logging
+import os
+import sys
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -42,6 +49,10 @@ def run_scheduled(scheduled_refresh_time: str) -> None:
 
 
 def main() -> None:
+    if os.getenv("LEGACY_INGESTION_SCHEDULER_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        logger.error("Legacy ingestion scheduler is retired and did not start: the refresh runs on the production "
+                     "server (docs/etl-refresh-schedule.md). Set LEGACY_INGESTION_SCHEDULER_ENABLED=true to override.")
+        sys.exit(0)
     scheduler = BlockingScheduler()
     for t in REFRESH_TIMES:
         hour, minute = t.split(":")

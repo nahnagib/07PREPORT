@@ -4,8 +4,10 @@ For every job run (unless ``JobSpec.log_run`` is False) one ``etl_run_log`` row 
 ``success``/``partial``/``failed``; dependency jobs get their own rows with ``parent_run_uid`` set to the run that
 started them, so one ``full_all`` run is one top-level row plus its core_dims / finance / sales rows. Every task gets an
 ``etl_task_log`` row (rows extracted/loaded, -1 key fallbacks with sample source ids, watermark before/after).
-Every check result goes to ``etl_dq_result``. The whole invocation holds the MySQL ETL lock, so a second trigger
-fails with ``RunLockError`` after the lock wait instead of running alongside.
+Every check result goes to ``etl_dq_result``. A run holds a MySQL named lock per module it writes ("<lock>:sales",
+"<lock>:finance", ... -- JobSpec.locks), so a second trigger of the same module fails with ``RunLockError`` after the
+lock wait, while a run of other modules goes ahead (the 30-minute refresh keeps running during a long sales build; an
+isolated refresh skips only the module whose lock is busy).
 
 Failure rules for a job with dependency jobs:
 * a required dependency fails -> the job's own tasks do not run and the job fails;
@@ -14,6 +16,10 @@ Failure rules for a job with dependency jobs:
 * an optional dependency (``JobSpec.optional_jobs``, finance in ``full_all``) fails -> everything else still
   runs and keeps its data, and the job ends ``partial`` with "<department> failed: <error>". Nothing is retried
   inside the run; the next scheduled run tries again.
+* an ``isolated`` umbrella job (``refresh_30m``) treats every dependency as a separate module: a failed module is
+  reported and the others still run -- one that needs it (finance after a core_dims failure) runs on what the
+  previous cycle loaded. The failed module's watermarks did not move (they are saved in its load transaction), so
+  the next cycle re-reads the same window. ``partial`` when some modules failed, ``failed`` when none succeeded.
 
 Progress lines ``Pipeline step <task> started|completed|failed`` match the pattern the Node worker already
 parses (runPipelineJob.ts STAGE_PATTERN), so the ETL Control Center shows task progress unchanged.
@@ -21,6 +27,7 @@ parses (runPipelineJob.ts STAGE_PATTERN), so the ETL Control Center shows task p
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import logging
 import socket
@@ -35,7 +42,7 @@ from sqlalchemy.engine import Engine
 
 from etl_platform import meta
 from etl_platform.config import PlatformConfig
-from etl_platform.db import run_lock
+from etl_platform.db import RunLockError, run_lock
 from etl_platform.notify import notify, register_channel
 from etl_platform.quality import QualityCheckFailed, QualityRunner
 from etl_platform.registry import DatasetSpec, JobSpec, Registry, RegistryError, TaskSpec
@@ -187,6 +194,7 @@ class Runner:
         self._sources: dict[str, Any] = {}
         self._done: dict[str, str] = {}
         self._totals: dict[str, dict[str, int]] = {}
+        self._isolated = False  # the top-level job of the current run() is an isolated umbrella (refresh_30m)
         # status of the top-level job of the last run() (success / partial / failed); run.py maps it to an exit code
         self.last_status: str | None = None
 
@@ -204,8 +212,12 @@ class Runner:
         as_of = as_of or _dt.datetime.now(ZoneInfo(self.config.business_timezone)).date()
         self._done = {}
         self._totals = {}
+        self._isolated = job.isolated
+        self._top_job = job.name
         self.last_status = None
-        with run_lock(self.engine, self.config.lock_name, self.config.lock_timeout_seconds):
+        # an isolated job (refresh_30m) locks each module when it starts (a busy module is skipped, the others run);
+        # any other job locks every module it may write, up front
+        with self._hold(() if job.isolated else self._lock_names(job), wait=self._lock_wait(job)):
             self._sync_dataset_registry()
             try:
                 return self._run_job(job, parent_uid=None, as_of=as_of, full_refresh=full_refresh, dataset=dataset,
@@ -234,10 +246,15 @@ class Runner:
             # Every dependency is attempted even if an earlier one failed (full_all still runs sales when finance
             # fails); a dependency whose own required dependency failed is skipped, not started.
             dep_failures: list[str] = []
-            for dep_name in job.depends_on_jobs:
-                optional = dep_name in job.optional_jobs
+            for dep_name in self._dependencies(job):
+                optional = dep_name in job.optional_jobs or job.isolated
                 failures = optional_failures if optional else dep_failures
                 if self._done.get(dep_name) in NOT_RUN:
+                    if self._isolated:
+                        # isolated run: the module goes on with what the previous cycle loaded for this dependency
+                        logger.warning("Job %s: dependency %s %s earlier in this run; continuing on its previously loaded data",
+                                       job.name, dep_name, self._done[dep_name])
+                        continue
                     failures.append(f"dependency job '{dep_name}' {self._done[dep_name]} earlier in this run")
                     continue
                 if dep_name in self._done:
@@ -264,9 +281,20 @@ class Runner:
                     logger.info("Job %s: dependency %s reused (succeeded at %s UTC, within %s min)", job.name, dep.name, fresh, self._reuse_window(dep))
                     self._done[dep.name] = "reused"
                     continue
+                module_locks = self._lock_names(dep, skip_done=True) if job.isolated and job.name == self._top_job else ()
                 try:
-                    self._run_job(dep, parent_uid=run_uid, as_of=as_of, full_refresh=full_refresh, dataset=None,
-                                  allow_large_change=allow_large_change, trigger_source=trigger_source)
+                    with self._hold(module_locks, wait=self.config.lock_timeout_seconds):
+                        self._run_job(dep, parent_uid=run_uid, as_of=as_of, full_refresh=full_refresh, dataset=None,
+                                      allow_large_change=allow_large_change, trigger_source=trigger_source)
+                except RunLockError as exc:
+                    if not module_locks:
+                        raise
+                    # another run writes this module (e.g. a sales rebuild holds "sales"): not a failure, the next
+                    # cycle runs it
+                    logger.warning("Job %s: module %s skipped, its lock is busy: %s", job.name, dep.name, exc)
+                    if dep.log_run:
+                        self._skipped_run_row(dep, run_uid, trigger_source, f"skipped: locked ({exc})")
+                    self._done[dep.name] = STATUS_SKIPPED
                 except Exception as exc:  # noqa: BLE001 - recorded on the dependency's own row; reported below
                     if optional:
                         logger.error("Job %s: optional dependency %s failed; the rest of the run continues", job.name, dep.name)
@@ -279,9 +307,13 @@ class Runner:
                             totals[key] += value
             if dep_failures:
                 raise DependencyFailed("; ".join(dep_failures + optional_failures))
+            if job.isolated and optional_failures and not job.tasks and not any(
+                    self._done.get(d) in (STATUS_SUCCESS, STATUS_PARTIAL, "reused") for d in self._dependencies(job)):
+                raise DependencyFailed("every module failed: " + "; ".join(optional_failures))
 
             ctx = RunContext(self.engine, self.config, self.registry, run_uid, job, as_of, full_refresh, dataset,
                              allow_large_change, quality, WatermarkStore(self.engine), trigger_source, self._sources)
+            ctx.state["top_job"] = self._top_job  # e.g. "full_all": the 02:00 refresh (full reads, id checks)
             for task in self.registry.task_order(job):
                 if dataset is not None and dataset not in task.datasets:
                     logger.info("Pipeline step %s skipped (--dataset %s)", task.name, dataset)
@@ -314,8 +346,51 @@ class Runner:
                         f"{totals['extracted']:,}", f"{totals['loaded']:,}")
         return run_uid
 
+    def _dependencies(self, job: JobSpec) -> list[str]:
+        """The dependency jobs to run, in their declared order: for a ``configurable_modules`` job only those listed in
+        ETL_REFRESH_MODULES (a listed module this build does not register is reported, never an error)."""
+        if not job.configurable_modules:
+            return list(job.depends_on_jobs)
+        wanted = set(self.config.refresh_modules)
+        chosen = [d for d in job.depends_on_jobs if d in wanted]
+        left_out = [d for d in job.depends_on_jobs if d not in wanted]
+        unknown = [m for m in self.config.refresh_modules if m not in job.depends_on_jobs]
+        if left_out:
+            logger.info("Job %s: module(s) not in ETL_REFRESH_MODULES, not run: %s", job.name, ", ".join(left_out))
+        if unknown:
+            logger.warning("Job %s: ETL_REFRESH_MODULES lists module(s) this job cannot run here: %s (available: %s)",
+                           job.name, ", ".join(unknown), ", ".join(job.depends_on_jobs))
+        return chosen
+
+    def _lock_names(self, job: JobSpec, *, skip_done: bool = False) -> list[str]:
+        """'<lock name>:<module>' for every module ``job`` and the dependencies it may run write, sorted (every run takes
+        them in the same order, so two runs never deadlock). ``skip_done``: leave out dependencies already run."""
+        modules: set[str] = set()
+        stack, seen = [job], set()
+        while stack:
+            j = stack.pop()
+            if j.name in seen or (skip_done and j is not job and j.name in self._done):
+                continue
+            seen.add(j.name)
+            modules.update(j.own_locks)
+            stack.extend(self.registry.get_job(d) for d in self._dependencies(j))
+        return sorted(f"{self.config.lock_name}:{m}" for m in modules)
+
+    def _lock_wait(self, job: JobSpec) -> int:
+        return self.config.full_lock_wait_seconds if job.lock_wait == "full" else self.config.lock_timeout_seconds
+
+    @contextlib.contextmanager
+    def _hold(self, names, *, wait: int):
+        with contextlib.ExitStack() as stack:
+            for name in names:
+                stack.enter_context(run_lock(self.engine, name, wait))
+            yield
+
     def _failed_requirement(self, job: JobSpec) -> str | None:
-        """The first required dependency of ``job`` that failed or was skipped earlier in this run, else None."""
+        """The first required dependency of ``job`` that failed or was skipped earlier in this run, else None. Never
+        blocks in an isolated run: the module runs on the dependency's previously loaded data."""
+        if self._isolated:
+            return None
         for dep_name in job.depends_on_jobs:
             if dep_name not in job.optional_jobs and self._done.get(dep_name) in NOT_RUN:
                 return dep_name

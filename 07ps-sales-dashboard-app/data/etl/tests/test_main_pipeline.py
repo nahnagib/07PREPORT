@@ -67,8 +67,11 @@ def _registry(sales_gate: dict) -> Registry:
 
     r.task(TaskSpec("load_stub_sales", load_stub_sales))
     r.task(TaskSpec("load_stub_nps", load_stub_nps))
-    for name in ("core_dims", "finance_receivables", "main", "full_all"):
+    for name in ("core_dims", "finance_receivables", "main"):
         r.job(REGISTRY.jobs[name])
+    # the legacy steps of full_all (ETL_SALES_MODE=legacy skips the Phase B steps; they are tested in test_sales_incremental)
+    r.job(replace(REGISTRY.jobs["full_all"], depends_on_jobs=REGISTRY.jobs["full_all"].depends_on_jobs[:4],
+                  optional_jobs=("finance_receivables", "process_nps")))
     # the NPS source is not configured in these tests: full_all records process_nps as skipped (disabled), unless a
     # test sets gate["nps"]; then the real process_nps job (same dependencies) runs a stub task that can fail
     r.job(replace(REGISTRY.jobs["process_nps"], tasks=("load_stub_nps",),
@@ -319,7 +322,7 @@ def test_cli_exit_codes(pipe, monkeypatch):
     pipe["gate"]["fail"] = True
     assert _cli(monkeypatch, pipe) == cli.EXIT_FAILED
     pipe["gate"]["fail"] = False
-    with run_lock(pipe["engine"], pipe["config"].lock_name, 1):  # another run holds the lock
+    with run_lock(pipe["engine"], f'{pipe["config"].lock_name}:sales', 1):  # another run writes sales
         monkeypatch.setattr(cli.PlatformConfig, "from_env",
                             classmethod(lambda cls, env_file=None: replace(pipe["config"], lock_timeout_seconds=1)))
         monkeypatch.setattr(cli, "Runner", lambda registry, engine, config: pipe["runner"](cfg=config))
@@ -329,7 +332,10 @@ def test_cli_exit_codes(pipe, monkeypatch):
 def test_job_definitions(pipe):
     assert REGISTRY.jobs["main"].depends_on_jobs == ("core_dims", "sales_incremental")
     assert REGISTRY.jobs["main"].optional_jobs == ()
-    assert REGISTRY.jobs["full_all"].depends_on_jobs == ("core_dims", "finance_receivables", "sales_full", "process_nps")
-    assert REGISTRY.jobs["full_all"].optional_jobs == ("finance_receivables", "process_nps")
+    assert REGISTRY.jobs["full_all"].depends_on_jobs == ("core_dims", "finance_receivables", "sales_full", "process_nps", "sales_mirror",
+                                                         "sales_build", "sales_shadow_compare")
+    assert REGISTRY.jobs["full_all"].optional_jobs == ("finance_receivables", "process_nps", "sales_mirror", "sales_build",
+                                                       "sales_shadow_compare")
+    assert REGISTRY.jobs["full_all"].lock_wait == "full"
     assert REGISTRY.jobs["process_nps"].depends_on_jobs == ("core_dims",)
     assert REGISTRY.jobs["finance_receivables"].depends_on_jobs == ("core_dims",)

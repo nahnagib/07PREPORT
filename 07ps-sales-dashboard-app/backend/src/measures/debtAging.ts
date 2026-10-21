@@ -19,7 +19,9 @@
  *   5. its overdue date = due date + OVERDUE_OFFSET_DAYS (1: the first day it is late); days overdue = as-of date -
  *      overdue date, in calendar days (as-of = the snapshot date, i.e. today for the latest snapshot). 0 = the first
  *      day overdue (due the day before); negative = "Not yet due", incl. due exactly on the as-of date (never GREEN).
- *   6. zone, owner and action: config/creditPolicy.ts. Dot size = the customer's total outstanding (every invoice).
+ *   6. zone, owner and action: config/creditPolicy.ts. Dot size and zone totals = the customer's OVERDUE amount (2026-10-21):
+ *      its lines whose own overdue date (line due_date, else the invoice's due date from step 3, + OVERDUE_OFFSET_DAYS) is on
+ *      or before the as-of date, negative lines included. Total outstanding (every line) stays for reference.
  *
  * The same placement feeds the Customers table's "Aging bucket" (attachCreditZones), so a customer's bucket there is
  * the same policy status (not-yet-due customers are omitted from the chart). The payment-term filter only chooses which
@@ -133,11 +135,18 @@ export interface CreditCustomer {
   /** payment term of the deciding invoice */
   paymentTermKey: number;
   paymentTerm: string;
-  /** every invoice line of the customer (the dot's size), in the view's currency (LYD for all currencies) */
+  /** every invoice line of the customer (the tooltip's "Total open balance"), in the view's currency (LYD for all currencies) */
   totalOutstanding: number;
   /** the same in LYD (Odoo's own amount_residual) */
   totalOutstandingCompany: number;
   unpaidInvoiceCount: number;
+  /** the lines overdue on the as-of date (line overdue date <= as-of; negative lines included): the dot's size and the
+   * zone totals, in the view's currency */
+  overdueAmount: number;
+  /** the same in LYD */
+  overdueAmountCompany: number;
+  /** unpaid invoices with at least one open overdue line */
+  overdueInvoiceCount: number;
   oldestInvoiceMoveId: number;
   oldestInvoiceNumber: string | null;
   oldestInvoiceDate: string | null;
@@ -218,6 +227,21 @@ export function placeCustomers(lines: CreditLine[], asOf: string, allCurrencies:
       if (amount > 0 && l.due_date && (inv.openDue === null || l.due_date < inv.openDue)) inv.openDue = l.due_date;
       invoices.set(inv.moveId, inv);
     }
+    // overdue part: lines whose own overdue date (line due_date, else the invoice's resolved due date, + the offset) is on
+    // or before the as-of date; negative lines lower it like they lower the total. Second pass: the fallback needs the
+    // whole invoice.
+    let overdue = 0;
+    let overdueCompany = 0;
+    const overdueMoves = new Set<number>();
+    for (const l of g.lines) {
+      const inv = invoices.get(Number(l.move_id)) as InvoiceAcc;
+      const lineDue = l.due_date ?? invoiceDueDate(inv)?.date ?? null;
+      if (lineDue === null || addDays(lineDue, OVERDUE_OFFSET_DAYS) > asOf) continue;
+      const amount = micro(allCurrencies ? l.residual_company_ccy : l.residual_doc_ccy);
+      overdue += amount;
+      overdueCompany += micro(l.residual_company_ccy);
+      if (amount > 0 && inv.residual > 0) overdueMoves.add(inv.moveId);
+    }
     const unpaid = [...invoices.values()]
       .filter((i) => i.residual > 0)
       .map((i) => ({ inv: i, due: invoiceDueDate(i) }))
@@ -247,6 +271,9 @@ export function placeCustomers(lines: CreditLine[], asOf: string, allCurrencies:
       totalOutstanding: fromMicro(total),
       totalOutstandingCompany: fromMicro(totalCompany),
       unpaidInvoiceCount: unpaid.length,
+      overdueAmount: fromMicro(overdue),
+      overdueAmountCompany: fromMicro(overdueCompany),
+      overdueInvoiceCount: overdueMoves.size,
       oldestInvoiceMoveId: inv.moveId,
       oldestInvoiceNumber: inv.document,
       oldestInvoiceDate: inv.invoiceDate,
@@ -273,8 +300,9 @@ export function placeCustomers(lines: CreditLine[], asOf: string, allCurrencies:
 export interface CreditZoneSummary {
   key: CreditZoneKey;
   customers: number;
+  /** the customers' overdue amounts (overdueAmount), in the view's currency */
   amount: number;
-  /** The same outstanding amount in LYD, for the policy zone headers. */
+  /** The same overdue amount in LYD, for the policy zone headers. */
   amountCompany: number;
 }
 
@@ -329,13 +357,13 @@ export function buildCreditPolicy(
       Number(a.notYetDue) - Number(b.notYetDue) ||
       b.daysOverdue - a.daysOverdue ||
       a.daysUntilDue - b.daysUntilDue ||
-      b.totalOutstanding - a.totalOutstanding ||
+      b.overdueAmount - a.overdueAmount ||
       a.customerKey - b.customerKey,
   );
   const sum = (key: CreditZoneKey): CreditZoneSummary => {
     const list = shown.filter((c) => c.zone === key);
-    return { key, customers: list.length, amount: fromMicro(list.reduce((t, c) => t + micro(c.totalOutstanding), 0)),
-      amountCompany: fromMicro(list.reduce((t, c) => t + micro(c.totalOutstandingCompany), 0)) };
+    return { key, customers: list.length, amount: fromMicro(list.reduce((t, c) => t + micro(c.overdueAmount), 0)),
+      amountCompany: fromMicro(list.reduce((t, c) => t + micro(c.overdueAmountCompany), 0)) };
   };
 
   return {
@@ -349,7 +377,7 @@ export function buildCreditPolicy(
     terms,
     summary: {
       zones: CREDIT_POLICY_ZONES.map((z) => sum(z.key)),
-      total: { customers: shown.length, amount: fromMicro(shown.reduce((t, c) => t + micro(c.totalOutstanding), 0)) },
+      total: { customers: shown.length, amount: fromMicro(shown.reduce((t, c) => t + micro(c.overdueAmount), 0)) },
     },
     customers: shown.map((c) => {
       const { currency: _currency, ...rest } = c;

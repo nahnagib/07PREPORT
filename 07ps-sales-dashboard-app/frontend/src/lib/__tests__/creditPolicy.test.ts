@@ -76,7 +76,7 @@ describe('chart geometry', () => {
   });
 
   it('overflow x reflects actual days, not customer rank', () => {
-    const customers = [66, 67, 156].map((daysOverdue, customerKey) => ({ customerKey, daysOverdue, zone: 'BLOCK' as const, totalOutstanding: 100 }));
+    const customers = [66, 67, 156].map((daysOverdue, customerKey) => ({ customerKey, daysOverdue, zone: 'BLOCK' as const, overdueAmount: 100 }));
     const { dots } = layoutCreditDots(customers, ZONES, chartColumns(1200, ZONES));
     const x = (id: number) => dots.find((d) => d.id === String(id))!.x;
     expect((x(2) - x(1)) / (x(1) - x(0))).toBeCloseTo(89, 6);
@@ -84,7 +84,7 @@ describe('chart geometry', () => {
 
   it('fits dense clusters into a compact band without overlaps, changing x, or dropping customers', () => {
     const customers = Array.from({ length: 180 }, (_, i) => ({ customerKey: i + 1, zone: 'BLOCK' as const,
-      daysOverdue: 66 + i % 15, totalOutstanding: 1000 + i * 100 }));
+      daysOverdue: 66 + i % 15, overdueAmount: 1000 + i * 100 }));
     const cols = chartColumns(1100, ZONES);
     const original = layoutCreditDots(customers, ZONES, cols);
     const compact = layoutCreditDots(customers, ZONES, cols, { maxHeight: 170 });
@@ -108,10 +108,10 @@ describe('chart geometry', () => {
 
   it('every dot in its own zone, none overlapping; BLOCK overflow follows days; not-yet-due has no dot', () => {
     const customers = [
-      ...Array.from({ length: 120 }, (_, i) => ({ customerKey: i + 1, zone: 'GREEN' as const, daysOverdue: i % 16, totalOutstanding: 1000 + i * 37 })),
-      ...Array.from({ length: 60 }, (_, i) => ({ customerKey: 500 + i, zone: 'BLOCK' as const, daysOverdue: 66 + i * 7, totalOutstanding: 20000 - i * 100 })),
-      { customerKey: 900, zone: 'BLOCK' as const, daysOverdue: 63, totalOutstanding: 5000 },
-      { customerKey: 901, zone: 'NOT_YET_DUE' as const, daysOverdue: 0, totalOutstanding: 9000 },
+      ...Array.from({ length: 120 }, (_, i) => ({ customerKey: i + 1, zone: 'GREEN' as const, daysOverdue: i % 16, overdueAmount: 1000 + i * 37 })),
+      ...Array.from({ length: 60 }, (_, i) => ({ customerKey: 500 + i, zone: 'BLOCK' as const, daysOverdue: 66 + i * 7, overdueAmount: 20000 - i * 100 })),
+      { customerKey: 900, zone: 'BLOCK' as const, daysOverdue: 63, overdueAmount: 5000 },
+      { customerKey: 901, zone: 'NOT_YET_DUE' as const, daysOverdue: 0, overdueAmount: 9000 },
     ];
     const cols = chartColumns(1200, ZONES);
     const { dots } = layoutCreditDots(customers, ZONES, cols);

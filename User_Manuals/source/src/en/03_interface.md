@@ -167,14 +167,15 @@ The dashboard doesn't show live, second-by-second data. It is refreshed automati
 
 | Refresh | When | What it does |
 |---|---|---|
-| **Incremental refresh** | Every day at **08:50, 11:50, 14:50, 17:50 and 20:50** | Adds the latest orders, invoices and pipeline activity. Takes a few minutes. |
-| **Full refresh** | Every night at **02:00** | Rebuilds all sales and product data from scratch. |
+| **30-minute refresh** | **Every 30 minutes**, day and night (:00 and :30) | Updates customers, salespeople and products, the **Receivables** and **Collections** reports, and the **NPS Score** page. Takes a few minutes. |
+| **Sales refresh** | Every day at **08:50, 11:50, 14:50, 17:50 and 20:50** | Adds the latest orders, invoices and pipeline activity to the sales reports. Takes up to half an hour. |
+| **Full refresh** | Every night at **02:00** | Rebuilds all sales, product and receivables data from scratch. |
 <!-- only:full -->
 | **MARCOM data** | **Monthly**, when the Marketing department uploads its workbook | The four MARCOM reports show "Data as of *month* — uploaded by *name* on *date*". |
 | **Stock Velocity, PIM Contribution, Product Lifecycle** | **Manually** | Currently show product data as of 25 July 2026 (see the note in each chapter). |
 <!-- /only -->
 
-So the figures you see are normally at most about three hours old during the working day. To check how fresh a report is, look at **Last Order Date** and **Last Order Created** in the filter bar, or at the line at the very bottom of the page: **Last Update** (latest data included), **Last Order Created** and **Last Refresh Time** (when the last refresh ran)<!-- only:full -->, or the "Data as of …" line on MARCOM reports<!-- /only -->.
+So Receivables, Collections and NPS figures are normally at most about 30 minutes old, and sales figures at most about three hours old during the working day. To check how fresh a report is, look at **Last Order Date** and **Last Order Created** in the filter bar, or at the line at the very bottom of the page: **Last Update** (latest data included), **Last Order Created** and **Last Refresh Time** (when the last refresh ran)<!-- only:full -->, or the "Data as of …" line on MARCOM reports<!-- /only -->.
 
 > [!WARNING]
 > If a yellow bar reading **Data may be out of date - last successful refresh: …** appears under the filter bar, the most recent scheduled refresh did not complete. The figures are correct as of the time shown, but newer sales are missing. If the bar stays for more than a few hours, contact support.
