@@ -798,7 +798,41 @@ export const adminApi = {
       body: JSON.stringify({ replacementRoleId: replacementRoleId ?? null }),
     }),
 
-  /** Saves the role's rule on one dimension (replaces that dimension's previous rule). */
+  /** Adds a rule on a dimension, next to any rules it already has (all of them apply, AND). 400 when the dimension's
+   * rules together would match no data. */
+  addRoleDataScopeRule: (
+    token: string,
+    roleId: number,
+    dimension: string,
+    operator: DataScopeOperator,
+    values: string[],
+  ): Promise<{ dataScope: Record<number, DataScopeRule[]> }> =>
+    request(`/admin/roles/${roleId}/data-scope`, token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dimension, operator, values }),
+    }),
+
+  /** Replaces one rule of a dimension; its other rules stay as they are. */
+  updateRoleDataScopeRule: (
+    token: string,
+    roleId: number,
+    dimension: string,
+    ruleNo: number,
+    operator: DataScopeOperator,
+    values: string[],
+  ): Promise<{ dataScope: Record<number, DataScopeRule[]> }> =>
+    request(`/admin/roles/${roleId}/data-scope/${encodeURIComponent(dimension)}/${ruleNo}`, token, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operator, values }),
+    }),
+
+  /** Removes one rule of a dimension; its other rules keep applying. */
+  removeRoleDataScopeRule: (token: string, roleId: number, dimension: string, ruleNo: number): Promise<{ dataScope: Record<number, DataScopeRule[]> }> =>
+    request(`/admin/roles/${roleId}/data-scope/${encodeURIComponent(dimension)}/${ruleNo}`, token, { method: 'DELETE' }),
+
+  /** Replaces EVERY rule of one dimension with this single rule. */
   saveRoleDataScope: (
     token: string,
     roleId: number,
@@ -817,7 +851,7 @@ export const adminApi = {
   getDimensionValues: (token: string, dimension: string): Promise<{ dimension: string; values: unknown[] }> =>
     request(`/admin/roles/dimension-values/${encodeURIComponent(dimension)}`, token),
 
-  /** Removes the role's rule on one dimension (= no restriction on it). */
+  /** Removes every rule of one dimension (= no restriction on it). */
   removeRoleDataScope: (token: string, roleId: number, dimension: string): Promise<{ dataScope: Record<number, DataScopeRule[]> }> =>
     request(`/admin/roles/${roleId}/data-scope/${encodeURIComponent(dimension)}`, token, { method: 'DELETE' }),
 
@@ -1103,6 +1137,21 @@ export const adminApi = {
     request(`/admin/companies/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
   deleteCompany: (token: string, id: number): Promise<{ success: boolean }> =>
     request(`/admin/companies/${id}`, token, { method: 'DELETE' }),
+
+  /** Admin > Critical Number (Admin role only): the current value, scheduled changes and the full history. */
+  getCriticalNumber: (token: string): Promise<CriticalNumberAdminView> => request('/admin/critical-number', token),
+
+  /** A new Daily Critical Number from `effectiveFrom` onward (past days keep their value). `confirmLargeChange` must
+   * be true for a change of more than 50% of the current value. */
+  changeCriticalNumber: (
+    token: string,
+    body: { value: number; effectiveFrom: string; note?: string; confirmLargeChange?: boolean },
+  ): Promise<CriticalNumberAdminView> =>
+    request('/admin/critical-number', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 
   listHolidays: (
     token: string,
@@ -1397,9 +1446,12 @@ export interface DataScopeValue {
   value: string;
   label: string;
 }
-/** One rule per role + dimension (2026-10-15); rules on different dimensions combine with AND. */
+/** One data-scope rule of a role (2026-10-15). A dimension may hold several rules (2026-10-21); every rule applies
+ * (AND), on the same dimension and across dimensions alike; within a rule the values are OR'd. */
 export interface DataScopeRule {
   dimension: string;
+  /** Numbers the rules of one role + dimension (1, 2, ...). */
+  ruleNo: number;
   operator: DataScopeOperator;
   values: DataScopeValue[];
 }
@@ -1558,6 +1610,30 @@ export interface CriticalNumberTrendCard {
   expectedValue: number;
 }
 
+/** One dated Daily Critical Number value (backend measures/criticalNumberHistory.ts). */
+export interface CriticalNumberHistoryRow {
+  [key: string]: unknown;
+  id: number;
+  valueLyd: number;
+  /** YYYY-MM-DD: the first day this value applies to. */
+  effectiveFrom: string;
+  createdBy: number | null;
+  createdByName: string | null;
+  createdByEmail: string | null;
+  /** ISO timestamp; empty for the migration seed's fallback. */
+  createdAt: string;
+  note: string | null;
+}
+
+export interface CriticalNumberAdminView {
+  current: CriticalNumberHistoryRow | null;
+  scheduled: CriticalNumberHistoryRow[];
+  /** Newest first. */
+  history: CriticalNumberHistoryRow[];
+  /** Today in the business timezone (YYYY-MM-DD). */
+  today: string;
+}
+
 export interface CriticalNumberOverview {
   anchorDate: string;
   /** True when today's ETL data hasn't landed yet and the figures below are the most recent
@@ -1568,6 +1644,8 @@ export interface CriticalNumberOverview {
   /** The date actually requested (normally "today") before any fallback was applied. */
   requestedDate: string;
   dailyCriticalNumber: number;
+  /** Admins only (null for everyone else): the unscaled base value active on the anchor date and who set it. */
+  criticalNumberSource?: { baseValue: number; effectiveFrom: string; updatedAt: string; updatedBy: string | null } | null;
   dailyCounter: CriticalNumberDailyCounter;
   monthlyCounter: CriticalNumberPeriodCounter;
   yearlyCounter: CriticalNumberPeriodCounter;

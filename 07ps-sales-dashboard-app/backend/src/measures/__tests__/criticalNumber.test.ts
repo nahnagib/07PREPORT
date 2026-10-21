@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'mysql2/promise';
 import {
-  DAILY_CRITICAL_NUMBER,
   bucketPaceDays,
   computeDailyCriticalNumber,
+  computeDailyCriticalNumberSchedule,
   computeMissingSummary,
   type PaceDay,
   computeForcedClosuresYtd,
   computeOfficialHolidaysYtd,
   computeWorkingDaysYtd,
+  computeYearlyCounter,
+  computeMonthlyCounter,
 } from '../criticalNumber';
 import { dateOnlyUTC } from '../filters';
 
@@ -136,6 +138,7 @@ function makePctMockPool(opts: {
   throwOnSegment?: boolean;
 }): Pool {
   const query = vi.fn(async (sql: string) => {
+    if (sql.includes('FROM critical_number_history')) return [SEED_HISTORY];
     if (sql.includes('FROM admin_company')) {
       if (opts.throwOnCompany) throw Object.assign(new Error("Unknown column 'critical_number_pct' in 'field list'"), { code: 'ER_BAD_FIELD_ERROR' });
       return [opts.companyRows ?? []];
@@ -148,6 +151,9 @@ function makePctMockPool(opts: {
   });
   return { query } as unknown as Pool;
 }
+
+const DAILY_CRITICAL_NUMBER = 560_000;
+const SEED_HISTORY = [{ id: 1, valueLyd: DAILY_CRITICAL_NUMBER, effectiveFrom: '2026-01-01', createdBy: null, createdAt: new Date(), note: null }];
 
 describe('computeDailyCriticalNumber -- Company/Customer Group percentage scaling', () => {
   afterEach(() => {
@@ -280,5 +286,95 @@ describe('bucketPaceDays', () => {
       const summed = rows.reduce((acc, r) => acc + r.gapValue, 0);
       expect(summed).toBeCloseTo(rows[rows.length - 1].cumulativeGap, 9);
     }
+  });
+
+  it('a dated target: each day at its own value, gap days at the period end value', () => {
+    const target = (d: Date) => (d.getUTCDate() >= 5 ? 200 : 100);
+    const rows = bucketPaceDays(days, target, 'monthly', null);
+    // working days: Jan 1, 3, 4 at 100; Jan 5, 6, 7, 8, 10 at 200
+    expect(rows[0].target).toBe(3 * 100 + 5 * 200);
+    expect(rows[0].gapDays).toBeCloseTo((800 - 1300) / 200, 9);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dated Daily Critical Number (critical_number_history, 2026-10-21)
+// ---------------------------------------------------------------------------
+
+/** No holidays, no shares, the given history; every period sales query returns `value`, the daily query nothing. */
+function makeHistoryMockPool(history: { id: number; valueLyd: number; effectiveFrom: string }[], value = 0): Pool {
+  const newestFirst = [...history]
+    .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom) || b.id - a.id)
+    .map((r) => ({ ...r, createdBy: null, createdAt: new Date(), note: null }));
+  const query = vi.fn(async (sql: string) => {
+    if (sql.includes('FROM critical_number_history')) return [newestFirst];
+    if (sql.includes('FROM admin_company') || sql.includes('FROM admin_customer_group')) return [[]];
+    if (sql.includes('FROM official_holidays')) return [[]];
+    if (sql.includes('FROM v_sales_lines')) return [sql.includes('GROUP BY') ? [] : [{ value, volume: 0 }]];
+    throw new Error(`Unexpected SQL in test mock: ${sql.slice(0, 120)}`);
+  });
+  return { query } as unknown as Pool;
+}
+
+describe('dated Daily Critical Number', () => {
+  // 2026: 365 days, 52 Fridays -> 313 working days. Nov: 4 Fridays -> 26; Dec: 4 Fridays -> 27.
+  const seed = { id: 1, valueLyd: 560_000, effectiveFrom: '2026-01-01' };
+
+  it('a change with a future effective date leaves today and every past month unchanged', async () => {
+    const today = dateOnlyUTC(2026, 10, 21);
+    const before = makeHistoryMockPool([seed]);
+    const after = makeHistoryMockPool([seed, { id: 2, valueLyd: 600_000, effectiveFrom: '2026-11-01' }]);
+    const scheduleBefore = await computeDailyCriticalNumberSchedule(before, {});
+    const scheduleAfter = await computeDailyCriticalNumberSchedule(after, {});
+
+    expect(await computeDailyCriticalNumber(after, today, {}, new Map())).toBe(560_000);
+    expect(scheduleAfter(dateOnlyUTC(2026, 11, 1))).toBe(600_000);
+
+    // The current month and a past month: identical targets before and after the change.
+    for (const anchor of [today, dateOnlyUTC(2026, 3, 31)]) {
+      const mBefore = await computeMonthlyCounter(before, anchor, {}, new Map(), scheduleBefore);
+      const mAfter = await computeMonthlyCounter(after, anchor, {}, new Map(), scheduleAfter);
+      expect(mAfter.periodTarget).toBe(mBefore.periodTarget);
+      expect(mAfter.expectedValue).toBe(mBefore.expectedValue);
+    }
+    // Yearly: the elapsed (to-date) target is unchanged; the full-year target picks up Nov + Dec at the new value.
+    const yBefore = await computeYearlyCounter(before, today, {}, new Map(), scheduleBefore);
+    const yAfter = await computeYearlyCounter(after, today, {}, new Map(), scheduleAfter);
+    expect(yAfter.expectedValue).toBe(yBefore.expectedValue);
+    expect(yBefore.periodTarget).toBe(313 * 560_000);
+    expect(yAfter.periodTarget).toBe((313 - 53) * 560_000 + 53 * 600_000);
+  });
+
+  it("monthly target sums each working day at its own value, not today's value x days", async () => {
+    const pool = makeHistoryMockPool([seed, { id: 2, valueLyd: 600_000, effectiveFrom: '2026-01-15' }]);
+    const schedule = await computeDailyCriticalNumberSchedule(pool, {});
+    const jan = await computeMonthlyCounter(pool, dateOnlyUTC(2026, 1, 31), {}, new Map(), schedule);
+    // Jan 1-14: Fridays 2, 9 -> 12 working days at 560K; Jan 15-31: Fridays 16, 23, 30 -> 14 at 600K.
+    expect(jan.workingDaysTotal).toBe(26);
+    expect(jan.periodTarget).toBe(12 * 560_000 + 14 * 600_000);
+  });
+
+  it("Company / Customer Group shares scale every day's own base value", async () => {
+    const newestFirst = [
+      { id: 2, valueLyd: 600_000, effectiveFrom: '2026-06-01' },
+      { ...seed },
+    ].map((r) => ({ ...r, createdBy: null, createdAt: new Date(), note: null }));
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM critical_number_history')) return [newestFirst];
+      if (sql.includes('FROM admin_company')) return [[{ pct: 50 }]];
+      throw new Error(`Unexpected SQL in test mock: ${sql.slice(0, 120)}`);
+    });
+    const schedule = await computeDailyCriticalNumberSchedule({ query } as unknown as Pool, { companyKeys: [1] });
+    expect(schedule(dateOnlyUTC(2026, 5, 31))).toBe(280_000);
+    expect(schedule(dateOnlyUTC(2026, 6, 1))).toBe(300_000);
+  });
+
+  it("Missing Value YTD sums the dated targets; Missing Days divides by the anchor day's value", async () => {
+    // Jan 1 (Thu) and Jan 3 (Sat) at 560K, Jan 2 is a Friday, Jan 4 and Jan 5 at 200. No sales.
+    const pool = makeHistoryMockPool([seed, { id: 2, valueLyd: 200, effectiveFrom: '2026-01-04' }]);
+    const schedule = await computeDailyCriticalNumberSchedule(pool, {});
+    const result = await computeMissingSummary(pool, dateOnlyUTC(2026, 1, 5), {}, new Map(), schedule, null);
+    expect(result.missingValue.expectedValue).toBe(2 * 560_000 + 2 * 200);
+    expect(result.missingDays.value).toBe(Math.round((2 * 560_000 + 400) / 200));
   });
 });
