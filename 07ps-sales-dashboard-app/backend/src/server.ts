@@ -26,6 +26,7 @@ import { adminCustomerGroupsRouter } from './routes/admin/customerGroups';
 import { adminDistributionChannelsRouter } from './routes/admin/distributionChannels';
 import { adminCompaniesRouter } from './routes/admin/companies';
 import { adminHolidaysRouter } from './routes/admin/holidays';
+import { adminCriticalNumberRouter } from './routes/admin/criticalNumber';
 import { adminClosuresRouter } from './routes/admin/closures';
 import { adminLoginHistoryRouter } from './routes/admin/loginHistory';
 import { adminEtlRunsRouter } from './routes/admin/etlRuns';
@@ -98,6 +99,7 @@ app.use('/admin/customer-groups', adminCustomerGroupsRouter);
 app.use('/admin/distribution-channels', adminDistributionChannelsRouter);
 app.use('/admin/companies', adminCompaniesRouter);
 app.use('/admin/holidays', adminHolidaysRouter);
+app.use('/admin/critical-number', adminCriticalNumberRouter);
 app.use('/admin/closures', adminClosuresRouter);
 app.use('/admin/login-history', adminLoginHistoryRouter);
 // Mounted before /admin/etl (a shorter prefix) to avoid any ambiguity in route matching.

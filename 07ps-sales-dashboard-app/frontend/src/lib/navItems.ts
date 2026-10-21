@@ -55,7 +55,7 @@ export const NAV_ITEMS = [
 
 /** Admin Panel sections, in tab order -- AdminLayout's tab row, the Admin nav link's landing
  * section and route->page lookups all read this one list. `adminOnly` sections (ETL Control Center,
- * Audit Log) aren't in the permission registry: they are reserved for the Admin role. */
+ * Audit Log, Kaizen Dropdowns, Critical Number) aren't in the permission registry: they are reserved for the Admin role. */
 export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string | null; adminOnly?: boolean }[] = [
   { label: 'Users', href: '/admin/users', pageKey: 'admin_users' },
   { label: 'Roles & Permissions', href: '/admin/roles', pageKey: 'admin_roles' },
@@ -71,6 +71,7 @@ export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string
   { label: 'ETL Control Center', href: '/admin/etl-control', pageKey: null, adminOnly: true },
   { label: 'Audit Log', href: '/admin/audit-log', pageKey: null, adminOnly: true },
   { label: 'Kaizen Dropdowns', href: '/admin/kaizen-dropdowns', pageKey: null, adminOnly: true },
+  { label: 'Critical Number', href: '/admin/critical-number', pageKey: null, adminOnly: true },
 ];
 
 /** Routes whose permission page differs from the nav entry they sit under: the Kaizen card entry

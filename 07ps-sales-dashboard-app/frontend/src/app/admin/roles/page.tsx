@@ -19,7 +19,15 @@ import {
   RoleSummary,
 } from '../../../lib/api';
 import { formatDate as formatDisplayDate } from '../../../lib/format';
-import { OPERATOR_HINT, OPERATOR_LABEL, scopeSummary } from '../../../lib/dataScope';
+import {
+  OPERATOR_HINT,
+  OPERATOR_LABEL,
+  findMergeablePair,
+  groupByDimension,
+  matchesNoData,
+  mergeRules,
+  scopeSummary,
+} from '../../../lib/dataScope';
 import { ScopeValuePicker } from '../../../components/admin/ScopeValuePicker';
 import { useDimensionValues } from '../../../lib/useDimensionValues';
 import { CheckState, columnState, hasAction, rowState, toggleCell, toggleColumn, toggleRow } from '../../../lib/rolePermissions';
@@ -551,12 +559,18 @@ function PermissionMatrix({
 
 type RuleDraft = { operator: DataScopeOperator; values: string[] };
 
+const ruleKey = (r: { dimension: string; ruleNo: number }) => `${r.dimension}:${r.ruleNo}`;
+const sameDraft = (a: RuleDraft, b: RuleDraft) =>
+  a.operator === b.operator && a.values.length === b.values.length && a.values.every((v) => b.values.includes(v));
+
 /**
- * The role's data-scope rules (2026-10-15): one row per dimension -- [Dimension] [is / is not] [values] -- each
- * saved on its own (PUT /admin/roles/:id/data-scope/:dimension, validated by the server), plus a row to add a rule
- * on a dimension that has none. "is" = is any of (only these values); "is not" = is none of (everything except
- * these, values added later included). Rules on different dimensions combine with AND; the live summary under the
- * rows says it in words.
+ * The role's data-scope rules (2026-10-15; several per dimension since 2026-10-21): grouped by dimension, one stacked
+ * row per rule -- [is / is not] [values] -- with an AND between the rows of a dimension. Each rule is saved on its own
+ * (POST / PUT / DELETE /admin/roles/:id/data-scope..., validated by the server), plus a row to add a rule on any
+ * dimension. "is" = is any of (only these values); "is not" = is none of (everything except these, values added later
+ * included). Every rule applies (AND), on the same dimension and across dimensions; within a rule the values are OR'd.
+ * Non-blocking amber hints offer to merge two same-operator rules; a combination that matches no data blocks Save
+ * (the server refuses it too). The live summary under the rows says it all in words.
  */
 function DataScopeSection({
   roleId,
@@ -572,19 +586,20 @@ function DataScopeSection({
   onChange: (dataScope: Record<number, DataScopeRule[]>) => void;
 }) {
   const { token } = useAuth();
-  const saved = useMemo(() => new Map(rules.map((r) => [r.dimension, { operator: r.operator, values: r.values.map((v) => v.value) }])), [rules]);
+  const saved = useMemo(() => new Map(rules.map((r) => [ruleKey(r), { operator: r.operator, values: r.values.map((v) => v.value) }])), [rules]);
   const [drafts, setDrafts] = useState<Record<string, RuleDraft>>({});
   const [newDimension, setNewDimension] = useState('');
   const [newRule, setNewRule] = useState<RuleDraft>({ operator: 'in', values: [] });
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [triedEmpty, setTriedEmpty] = useState<Record<string, boolean>>({});
-  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   // value labels: the saved rules' (from the server), then every list a picker loaded (for values just picked)
   const [loadedLabels, setLoadedLabels] = useState<Record<string, string>>({});
+  // every value of a dimension, once a picker loaded it: needed to tell whether "is not" rules leave anything
+  const [domains, setDomains] = useState<Record<string, string[]>>({});
   const savedLabels = useMemo(() => {
     const out: Record<string, Record<string, string>> = {};
-    for (const r of rules) out[r.dimension] = Object.fromEntries(r.values.map((v) => [v.value, v.label]));
+    for (const r of rules) out[r.dimension] = { ...out[r.dimension], ...Object.fromEntries(r.values.map((v) => [v.value, v.label])) };
     return out;
   }, [rules]);
   const rememberLabels = useCallback((dimension: string, options: DataScopeValue[]) => {
@@ -593,23 +608,35 @@ function DataScopeSection({
       for (const o of options) next[`${dimension}:${o.value}`] = o.label;
       return next;
     });
+    setDomains((prev) => ({ ...prev, [dimension]: options.map((o) => o.value) }));
   }, []);
 
   // a fresh rule list from the server replaces every unsaved edit of a rule it saved
   useEffect(() => setDrafts({}), [rules]);
 
+  const dimensionOrder = dimensions.map((d) => d.key);
+  const groups = groupByDimension(rules, dimensionOrder);
   const dimLabel = (key: string) => dimensions.find((d) => d.key === key)?.label ?? key;
   const valueLabel = (dimension: string, value: string) => loadedLabels[`${dimension}:${value}`] ?? savedLabels[dimension]?.[value] ?? value;
-  const current = (dimension: string): RuleDraft => drafts[dimension] ?? saved.get(dimension) ?? { operator: 'in', values: [] };
-  const isDirty = (dimension: string) => {
-    const d = drafts[dimension];
-    const s = saved.get(dimension);
-    return !!d && !!s && (d.operator !== s.operator || d.values.length !== s.values.length || d.values.some((v) => !s.values.includes(v)));
+  const current = (key: string): RuleDraft => drafts[key] ?? saved.get(key) ?? { operator: 'in', values: [] };
+  const isDirty = (key: string) => {
+    const d = drafts[key];
+    const s = saved.get(key);
+    return !!d && !!s && !sameDraft(d, s);
   };
-  const usedDimension = newDimension !== '' && saved.has(newDimension);
+  const domainOf = (dimension: string) => domains[dimension] ?? null;
+  const savedOn = (dimension: string) => rules.filter((r) => r.dimension === dimension);
+  /** Saving this row (the dimension's other rules as saved) would leave the dimension with no value. */
+  const rowMatchesNoData = (rule: DataScopeRule) =>
+    matchesNoData(
+      [...savedOn(rule.dimension).filter((r) => r.ruleNo !== rule.ruleNo).map((r) => saved.get(ruleKey(r))!), current(ruleKey(rule))],
+      domainOf(rule.dimension),
+    );
+  const newMatchesNoData =
+    newDimension !== '' && matchesNoData([...savedOn(newDimension).map((r) => saved.get(ruleKey(r))!), newRule], domainOf(newDimension));
   // the rule being added counts in the live summary as soon as it has a value (marked unsaved)
-  const draftingNew = newDimension !== '' && !usedDimension && newRule.values.length > 0;
-  const anyDirty = draftingNew || rules.some((r) => isDirty(r.dimension));
+  const draftingNew = newDimension !== '' && newRule.values.length > 0;
+  const anyDirty = draftingNew || rules.some((r) => isDirty(ruleKey(r)));
 
   async function run(key: string, action: () => Promise<{ dataScope: Record<number, DataScopeRule[]> }>, after?: () => void) {
     setBusy(key);
@@ -624,27 +651,46 @@ function DataScopeSection({
     }
   }
 
-  function save(dimension: string, draft: RuleDraft, after?: () => void) {
+  function save(rule: DataScopeRule, draft: RuleDraft) {
+    const key = ruleKey(rule);
     if (draft.values.length === 0) {
-      setTriedEmpty((t) => ({ ...t, [dimension]: true }));
+      setTriedEmpty((t) => ({ ...t, [key]: true }));
       return;
     }
-    if (token) void run(dimension, () => adminApi.saveRoleDataScope(token, roleId, dimension, draft.operator, draft.values), after);
+    if (token) void run(key, () => adminApi.updateRoleDataScopeRule(token, roleId, rule.dimension, rule.ruleNo, draft.operator, draft.values));
   }
 
-  function pickNewDimension(key: string) {
-    setNewDimension(key);
-    setNewRule({ operator: 'in', values: [] });
-    setTriedEmpty((t) => ({ ...t, __new: false }));
-    // a dimension that already has a rule: point at that rule instead of creating a second, conflicting one
-    if (key && saved.has(key)) rowRefs.current[key]?.querySelector<HTMLButtonElement>('button')?.focus();
+  function addRule() {
+    if (newRule.values.length === 0) {
+      setTriedEmpty((t) => ({ ...t, __new: true }));
+      return;
+    }
+    if (token) {
+      void run('__new', () => adminApi.addRoleDataScopeRule(token, roleId, newDimension, newRule.operator, newRule.values), () => {
+        setNewDimension('');
+        setNewRule({ operator: 'in', values: [] });
+      });
+    }
+  }
+
+  /** Two same-operator rules -> one: the merged rule replaces the first, then the second goes. In between, the role
+   * still sees exactly the same data (the first rule alone already means "both"). */
+  function merge(a: { dimension: string; ruleNo: number }, b: { dimension: string; ruleNo: number }) {
+    const merged = mergeRules(saved.get(ruleKey(a))!, saved.get(ruleKey(b))!);
+    if (!token || !merged) return;
+    void run(ruleKey(a), async () => {
+      await adminApi.updateRoleDataScopeRule(token, roleId, a.dimension, a.ruleNo, merged.operator, merged.values);
+      return adminApi.removeRoleDataScopeRule(token, roleId, b.dimension, b.ruleNo);
+    });
   }
 
   const summary = scopeSummary([
-    ...rules.map((r) => {
-      const d = current(r.dimension);
-      return { dimensionLabel: dimLabel(r.dimension), operator: d.operator, valueLabels: d.values.map((v) => valueLabel(r.dimension, v)) };
-    }),
+    ...groups.flatMap((g) =>
+      g.rules.map((r) => {
+        const d = current(ruleKey(r));
+        return { dimensionLabel: dimLabel(r.dimension), operator: d.operator, valueLabels: d.values.map((v) => valueLabel(r.dimension, v)) };
+      }),
+    ),
     ...(draftingNew
       ? [{ dimensionLabel: dimLabel(newDimension), operator: newRule.operator, valueLabels: newRule.values.map((v) => valueLabel(newDimension, v)) }]
       : []),
@@ -655,68 +701,93 @@ function DataScopeSection({
       <div className="ps-admin-label">Data scope rules</div>
       <p style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', margin: '0 0 10px' }}>
         Restricts every page&apos;s data, exports included, for users whose primary role this is. &quot;is&quot; = only the selected values;
-        &quot;is not&quot; = everything except them (values added later are included automatically). Rules on different dimensions all apply
-        (AND). No rules means all data. Each rule is saved on its own.
+        &quot;is not&quot; = everything except them (values added later are included automatically). Inside one rule the values combine with OR
+        (&quot;is A or B&quot;). Every rule applies (AND): rules on different dimensions, and several rules on the same dimension -- e.g.
+        &quot;Company is Athena or Zeus&quot; AND &quot;Company is not Zeus-Retail&quot;. No rules means all data. Each rule is saved on its own.
       </p>
       {rules.length === 0 ? (
         <p style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', margin: '0 0 10px', fontStyle: 'italic' }}>No data scope restrictions.</p>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-          {rules.map((rule) => {
-            const d = current(rule.dimension);
-            const dirty = isDirty(rule.dimension);
-            const empty = d.values.length === 0;
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
+          {groups.map((group) => {
+            const currentRules = group.rules.map((r) => current(ruleKey(r)));
+            const noData = matchesNoData(currentRules, domainOf(group.dimension));
+            const mergeable = noData ? null : findMergeablePair(group.rules.filter((r) => !isDirty(ruleKey(r))).map((r) => ({ ...r, ...saved.get(ruleKey(r))! })));
             return (
-              <div
-                key={rule.dimension}
-                ref={(el) => {
-                  rowRefs.current[rule.dimension] = el;
-                }}
-                style={{
-                  ...ruleRow,
-                  borderColor: usedDimension && newDimension === rule.dimension ? 'var(--ps-color-accent)' : 'var(--ps-color-border)',
-                }}
-              >
-                <div style={{ fontWeight: 600, fontSize: 13.5, minWidth: 130, paddingTop: 24 }}>{dimLabel(rule.dimension)}</div>
-                <OperatorToggle
-                  value={d.operator}
-                  disabled={disabled}
-                  onChange={(operator) => setDrafts((x) => ({ ...x, [rule.dimension]: { ...d, operator } }))}
-                />
-                <div style={{ flex: '1 1 240px', minWidth: 0 }}>
-                  <ScopeValueField
-                    dimension={rule.dimension}
-                    label={`${dimLabel(rule.dimension)} values`}
-                    savedLabels={savedLabels[rule.dimension]}
-                    onLoaded={rememberLabels}
-                    value={d.values}
-                    onChange={(values) => setDrafts((x) => ({ ...x, [rule.dimension]: { ...d, values } }))}
-                    disabled={disabled}
-                    invalid={empty && (dirty || !!triedEmpty[rule.dimension])}
-                  />
-                  {empty ? <p style={fieldError}>Pick at least one value, or remove the rule.</p> : null}
-                </div>
-                {!disabled && (
-                  <div style={{ display: 'flex', gap: 6, paddingTop: 20 }}>
-                    <Button type="button" variant="primary" disabled={!dirty || empty || busy !== null} onClick={() => save(rule.dimension, d)}>
-                      {busy === rule.dimension ? 'Saving...' : 'Save'}
-                    </Button>
-                    {dirty ? (
-                      <Button type="button" variant="ghost" disabled={busy !== null} onClick={() => setDrafts(({ [rule.dimension]: _, ...rest }) => rest)}>
-                        Undo
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      disabled={busy !== null}
-                      aria-label={`Remove the ${dimLabel(rule.dimension)} rule`}
-                      onClick={() => token && run(rule.dimension, () => adminApi.removeRoleDataScope(token, roleId, rule.dimension))}
-                    >
-                      <Trash2 size={15} aria-hidden />
+              <div key={group.dimension} style={{ ...ruleGroup, borderColor: newDimension === group.dimension ? 'var(--ps-color-accent)' : 'var(--ps-color-border)' }}>
+                <div style={{ fontWeight: 600, fontSize: 13.5 }}>{dimLabel(group.dimension)}</div>
+                {group.rules.map((rule, index) => {
+                  const key = ruleKey(rule);
+                  const d = current(key);
+                  const dirty = isDirty(key);
+                  const empty = d.values.length === 0;
+                  const blocked = rowMatchesNoData(rule);
+                  return (
+                    <React.Fragment key={key}>
+                      {index > 0 ? <AndConnector /> : null}
+                      <div style={ruleRow}>
+                        <OperatorToggle value={d.operator} disabled={disabled} onChange={(operator) => setDrafts((x) => ({ ...x, [key]: { ...d, operator } }))} />
+                        <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+                          <ScopeValueField
+                            dimension={rule.dimension}
+                            label={`${dimLabel(rule.dimension)} values`}
+                            savedLabels={savedLabels[rule.dimension]}
+                            onLoaded={rememberLabels}
+                            value={d.values}
+                            onChange={(values) => setDrafts((x) => ({ ...x, [key]: { ...d, values } }))}
+                            disabled={disabled}
+                            invalid={empty && (dirty || !!triedEmpty[key])}
+                          />
+                          {empty ? <p style={fieldError}>Pick at least one value, or remove the rule.</p> : null}
+                        </div>
+                        {!disabled && (
+                          <div style={{ display: 'flex', gap: 6, paddingTop: 20 }}>
+                            <Button
+                              type="button"
+                              variant="primary"
+                              disabled={!dirty || empty || blocked || busy !== null}
+                              title={blocked ? 'This combination matches no data: fix it before saving.' : undefined}
+                              onClick={() => save(rule, d)}
+                            >
+                              {busy === key ? 'Saving...' : 'Save'}
+                            </Button>
+                            {dirty ? (
+                              <Button type="button" variant="ghost" disabled={busy !== null} onClick={() => setDrafts(({ [key]: _, ...rest }) => rest)}>
+                                Undo
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              disabled={busy !== null}
+                              aria-label={`Remove this ${dimLabel(rule.dimension)} rule`}
+                              onClick={() => token && run(key, () => adminApi.removeRoleDataScopeRule(token, roleId, rule.dimension, rule.ruleNo))}
+                            >
+                              <Trash2 size={15} aria-hidden />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </React.Fragment>
+                  );
+                })}
+                {noData ? (
+                  <p role="alert" style={amberNote}>
+                    This combination matches no data: no {dimLabel(group.dimension)} value passes every rule. Change or remove a rule -- Save stays
+                    off until it matches something.
+                  </p>
+                ) : null}
+                {mergeable && !disabled ? (
+                  <div style={{ ...amberNote, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <span>
+                      Two &quot;{OPERATOR_LABEL[mergeable[0].operator]}&quot; rules on {dimLabel(group.dimension)}: these can be merged into one rule
+                      (same data).
+                    </span>
+                    <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => merge(mergeable[0], mergeable[1])} style={{ padding: '4px 10px', fontSize: 12 }}>
+                      {busy === ruleKey(mergeable[0]) ? 'Merging...' : 'Merge'}
                     </Button>
                   </div>
-                )}
+                ) : null}
               </div>
             );
           })}
@@ -724,17 +795,21 @@ function DataScopeSection({
       )}
 
       {!disabled && (
-        <div style={{ ...ruleRow, borderStyle: 'dashed' }}>
+        <div style={{ ...ruleRow, borderStyle: 'dashed', border: '1px dashed var(--ps-color-border)', borderRadius: 10, padding: '10px 12px' }}>
           <div style={{ minWidth: 170 }}>
             <Select
               label="Dimension"
-              options={dimensions.map((x) => ({ value: x.key, label: saved.has(x.key) ? `${x.label} (has a rule)` : x.label }))}
+              options={dimensions.map((x) => ({ value: x.key, label: x.label }))}
               value={newDimension ? [newDimension] : []}
-              onChange={(v) => pickNewDimension(v[0] ?? '')}
+              onChange={(v) => {
+                setNewDimension(v[0] ?? '');
+                setNewRule({ operator: 'in', values: [] });
+                setTriedEmpty((t) => ({ ...t, __new: false }));
+              }}
               placeholder="Choose a dimension"
             />
           </div>
-          <OperatorToggle value={newRule.operator} disabled={!newDimension || usedDimension} onChange={(operator) => setNewRule((r) => ({ ...r, operator }))} />
+          <OperatorToggle value={newRule.operator} disabled={!newDimension} onChange={(operator) => setNewRule((r) => ({ ...r, operator }))} />
           <div style={{ flex: '1 1 240px', minWidth: 0 }}>
             <ScopeValueField
               dimension={newDimension}
@@ -742,28 +817,24 @@ function DataScopeSection({
               onLoaded={rememberLabels}
               value={newRule.values}
               onChange={(values) => setNewRule((r) => ({ ...r, values }))}
-              disabled={!newDimension || usedDimension}
+              disabled={!newDimension}
               invalid={!!triedEmpty.__new && newRule.values.length === 0}
             />
-            {usedDimension ? (
-              <p style={fieldError} role="alert">
-                {dimLabel(newDimension)} already has a rule (highlighted above): edit that one -- a dimension can have only one rule.
+            {newDimension && savedOn(newDimension).length > 0 && !newMatchesNoData ? (
+              <p style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', margin: '4px 0 0' }}>
+                {dimLabel(newDimension)} already has {savedOn(newDimension).length === 1 ? 'a rule' : 'rules'} (highlighted above): this one is added
+                next to {savedOn(newDimension).length === 1 ? 'it' : 'them'}, and all of them apply (AND).
+              </p>
+            ) : null}
+            {newMatchesNoData ? (
+              <p role="alert" style={amberNote}>
+                This combination matches no data: together with the {dimLabel(newDimension)} rule(s) above, no value is left. Change the values to add it.
               </p>
             ) : null}
           </div>
           <div style={{ paddingTop: 20 }}>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={!newDimension || usedDimension || newRule.values.length === 0 || busy !== null}
-              onClick={() =>
-                save(newDimension, newRule, () => {
-                  setNewDimension('');
-                  setNewRule({ operator: 'in', values: [] });
-                })
-              }
-            >
-              <Plus size={15} aria-hidden /> {busy === newDimension ? 'Adding...' : 'Add rule'}
+            <Button type="button" variant="secondary" disabled={!newDimension || newRule.values.length === 0 || newMatchesNoData || busy !== null} onClick={addRule}>
+              <Plus size={15} aria-hidden /> {busy === '__new' ? 'Adding...' : 'Add rule'}
             </Button>
           </div>
         </div>
@@ -774,6 +845,29 @@ function DataScopeSection({
         {anyDirty ? <span style={{ color: 'var(--ps-color-watch)', fontWeight: 600 }}> (unsaved changes)</span> : null}
       </p>
       {error && <p style={{ fontSize: 12, color: 'var(--ps-color-alert)', margin: '8px 0 0' }}>{error}</p>}
+    </div>
+  );
+}
+
+/** The small "AND" between two rules of one dimension. */
+function AndConnector() {
+  return (
+    <div aria-hidden style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '-2px 0' }}>
+      <span style={{ flex: '0 0 16px', borderTop: '1px solid var(--ps-color-border)' }} />
+      <span
+        style={{
+          fontSize: 10.5,
+          fontWeight: 700,
+          letterSpacing: 0.6,
+          color: 'var(--ps-color-muted-text)',
+          border: '1px solid var(--ps-color-border)',
+          borderRadius: 999,
+          padding: '1px 8px',
+        }}
+      >
+        AND
+      </span>
+      <span style={{ flex: 1, borderTop: '1px solid var(--ps-color-border)' }} />
     </div>
   );
 }
@@ -821,9 +915,13 @@ function OperatorToggle({ value, onChange, disabled }: { value: DataScopeOperato
   );
 }
 
-const ruleRow: React.CSSProperties = {
-  display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '8px 12px', padding: '10px 12px', borderRadius: 10,
-  border: '1px solid var(--ps-color-border)',
+const ruleGroup: React.CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--ps-color-border)',
+};
+const ruleRow: React.CSSProperties = { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '8px 12px' };
+const amberNote: React.CSSProperties = {
+  margin: '4px 0 0', padding: '6px 10px', borderRadius: 8, fontSize: 12, color: 'var(--ps-color-text)',
+  background: 'var(--ps-color-watch-bg)', border: '1px solid var(--ps-color-watch-border)',
 };
 const fieldError: React.CSSProperties = { fontSize: 12, color: 'var(--ps-color-alert)', margin: '4px 0 0' };
 const summaryLine: React.CSSProperties = {

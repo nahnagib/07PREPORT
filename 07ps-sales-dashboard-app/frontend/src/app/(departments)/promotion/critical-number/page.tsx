@@ -34,7 +34,7 @@ import {
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useCriticalNumberOverview, useRefreshStatus } from '../../../../lib/hooks';
-import { formatCompactCurrency, formatCurrency, formatVariance, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
+import { APP_TIMEZONE, formatCompactCurrency, formatCurrency, formatDate, formatVariance, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
 import type { CriticalNumberOverview } from '../../../../lib/api';
 import { MissingTrendModal, type MissingTrendMetric } from '../../../../components/criticalNumber/MissingTrendModal';
 
@@ -222,9 +222,9 @@ function impactHeadline(
  * admin-managed official_holidays/forced_closures tables (Admin Panel > Official Holidays / Forced
  * Closures) -- there is no live Odoo or Power BI connection, and no sample/mock data path;
  * ValidationStatusBar below states this plainly, same as Tachometer. The Daily Critical Number's
- * company-wide base is a fixed 560,000 constant, unrelated to Fact_Targets, scaled by the active
- * Company/Customer Group filter selection via admin-configured percentages -- see
- * criticalNumber.ts's DAILY_CRITICAL_NUMBER and computeDailyCriticalNumber docstrings.
+ * company-wide base is admin-set and dated (Admin Panel > Critical Number, critical_number_history), unrelated to
+ * Fact_Targets, scaled by the active Company/Customer Group filter selection via admin-configured percentages -- see
+ * backend measures/criticalNumberHistory.ts and criticalNumber.ts's computeDailyCriticalNumberSchedule.
  */
 export default function CriticalNumberPage() {
   const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
@@ -364,7 +364,7 @@ export default function CriticalNumberPage() {
             {/* Section 1 -- Hero Metrics: the Daily Critical Number (the baseline every counter is
                 measured against) as a full-width first row, then the Daily/Monthly/Yearly counters. */}
             <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
-              <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} isAdmin={user?.isAdmin === true} />
+              <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} source={data?.criticalNumberSource ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} isAdmin={user?.isAdmin === true} />
 
               <div
                 style={{
@@ -541,12 +541,15 @@ function FallbackDataNotice({ anchorDate, daysAgo }: { anchorDate: string; daysA
 
 function DailyCriticalNumberCard({
   value,
+  source,
   loading,
   error,
   onRetry,
   isAdmin,
 }: {
   value: number | null;
+  /** Admins only: who set the base value active on the shown day, and when. */
+  source: CriticalNumberOverview['criticalNumberSource'];
   loading: boolean;
   error?: string;
   onRetry: () => void;
@@ -590,10 +593,17 @@ function DailyCriticalNumberCard({
         </div>
         {isAdmin && (
           <div className="ps-cn-hero-desc" style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--ps-color-muted-text)' }}>
-            Baseline daily sales target -- the figure every Daily/Monthly/Yearly Counter below is measured against. Scales with
-            the active Company/Customer Group filters (Admin Panel &gt; Companies / Customer Groups sets each one&apos;s share).
+            Baseline daily sales target -- the figure every Daily/Monthly/Yearly Counter below is measured against. Set on Admin
+            Panel &gt; Critical Number; scales with the active Company/Customer Group filters (Admin Panel &gt; Companies / Customer
+            Groups sets each one&apos;s share).
           </div>
         )}
+        {isAdmin && source?.updatedAt ? (
+          <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }} title={`Base value ${formatCurrency(source.baseValue)} from ${source.effectiveFrom}`}>
+            Updated {formatDate(source.updatedAt, APP_TIMEZONE)}
+            {source.updatedBy ? ` by ${source.updatedBy}` : ''}
+          </div>
+        ) : null}
       </div>
     </Card>
   );

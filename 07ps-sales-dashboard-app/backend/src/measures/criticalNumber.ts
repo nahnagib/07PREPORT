@@ -11,9 +11,8 @@
  *
  *   Metric                    | Source table(s)                        | How
  *   ---------------------------|------------------------------------------|---------------------------
- *   Daily Critical Number      | DAILY_CRITICAL_NUMBER constant (560,000)  | fixed business figure, no
- *                               |                                            | relation to v_sales_targets --
- *                               |                                            | see that constant's docstring
+ *   Daily Critical Number      | critical_number_history (Admin > Critical | value active on each day,
+ *                               | Number), see criticalNumberHistory.ts      | no relation to v_sales_targets
  *   Daily/Monthly/Yearly       | v_sales_lines (value)                    | actual value for the day /
  *   Counter actuals            |                                            | MTD / YTD window
  *   Working Days / Weekly Rest | dim_date.IsWeeklyRestDay + calendar        | see computeWorkingDays below
@@ -51,6 +50,7 @@ import { DateTime } from 'luxon';
 import { getAppTimezone, utcSqlDateTimeToDate } from '../lib/timezone';
 import { classifyVsTarget, variancePct, TargetStatus } from './classify';
 import { fetchValueVolume } from './tachometer';
+import { criticalNumberLookup, loadCriticalNumberHistory } from './criticalNumberHistory';
 import {
   buildWhereClause,
   dateOnlyUTC,
@@ -267,27 +267,71 @@ async function computeWorkingDays(
   return Math.max(0, totalDays - restDays - officialCount);
 }
 
+/** Every working day of `window` (not a Friday, not a scope-matched official holiday -- the same rule as
+ * computeWorkingDays and fetchYtdPaceDays), in date order: the days a period's target is summed over. */
+async function listWorkingDays(
+  pool: Pool,
+  window: DateWindow,
+  filters: Filters,
+  companyNamesByKey: Map<number, string>,
+): Promise<Date[]> {
+  const officialRows = await fetchOffDayRows(pool, 'official', window);
+  const holidayKeys = new Set(
+    officialRows.filter((r) => offDayMatchesScope(r, filters, companyNamesByKey)).map((r) => dateKeyOf(r.date)),
+  );
+  const days: Date[] = [];
+  for (let cur = window.start; cur.getTime() <= window.end.getTime(); cur = addDaysUTC(cur, 1)) {
+    if (!isFriday(cur) && !holidayKeys.has(dateKeyOf(cur))) days.push(cur);
+  }
+  return days;
+}
+
+/** A running sum of daily targets, kept as day count x value per distinct value: while the value never changed it
+ * is exactly days x value -- the same figure, to the last digit, as before the Critical Number became dated. */
+class TargetSum {
+  private readonly counts = new Map<number, number>();
+
+  add(value: number): void {
+    this.counts.set(value, (this.counts.get(value) ?? 0) + 1);
+  }
+
+  get total(): number {
+    let total = 0;
+    for (const [value, count] of this.counts) total += count * value;
+    return total;
+  }
+}
+
+/** Sum of the Daily Critical Number over the given days, each day at its own value. */
+function sumTarget(days: Date[], target: DailyTarget): number {
+  const sum = new TargetSum();
+  for (const d of days) sum.add(dailyTargetOn(target, d));
+  return sum.total;
+}
+
 // ---------------------------------------------------------------------------
 // Daily Critical Number
 // ---------------------------------------------------------------------------
 
 /**
- * Company-wide daily sales target, LYD 560,000/day -- a fixed business constant, not derived from
- * v_sales_targets. Confirmed with the business owner (2026-09-14 revision pass): "560 is a critical
- * number, it has no relation with the target." Previously this was computed as Full-Year Target
- * Revenue / working days in the year (per-company/segment scope-aware); that formula produced
- * ~LYD 559K against the live v_sales_targets data, which read as "wrong" because the two numbers were
- * never meant to be the same thing -- the Critical Number is a flat operational pace goal, the FY
- * Target is a separate planning figure.
+ * Company-wide daily sales target -- not derived from v_sales_targets. Confirmed with the business owner (2026-09-14
+ * revision pass): "560 is a critical number, it has no relation with the target." Previously this was computed as
+ * Full-Year Target Revenue / working days in the year; that read as "wrong" because the two numbers were never meant
+ * to be the same thing -- the Critical Number is a flat operational pace goal, the FY Target a separate planning figure.
  *
- * SUPERSEDED IN PART (2026-09, dynamic Company/Customer Group breakdown pass): this remains the
- * company-wide *base* figure with no filter applied, but computeDailyCriticalNumber below now
- * scales it by admin-configured Company/Customer Group percentages when those filters are active
- * -- see that function's docstring. The working-days denominator downstream (Monthly/Yearly
- * Counters, Missing Value/Days) was always scope-aware via holiday/closure matching; now the
- * numerator is too.
+ * Admin-editable since 2026-10-21: the base value is dated (critical_number_history, migration 0055; read through
+ * criticalNumberHistory.ts's getCriticalNumber / criticalNumberLookup), so every day uses the value that was active on
+ * it. A change never rewrites a past day, and the Monthly / Yearly targets are the SUM of each working day's own value,
+ * not today's value x the number of days.
+ *
+ * The Company / Customer Group scaling below (computeDailyCriticalNumber) applies on top of the base value of each day.
  */
-export const DAILY_CRITICAL_NUMBER = 560_000;
+export type DailyTarget = number | ((date: Date) => number);
+
+/** The (scaled) Daily Critical Number on one day. A plain number = the same value every day. */
+export function dailyTargetOn(target: DailyTarget, date: Date): number {
+  return typeof target === 'function' ? target(date) : target;
+}
 
 /** Sum of admin_company.critical_number_pct for the given etl_company_keys (active rows only).
  * Returns 100 (i.e. "no scaling") when companyKeys is empty -- no Company filter means the full
@@ -349,44 +393,51 @@ async function sumSegmentPct(pool: Pool, segmentKeys: number[]): Promise<number>
   }
 }
 
-/**
- * Daily Critical Number, scaled by the active Company/Customer Group filter selection using the
- * admin-configured percentage breakdowns (Admin Panel > Companies / Customer Groups,
- * critical_number_pct column -- see data/warehouse/migrations/0021_critical_number_allocation.sql):
+/** The Company / Customer Group scaling factor of the active filter selection, admin-configured percentage breakdowns
+ * (Admin Panel > Companies / Customer Groups, critical_number_pct column -- see
+ * data/warehouse/migrations/0021_critical_number_allocation.sql):
  *
- *   No Company filter and no Customer Group filter -> DAILY_CRITICAL_NUMBER unchanged.
- *   Company filter only                             -> base x (sum of selected companies' pct / 100).
- *   Customer Group filter only                       -> base x (sum of selected groups' pct / 100).
- *   Both                                              -> base x companyFactor x groupFactor (the two
- *                                                        factors cascade/multiply, they don't add).
+ *   No Company filter and no Customer Group filter -> 1 (the base unchanged).
+ *   Company filter only                             -> sum of selected companies' pct / 100.
+ *   Customer Group filter only                       -> sum of selected groups' pct / 100.
+ *   Both                                              -> companyFactor x groupFactor (the two factors cascade/multiply,
+ *                                                        they don't add).
  *
- * Multi-select within one dimension sums that dimension's percentages (e.g. selecting both Majaal
- * and Tika => 47.44 + 52.56 = 100%, i.e. the same as not filtering by Company at all). A selected
- * company/group with no admin-configured percentage yet (or none found, e.g. deactivated)
- * contributes 0 to that sum, per this feature's "default 0% until an admin sets a real percentage"
- * design -- so filtering to only such a company/group correctly yields a 0 Daily Critical Number
- * rather than silently falling back to the full base.
- *
- * This is the single source computeDailyCounter/computeMonthlyCounter/computeYearlyCounter/
- * computeMissingSummary all take their `dailyCriticalNumber` argument from (see
- * routes/criticalNumber.ts), so the scaled figure automatically flows through to every Daily/
- * Monthly/Yearly Counter, Missing Value/Days YTD, and their variance calculations -- not just the
- * Daily Critical Number display card.
- *
- * Kept async (Promise<number>) so every existing call site (routes/criticalNumber.ts) needs no
- * signature changes from before this feature.
+ * Multi-select within one dimension sums that dimension's percentages (e.g. selecting both Majaal and Tika => 47.44 +
+ * 52.56 = 100%, i.e. the same as not filtering by Company at all). A selected company/group with no admin-configured
+ * percentage yet (or none found, e.g. deactivated) contributes 0 to that sum, per this feature's "default 0% until an
+ * admin sets a real percentage" design -- so filtering to only such a company/group correctly yields a 0 Daily Critical
+ * Number rather than silently falling back to the full base. The shares are not dated: today's shares scale every day.
  */
-export async function computeDailyCriticalNumber(
-  pool: Pool,
-  _anchor: Date,
-  filters: Filters,
-  _companyNamesByKey: Map<number, string>,
-): Promise<number> {
+async function computeScopeFactor(pool: Pool, filters: Filters): Promise<number> {
   const [companyPct, segmentPct] = await Promise.all([
     sumCompanyPct(pool, filters.companyKeys ?? []),
     sumSegmentPct(pool, filters.segmentKeys ?? []),
   ]);
-  return DAILY_CRITICAL_NUMBER * (companyPct / 100) * (segmentPct / 100);
+  return (companyPct / 100) * (segmentPct / 100);
+}
+
+/**
+ * The scaled Daily Critical Number of every day for the active filter selection: the base value active on that day
+ * (criticalNumberHistory.ts) x the Company / Customer Group factor (computeScopeFactor). This is the single source
+ * computeDailyCounter/computeMonthlyCounter/computeYearlyCounter/computeMissingSummary/computeMissingTrend all take
+ * their target from (see routes/criticalNumber.ts), so the scaled, dated figure flows through to every Daily/Monthly/
+ * Yearly Counter, Missing Value/Days YTD, and their variance calculations -- not just the display card.
+ */
+export async function computeDailyCriticalNumberSchedule(pool: Pool, filters: Filters): Promise<(date: Date) => number> {
+  const [history, factor] = await Promise.all([loadCriticalNumberHistory(pool), computeScopeFactor(pool, filters)]);
+  const base = criticalNumberLookup(history);
+  return (date: Date) => base(date) * factor;
+}
+
+/** The scaled Daily Critical Number on `anchor` -- what the Daily Critical Number card shows. */
+export async function computeDailyCriticalNumber(
+  pool: Pool,
+  anchor: Date,
+  filters: Filters,
+  _companyNamesByKey: Map<number, string>,
+): Promise<number> {
+  return (await computeDailyCriticalNumberSchedule(pool, filters))(anchor);
 }
 
 // ---------------------------------------------------------------------------
@@ -420,12 +471,12 @@ export interface PeriodCounter {
    * above are derived from -- exposed directly so the frontend can render the value gap without
    * re-deriving it from achievementPct (which loses precision once rounded for display). */
   actualValue: number;
-  /** workingDaysElapsed * dailyCriticalNumber -- what the pace-based target says should have been
-   * achieved by now. */
+  /** Sum of the Daily Critical Number over the elapsed working days, each day at the value active on it -- what the
+   * pace-based target says should have been achieved by now. */
   expectedValue: number;
   /** actualValue - expectedValue: negative = behind pace, positive = ahead of pace. */
   gapValue: number;
-  /** workingDaysTotal * dailyCriticalNumber -- the FULL month/year target (not just the
+  /** Sum of the Daily Critical Number over every working day of the month/year -- the FULL target (not just the
    * elapsed-to-date pace target above). Used by the frontend's donut chart to show
    * Achieved-vs-Remaining against the whole period, distinct from expectedValue/gapValue which
    * stay elapsed-based for the pace/status badge. */
@@ -438,14 +489,16 @@ async function computePeriodCounter(
   fullWindow: DateWindow,
   filters: Filters,
   companyNamesByKey: Map<number, string>,
-  dailyCriticalNumber: number,
+  dailyCriticalNumber: DailyTarget,
 ): Promise<PeriodCounter> {
-  const [workingDaysElapsed, workingDaysTotal, actualVv] = await Promise.all([
+  const [workingDaysElapsed, workingDaysTotal, elapsedDays, fullDays, actualVv] = await Promise.all([
     computeWorkingDays(pool, elapsedWindow, filters, companyNamesByKey),
     computeWorkingDays(pool, fullWindow, filters, companyNamesByKey),
+    listWorkingDays(pool, elapsedWindow, filters, companyNamesByKey),
+    listWorkingDays(pool, fullWindow, filters, companyNamesByKey),
     fetchValueVolume(pool, elapsedWindow, filters),
   ]);
-  const expectedToDate = workingDaysElapsed * dailyCriticalNumber;
+  const expectedToDate = sumTarget(elapsedDays, dailyCriticalNumber);
   return {
     workingDaysElapsed,
     workingDaysTotal,
@@ -454,7 +507,7 @@ async function computePeriodCounter(
     actualValue: actualVv.value,
     expectedValue: expectedToDate,
     gapValue: actualVv.value - expectedToDate,
-    periodTarget: workingDaysTotal * dailyCriticalNumber,
+    periodTarget: sumTarget(fullDays, dailyCriticalNumber),
   };
 }
 
@@ -463,7 +516,7 @@ export async function computeMonthlyCounter(
   anchor: Date,
   filters: Filters,
   companyNamesByKey: Map<number, string>,
-  dailyCriticalNumber: number,
+  dailyCriticalNumber: DailyTarget,
 ): Promise<PeriodCounter> {
   const year = anchor.getUTCFullYear();
   const month = anchor.getUTCMonth() + 1;
@@ -482,7 +535,7 @@ export async function computeYearlyCounter(
   anchor: Date,
   filters: Filters,
   companyNamesByKey: Map<number, string>,
-  dailyCriticalNumber: number,
+  dailyCriticalNumber: DailyTarget,
 ): Promise<PeriodCounter> {
   const year = anchor.getUTCFullYear();
   return computePeriodCounter(pool, ytdWindow(anchor), yearWindow(year), filters, companyNamesByKey, dailyCriticalNumber);
@@ -670,7 +723,8 @@ export interface MissingValueCard {
   value: number;
   trendValues: number[];
   trendPct: number | null;
-  /** Working Days YTD x Daily Critical Number, as of the anchor date -- same pace-adjusted
+  /** Sum of the Daily Critical Number over the working days YTD (each day at its own value), as of the anchor date --
+   * same pace-adjusted
    * "expected value as of today" methodology as PeriodCounter.expectedValue (see that field's
    * docstring), replacing the old 'On pace' string placeholder in the Performance Details table's
    * Target column. */
@@ -734,9 +788,10 @@ async function fetchYtdPaceDays(
  * earlier unnetted per-day-shortfall sum, which read as far worse than actual YTD performance
  * because it never let surplus days offset shortfall days):
  *
- *   Total Expected YTD = Working Days YTD x Daily Critical Number
+ *   Total Expected YTD = sum of the Daily Critical Number over the working days YTD (each day at the value active on
+ *                        it -- Working Days YTD x Daily Critical Number while the value never changed)
  *   Missing Value YTD  = Total Expected YTD - Actual YTD Value
- *   Missing Days YTD   = Missing Value YTD / Daily Critical Number
+ *   Missing Days YTD   = Missing Value YTD / Daily Critical Number on the anchor date
  *
  * Signed, not floored at zero (2026-09 revision): a positive value means behind pace (shortfall),
  * a negative value means ahead of pace (surplus) -- previously both were clamped to
@@ -764,23 +819,28 @@ export async function computeMissingSummary(
   anchor: Date,
   filters: Filters,
   companyNamesByKey: Map<number, string>,
-  dailyCriticalNumber: number,
+  dailyCriticalNumber: DailyTarget,
   inProgressDate: Date | null = null,
 ): Promise<MissingSummary> {
   const days = await fetchYtdPaceDays(pool, anchor, filters, companyNamesByKey);
 
   let cumWorkingDays = 0;
+  const cumTarget = new TargetSum();
   let cumActual = 0;
   const dailyRunningMissingDays: number[] = [];
   const monthlyRunningMissingValue = new Map<string, number>(); // 'YYYY-MM' -> running value as of that month's last walked day
 
   for (const day of days) {
     cumActual += day.actual;
-    if (day.isWorkingDay) cumWorkingDays += 1;
+    if (day.isWorkingDay) {
+      cumWorkingDays += 1;
+      cumTarget.add(dailyTargetOn(dailyCriticalNumber, day.date));
+    }
     if (inProgressDate && day.date.getTime() >= inProgressDate.getTime()) continue;
 
-    const runningMissingValue = dailyCriticalNumber > 0 ? cumWorkingDays * dailyCriticalNumber - cumActual : 0;
-    const runningMissingDays = dailyCriticalNumber > 0 ? runningMissingValue / dailyCriticalNumber : 0;
+    const dayValue = dailyTargetOn(dailyCriticalNumber, day.date);
+    const runningMissingValue = dayValue > 0 ? cumTarget.total - cumActual : 0;
+    const runningMissingDays = dayValue > 0 ? runningMissingValue / dayValue : 0;
 
     dailyRunningMissingDays.push(runningMissingDays);
     const cur = day.date;
@@ -788,9 +848,10 @@ export async function computeMissingSummary(
     monthlyRunningMissingValue.set(monthKey, runningMissingValue);
   }
 
-  const expectedValueToDate = cumWorkingDays * dailyCriticalNumber;
-  const missingValue = dailyCriticalNumber > 0 ? expectedValueToDate - cumActual : 0;
-  const missingDays = dailyCriticalNumber > 0 ? Math.round(missingValue / dailyCriticalNumber) : 0;
+  const anchorValue = dailyTargetOn(dailyCriticalNumber, anchor);
+  const expectedValueToDate = cumTarget.total;
+  const missingValue = anchorValue > 0 ? expectedValueToDate - cumActual : 0;
+  const missingDays = anchorValue > 0 ? Math.round(missingValue / anchorValue) : 0;
 
   const last30 = dailyRunningMissingDays.slice(-30);
   const monthlySeries = Array.from(monthlyRunningMissingValue.entries())
@@ -831,12 +892,13 @@ export interface MissingTrendPeriod {
   start: string;
   end: string;
   workingDays: number;
-  /** workingDays x Daily Critical Number -- the pace target for this period alone. */
+  /** Sum of the Daily Critical Number over the period's working days (each day at its own value) -- the pace target
+   * for this period alone. */
   target: number;
   actual: number;
   /** actual - target for this period alone. */
   gapValue: number;
-  /** gapValue / Daily Critical Number. */
+  /** gapValue / Daily Critical Number on the period's last day. */
   gapDays: number;
   /** Running totals from Jan 1 through this period's end -- the values the trend chart plots. */
   cumulativeTarget: number;
@@ -863,7 +925,7 @@ function periodKeyOf(date: Date, granularity: MissingTrendGranularity): string {
  */
 export function bucketPaceDays(
   days: PaceDay[],
-  dailyCriticalNumber: number,
+  dailyCriticalNumber: DailyTarget,
   granularity: MissingTrendGranularity,
   inProgressDate: Date | null,
 ): MissingTrendPeriod[] {
@@ -893,7 +955,7 @@ export function bucketPaceDays(
       byKey.set(key, period);
       periods.push(period);
     }
-    const dayTarget = day.isWorkingDay ? dailyCriticalNumber : 0;
+    const dayTarget = day.isWorkingDay ? dailyTargetOn(dailyCriticalNumber, day.date) : 0;
     cumTarget += dayTarget;
     cumActual += day.actual;
     period.end = toDateOnlyString(day.date);
@@ -905,10 +967,11 @@ export function bucketPaceDays(
     if (inProgressDate && day.date.getTime() === inProgressDate.getTime()) period.inProgress = true;
   }
   for (const p of periods) {
+    const endValue = dailyTargetOn(dailyCriticalNumber, new Date(`${p.end}T00:00:00Z`));
     p.gapValue = p.actual - p.target;
     p.cumulativeGap = p.cumulativeActual - p.cumulativeTarget;
-    p.gapDays = dailyCriticalNumber > 0 ? p.gapValue / dailyCriticalNumber : 0;
-    p.cumulativeGapDays = dailyCriticalNumber > 0 ? p.cumulativeGap / dailyCriticalNumber : 0;
+    p.gapDays = endValue > 0 ? p.gapValue / endValue : 0;
+    p.cumulativeGapDays = endValue > 0 ? p.cumulativeGap / endValue : 0;
   }
   return periods;
 }
@@ -924,7 +987,7 @@ export async function computeMissingTrend(
   anchor: Date,
   filters: Filters,
   companyNamesByKey: Map<number, string>,
-  dailyCriticalNumber: number,
+  dailyCriticalNumber: DailyTarget,
   inProgressDate: Date | null,
 ): Promise<MissingTrend> {
   const days = await fetchYtdPaceDays(pool, anchor, filters, companyNamesByKey);
