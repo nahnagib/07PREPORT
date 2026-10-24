@@ -9,6 +9,10 @@ export interface KpiTileProps {
   value: string;
   /** Optional second line under the value, e.g. the same amount in another currency ("≈ LYD 9,983,931.540") */
   subValue?: string;
+  /** Put a bold title first, then the value and a light secondary value (e.g. NPS shares). */
+  emphasizeLabel?: boolean;
+  /** Optional secondary title, such as a translated metric name. */
+  labelDetail?: string;
   /** Signed variance, e.g. "+8.20%" - Section 3.6 Variance KPI cards */
   variance?: string;
   status?: SemanticStatus;
@@ -41,11 +45,11 @@ const statusColorVar: Record<SemanticStatus, string> = {
 
 /**
  * Standards Section 3.6 - KPI Cards.
- * Value is large/bold (28-36px), label sits below in small muted grey (12-14px).
+ * Value is large/bold (28-36px). By default the label sits below; emphasizeLabel puts the title first.
  * Color-coding follows the single semantic scale (3.9); KPIs with no target use neutral grey/white.
  * Color is never the only signal (Section 5.10) - the numeric value is always shown alongside it.
  */
-export function KpiTile({ label, value, subValue, variance, status = 'neutral', loading, icon, accentColor, badgeLabel }: KpiTileProps) {
+export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelDetail, variance, status = 'neutral', loading, icon, accentColor, badgeLabel }: KpiTileProps) {
   const hasHeader = icon !== undefined && accentColor !== undefined && badgeLabel !== undefined;
 
   if (loading) {
@@ -60,22 +64,32 @@ export function KpiTile({ label, value, subValue, variance, status = 'neutral', 
   const body = (
     <Card
       aria-label={label}
-      style={hasHeader ? { borderTopLeftRadius: 0, borderTopRightRadius: 0 } : undefined}
+      style={{
+        ...(hasHeader ? { borderTopLeftRadius: 0, borderTopRightRadius: 0 } : {}),
+        ...(emphasizeLabel && status !== 'neutral' ? { borderTop: `2px solid ${accentColor ?? statusColorVar[status]}` } : {}),
+      }}
     >
+      {emphasizeLabel && (
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px 8px', marginBottom: 12, minHeight: 20 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{label}</span>
+          {labelDetail && <span dir="auto" style={{ fontSize: 12, fontWeight: 400, color: 'var(--ps-color-muted-text)' }}>{labelDetail}</span>}
+        </div>
+      )}
       <div
         style={{
           fontSize: 32,
           fontWeight: 700,
-          color: statusColorVar[status],
+          color: emphasizeLabel ? 'var(--ps-color-text)' : statusColorVar[status],
+          lineHeight: emphasizeLabel ? 1.15 : undefined,
           fontVariantNumeric: 'tabular-nums',
         }}
       >
         {value}
       </div>
       {subValue && (
-        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>{subValue}</div>
+        <div style={{ fontSize: emphasizeLabel ? 13 : 14, fontWeight: emphasizeLabel ? 300 : 600, color: emphasizeLabel ? 'var(--ps-color-muted-text)' : 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums', marginTop: emphasizeLabel ? 8 : 2 }}>{subValue}</div>
       )}
-      <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>{label}</div>
+      {!emphasizeLabel && <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>{label}</div>}
       {variance && (
         <div
           style={{

@@ -38,19 +38,20 @@ afterEach(cleanup);
 describe('CreditPolicyChart', () => {
   const props = { data, loading: false, error: null, onRetry: () => undefined, term: null, onTermChange: () => undefined, viewLabel: 'All currencies (≈ LYD)' };
 
-  it('title follows the currency view; zone headers show range, owner, action and live counts', () => {
+  it('title follows the currency view; concise headers retain policy details on hover', () => {
     render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
     expect(screen.getByText('Credit Policy Escalation · All currencies (≈ LYD)')).toBeTruthy();
-    for (const t of ['GREEN', 'YELLOW', 'RED', 'BLOCK', '0 – 15 Days', '16 – 30 Days', '31 – 44 Days', '45+ Days', '45 – 60 Days', '61 – 65 Days', '>65 Days', 'Final Warning + Stop Supply', 'GCEO + CFO']) {
+    for (const t of ['GREEN', 'YELLOW', 'RED', 'BLACK', '0 – 15 Days', '16 – 30 Days', '31 – 44 Days', '45+ Days', '45 – 60 Days', '61 – 65 Days', '>65 Days']) {
       expect(screen.getAllByText(t).length, t).toBeGreaterThan(0);
     }
     expect(document.querySelector('svg')?.textContent ?? document.body.textContent).toBeDefined();
     expect(document.body.textContent).toContain('Overdue date');
     expect(document.body.textContent).not.toContain('Due Date');
     expect(document.body.textContent).toContain('(Day 0)');
-    expect(document.body.textContent).toContain('placed by the number of days overdue of its oldest unpaid invoice (counted from the overdue date = day');
+    expect(screen.getByTitle(/BLACK · GCEO \+ CFO/)).toBeTruthy();
+    expect(screen.getByTitle(/Final Warning \+ Stop Supply/)).toBeTruthy();
     expect(screen.getAllByText('>65 Days')).toHaveLength(2);
-    expect(screen.getByText('PAYMENT TERM (FILTER)')).toBeTruthy();
+    expect(screen.getByText('Payment term')).toBeTruthy();
     // Counts combine BLOCK ranges; future-due customers have no visible content.
     expect(document.body.textContent).toContain('≈ LYD 700');
     expect(document.body.textContent?.toLowerCase()).not.toContain('not yet due');
@@ -155,7 +156,7 @@ describe('CreditPolicyChart', () => {
     expect(document.querySelectorAll('[data-customer]')).toHaveLength(cases.length);
     for (const [key, days, zone] of cases) {
       const g = document.querySelector(`[data-customer="${key}"]`)!;
-      expect(g.getAttribute('aria-label'), `${days}`).toContain(`${days} day${days === 1 ? '' : 's'} overdue · ${zone}`);
+      expect(g.getAttribute('aria-label'), `${days}`).toContain(`${days} day${days === 1 ? '' : 's'} overdue · ${zone === 'BLOCK' ? 'BLACK' : zone}`);
       const band = document.querySelector(`[data-zone="${zone}"]`)!;
       const x0 = Number(band.getAttribute('x'));
       const cx = Number(g.querySelector('circle:not([stroke-dasharray])')!.getAttribute('cx'));
@@ -164,10 +165,17 @@ describe('CreditPolicyChart', () => {
     }
   });
 
-  it('the legend', () => {
+  it('moves the explanatory legend into hover details', () => {
     render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
-    for (const t of ['Dot size = overdue amount', 'Position = days overdue of the oldest unpaid invoice (from overdue date)', 'Each customer appears once']) {
-      expect(screen.getByText(t)).toBeTruthy();
-    }
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    const help = screen.getByRole('button', { name: 'Credit Policy Escalation details' });
+    fireEvent.mouseEnter(help);
+    for (const text of ['Dot size = overdue amount', 'Each customer appears once', 'Days counted to']) expect(screen.getByRole('tooltip').textContent).toContain(text);
+    fireEvent.mouseLeave(help);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.focus(help);
+    expect(screen.getByRole('tooltip')).toBeTruthy();
+    fireEvent.keyDown(help, { key: 'Escape' });
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });

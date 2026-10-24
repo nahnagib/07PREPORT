@@ -48,21 +48,20 @@ describe('NPS Score view helpers', () => {
     expect(smallSample(counts({ responders: 30 }))).toBeNull();
   });
 
-  it('trend: both targets on every point; a period below the minimum moves NPS and CSAT to the faded series', () => {
+  it('trend: no target series; a period below the minimum moves NPS and CSAT to the faded series', () => {
     const points = trendPoints({
-      target: 90,
-      csatTarget: 95,
       points: [
         { period: '2026-09', ...counts({}) },
         { period: '2026-10', ...counts({ responders: 177, nps: 64.97175141, csat: 94.915254 }) },
         { period: '2026-11', ...counts({ responders: 3, nps: 33.333, csat: 66.6667, belowMinimum: true }) },
       ],
     });
-    expect(points.map((p) => [p.label, p.responders, p.nps, p.npsSmall, p.target, p.csat, p.csatSmall, p.csatTarget])).toEqual([
-      ['Sep 2026', 0, null, null, 90, null, null, 95],
-      ['Oct 2026', 177, 64.97, null, 90, 94.92, null, 95],
-      ['Nov 2026', 3, null, 33.33, 90, null, 66.67, 95],
+    expect(points.map((p) => [p.label, p.responders, p.nps, p.npsSmall, p.csat, p.csatSmall])).toEqual([
+      ['Sep 2026', 0, null, null, null, null],
+      ['Oct 2026', 177, 64.97, null, 94.92, null],
+      ['Nov 2026', 3, null, 33.33, null, 66.67],
     ]);
+    expect(points.every((p) => !('target' in p) && !('csatTarget' in p))).toBe(true);
     // a week is labelled by its Sunday
     expect([periodLabel('2026-10-04'), periodLabel('2026')]).toEqual(['04 Oct', '2026']);
   });
@@ -143,9 +142,9 @@ describe('the top row', () => {
 });
 
 describe('follow-up', () => {
-  it('status buckets: green / yellow / red solved, black (text colour) pending', () => {
+  it('status buckets: muted semantic accents for solved, blue pending', () => {
     expect(FOLLOWUP_BUCKETS.map((b) => [b.key, b.color])).toEqual([
-      ['solved_48h', 'var(--ps-color-success)'], ['solved_5d', 'var(--ps-color-watch)'], ['solved_late', 'var(--ps-color-alert)'], ['pending', 'var(--ps-color-text)'],
+      ['solved_48h', 'var(--ps-nps-teal)'], ['solved_5d', 'var(--ps-nps-amber)'], ['solved_late', 'var(--ps-nps-rose)'], ['pending', 'var(--ps-nps-blue)'],
     ]);
   });
 

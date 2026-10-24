@@ -17,6 +17,8 @@ export const creditSoft = (tone: string) => `var(--ps-credit-${tone}-soft)`;
 /** Plot/header surfaces have their own light/dark contrast pairs. */
 export const creditBand = (tone: string) => `var(--ps-credit-${tone}-band)`;
 export const creditHeader = (tone: string) => `var(--ps-credit-${tone}-header)`;
+/** Keep API policy keys stable while displaying the black escalation zone by its color name. */
+export const zoneLabel = (zone: Pick<CreditPolicyZone, 'key' | 'label'>) => zone.key === 'BLOCK' ? 'BLACK' : zone.label;
 
 /** Main-zone ranges: "0 – 15 Days", "45+ Days". */
 export function zoneRange(z: Pick<CreditPolicyZone, 'minDays' | 'maxDays'>): string {
@@ -35,35 +37,39 @@ export function nextZoneText(c: Pick<CreditCustomer, 'nextZone' | 'daysToNextZon
   if (!c.nextZone || c.daysToNextZone === null) return null;
   const z = zones.find((x) => x.key === c.nextZone);
   if (!z) return null;
-  return `Moves to ${z.label} (${z.owner}) in ${formatNumber(c.daysToNextZone)} day${c.daysToNextZone === 1 ? '' : 's'} if unpaid.`;
+  return `Moves to ${zoneLabel(z)} (${z.owner}) in ${formatNumber(c.daysToNextZone)} day${c.daysToNextZone === 1 ? '' : 's'} if unpaid.`;
 }
 
 // ---- Customers table: the "Aging bucket" column -------------------------------------------------------------------------
 export interface CreditBucket {
-  /** badge text: "Green · 0 – 15 Days", "Not yet due", "—" */
+  /** The numeric overdue range, "Not yet due", or "—". */
   label: string;
-  /** the filter value: the zone label, "Not yet due" or "—" */
+  /** The filter value is the same numeric range label, "Not yet due", or "—". */
   filterValue: string;
   tone: string | null;
   /** sorts by actual age: credits only < not yet due (the later the due date, the lower) < days overdue */
   sortValue: number;
+  detail: string;
 }
 
 export const NO_BUCKET = '—';
 
-/** A row's bucket = its customer's zone on the chart (the API places both with the same code). */
-export function creditBucket(z: RowCreditZone | null, zones: CreditPolicyZone[]): CreditBucket {
-  if (!z) return { label: NO_BUCKET, filterValue: NO_BUCKET, tone: null, sortValue: -1_000_000 };
-  if (z.zone === NOT_YET_DUE) return { label: NOT_YET_DUE_LABEL, filterValue: NOT_YET_DUE_LABEL, tone: 'notdue', sortValue: -1 - z.daysUntilDue };
-  const i = zones.findIndex((x) => x.key === z.zone);
-  const zone = zones[i];
-  if (!zone) return { label: z.zone, filterValue: z.zone, tone: null, sortValue: z.daysOverdue };
-  return { label: `${zone.label} · ${zoneRange(zone)}`, filterValue: zone.label, tone: zone.tone, sortValue: z.daysOverdue };
+const OVERDUE_RANGES = ['Overdue 1 – 30', 'Overdue 31 – 60', 'Overdue 61 – 90', 'Overdue 90+'];
+
+/** Standard aging counts from the due date. The policy API counts its first late day as day 0. */
+export function creditBucket(z: RowCreditZone | null): CreditBucket {
+  if (!z) return { label: NO_BUCKET, filterValue: NO_BUCKET, tone: null, sortValue: -1_000_000, detail: 'No unpaid customer invoice in this view (credits or other entries only).' };
+  if (z.zone === NOT_YET_DUE) return { label: NOT_YET_DUE_LABEL, filterValue: NOT_YET_DUE_LABEL, tone: null, sortValue: -1 - z.daysUntilDue,
+    detail: z.daysUntilDue === 0 ? 'The oldest unpaid invoice is due today.' : `The oldest unpaid invoice is due in ${formatNumber(z.daysUntilDue)} days.` };
+  const days = z.daysOverdue + 1;
+  const label = OVERDUE_RANGES[days <= 30 ? 0 : days <= 60 ? 1 : days <= 90 ? 2 : 3];
+  return { label, filterValue: label, tone: null, sortValue: days,
+    detail: `${formatNumber(days)} day${days === 1 ? '' : 's'} overdue, counted from the oldest unpaid invoice's due date. 90+ means more than 90 days.` };
 }
 
-/** The bucket filter's options, in policy order: Not yet due, every zone, then — (credits only). */
-export function creditBucketOptions(zones: CreditPolicyZone[]): { value: string; label: string }[] {
-  return [NOT_YET_DUE_LABEL, ...zones.map((z) => z.label), NO_BUCKET].map((v) => ({ value: v, label: v }));
+/** Not yet due, the four standard overdue ranges, then — (no unpaid invoice). */
+export function creditBucketOptions(): { value: string; label: string }[] {
+  return [NOT_YET_DUE_LABEL, ...OVERDUE_RANGES, NO_BUCKET].map((v) => ({ value: v, label: v }));
 }
 
 // ---- chart geometry ---------------------------------------------------------------------------------------------------

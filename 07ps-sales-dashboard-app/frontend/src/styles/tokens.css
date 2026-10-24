@@ -22,6 +22,15 @@
   --ps-color-alert: #cc0033;
   --ps-color-last-year: #8c8c8c;
 
+  /* NPS categorical palette: restrained cool hues, with muted semantic accents. */
+  --ps-nps-blue: #5278a5;
+  --ps-nps-teal: #477f77;
+  --ps-nps-cyan: #548a9d;
+  --ps-nps-slate: #718198;
+  --ps-nps-amber: #a1844e;
+  --ps-nps-rose: #ab6c76;
+  --ps-nps-lilac: #817b97;
+
   /* Revenue Trend chart palette: Y-1/Target need to read as clearly distinct series (not two
      grayscale line styles told apart only by dash pattern), without borrowing the success/watch/
      alert hues -- those are reserved for KPI status elsewhere and would misleadingly imply
@@ -153,6 +162,13 @@
   --ps-color-success: #4caf50;
   --ps-color-watch: #e0a815;
   --ps-color-alert: #ff5c7a;
+  --ps-nps-blue: #7294bd;
+  --ps-nps-teal: #72a79b;
+  --ps-nps-cyan: #67a1b3;
+  --ps-nps-slate: #596d86;
+  --ps-nps-amber: #b8a06f;
+  --ps-nps-rose: #bd818c;
+  --ps-nps-lilac: #928aa8;
   /*
    * Design-quality pass finding: the default/Majaal accent (--ps-neutral-charcoal, #1a1a1a) is
    * near-black - fine against the light theme's white surface, but nearly invisible against the

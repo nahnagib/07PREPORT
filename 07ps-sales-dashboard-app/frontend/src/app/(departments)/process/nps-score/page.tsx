@@ -9,6 +9,7 @@ import { useFilterState, useScopedFilterOptions } from '../../../../components/F
 import { FollowupCharts } from '../../../../components/nps/FollowupCharts';
 import { NpsReach } from '../../../../components/nps/NpsReach';
 import { NpsTopRow } from '../../../../components/nps/NpsTopRow';
+import { NpsTrendChart, RespondersTrend } from '../../../../components/nps/NpsTrends';
 import { OdooLink } from '../../../../components/nps/OdooLink';
 import { StatusPill, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
 import { useAuth } from '../../../../lib/AuthProvider';
@@ -29,19 +30,15 @@ import { formatNumber, formatTimestamp } from '../../../../lib/format';
 import {
   GROUPS,
   GROUP_COLOR,
-  NPS_CONTEXT,
-  fmt2,
   followupCaseHref,
   longDate,
   npsPeriod,
   pct,
   periodCaption,
-  trendPoints,
 } from '../../../../lib/nps/view';
 import {
   Button,
   ChartPanel,
-  ComboChart,
   DataGrid,
   EmptyState,
   ErrorState,
@@ -62,7 +59,7 @@ import {
  * Row 2 responders: Total · Promoters · Passives · Detractors (# and % of responders).
  * Row 3 WhatsApp message reach: company/date only.
  * Row 4 the trend: Weekly (Sunday..Saturday) / Monthly / Yearly from the first period with ratings; NPS and CSAT lines
- *       with their targets; periods below the minimum faded.
+ *       plus monthly stacked responders; periods below the minimum faded on the score chart.
  * Row 5 Errors by reason · Detractors by reason · Detractors by status (live from the follow-up cases).
  * Row 6 the detractor list with the follow-up case and the customers' comments: only with the nps_comments permission.
  * Every rating visual filters on the rating date (Tripoli time), the global filters and the role's data scope.
@@ -75,7 +72,6 @@ export default function NpsScorePage() {
   );
 }
 
-const GRAIN_LABEL: Record<NpsGrain, string> = { week: 'Weekly', month: 'Monthly', year: 'Yearly' };
 const LIST_PAGE = 100;
 
 function NpsScoreBody() {
@@ -85,7 +81,6 @@ function NpsScoreBody() {
   const { effectiveFilters, onFiltersChange, anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
   const filterOptions = useScopedFilterOptions();
   const [grain, setGrain] = useState<NpsGrain>('month');
-  const [showCsat, setShowCsat] = useState(true);
   const [listPages, setListPages] = useState(1);
 
   const period = useMemo(() => npsPeriod(dateFromDate, dateToDate), [dateFromDate, dateToDate]);
@@ -95,6 +90,7 @@ function NpsScoreBody() {
   const meta = useNpsScore<NpsMeta>(token, authError, retryAuth, 'meta', scope, undefined, allowed);
   const overview = useNpsScore<NpsOverview>(token, authError, retryAuth, 'overview', scope, undefined, allowed);
   const trend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { grain }, allowed);
+  const monthlyTrend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { grain: 'month' }, allowed && grain !== 'month');
   const reach = useNpsScore<ReachData>(token, authError, retryAuth, 'reach', scope, undefined, allowed);
   const rate = useNpsScore<NpsResponseRate>(token, authError, retryAuth, 'response-rate', scope, undefined, allowed);
   const followup = useNpsScore<NpsFollowupSummary>(token, authError, retryAuth, 'followup-summary', scope, undefined, allowed);
@@ -149,13 +145,16 @@ function NpsScoreBody() {
 
             {/* Row 2: responders */}
             <section className="ps-nps-boxes" aria-label="Responders">
-              <KpiTile label="Total Responders" value={formatNumber(totals.responders)} subValue={`${formatNumber(totals.withComment)} with a comment`} />
+              <KpiTile label="Total Responders" value={formatNumber(totals.responders)} subValue={`${formatNumber(totals.withComment)} with a comment`} emphasizeLabel />
               {GROUPS.map((g) => (
                 <KpiTile
                   key={g.key}
-                  label={`${g.stars} ${g.label} · ${g.labelAr}`}
+                  emphasizeLabel
+                  label={g.label}
+                  labelDetail={g.labelAr}
                   value={formatNumber(totals[g.key])}
                   subValue={`${pct(totals[`${g.key}Pct` as const])} of responders`}
+                  status={g.key === 'promoters' ? 'success' : g.key === 'passives' ? 'watch' : 'alert'}
                   accentColor={GROUP_COLOR[g.key]}
                 />
               ))}
@@ -165,56 +164,10 @@ function NpsScoreBody() {
             <NpsReach state={reach} part="boxes" />
 
             {/* Row 4: trend */}
-            <ChartPanel
-              title="NPS trend"
-              wrapHeader
-              infoText={[
-                NPS_CONTEXT,
-                `Line: NPS per period, target line at ${trend.data?.target ?? thresholds.nps.target}; CSAT (toggle) with its target ${trend.data?.csatTarget ?? thresholds.csat.target}. Bars: responders. A period below ${meta.data?.minResponders} responders is shown faded.`,
-                'Weeks run Sunday to Saturday and are named by their Sunday. The axis starts at the first period with ratings.',
-              ].join('\n')}
-              headerActions={
-                <div className="ps-nps-switch" role="group" aria-label="Trend period">
-                  {(Object.keys(GRAIN_LABEL) as NpsGrain[]).map((g) => (
-                    <Button key={g} variant={grain === g ? 'primary' : 'secondary'} onClick={() => setGrain(g)} aria-pressed={grain === g}>
-                      {GRAIN_LABEL[g]}
-                    </Button>
-                  ))}
-                  <Button variant={showCsat ? 'primary' : 'secondary'} onClick={() => setShowCsat((v) => !v)} aria-pressed={showCsat} data-testid="trend-csat-toggle">
-                    CSAT
-                  </Button>
-                </div>
-              }
-            >
-              {trend.error ? (
-                <ErrorState message={trend.error} onRetry={trend.retry} />
-              ) : !trend.data ? (
-                <LoadingSkeleton variant="chart" />
-              ) : trend.data.points.length === 0 ? (
-                <EmptyState message="No ratings for these filters and dates." />
-              ) : (
-                <ComboChart
-                  showTitle={false}
-                  points={trendPoints(trend.data)}
-                  bars={[{ key: 'responders', name: 'Responders', color: 'var(--ps-color-last-year)' }]}
-                  lines={[
-                    { key: 'nps', name: 'NPS', color: 'var(--ps-color-accent)', yAxisId: 'right', labelFormatter: (v) => fmt2(v) },
-                    { key: 'npsSmall', name: `NPS (n < ${trend.data.minResponders})`, color: 'var(--ps-color-neutral-text)', yAxisId: 'right' },
-                    { key: 'target', name: `NPS target ${trend.data.target}`, color: 'var(--ps-color-success)', yAxisId: 'right' },
-                    ...(showCsat
-                      ? [
-                          { key: 'csat', name: 'CSAT', color: 'var(--ps-color-gold)', yAxisId: 'right' as const },
-                          { key: 'csatSmall', name: `CSAT (n < ${trend.data.minResponders})`, color: 'var(--ps-color-muted-text)', yAxisId: 'right' as const },
-                          { key: 'csatTarget', name: `CSAT target ${trend.data.csatTarget}`, color: 'var(--ps-color-watch)', yAxisId: 'right' as const },
-                        ]
-                      : []),
-                  ]}
-                  leftAxisFormatter={(v) => formatNumber(v)}
-                  rightAxisFormatter={(v) => String(Math.round(v))}
-                  height={300}
-                />
-              )}
-            </ChartPanel>
+            <section className="ps-nps-trends" aria-label="Trends">
+              <NpsTrendChart state={trend} grain={grain} onGrainChange={setGrain} />
+              <RespondersTrend state={grain === 'month' ? trend : monthlyTrend} />
+            </section>
 
             {/* Row 5: reasons and follow-up (live from the follow-up cases) */}
             <section className="ps-nps-row" aria-label="Reasons and follow-up">

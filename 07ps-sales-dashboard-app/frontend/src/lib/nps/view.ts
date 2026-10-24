@@ -17,9 +17,9 @@ export const GROUPS: readonly { key: GroupKey; level: number; stars: string; lab
 
 /** Theme tokens only (light and dark both define them). */
 export const GROUP_COLOR: Record<GroupKey, string> = {
-  promoters: 'var(--ps-color-success)',
-  passives: 'var(--ps-color-watch)',
-  detractors: 'var(--ps-color-alert)',
+  promoters: 'var(--ps-nps-teal)',
+  passives: 'var(--ps-nps-amber)',
+  detractors: 'var(--ps-nps-rose)',
 };
 
 export const BAND_STATUS: Record<NpsBand, 'alert' | 'watch' | 'success'> = { red: 'alert', yellow: 'watch', green: 'success' };
@@ -67,19 +67,17 @@ const round2 = (v: number | null) => (v === null ? null : Math.round(v * 100) / 
 
 /**
  * Trend points for ComboChart: responders (bars), NPS and CSAT (lines), the same values faded where the period is below
- * the minimum number of responders (separate, muted series), and the two target lines.
+ * the minimum number of responders (separate, muted series).
  */
-export function trendPoints(trend: Pick<NpsTrend, 'points' | 'target' | 'csatTarget'>) {
+export function trendPoints(trend: Pick<NpsTrend, 'points'>) {
   return trend.points.map((p) => ({
     label: periodLabel(p.period),
     period: p.period,
     responders: p.responders,
     nps: p.belowMinimum ? null : round2(p.nps),
     npsSmall: p.belowMinimum ? round2(p.nps) : null,
-    target: trend.target,
     csat: p.belowMinimum ? null : round2(p.csat),
     csatSmall: p.belowMinimum ? round2(p.csat) : null,
-    csatTarget: trend.csatTarget,
   }));
 }
 
@@ -171,13 +169,12 @@ export function responseRateTooltip(r: Pick<NpsResponseRate, 'responders' | 'del
 }
 
 // -- follow-up charts -----------------------------------------------------------------------------------------------------
-/** Detractors by status: solved < 48 h green, 48 h – 5 days yellow, > 5 days red, pending black (the text colour, so it
- * stays visible in dark mode). */
+/** Follow-up status colors match the page's muted semantic palette; pending is blue. */
 export const FOLLOWUP_BUCKETS: readonly { key: NpsFollowupBucket; label: string; color: string }[] = [
-  { key: 'solved_48h', label: 'Solved < 48 h', color: 'var(--ps-color-success)' },
-  { key: 'solved_5d', label: 'Solved 48 h – 5 days', color: 'var(--ps-color-watch)' },
-  { key: 'solved_late', label: 'Solved > 5 days', color: 'var(--ps-color-alert)' },
-  { key: 'pending', label: 'Pending', color: 'var(--ps-color-text)' },
+  { key: 'solved_48h', label: 'Solved < 48 h', color: 'var(--ps-nps-teal)' },
+  { key: 'solved_5d', label: 'Solved 48 h – 5 days', color: 'var(--ps-nps-amber)' },
+  { key: 'solved_late', label: 'Solved > 5 days', color: 'var(--ps-nps-rose)' },
+  { key: 'pending', label: 'Pending', color: 'var(--ps-nps-blue)' },
 ];
 
 /** The follow-up page's case card (?case=ID); a Historical case opens over the List view (the board hides them). */

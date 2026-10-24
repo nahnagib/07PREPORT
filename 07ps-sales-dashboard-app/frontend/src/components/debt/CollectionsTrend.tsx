@@ -75,21 +75,17 @@ export function CollectionsTrendPanel({
     </div>
   );
   return (
-    <ChartPanel title={`Collections trend · ${viewLabel}`} infoText={COLLECTIONS_INFO} headerActions={header}>
+    <ChartPanel title={`Collections trend · ${viewLabel}`} infoText={`${COLLECTIONS_INFO}\n${data?.firstPaymentDate ? `History from ${formatDate(data.firstPaymentDate)}. ` : ''}${hasRate ? 'Collection rate is shown where a snapshot exists at the period start.' : 'Collection rate requires a receivable snapshot on the day before a period starts.'}`} headerActions={header}>
       {error ? (
         <ErrorState message={error} onRetry={onRetry} />
       ) : loading && !data ? (
         <LoadingSkeleton variant="chart" />
       ) : !data || data.points.every((p) => p.payments === 0) ? (
         <>
-          <p style={note}>{COLLECTIONS_NOTE}</p>
           <EmptyState message={data?.allCurrencies ? 'No collection against an earlier invoice in this range for these filters.' : `No ${ccy} collection against an earlier invoice in this range for these filters.`} />
         </>
       ) : (
         <>
-          <p style={note}>
-            {COLLECTIONS_NOTE} History from {formatDate(data.firstPaymentDate)}; {hasRate ? 'collection rate where a snapshot exists at the period start.' : 'no collection rate in this range (it needs a receivable snapshot on the day before a period starts).'}
-          </p>
           <ComboChart
             title={`Collections trend ${viewLabel}`}
             showTitle={false}

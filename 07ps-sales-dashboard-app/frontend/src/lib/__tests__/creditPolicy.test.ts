@@ -30,22 +30,28 @@ describe('words', () => {
   });
 });
 
-describe('the Customers table "Aging bucket" = the chart zone', () => {
-  it('zone name + range, Not yet due, — for credits only; sorts by actual age', () => {
-    const ceo = creditBucket({ zone: 'BLOCK', daysOverdue: 49, daysUntilDue: 0 }, ZONES);
-    const nyd = creditBucket({ zone: 'NOT_YET_DUE', daysOverdue: 0, daysUntilDue: 5 }, ZONES);
-    const none = creditBucket(null, ZONES);
-    expect(ceo).toMatchObject({ label: 'BLOCK · 45+ Days', filterValue: 'BLOCK', tone: 'block', sortValue: 49 });
-    expect(creditBucket({ zone: 'BLOCK', daysOverdue: 419, daysUntilDue: 0 }, ZONES).label).toBe('BLOCK · 45+ Days');
-    expect(nyd).toMatchObject({ label: 'Not yet due', tone: 'notdue' });
+describe('Customer overdue analysis aging ranges', () => {
+  it('uses standard aging rather than policy colors; keeps not due and credits-only distinct', () => {
+    const ceo = creditBucket({ zone: 'BLOCK', daysOverdue: 49, daysUntilDue: 0 });
+    const nyd = creditBucket({ zone: 'NOT_YET_DUE', daysOverdue: 0, daysUntilDue: 5 });
+    const none = creditBucket(null);
+    expect(ceo).toMatchObject({ label: 'Overdue 31 – 60', filterValue: 'Overdue 31 – 60', tone: null, sortValue: 50 });
+    expect(nyd).toMatchObject({ label: 'Not yet due', tone: null });
     expect(none).toMatchObject({ label: '—', tone: null });
-    expect(none.sortValue < nyd.sortValue && nyd.sortValue < creditBucket({ zone: 'GREEN', daysOverdue: 0, daysUntilDue: 0 }, ZONES).sortValue).toBe(true);
-    // a later due date sorts lower (younger)
-    expect(creditBucket({ zone: 'NOT_YET_DUE', daysOverdue: 0, daysUntilDue: 30 }, ZONES).sortValue).toBeLessThan(nyd.sortValue);
+    expect(none.sortValue < nyd.sortValue && nyd.sortValue < creditBucket({ zone: 'GREEN', daysOverdue: 0, daysUntilDue: 0 }).sortValue).toBe(true);
+    expect(creditBucket({ zone: 'NOT_YET_DUE', daysOverdue: 0, daysUntilDue: 30 }).sortValue).toBeLessThan(nyd.sortValue);
+    expect(creditBucket({ zone: 'NOT_YET_DUE', daysOverdue: -1, daysUntilDue: 0 }).detail).toContain('due today');
   });
 
-  it('filter options in policy order', () => {
-    expect(creditBucketOptions(ZONES).map((o) => o.value)).toEqual(['Not yet due', 'GREEN', 'YELLOW', 'RED', 'BLOCK', '—']);
+  it.each([[0, 'Overdue 1 – 30'], [29, 'Overdue 1 – 30'], [30, 'Overdue 31 – 60'], [59, 'Overdue 31 – 60'],
+    [60, 'Overdue 61 – 90'], [89, 'Overdue 61 – 90'], [90, 'Overdue 90+'], [419, 'Overdue 90+']])('policy day %s maps to %s from the due date', (policyDays, label) => {
+    const bucket = creditBucket({ zone: 'BLOCK', daysOverdue: Number(policyDays), daysUntilDue: 0 });
+    expect(bucket.label).toBe(label);
+    expect(bucket.detail).toContain(`${Number(policyDays) + 1} day`);
+  });
+
+  it('filter options are non-overlapping day ranges', () => {
+    expect(creditBucketOptions().map((o) => o.value)).toEqual(['Not yet due', 'Overdue 1 – 30', 'Overdue 31 – 60', 'Overdue 61 – 90', 'Overdue 90+', '—']);
   });
 });
 

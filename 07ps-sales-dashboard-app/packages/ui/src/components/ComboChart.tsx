@@ -51,9 +51,9 @@ export interface ComboChartProps {
   lines?: ComboLineSeries[];
   leftAxisFormatter?: (value: number) => string;
   rightAxisFormatter?: (value: number) => string;
-  /** Per-series full-precision tooltip formatter, keyed by series `key`. Falls back to the axis
-   * formatter for that series' axis, then to a plain toLocaleString. */
-  tooltipFormatters?: Record<string, (value: number) => string>;
+  /** Per-series full-precision tooltip formatter, keyed by series `key`. Receives the point for
+   * context such as a percentage of its total. Falls back to the axis formatter for that series. */
+  tooltipFormatters?: Record<string, (value: number, point?: ComboChartPoint) => string>;
   height?: number;
   /** The whole plot area becomes clickable (pointer cursor) and invokes this with the clicked
    * point's `label` -- fires whether the click lands on a bar, a line point, or elsewhere in that
@@ -206,7 +206,7 @@ export function ComboChart({
               formatter={(value: number, name: string, item: any) => {
                 const dataKey = item?.dataKey as string;
                 const isRightAxis = item?.payload && lines.some((l) => l.key === dataKey && (l.yAxisId ?? 'right') === 'right');
-                return [tooltipFormatterFor(dataKey, !!isRightAxis)(value), name];
+                return [tooltipFormatterFor(dataKey, !!isRightAxis)(value, item?.payload), name];
               }}
               contentStyle={{
                 borderRadius: 10,

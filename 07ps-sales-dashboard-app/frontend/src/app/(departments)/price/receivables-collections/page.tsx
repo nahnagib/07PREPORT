@@ -5,6 +5,7 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { CreditPolicyChart } from '../../../../components/debt/CreditPolicyChart';
+import { InfoHint } from '../../../../components/debt/InfoHint';
 import { DebtDrilldownModal, type DebtDrillTarget } from '../../../../components/debt/DebtDrilldownModal';
 import { CollectionsDrilldownModal, CollectionsTrendPanel } from '../../../../components/debt/CollectionsTrend';
 import { useAuth } from '../../../../lib/AuthProvider';
@@ -29,7 +30,7 @@ import {
   type LabelLang,
 } from '../../../../lib/debt/view';
 import { useUrlCurrency } from '../../../../lib/debt/useUrlCurrency';
-import { creditBucket, creditBucketOptions, creditColor, creditSoft, type CreditBucket } from '../../../../lib/debt/creditPolicy';
+import { creditBucket, creditBucketOptions, type CreditBucket } from '../../../../lib/debt/creditPolicy';
 import { CUSTOMER_CATEGORY_DEFINITION } from '../../../../lib/customerCategory';
 import {
   Button,
@@ -76,7 +77,8 @@ import {
  * in the credit policy's zones (backend config/creditPolicy.ts), in the page's currency (all currencies: every customer once). It
  * ignores the line-level filters (overdue status, aging bucket, delivery status, payment term, invoice size), which would change
  * which invoice decides, and has its own payment-term filter (it only chooses customers). A dot opens the customer's open
- * invoices; the Customers table's Aging bucket is the same zone.
+ * invoices. The Customer overdue analysis table uses standard 1–30 / 31–60 / 61–90 / 90+ day ranges from the due date,
+ * independently of the policy's escalation zones.
  *
  * Filters (2026-10-07): every filter is a dropdown (the shared Select), worded as on the other pages -- Company
  * (multi-select), Customer group, Distribution Channel, Branch = the sales team, Salesperson, Customer (searchable,
@@ -247,8 +249,7 @@ export default function ReceivablesCollectionsPage() {
 
   // ---- customer table ------------------------------------------------------------------------------------------------
   // the page's currency filter decides the rows (the table has no currency filter of its own any more)
-  // the Aging bucket = the customer's credit-policy zone, exactly as the escalation chart places it (same API code)
-  const creditZones = useMemo(() => meta.data?.creditPolicy?.zones ?? [], [meta.data]);
+  // Standard overdue day ranges, independent of the chart's escalation policy zones.
   const customerRows: CustomerGridRow[] = useMemo(
     () =>
       (customers.data?.rows ?? [])
@@ -256,7 +257,7 @@ export default function ReceivablesCollectionsPage() {
         // all currencies: one ranking by overdue in LYD (the server sorts within each currency)
         .sort((a, b) => (currency ? 0 : b.lyd.overdue - a.lyd.overdue || b.lyd.open - a.lyd.open || a.lyd.net - b.lyd.net))
         .map((r) => {
-          const bucket = creditBucket(currency ? r.creditZone?.currency ?? null : r.creditZone?.all ?? null, creditZones);
+          const bucket = creditBucket(currency ? r.creditZone?.currency ?? null : r.creditZone?.all ?? null);
           return {
             ...r,
             id: `${r.companyKey}:${r.customerKey}:${r.currency}`,
@@ -267,7 +268,7 @@ export default function ReceivablesCollectionsPage() {
             bucket,
           };
         }),
-    [customers.data, currency, creditZones],
+    [customers.data, currency],
   );
   const distinctOptions = (values: string[]) => [...new Set(values)].sort((a, b) => a.localeCompare(b)).map((v) => ({ value: v, label: v }));
   // one currency: each row in its own units; all currencies: every row in LYD (≈ unless the row already is in LYD)
@@ -293,7 +294,7 @@ export default function ReceivablesCollectionsPage() {
       width: 170,
       // by actual age: credits only (—) < not yet due < days overdue of the earliest unpaid due date
       sortValue: (r) => r.bucket.sortValue,
-      filterOptions: creditBucketOptions(creditZones),
+      filterOptions: creditBucketOptions(),
       render: (r) => <BucketBadge bucket={r.bucket} />,
     },
     rowMoney('credits', 'Unapplied credits'),
@@ -444,19 +445,11 @@ export default function ReceivablesCollectionsPage() {
               {freshness?.lastFailureUtc ? (
                 <span style={{ color: 'var(--ps-color-alert)' }}>Last finance run failed at {formatTimestamp(freshness.lastFailureUtc)}</span>
               ) : null}
-              <span>
-                Showing{' '}
-                <strong style={{ color: 'var(--ps-color-text)' }}>
-                  {[defaultScope ? scopeLabel(defaultScope.value) : null, filters.includeOther && otherScope ? scopeLabel(otherScope.value) : null].filter(Boolean).join(' + ')}
-                </strong>
-                {filters.includeIntercompany ? ', inter-company included' : ', inter-company excluded'}
-              </span>
-              {exclusionText ? (
-                <span title={exclusionTitle} dir="auto">
-                  Always excluded: <strong style={{ color: 'var(--ps-color-text)' }}>{exclusionText}</strong>
-                </span>
-              ) : null}
-              <span>Amounts per currency; LYD equivalents (≈) are Odoo&apos;s own amounts, at the Odoo rate of each invoice&apos;s date</span>
+              <InfoHint label="Data scope" detail={[
+                `Showing ${[defaultScope ? scopeLabel(defaultScope.value) : null, filters.includeOther && otherScope ? scopeLabel(otherScope.value) : null].filter(Boolean).join(' + ')}; inter-company ${filters.includeIntercompany ? 'included' : 'excluded'}.`,
+                exclusionText ? `Always excluded: ${exclusionText}.\n${exclusionTitle ?? ''}` : '',
+                'Amounts per currency; LYD equivalents (≈) use Odoo’s booked rate on each invoice’s date.',
+              ].filter(Boolean).join('\n')} />
             </>
           ) : null}
         </div>
@@ -472,7 +465,7 @@ export default function ReceivablesCollectionsPage() {
             <>
               {overview.data ? <DebtTotalBand all={overview.data.allCurrencies} currencies={currencies} snapshotDate={overview.data.snapshotDate} /> : null}
               <h2 style={{ ...h2, margin: '4px 0 -8px', fontSize: 15, color: 'var(--ps-color-muted-text)' }}>
-                By currency <span style={{ fontWeight: 400, fontSize: 12.5 }}>· click a currency to show it alone on the whole page</span>
+                By currency <InfoHint label="Currency selection" detail={`Click a currency row to show it alone on the whole page; click it again to show all currencies. ${OPEN_INVOICES_NOTE}.`} />
               </h2>
               <style>{CURRENCY_ROW_CSS}</style>
               {currencies.map((c) => (
@@ -487,7 +480,6 @@ export default function ReceivablesCollectionsPage() {
                   onToggle={() => setCurrency(toggleCurrency(currency, c.currency))}
                 />
               ))}
-              <p style={{ ...note, margin: 0 }}>{OPEN_INVOICES_NOTE}.</p>
 
               <div role="status" aria-live="polite" style={viewBar}>
                 <span>
@@ -498,14 +490,7 @@ export default function ReceivablesCollectionsPage() {
                     Clear
                   </button>
                 ) : null}
-                <span>
-                  {currency
-                    ? currencies.some((c) => c.currency === currency)
-                      ? `Amounts in ${currency}.`
-                      : `No open ${currency} invoice for these filters.`
-                    : "Amounts are LYD equivalents: Odoo's Amount Due at the rate booked on each invoice's date."}{' '}
-                  Click a bar to see the invoices behind it.
-                </span>
+                <InfoHint label="Currency view" detail={`${currency ? `Amounts in ${currency}.` : "Amounts are LYD equivalents: Odoo's Amount Due at the rate booked on each invoice's date."} Click a bar to see its invoices.`} />
               </div>
 
               <CreditPolicyChart
@@ -520,12 +505,11 @@ export default function ReceivablesCollectionsPage() {
               />
 
               <div style={grid2}>
-              <ChartPanel title={`Receivables trend · ${viewLabel}`} infoText="Open invoices per snapshot date (line), split into overdue and not yet due (stacked bars), with the same filters">
+              <ChartPanel title={`Receivables trend · ${viewLabel}`} infoText={`Open invoices per snapshot date (line), split into overdue and not yet due (stacked bars), with the same filters. ${trendNote}`}>
                 {trend.error ? (
                   <ErrorState message={trend.error} onRetry={trend.retry} />
                 ) : (
                   <>
-                    <p style={note}>{trendNote}</p>
                     <ComboChart
                       showTitle={false}
                       points={trendPoints}
@@ -659,15 +643,17 @@ export default function ReceivablesCollectionsPage() {
             </>
           )}
 
-          <section style={{ minWidth: 0 }}>
-            <h2 style={h2}>Customers · {viewLabel}</h2>
-            <p style={note}>
-              One row per company, customer and currency, sorted by overdue{currency ? `; ${currency} rows only` : '; amounts in LYD (≈ = converted at Odoo’s booked rate)'}. Open
-              invoices, their amounts and Overdue count customer invoices only; Unapplied credits = credit notes + unreconciled payments; Net
-              balance = every line (customers with credits only are listed too). Aging bucket = the customer&apos;s credit-policy zone, as on the
-              escalation chart (days overdue of the earliest unpaid invoice, counted from the day after its due date; Not yet due before it, — with credits only). Salesperson, team and segment list every value on the customer’s lines.
-              Click a row for every open document behind its net balance.
-            </p>
+          <section aria-label="Customer overdue analysis" style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              <h2 style={{ ...h2, margin: 0 }}>Customer overdue analysis</h2>
+              <InfoHint label="Customer overdue analysis" detail={[
+                `One row per company, customer and currency, sorted by overdue. ${currency ? `${currency} rows only.` : 'Amounts in LYD; ≈ means converted at Odoo’s booked rate.'}`,
+                'Open invoices and overdue amounts count customer invoices only. Unapplied credits = credit notes + unreconciled payments. Net balance = every line, including credits-only customers.',
+                'Aging bucket = days past the oldest unpaid invoice’s due date in this currency view: 1–30, 31–60, 61–90, or more than 90 days. Hover over a bucket for exact days. Not yet due includes invoices due today; — means no unpaid invoice.',
+                'Salesperson, branch and segment list every value on the customer’s lines. Click a row for the open documents behind its net balance.',
+              ].join('\n')} />
+              <span style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>{viewLabel}</span>
+            </div>
             {customers.error ? (
               <ErrorState message={customers.error} onRetry={customers.retry} />
             ) : customers.loading && !customers.data ? (
@@ -724,25 +710,15 @@ type CustomerGridRow = DebtCustomerRow & {
   salespersonList: string;
   teamList: string;
   segmentList: string;
-  /** the Aging bucket column's filter value (zone label / Not yet due / —) and badge (lib/debt/creditPolicy.ts) */
+  /** Numeric overdue range, Not yet due, or —. */
   agingBucket: string;
   bucket: CreditBucket;
 } & Record<string, unknown>;
 
-/** The Aging bucket cell: the credit-policy zone as a badge in the zone's colour ("Green · 0 – 15 Days"), grey for Not
- * yet due, plain "—" for credits only. */
+/** Numeric age range, with exact days on hover; no policy-color badge. */
 function BucketBadge({ bucket }: { bucket: CreditBucket }) {
-  if (!bucket.tone) return <span style={{ color: 'var(--ps-color-muted-text)' }}>{bucket.label}</span>;
   return (
-    <span
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6, padding: '1px 9px 1px 7px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-        whiteSpace: 'nowrap', color: bucket.tone === 'block' ? '#fff' : bucket.tone === 'notdue' ? 'var(--ps-color-text)' : '#111827', border: `1px solid ${creditColor(bucket.tone)}`, background: creditSoft(bucket.tone),
-      }}
-    >
-      <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, background: creditColor(bucket.tone), outline: bucket.tone === 'block' ? '1px solid #f3f4f6' : undefined }} />
-      {bucket.label}
-    </span>
+    <span title={bucket.detail} style={{ whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', color: bucket.label === '—' ? 'var(--ps-color-muted-text)' : 'var(--ps-color-text)' }}>{bucket.label}</span>
   );
 }
 
@@ -830,7 +806,7 @@ function DebtTotalBand({ all, currencies, snapshotDate }: { all: CardTotals & { 
     <div title={title} style={{ flex: `1 1 ${basis}px`, minWidth: 0, padding: '10px 14px', borderRadius: 10, background: 'var(--ps-color-surface)', border: '1px solid var(--ps-color-border)' }}>
       <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 700, color, fontVariantNumeric: 'tabular-nums', lineHeight: 1.3, overflowWrap: 'anywhere' }}>{value}</div>
-      <div style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)' }}>{sub}</div>
+      {sub && <div style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)' }}>{sub}</div>}
     </div>
   );
   return (
@@ -844,21 +820,17 @@ function DebtTotalBand({ all, currencies, snapshotDate }: { all: CardTotals & { 
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 24px', alignItems: 'center' }}>
         <div style={{ flex: '1 1 280px', minWidth: 0 }} title={`${approx}${formatMoney(all.currency, all.openAmount)}. ${OPEN_INVOICES_NOTE}.`}>
-          <h2 style={{ ...h2, margin: 0, fontSize: 15 }}>Total debt: all currencies ({all.currency} equivalent)</h2>
+          <h2 style={{ ...h2, margin: 0, fontSize: 15 }}>Total debt: all currencies ({all.currency} equivalent) <InfoHint label="Total debt" detail={`${approx}${formatMoney(all.currency, all.openAmount)}. ${OPEN_INVOICES_NOTE}. ${converted ? `≈ Converted at Odoo’s booked rate on each invoice’s date. ` : ''}Snapshot: ${formatDate(snapshotDate)}.`} /></h2>
           <div style={{ fontSize: 'clamp(34px, 4.2vw, 46px)', fontWeight: 800, lineHeight: 1.15, marginTop: 6, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
             {approx}
             {formatCompactMoney(all.currency, all.openAmount)}
-          </div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
-            {approx}
-            {formatMoney(all.currency, all.openAmount)}
           </div>
         </div>
         <div style={{ flex: '2 1 460px', minWidth: 0, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
           {stat('Overdue', `${approx}${formatCompactMoney(all.currency, all.overdueAmount)}`, `${pctLabel(all.overduePctOfOpen)} of total debt`, 'var(--ps-color-alert)', `${approx}${formatMoney(all.currency, all.overdueAmount)}`)}
           {stat('Not yet due', `${approx}${formatCompactMoney(all.currency, all.notDueAmount)}`, `${pctLabel(all.notDuePctOfOpen)} of total debt`, 'var(--ps-color-success)', `${approx}${formatMoney(all.currency, all.notDueAmount)}`)}
-          {stat('Customers', formatNumber(all.customers), 'with an open invoice', 'var(--ps-color-text)', 'A customer owing in several currencies counts once', 100)}
-          {stat('Invoices', formatNumber(all.openDocuments), 'with an amount due', 'var(--ps-color-text)', undefined, 100)}
+          {stat('Customers', formatNumber(all.customers), '', 'var(--ps-color-text)', 'Customers with an open invoice. A customer owing in several currencies counts once.', 100)}
+          {stat('Invoices', formatNumber(all.openDocuments), '', 'var(--ps-color-text)', 'Posted invoices with an amount due.', 100)}
         </div>
       </div>
       {mix.length > 0 ? (
@@ -881,11 +853,6 @@ function DebtTotalBand({ all, currencies, snapshotDate }: { all: CardTotals & { 
             ))}
           </div>
         </div>
-      ) : null}
-      {converted ? (
-        <p style={{ ...note, margin: 0 }}>
-          ≈ Converted to {all.currency} at Odoo&apos;s booked rate of each invoice&apos;s date (Odoo&apos;s Amount Due), snapshot of {formatDate(snapshotDate)}.
-        </p>
       ) : null}
     </section>
   );
@@ -946,8 +913,8 @@ function DebtCards({
           subValue={lydLine(t.openAmount, lyd?.open)}
           status="neutral"
         />
-        <Kpi label="Customers" value={formatNumber(t.customers)} variance="with an open invoice" status="neutral" />
-        <Kpi label="Invoices" value={formatNumber(t.openDocuments)} variance="posted invoices with an amount due" status="neutral" />
+        <Kpi label="Customers" value={formatNumber(t.customers)} title="Customers with an open invoice." status="neutral" />
+        <Kpi label="Invoices" value={formatNumber(t.openDocuments)} title="Posted invoices with an amount due." status="neutral" />
         <Kpi
           title={formatMoney(currency, t.overdueAmount)}
           label="Overdue"

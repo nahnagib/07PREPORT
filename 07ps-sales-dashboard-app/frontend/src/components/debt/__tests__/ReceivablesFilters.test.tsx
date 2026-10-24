@@ -111,18 +111,20 @@ describe('Receivables status strip', () => {
     } as DebtMeta;
   };
 
-  it('shows the Admin role all the data context, in the same order', () => {
+  it('keeps freshness visible and moves admin scope details into hover help', () => {
     mocked.isAdmin = true;
     withContext();
     render(<ReceivablesCollectionsPage />);
     const shown = items();
-    expect(shown).toHaveLength(6);
+    expect(shown).toHaveLength(4);
     expect(shown[0]).toMatch(/^Receivables snapshot /);
     expect(shown[1]).toMatch(/^Finance refresh /);
     expect(shown[2]).toMatch(/^Last finance run failed at /);
-    expect(shown[3]).toBe('Showing Customer debt, inter-company excluded');
-    expect(shown[4]).toBe('Always excluded: segments Backoffice, Inter Company');
-    expect(shown[5]).toBe("Amounts per currency; LYD equivalents (≈) are Odoo's own amounts, at the Odoo rate of each invoice's date");
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Data scope details' }));
+    expect(screen.getByRole('tooltip').textContent).toContain('Showing Customer debt; inter-company excluded');
+    expect(screen.getByRole('tooltip').textContent).toContain('Always excluded: segments Backoffice, Inter Company');
+    expect(screen.getByRole('tooltip').textContent).toContain('Amounts per currency; LYD equivalents');
   });
 
   it('shows everyone else the finance refresh alone, with nothing else in the strip', () => {

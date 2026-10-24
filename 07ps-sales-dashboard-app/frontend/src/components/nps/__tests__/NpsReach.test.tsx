@@ -46,14 +46,27 @@ it('no share when nothing was sent, and no start label for all history', () => {
   expect(screen.queryByText(/Reach data from/)).toBeNull();
 });
 
-it('shows reasons, counts with their share, fixable flags and hints', () => {
+it('shows short reasons and shares in a pie, with causes and fixable details only on hover', () => {
   const errors = [...ready.errors, { key: 'other', label: 'Other', fixable: false, hint: 'Any other failure value.', count: 6 }];
   render(<NpsReach part="errors" state={state({ ...ready, errors })} />);
-  expect(screen.getByText('Phone format · Fixable')).toBeTruthy();
-  expect(screen.getByRole('img', { name: 'Phone format: 2 (25.00%)' })).toBeTruthy();
-  expect(screen.getByRole('img', { name: 'Other: 6 (75.00%)' })).toBeTruthy();
+  expect(screen.getByText('Phone wrong')).toBeTruthy();
+  const phone = screen.getByRole('button', { name: 'Phone wrong: 2 (25.00%)' });
+  expect(screen.getByRole('button', { name: 'Other: 6 (75.00%)' })).toBeTruthy();
+  expect(screen.getByRole('img', { name: 'Message errors by reason. Total: 8' })).toBeTruthy();
   expect(screen.getByText('(75.00%)')).toBeTruthy();
-  expect(screen.getByText('Correct the number in Odoo.')).toBeTruthy();
+  expect(screen.queryByRole('tooltip')).toBeNull();
+  expect(screen.queryByText(/Correct the number in Odoo/)).toBeNull();
+  fireEvent.mouseEnter(phone);
+  expect(screen.getByRole('tooltip').textContent).toContain('Correct the number in Odoo.');
+  expect(screen.getByRole('tooltip').textContent).toContain('Fixable:');
+  fireEvent.mouseLeave(phone);
+  expect(screen.queryByRole('tooltip')).toBeNull();
+  fireEvent.focus(phone);
+  expect(screen.getByRole('tooltip').textContent).toContain('incorrect number');
+  fireEvent.keyDown(phone, { key: 'Escape' });
+  expect(screen.queryByRole('tooltip')).toBeNull();
+  fireEvent.click(phone);
+  expect(screen.getByRole('tooltip').textContent).toContain('incorrect number');
 });
 
 it('distinguishes a loaded empty period from waiting', () => {

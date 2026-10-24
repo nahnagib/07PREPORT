@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { EmptyState, ErrorState, LoadingSkeleton, Select, type SelectOption } from '@07ps/ui';
 import type { CreditCustomer, CreditPolicyZone, DebtAging } from '../../lib/api';
 import { formatCompactMoney, formatDate, formatMoney, formatNumber } from '../../lib/format';
+import { InfoHint } from './InfoHint';
 import {
   CHART_MIN_WIDTH,
   chartColumns,
@@ -15,6 +16,7 @@ import {
   nextZoneText,
   placeTooltip,
   zoneRange,
+  zoneLabel,
   timelineSections,
   type PlacedCreditDot,
 } from '../../lib/debt/creditPolicy';
@@ -78,14 +80,17 @@ export function CreditPolicyChart({ data, loading, error, onRetry, term, onTermC
     <section aria-label="Credit Policy Escalation" style={{ ...panel, opacity: loading ? 0.65 : 1, transition: 'opacity .15s' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
         <div style={{ minWidth: 0, flex: '1 1 440px' }}>
-          <h3 style={h3}>Credit Policy Escalation · {viewLabel}</h3>
-          <p style={note}>
-            Each dot is a customer, placed by the number of days overdue of its oldest unpaid invoice (counted from the overdue date = day
-            after due date). Click a dot for its details.
-          </p>
+          <h3 style={{ ...h3, display: 'flex', alignItems: 'center', gap: 6 }}>Credit Policy Escalation · {viewLabel}
+            <InfoHint label="Credit Policy Escalation" detail={[
+              'Each dot is a customer, placed by the number of days overdue of its oldest unpaid invoice. Policy day 0 is the first day after the due date.',
+              'Dot size = overdue amount. Each customer appears once. Hover or focus for details; click a dot for its open invoices.',
+              `Dashed ring = moves to the next zone within ${data.escalationWindowDays} days.`,
+              data.asOf ? `Days counted to ${formatDate(data.asOf)}.` : '',
+            ].filter(Boolean).join('\n')} />
+          </h3>
         </div>
         <div style={{ width: 200, flex: '0 0 200px', maxWidth: '100%' }}>
-          <Select label="PAYMENT TERM (FILTER)" options={termOptions} value={term ? [term] : []} onChange={(v) => onTermChange(v[0] ?? null)} placeholder="All terms" searchable />
+          <Select label="Payment term" options={termOptions} value={term ? [term] : []} onChange={(v) => onTermChange(v[0] ?? null)} placeholder="All terms" searchable />
         </div>
       </div>
 
@@ -103,19 +108,6 @@ export function CreditPolicyChart({ data, loading, error, onRetry, term, onTermC
         />
       )}
 
-      <div aria-label="Legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
-        <span>Dot size = overdue amount</span>
-        <span>Position = days overdue of the oldest unpaid invoice (from overdue date)</span>
-        <span>Each customer appears once</span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <svg width="14" height="14" aria-hidden>
-            <circle cx="7" cy="7" r="5.5" fill="none" stroke="var(--ps-color-text)" strokeDasharray="2.5 2" />
-          </svg>
-          Dashed ring = moves to the next zone within {data.escalationWindowDays} days
-        </span>
-        {data.asOf ? <span>Days counted to {formatDate(data.asOf)}</span> : null}
-      </div>
-
       {hovered && hover ? <DotTooltip c={hovered} anchor={hover.anchor} zones={data.zones} money={money} foreign={!data.allCurrencies && ccy !== COMPANY_CURRENCY} /> : null}
     </section>
   );
@@ -124,7 +116,7 @@ export function CreditPolicyChart({ data, loading, error, onRetry, term, onTermC
 // ---- the track ---------------------------------------------------------------------------------------------------------
 const BAND_PAD = 10;
 const BAND_H = 160;
-const HEADER_H = 126;
+const HEADER_H = 86;
 const AXIS_H = 42;
 
 function EscalationTrack({
@@ -168,13 +160,12 @@ function EscalationTrack({
           })}
           {sections.map((s, i) => s.key === 'BLOCK' ? (
             <div key={cols.sections[i].key} data-block-action={s.minDays}
-              title={s.details}
+              title={[s.action, s.details].filter(Boolean).join('\n')}
               style={{ position: 'absolute', left: cols.sections[i].x0, width: cols.sections[i].x1 - cols.sections[i].x0,
-                top: 78, bottom: 0, boxSizing: 'border-box', padding: '6px 8px', color: '#f3f4f6',
+                top: 56, bottom: 0, boxSizing: 'border-box', padding: '6px 8px', color: '#f3f4f6',
                 background: creditBand('block'), borderTop: '1px solid #ffffff40',
                 borderLeft: s.minDays > 45 ? '1px solid #ffffff40' : undefined }}>
               <div style={{ fontSize: 11, fontWeight: 700 }}>{s.maxDays === null ? `>${s.minDays - 1} Days` : zoneRange(s)}</div>
-              <div style={{ marginTop: 3, fontSize: 10.5, lineHeight: 1.3 }}>{s.action}</div>
             </div>
           ) : null)}
         </div>
@@ -221,17 +212,15 @@ function Header({ x0, x1, zone, count, amount }: {
 }) {
   const ink = zone.key === 'BLOCK' ? '#f3f4f6' : 'var(--ps-credit-zone-ink)';
   return (
-    <div data-status={zone.key} style={{ position: 'absolute', left: x0, width: x1 - x0, top: 0, bottom: 0,
+    <div data-status={zone.key} title={`${zoneLabel(zone)} · ${zone.owner}\n${zone.action}`} style={{ position: 'absolute', left: x0, width: x1 - x0, top: 0, bottom: 0,
       boxSizing: 'border-box', background: creditBand(zone.tone), color: ink,
       borderRight: zone.key !== 'BLOCK' ? '1px solid var(--ps-credit-main-line)' : undefined }}>
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 5, height: 27,
         padding: '0 6px', background: creditHeader(zone.tone), color: zone.key === 'YELLOW' ? '#111827' : '#fff',
         fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>
-        <span>{zone.label}</span><span aria-hidden>·</span><span>{zoneRange(zone)}</span>
+        <span>{zoneLabel(zone)}</span><span aria-hidden>·</span><span>{zoneRange(zone)}</span>
       </div>
       <div style={{ padding: '6px 8px', textAlign: 'center' }}>
-        <div style={{ fontSize: 12, fontWeight: 700 }}>{zone.owner}</div>
-        {zone.key !== 'BLOCK' ? <div style={{ fontSize: 11, marginTop: 3, lineHeight: 1.25, minHeight: 28 }}>{zone.action}</div> : null}
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', columnGap: 8, marginTop: 4,
           fontSize: 10.5, fontVariantNumeric: 'tabular-nums', lineHeight: 1.4 }}>
           <span><strong>{formatNumber(count)}</strong> customer{count === 1 ? '' : 's'}</span>
@@ -249,7 +238,7 @@ function Dot({
   onHover: (c: CreditCustomer | null, anchor?: Element) => void; onClick: (c: CreditCustomer) => void;
 }) {
   const blocked = zone.key === 'BLOCK';
-  const label = `${c.customer} · ${days(c.daysOverdue)} overdue · ${zone.label} (${zone.owner}) · ${money(c.overdueAmount)} overdue${nextText ? ` · ${nextText}` : ''}`;
+  const label = `${c.customer} · ${days(c.daysOverdue)} overdue · ${zoneLabel(zone)} (${zone.owner}) · ${money(c.overdueAmount)} overdue${nextText ? ` · ${nextText}` : ''}`;
   return (
     <g
       role="button"
@@ -321,7 +310,7 @@ function DotTooltip({ c, anchor, zones, money, foreign }: { c: CreditCustomer; a
       {zone ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0 2px', fontWeight: 700 }}>
           <span aria-hidden style={{ width: 10, height: 10, borderRadius: '50%', background: creditColor(zone.tone), outline: zone.key === 'BLOCK' ? '1px solid #d1d5db' : undefined }} />
-          {zone.label} · {zone.owner}
+          {zoneLabel(zone)} · {zone.owner}
         </div>
       ) : null}
       <dl style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '4px 12px', margin: '8px 0 0' }}>
@@ -337,7 +326,7 @@ function DotTooltip({ c, anchor, zones, money, foreign }: { c: CreditCustomer; a
         <Fact k="Overdue date" v={formatDate(c.oldestOverdueDate)} />
         <Fact k="Days overdue" v={<strong style={mono}>{formatNumber(c.daysOverdue)}</strong>} />
         <Fact k="Payment term" v={<span dir="auto">{c.paymentTerm}</span>} />
-        <Fact k="Current Status" v={zone?.label ?? c.zone} />
+        <Fact k="Current Status" v={zone ? zoneLabel(zone) : c.zone} />
         <Fact k="Responsible Role" v={c.responsibleRole} />
         <Fact k="Required Action" v={c.requiredAction} />
         {c.actionDetails ? <Fact k="Additional action" v={c.actionDetails} /> : null}
@@ -360,7 +349,6 @@ function Fact({ k, v, muted }: { k: string; v: React.ReactNode; muted?: boolean 
 }
 
 const h3: React.CSSProperties = { margin: 0, fontSize: 15, fontWeight: 700 };
-const note: React.CSSProperties = { margin: '4px 0 0', fontSize: 11.5, lineHeight: 1.4, color: 'var(--ps-color-muted-text)', maxWidth: '110ch' };
 const sub: React.CSSProperties = { fontSize: 12, color: 'var(--ps-color-muted-text)' };
 const mono: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
 const panel: React.CSSProperties = {

@@ -3,7 +3,7 @@ import { ChartPanel, EmptyState, ErrorState, LoadingSkeleton } from '@07ps/ui';
 import type { NpsFollowupSummary } from '../../lib/api';
 import { formatNumber } from '../../lib/format';
 import { FOLLOWUP_BUCKETS } from '../../lib/nps/view';
-import { BarList } from './BarList';
+import { ReasonPie } from './ReasonPie';
 
 export type FollowupState = { data: NpsFollowupSummary | null; loading: boolean; error: string | null; retry: () => void };
 
@@ -26,15 +26,15 @@ export function FollowupCharts({ state, part }: { state: FollowupState; part: 'r
   const s = state.data;
   let body: React.ReactNode;
   if (state.error) body = <ErrorState message={state.error} onRetry={state.retry} />;
-  else if (!s) body = <LoadingSkeleton variant="chart" />;
+  else if (!s || state.loading) body = <LoadingSkeleton variant="chart" />;
   else if (s.charted === 0) body = <><EmptyState message="No followed-up detractors for these filters and dates." /><LeftOut s={s} /></>;
   else if (part === 'reason') {
     body = (
       <>
-        <BarList ariaLabel="Detractors by reason" testId="fu-reason"
+        <ReasonPie ariaLabel="Detractors by reason" testId="fu-reason" totalLabel="Detractors"
           items={s.byReason.map((r) => ({
-            key: r.reasonId === null ? 'none' : String(r.reasonId), label: r.label, title: r.labelAr ?? undefined, count: r.count,
-            color: r.reasonId === null ? 'var(--ps-color-muted-text)' : 'var(--ps-color-alert)',
+            key: r.reasonId === null ? 'none' : String(r.reasonId), label: r.label, hint: r.labelAr ?? undefined, count: r.count,
+            color: r.reasonId === null ? 'var(--ps-nps-slate)' : ['var(--ps-nps-blue)', 'var(--ps-nps-teal)', 'var(--ps-nps-cyan)', 'var(--ps-nps-lilac)', 'var(--ps-nps-amber)'][Math.abs(r.reasonId - 1) % 5],
           }))} />
         <LeftOut s={s} />
       </>
@@ -43,7 +43,7 @@ export function FollowupCharts({ state, part }: { state: FollowupState; part: 'r
     const counts = Object.fromEntries(s.byStatus.map((b) => [b.key, b.count]));
     body = (
       <>
-        <BarList ariaLabel="Detractors by status" testId="fu-status"
+        <ReasonPie ariaLabel="Detractors by status" testId="fu-status" totalLabel="Detractors"
           items={FOLLOWUP_BUCKETS.map((b) => ({ key: b.key, label: b.label, count: counts[b.key] ?? 0, color: b.color }))} />
         <LeftOut s={s} />
       </>
@@ -54,7 +54,7 @@ export function FollowupCharts({ state, part }: { state: FollowupState; part: 'r
       title={part === 'reason' ? 'Detractors by reason' : 'Detractors by status'}
       infoText={part === 'reason'
         ? 'The reason recorded on each follow-up case (Detractor Follow-up page), live. "Not yet classified" = a case without a reason yet. Historical and Cancelled cases are left out.'
-        : 'Each follow-up case, live: solved in under 48 hours (green), in 48 hours to 5 days (yellow), in more than 5 days (red), from the rating time to the time it was solved; or still pending (New, Contacted, In progress). Historical and Cancelled cases are left out.'}
+        : 'Each follow-up case, live: solved in under 48 hours (teal), in 48 hours to 5 days (amber), in more than 5 days (rose), from the rating time to the time it was solved; or still pending (blue: New, Contacted, In progress). Historical and Cancelled cases are left out.'}
     >
       {body}
     </ChartPanel>

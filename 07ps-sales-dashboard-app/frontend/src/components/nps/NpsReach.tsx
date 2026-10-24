@@ -3,7 +3,8 @@ import { ChartPanel, EmptyState, ErrorState, KpiTile, LoadingSkeleton } from '@0
 import type { NpsReach as ReachData } from '../../lib/api';
 import { formatDate, formatNumber } from '../../lib/format';
 import { pct } from '../../lib/nps/view';
-import { BarList } from './BarList';
+import { errorPieItems } from '../../lib/nps/errorReasons';
+import { ReasonPie } from './ReasonPie';
 import { Waiting } from './Waiting';
 
 export type ReachState = { data: ReachData | null; loading: boolean; error: string | null; retry: () => void };
@@ -38,7 +39,7 @@ export function NpsReach({ state, part }: { state: ReachState; part: 'boxes' | '
             ['Not Delivered', totals.notDelivered], ['Read', totals.read], ['Error', totals.error],
           ] as const).map(([label, value]) => (
             <div key={label} title={BOX_TIPS[label]} data-testid={`reach-box-${label}`}>
-              <KpiTile label={label} value={formatNumber(value)}
+              <KpiTile label={label} value={formatNumber(value)} emphasizeLabel
                 subValue={label === 'Total Reach' ? '100% of reach' : `${share(value, totals.totalReach)} of reach`} />
             </div>
           ))}
@@ -49,8 +50,7 @@ export function NpsReach({ state, part }: { state: ReachState; part: 'boxes' | '
   } else if (data.errors.length === 0) body = <EmptyState message="No message errors for these companies and dates." />;
   else {
     body = (
-      <BarList ariaLabel="Message errors by reason" testId="reach-errors"
-        items={data.errors.map((e) => ({ key: e.key, label: e.label, suffix: e.fixable ? ' · Fixable' : undefined, count: e.count, color: 'var(--ps-color-alert)', hint: e.hint }))} />
+      <ReasonPie ariaLabel="Message errors by reason" testId="reach-errors" totalLabel="Errors" items={errorPieItems(data.errors)} />
     );
   }
   const ready = data?.status === 'ready';
@@ -58,7 +58,7 @@ export function NpsReach({ state, part }: { state: ReachState; part: 'boxes' | '
     <ChartPanel title={part === 'boxes' ? 'Message reach' : 'Errors by reason'}
       infoText={part === 'boxes'
         ? 'WhatsApp feedback messages by message date (Tripoli time) and company. Delivered, Read, Not Delivered (sent) and Error are separate current states; each box shows its share of Total Reach. Counts are messages, not unique recipients.'
-        : 'Failed feedback messages by reason, with the share of all errors. Fixable reasons can be corrected on our side.'}>
+        : 'Failed feedback messages by reason, with the share of all errors. Hover over a slice or hover/focus/tap its legend entry for the cause and fixable details.'}>
       {data?.companyAndDateOnly && <p style={{ fontSize: 12 }}>Company and date filters only</p>}
       {ready && data.reachStart && <p style={{ fontSize: 12, color: 'var(--ps-color-neutral-text)' }}>Reach data from {formatDate(data.reachStart)}</p>}
       {body}
