@@ -120,7 +120,9 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
 
     if (result.exitCode !== 0) {
       recordedTerminalStatus = true;
-      const errorMessage = result.stderrTail || 'Pipeline exited non-zero with no captured output.';
+      // The platform logger can write failures to stdout (including disabled jobs).
+      const errorMessage = result.stderrTail || result.stdoutTail || correlated?.errorMessage ||
+        'Pipeline exited non-zero with no captured output.';
       if (willRetry) {
         await markRunRetrying(runId, errorMessage);
       } else {
@@ -138,7 +140,7 @@ async function processEtlJob(job: Job<EtlJobData>): Promise<void> {
       // (see enqueuePipelineRun in ../queue/etlQueue.ts) instead of silently swallowing the failure.
       throw new Error(
         `ETL run "${label}" exited with code ${result.exitCode} after ${result.durationMs}ms. ` +
-          `stderr tail: ${result.stderrTail || '(empty)'}`,
+          `error: ${errorMessage}`,
       );
     }
 

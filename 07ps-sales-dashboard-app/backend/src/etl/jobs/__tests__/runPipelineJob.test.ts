@@ -80,4 +80,28 @@ describe('ETL worker exit-code mapping', () => {
     await captured.processor!(bullJob());
     expect(tracker.finishRun).toHaveBeenCalledWith(9, expect.objectContaining({ status: 'success', exitCode: 0 }));
   });
+
+  it.each([0, 2])('surfaces stdout-only NPS failures on attempt %i', async (attemptsMade) => {
+    const errorMessage = "Job 'process_nps' is disabled in this environment: NPS_ENABLED is not true";
+    tracker.correlateLatestEtlRun.mockResolvedValue(null);
+    runner.runPipeline.mockResolvedValue({ ...result(1), stderrTail: '', stdoutTail: errorMessage });
+    const job = bullJob(attemptsMade);
+    job.data.job = 'process_nps';
+    await expect(captured.processor!(job)).rejects.toThrow(errorMessage);
+    if (attemptsMade === 0) {
+      expect(tracker.markRunRetrying).toHaveBeenCalledWith(9, errorMessage);
+    } else {
+      expect(tracker.finishRun).toHaveBeenCalledWith(9, expect.objectContaining({
+        status: 'failed', errorMessage,
+      }));
+    }
+  });
+
+  it('uses the correlated platform failure when both output streams are empty', async () => {
+    runner.runPipeline.mockResolvedValue({ ...result(1), stderrTail: '' });
+    await expect(captured.processor!(bullJob(2))).rejects.toThrow('finance failed');
+    expect(tracker.finishRun).toHaveBeenCalledWith(9, expect.objectContaining({
+      status: 'failed', errorMessage: 'finance failed: RuntimeError: Odoo read of account.move.line timed out',
+    }));
+  });
 });
