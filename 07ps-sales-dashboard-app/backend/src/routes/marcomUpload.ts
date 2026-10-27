@@ -13,6 +13,7 @@ import {
   MarcomError, auditMarcom, commitUpload, getBatch, getBatchFile, getFreshness, getStagedIssues,
   listBatches, previewRemoveBatch, removeBatch, rollbackBatch, validateUpload,
 } from '../marcom/service';
+import { listBrandCompanies, setBrandCompany } from '../marcom/brandCompany';
 
 /**
  * MARCOM Data Upload (admin). Every route sits behind `admin_marcom_upload` -- enforced here on
@@ -173,6 +174,32 @@ marcomUploadRouter.post('/batches/:id/remove', requirePermission('admin_marcom_u
     const id = intParam(req.params.id);
     if (id === null) { res.status(404).json({ error: 'Batch not found.', code: 'BATCH_NOT_FOUND' }); return; }
     res.json(await removeBatch({ batchId: id, actor: actorOf(req), reason: req.body?.reason }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------------- brand -> company (migration 0057)
+
+// Read: anyone who can open the upload page. Change: the same people who can import (`create`).
+marcomUploadRouter.get('/brands', async (_req, res, next) => {
+  try {
+    res.json(await listBrandCompanies());
+  } catch (err) {
+    next(err);
+  }
+});
+
+marcomUploadRouter.put('/brands/:id/company', requirePermission('admin_marcom_upload', 'create'), async (req, res, next) => {
+  try {
+    const id = intParam(req.params.id);
+    if (id === null) { res.status(404).json({ error: 'Brand not found.', code: 'BRAND_NOT_FOUND' }); return; }
+    const raw = req.body?.companyKey;
+    if (raw !== null && !(typeof raw === 'number' && Number.isInteger(raw) && raw >= 0)) {
+      res.status(400).json({ error: 'companyKey must be a whole number or null.', code: 'BAD_PARAMS' });
+      return;
+    }
+    res.json(await setBrandCompany(id, raw, req.user!.id));
   } catch (err) {
     next(err);
   }

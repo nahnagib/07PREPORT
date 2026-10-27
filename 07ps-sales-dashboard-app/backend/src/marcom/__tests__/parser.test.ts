@@ -47,7 +47,7 @@ describe('template as shipped', () => {
     expect(r.tables.campaigns.rows[0].data).toMatchObject({
       name: 'Ramadan Lighting Campaign', startDate: '2026-02-01', endDate: '2026-03-15', status: 'Completed', spend: 120000, revenueAttributed: 650000,
     });
-    expect(r.tables.media.rows[0].data).toMatchObject({ mediaType: '1-Street Lights', units: 45, cost: 30000 });
+    expect(r.tables.media.rows[0].data).toMatchObject({ mediaType: '1-Street Lights', city: 'Tripoli', units: 45, cost: 30000 });
     expect(r.tables.social.rows[0].data).toMatchObject({ platform: 'Instagram', followers: 52000, impressions: 180000, clicks: 9500, engagementPaid: 4200, engagementOrganic: 3100 });
     expect(r.tables.web.rows[0].data).toMatchObject({ bounceVisitors: 3400, totalVisitors: 12000, sessions: 15500, totalMinutes: 54250 });
     expect(r.tables.trade.rows[0].data).toMatchObject({ compliancePct: 0.94, giveawaysStockPct: 0.88, printedStockPct: 0.91, attendeesActual: 460, attendeesExpected: 500 });
@@ -117,7 +117,7 @@ describe('validation', () => {
 
   it('accepts a P2-B row that references a stored campaign', async () => {
     const wb = await template();
-    setRow(wb.getWorksheet(SHEET_P2)!, 31, ['Stored Campaign', '2-Mega Billboards', 3, 10]);
+    setRow(wb.getWorksheet(SHEET_P2)!, 31, ['Stored Campaign', '2-Mega Billboards', 'Misrata', 3, 10]);
     const r = await parse(wb, { knownCampaigns: ['stored campaign'] });
     expect(errors(r)).toEqual([]);
     expect(r.tables.media.rows).toHaveLength(1);

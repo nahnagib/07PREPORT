@@ -33,6 +33,12 @@ export const NPS_CONTEXT = [
   'Every rating figure uses the rating date (Tripoli time).',
 ].join('\n');
 
+/** Short info text of the Satisfaction Trend chart (the full context sits on the NPS Score card's title). */
+export const TREND_INFO = 'NPS and CSAT per period (lines) with responders (bars). Muted lines: periods below the minimum number of responders.';
+
+/** Short info text of the Responders Trend chart. */
+export const RESPONDERS_TREND_INFO = 'Responders per period (bars) with Promoters, Passives and Detractors (lines), for the selected filters, by week, month or year.';
+
 /** Two decimals, as the requirement shows them (64.97); "—" without a value. */
 export function fmt2(value: number | null | undefined): string {
   return value === null || value === undefined ? '—' : value.toFixed(2);
@@ -48,9 +54,9 @@ export function smallSample(counts: Pick<NpsCounts, 'belowMinimum' | 'responders
   return counts.belowMinimum ? `n = ${counts.responders}` : null;
 }
 
-/** The line under the gauge: "Promoters 70.06% − Detractors 5.08%". */
-export function npsBreakdown(counts: Pick<NpsCounts, 'promotersPct' | 'detractorsPct'>): string {
-  return `Promoters ${pct(counts.promotersPct)} − Detractors ${pct(counts.detractorsPct)}`;
+/** Hover of the NPS number: the formula with this selection's figures, "NPS = % Promoters − % Detractors = 70.06% − 5.08% = 64.97". */
+export function npsBreakdown(counts: Pick<NpsCounts, 'promotersPct' | 'detractorsPct' | 'nps'>): string {
+  return `NPS = % Promoters − % Detractors = ${pct(counts.promotersPct)} − ${pct(counts.detractorsPct)} = ${fmt2(counts.nps)}`;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

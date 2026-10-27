@@ -182,6 +182,42 @@ export function dailyTrendPoints(points: DebtTrend['points']): { label: string; 
   return out;
 }
 
+/** Day / Week / Month switch of the Receivables trend (same choices and week rule as the Collections trend). */
+export type ReceivablesGrain = 'day' | 'week' | 'month';
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** First day of the period holding `iso`: the day, the Sunday of its week (Sunday..Saturday), the 1st of its month. */
+export function receivablesPeriodStart(iso: string, grain: ReceivablesGrain): string {
+  if (grain === 'day') return iso;
+  if (grain === 'month') return `${iso.slice(0, 7)}-01`;
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Receivables trend points for a grain. Receivables are a BALANCE (what is open on a snapshot date), so a week or a
+ * month is never a sum of its days: each period shows its LAST snapshot that has a value (the closing balance), and
+ * `asOf` says which day that was. Days keep the gap-preserving daily series (dailyTrendPoints). Weeks run Sunday to
+ * Saturday and are named by their Sunday ("4 Oct 26"), months "Oct 2026" -- the same labels as the Collections trend.
+ */
+export function receivablesTrendPoints(points: DebtTrend['points'], grain: ReceivablesGrain): { label: string; total: number | null; overdue: number | null; notDue: number | null; asOf: string | null; periodStart: string }[] {
+  if (grain === 'day') return dailyTrendPoints(points).map((p) => ({ ...p, asOf: null, periodStart: p.label }));
+  const last = new Map<string, DebtTrend['points'][number]>();
+  for (const p of [...points].sort((a, b) => a.snapshotDate.localeCompare(b.snapshotDate))) {
+    if (p.open === null) continue;
+    last.set(receivablesPeriodStart(p.snapshotDate, grain), p); // later snapshots overwrite earlier ones
+  }
+  return [...last.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([start, p]) => {
+    const [y, m, d] = start.split('-').map(Number);
+    return {
+      label: grain === 'month' ? `${SHORT_MONTHS[m - 1]} ${y}` : `${d} ${SHORT_MONTHS[m - 1]} ${String(y).slice(2)}`,
+      total: p.open, overdue: p.overdue, notDue: p.notDue, asOf: p.snapshotDate, periodStart: start,
+    };
+  });
+}
+
 // ---- page currency filter (2026-10-15) ------------------------------------------------------------------------------
 /** The page-wide currency filter lives in the URL (?currency=USD) so a view can be shared and survives a refresh;
  * absent / invalid = null = "All currencies (≈ LYD)". */

@@ -33,6 +33,10 @@ export const BOARD_SOLVED_DAYS = 30;
 export const GREEN_HOURS = 48;
 export const YELLOW_HOURS = 120;
 export const MAX_TEXT = 2000;
+/** The free-text case owner (migration 0059). */
+export const MAX_OWNER = 120;
+/** `owners` filter value meaning "no owner yet". */
+export const NO_OWNER = '__none__';
 const MAX_BOARD_CASES = 2000;
 export const MAX_PAGE_SIZE = 500;
 
@@ -114,8 +118,8 @@ export interface FollowupQuery {
   dateTo?: string;
   statuses: FollowupStatus[];
   reasonIds: number[];
-  /** 0 = no owner yet */
-  ownerIds: number[];
+  /** owner names (free text, migration 0059); NO_OWNER = no owner yet */
+  owners: string[];
   sourceChanged?: boolean;
   search?: string;
   page: number;
@@ -171,6 +175,15 @@ function listOf(value: unknown): string[] {
     .filter(Boolean);
 }
 
+/** `owners=A,B` or repeated; each trimmed, at most 20, each at most MAX_OWNER characters. */
+function ownerList(value: unknown): string[] {
+  if (value === undefined || value === null || value === '') return [];
+  const raw = (Array.isArray(value) ? value : [value]).flatMap((v) => String(v).split(','));
+  const out = [...new Set(raw.map((s) => s.trim()).filter(Boolean))];
+  if (out.length > 20 || out.some((s) => s.length > MAX_OWNER)) throw new FollowupValidationError('query', 'owners is not valid');
+  return out;
+}
+
 function intList(value: unknown, name: string, allowZero = false): number[] {
   return listOf(value).map((s) => {
     const n = Number(s);
@@ -203,7 +216,7 @@ export function parseFollowupQuery(q: Record<string, unknown>): FollowupQuery {
     dateTo: optionalDate(q.dateTo, 'dateTo'),
     statuses: statuses as FollowupStatus[],
     reasonIds: intList(q.reasonIds, 'reasonIds'),
-    ownerIds: intList(q.ownerIds, 'ownerIds', true),
+    owners: ownerList(q.owners),
     sourceChanged: sc,
     search: typeof q.search === 'string' && q.search.trim() ? q.search.trim().slice(0, 100) : undefined,
     page,
@@ -214,7 +227,7 @@ export function parseFollowupQuery(q: Record<string, unknown>): FollowupQuery {
 // -- SQL -------------------------------------------------------------------------------------------------------------------
 const SELECT = `
   SELECT c.case_id, c.response_id, c.rated_at_local, c.status, c.reason_id, r.name_en AS reason_en, r.name_ar AS reason_ar,
-         c.owner_user_id, o.display_name AS owner_name, c.contacted_at, c.solved_at, c.root_cause, c.action_taken, c.notes,
+         c.owner_user_id, COALESCE(c.owner_name, o.display_name) AS owner_name, c.contacted_at, c.solved_at, c.root_cause, c.action_taken, c.notes,
          c.source_changed, c.source_changed_at, c.source_change_reason, c.version, c.updated_at, u.display_name AS updated_by_name,
          f.company, f.customer, f.order_ref, f.delivery_code, f.sales_team, f.salesperson, f.team_branch,
          f.CompanyKey, f.SalesOrderKey, f.PickingID, f.has_comment
@@ -250,11 +263,12 @@ export function followupWhere(q: Partial<FollowupQuery>, f: Filters): Where {
     parts.push(`c.reason_id IN (${q.reasonIds.map(() => '?').join(', ')})`);
     params.push(...q.reasonIds);
   }
-  if (q.ownerIds?.length) {
-    const ids = q.ownerIds.filter((n) => n > 0);
-    const alts = [...(ids.length ? [`c.owner_user_id IN (${ids.map(() => '?').join(', ')})`] : []), ...(q.ownerIds.includes(0) ? ['c.owner_user_id IS NULL'] : [])];
+  if (q.owners?.length) {
+    // owner_name holds every owner since migration 0059 (old user owners were copied into it)
+    const names = q.owners.filter((n) => n !== NO_OWNER);
+    const alts = [...(names.length ? [`c.owner_name IN (${names.map(() => '?').join(', ')})`] : []), ...(q.owners.includes(NO_OWNER) ? ['c.owner_name IS NULL'] : [])];
     parts.push(`(${alts.join(' OR ')})`);
-    params.push(...ids);
+    params.push(...names);
   }
   if (q.sourceChanged !== undefined) {
     parts.push('c.source_changed = ?');
@@ -415,15 +429,21 @@ export async function fetchCase(pool: Pool, caseId: number, f: Filters, canSeeCo
 export interface FollowupOptions {
   statuses: readonly FollowupStatus[];
   reasons: FollowupReason[];
-  owners: { userId: number; name: string }[];
+  /** Owner names already used on cases plus active users' names: suggestions for the free-text Owner field and the
+   *  Owner filter's choices. Sorted, unique. */
+  owners: string[];
 }
 
 export async function fetchOptions(pool: Pool): Promise<FollowupOptions> {
-  const [owners] = await pool.query("SELECT user_id, display_name FROM app_user WHERE is_active = 1 AND status <> 'INACTIVE' ORDER BY display_name");
+  const [owners] = await pool.query(
+    `SELECT DISTINCT owner_name AS name FROM nps_followup_case WHERE owner_name IS NOT NULL AND owner_name <> ''
+     UNION
+     SELECT display_name AS name FROM app_user WHERE is_active = 1 AND status <> 'INACTIVE'
+     ORDER BY name`);
   return {
     statuses: FOLLOWUP_STATUSES,
     reasons: await listReasons(pool),
-    owners: (owners as Record<string, unknown>[]).map((o) => ({ userId: Number(o.user_id), name: String(o.display_name) })),
+    owners: [...new Set((owners as Record<string, unknown>[]).map((o) => String(o.name).trim()).filter(Boolean))],
   };
 }
 
@@ -433,7 +453,8 @@ export interface CaseInput {
   version?: unknown;
   status?: unknown;
   reasonId?: unknown;
-  ownerUserId?: unknown;
+  /** free text (migration 0059); '' or null clears it */
+  owner?: unknown;
   contactedAt?: unknown;
   solvedAt?: unknown;
   rootCause?: unknown;
@@ -460,6 +481,13 @@ function textInput(v: unknown, field: string, label: string): string | null {
   return s || null;
 }
 
+function ownerInput(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  const s = String(v).replace(/\s+/g, ' ').trim();
+  if (s.length > MAX_OWNER) throw new FollowupValidationError('case.owner', `Owner is limited to ${MAX_OWNER} characters.`, 'owner');
+  return s || null;
+}
+
 function idInput(v: unknown, field: string, label: string): number | null {
   if (v === null || v === '' || v === undefined) return null;
   const n = Number(v);
@@ -474,7 +502,7 @@ export function applyEdit(existing: FollowupCase, input: CaseInput, now: string)
   const next = {
     status: existing.status,
     reasonId: existing.reasonId,
-    ownerUserId: existing.ownerUserId,
+    ownerName: existing.ownerName,
     contactedAt: existing.contactedAt,
     solvedAt: existing.solvedAt,
     rootCause: existing.rootCause,
@@ -489,7 +517,7 @@ export function applyEdit(existing: FollowupCase, input: CaseInput, now: string)
     next.status = s;
   }
   if (has(input, 'reasonId')) next.reasonId = idInput(input.reasonId, 'reasonId', 'Reason');
-  if (has(input, 'ownerUserId')) next.ownerUserId = idInput(input.ownerUserId, 'ownerUserId', 'Owner');
+  if (has(input, 'owner')) next.ownerName = ownerInput(input.owner);
   if (has(input, 'contactedAt')) next.contactedAt = wallInput(input.contactedAt, 'contactedAt', 'Contacted at');
   if (has(input, 'solvedAt')) next.solvedAt = wallInput(input.solvedAt, 'solvedAt', 'Solved at');
   if (has(input, 'rootCause')) next.rootCause = textInput(input.rootCause, 'rootCause', 'Root cause');
@@ -524,7 +552,7 @@ export function applyEdit(existing: FollowupCase, input: CaseInput, now: string)
 const AUDIT_FIELDS: { key: keyof ReturnType<typeof applyEdit>; column: string; field: string }[] = [
   { key: 'status', column: 'status', field: 'status' },
   { key: 'reasonId', column: 'reason_id', field: 'reason' },
-  { key: 'ownerUserId', column: 'owner_user_id', field: 'owner' },
+  { key: 'ownerName', column: 'owner_name', field: 'owner' },
   { key: 'contactedAt', column: 'contacted_at', field: 'contacted_at' },
   { key: 'solvedAt', column: 'solved_at', field: 'solved_at' },
   { key: 'rootCause', column: 'root_cause', field: 'root_cause' },
@@ -547,14 +575,12 @@ export async function updateCase(pool: Pool, caseId: number, input: CaseInput, f
       const row = (r as Record<string, unknown>[])[0];
       if (!row || !Number(row.is_active)) throw new FollowupValidationError('case.reasonId', 'Choose an active reason.', 'reasonId');
     }
-    if (next.ownerUserId !== null && next.ownerUserId !== existing.ownerUserId) {
-      const [u] = await conn.query('SELECT 1 FROM app_user WHERE user_id = ? AND is_active = 1', [next.ownerUserId]);
-      if (!(u as unknown[]).length) throw new FollowupValidationError('case.ownerUserId', 'Choose an active user as the owner.', 'ownerUserId');
-    }
     const changed = AUDIT_FIELDS.filter((a) => (existing[a.key] ?? null) !== (next[a.key] ?? null));
     if (changed.length) {
+      // a typed owner replaces the old user link (pre-0059), so clearing the text really clears the owner
+      const ownerChanged = changed.some((a) => a.key === 'ownerName');
       await conn.query(
-        `UPDATE nps_followup_case SET ${changed.map((a) => `${a.column} = ?`).join(', ')}, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP()
+        `UPDATE nps_followup_case SET ${changed.map((a) => `${a.column} = ?`).join(', ')}${ownerChanged ? ', owner_user_id = NULL' : ''}, version = version + 1, updated_by = ?, updated_at = UTC_TIMESTAMP()
           WHERE case_id = ? AND version = ?`,
         [...changed.map((a) => next[a.key] ?? null), actorUserId, caseId, version]);
       const names = await displayNames(conn, existing, next);
@@ -577,21 +603,14 @@ export async function updateCase(pool: Pool, caseId: number, input: CaseInput, f
 /** History keeps readable values (the reason's English name, the owner's name), so it still reads after renames. */
 async function displayNames(conn: PoolConnection, before: FollowupCase, after: ReturnType<typeof applyEdit>) {
   const reasonIds = [before.reasonId, after.reasonId].filter((n): n is number => n !== null);
-  const userIds = [before.ownerUserId, after.ownerUserId].filter((n): n is number => n !== null);
   const reasons = new Map<number, string>();
-  const users = new Map<number, string>();
   if (reasonIds.length) {
     const [r] = await conn.query(`SELECT reason_id, name_en FROM nps_followup_reason WHERE reason_id IN (${reasonIds.map(() => '?').join(', ')})`, reasonIds);
     for (const x of r as Record<string, unknown>[]) reasons.set(Number(x.reason_id), String(x.name_en));
   }
-  if (userIds.length) {
-    const [u] = await conn.query(`SELECT user_id, display_name FROM app_user WHERE user_id IN (${userIds.map(() => '?').join(', ')})`, userIds);
-    for (const x of u as Record<string, unknown>[]) users.set(Number(x.user_id), String(x.display_name));
-  }
   const show = (key: string, v: unknown): string | null => {
     if (v === null || v === undefined) return null;
     if (key === 'reasonId') return reasons.get(Number(v)) ?? String(v);
-    if (key === 'ownerUserId') return users.get(Number(v)) ?? String(v);
     return String(v);
   };
   return {

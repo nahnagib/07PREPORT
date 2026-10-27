@@ -7,21 +7,30 @@
   "brands": [
    {
     "id": 1,
-    "name": "Brand A"
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 2,
-    "name": "Brand B"
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 3,
-    "name": "Brand C"
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
    },
    {
     "id": 4,
-    "name": "Brand D"
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
    }
-  ]
+  ],
+  "companies": []
  },
  "options": {
   "years": [
@@ -31,19 +40,37 @@
   "brands": [
    {
     "id": 1,
-    "name": "Brand A"
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 2,
-    "name": "Brand B"
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 3,
-    "name": "Brand C"
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
    },
    {
     "id": 4,
-    "name": "Brand D"
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
+   }
+  ],
+  "companies": [
+   {
+    "key": 1,
+    "name": "Company One"
+   },
+   {
+    "key": 2,
+    "name": "Company Two"
    }
   ]
  },
@@ -183,6 +210,129 @@
      "value": 1272000
     }
    ]
+  },
+  "budget": {
+   "total": 495000,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": 55000
+    },
+    {
+     "month": 2,
+     "value": 57200
+    },
+    {
+     "month": 3,
+     "value": 52800
+    },
+    {
+     "month": 4,
+     "value": 60500
+    },
+    {
+     "month": 5,
+     "value": 66000
+    },
+    {
+     "month": 6,
+     "value": 63800
+    },
+    {
+     "month": 7,
+     "value": 68200
+    },
+    {
+     "month": 8,
+     "value": 71500
+    }
+   ]
+  },
+  "spendPctOfRevenue": {
+   "value": 15.878056525881233,
+   "status": "neutral",
+   "unit": "percent",
+   "direction": "lower_better",
+   "series": [
+    {
+     "month": 1,
+     "value": 14.705882352941176
+    },
+    {
+     "month": 2,
+     "value": 15.384615384615385
+    },
+    {
+     "month": 3,
+     "value": 16.129032258064516
+    },
+    {
+     "month": 4,
+     "value": 16.666666666666668
+    },
+    {
+     "month": 5,
+     "value": 15.625
+    },
+    {
+     "month": 6,
+     "value": 15.151515151515152
+    },
+    {
+     "month": 7,
+     "value": 16.39344262295082
+    },
+    {
+     "month": 8,
+     "value": 16.949152542372882
+    }
+   ]
+  },
+  "spendPctOfCompanyRevenue": {
+   "value": 4.5843520782396086,
+   "status": "neutral",
+   "unit": "percent",
+   "direction": "lower_better",
+   "series": [
+    {
+     "month": 1,
+     "value": 4.166666666666667
+    },
+    {
+     "month": 2,
+     "value": 4.248366013071895
+    },
+    {
+     "month": 3,
+     "value": 4.081632653061225
+    },
+    {
+     "month": 4,
+     "value": 4.449838187702265
+    },
+    {
+     "month": 5,
+     "value": 4.761904761904762
+    },
+    {
+     "month": 6,
+     "value": 4.833333333333333
+    },
+    {
+     "month": 7,
+     "value": 4.967948717948718
+    },
+    {
+     "month": 8,
+     "value": 5.110062893081761
+    }
+   ]
+  },
+  "budgetUsed": {
+   "value": 90.9090909090909,
+   "status": "neutral",
+   "unit": "percent"
   }
  },
  "roi": {
@@ -271,6 +421,8 @@
    {
     "brandId": 1,
     "brand": "Brand A",
+    "companyKey": 1,
+    "company": "Company One",
     "value": 90.9090909090909,
     "status": "neutral",
     "unit": "percent",
@@ -281,6 +433,8 @@
    {
     "brandId": 2,
     "brand": "Brand B",
+    "companyKey": 1,
+    "company": "Company One",
     "value": null,
     "status": "na",
     "unit": "percent",
@@ -291,6 +445,8 @@
    {
     "brandId": 3,
     "brand": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two",
     "value": null,
     "status": "na",
     "unit": "percent",
@@ -301,6 +457,43 @@
    {
     "brandId": 4,
     "brand": "Brand D",
+    "companyKey": null,
+    "company": null,
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "spend": 0,
+    "budget": 0,
+    "overBudget": false
+   }
+  ],
+  "companies": [
+   {
+    "companyKey": 1,
+    "company": "Company One",
+    "brands": 2,
+    "value": 90.9090909090909,
+    "status": "neutral",
+    "unit": "percent",
+    "spend": 450000,
+    "budget": 495000,
+    "overBudget": false
+   },
+   {
+    "companyKey": 2,
+    "company": "Company Two",
+    "brands": 1,
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "spend": 0,
+    "budget": 0,
+    "overBudget": false
+   },
+   {
+    "companyKey": null,
+    "company": "Unassigned",
+    "brands": 1,
     "value": null,
     "status": "na",
     "unit": "percent",
@@ -323,6 +516,8 @@
    {
     "brandId": 1,
     "brand": "Brand A",
+    "companyKey": 1,
+    "company": "Company One",
     "value": 14.285714285714286,
     "status": "neutral",
     "unit": "percent",
@@ -333,6 +528,8 @@
    {
     "brandId": 2,
     "brand": "Brand B",
+    "companyKey": 1,
+    "company": "Company One",
     "value": null,
     "status": "na",
     "unit": "percent",
@@ -343,6 +540,8 @@
    {
     "brandId": 3,
     "brand": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two",
     "value": null,
     "status": "na",
     "unit": "percent",
@@ -353,6 +552,43 @@
    {
     "brandId": 4,
     "brand": "Brand D",
+    "companyKey": null,
+    "company": null,
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 0,
+    "revenueLastYear": 0
+   }
+  ],
+  "companies": [
+   {
+    "companyKey": 1,
+    "company": "Company One",
+    "brands": 2,
+    "value": 14.285714285714286,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 9816000,
+    "revenueLastYear": 8589000
+   },
+   {
+    "companyKey": 2,
+    "company": "Company Two",
+    "brands": 1,
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "direction": "higher_better",
+    "revenueCurrent": 0,
+    "revenueLastYear": 0
+   },
+   {
+    "companyKey": null,
+    "company": "Unassigned",
+    "brands": 1,
     "value": null,
     "status": "na",
     "unit": "percent",
@@ -363,6 +599,10 @@
   ]
  },
  "cac": {
+  "bands": {
+   "greenAtMost": 3,
+   "redAbove": 5
+  },
   "overall": {
    "value": 125,
    "status": "green",
@@ -382,6 +622,8 @@
    {
     "brandId": 1,
     "brand": "Brand A",
+    "companyKey": 1,
+    "company": "Company One",
     "value": 125,
     "status": "green",
     "unit": "lyd",
@@ -399,6 +641,8 @@
    {
     "brandId": 2,
     "brand": "Brand B",
+    "companyKey": 1,
+    "company": "Company One",
     "value": null,
     "status": "na",
     "unit": "lyd",
@@ -416,6 +660,8 @@
    {
     "brandId": 3,
     "brand": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two",
     "value": null,
     "status": "na",
     "unit": "lyd",
@@ -433,6 +679,8 @@
    {
     "brandId": 4,
     "brand": "Brand D",
+    "companyKey": null,
+    "company": null,
     "value": null,
     "status": "na",
     "unit": "lyd",
@@ -462,6 +710,8 @@
    {
     "brandId": 1,
     "brand": "Brand A",
+    "companyKey": 1,
+    "company": "Company One",
     "value": 1.8,
     "status": "green",
     "unit": "lyd",
@@ -472,6 +722,8 @@
    {
     "brandId": 2,
     "brand": "Brand B",
+    "companyKey": 1,
+    "company": "Company One",
     "value": null,
     "status": "na",
     "unit": "lyd",
@@ -482,6 +734,8 @@
    {
     "brandId": 3,
     "brand": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two",
     "value": null,
     "status": "na",
     "unit": "lyd",
@@ -492,6 +746,8 @@
    {
     "brandId": 4,
     "brand": "Brand D",
+    "companyKey": null,
+    "company": null,
     "value": null,
     "status": "na",
     "unit": "lyd",

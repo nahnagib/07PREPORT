@@ -7,21 +7,30 @@
   "brands": [
    {
     "id": 1,
-    "name": "Brand A"
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 2,
-    "name": "Brand B"
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 3,
-    "name": "Brand C"
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
    },
    {
     "id": 4,
-    "name": "Brand D"
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
    }
   ],
+  "companies": [],
   "statuses": []
  },
  "options": {
@@ -32,19 +41,37 @@
   "brands": [
    {
     "id": 1,
-    "name": "Brand A"
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 2,
-    "name": "Brand B"
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 3,
-    "name": "Brand C"
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
    },
    {
     "id": 4,
-    "name": "Brand D"
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
+   }
+  ],
+  "companies": [
+   {
+    "key": 1,
+    "name": "Company One"
+   },
+   {
+    "key": 2,
+    "name": "Company Two"
    }
   ],
   "statuses": [
@@ -72,9 +99,112 @@
  },
  "hasData": true,
  "meta": {
-  "missing": []
+  "missing": [
+   "lastYearData"
+  ]
  },
  "today": "2026-09-20",
+ "roi": {
+  "ytd": {
+   "value": 4.731138652207591,
+   "status": "yellow",
+   "unit": "ratio",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null
+  },
+  "lytd": null,
+  "monthly": [
+   {
+    "month": 1,
+    "current": 5.013333333333334,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 2,
+    "current": 4.812345679012346,
+    "currentStatus": "yellow",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 3,
+    "current": 4.644444444444444,
+    "currentStatus": "yellow",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 4,
+    "current": 4.484276729559748,
+    "currentStatus": "yellow",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 5,
+    "current": 4.7768292682926825,
+    "currentStatus": "yellow",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 6,
+    "current": 4.854335260115607,
+    "currentStatus": "yellow",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 7,
+    "current": 4.592397660818714,
+    "currentStatus": "yellow",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 8,
+    "current": 4.678571428571429,
+    "currentStatus": "yellow",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 9,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 10,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 11,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 12,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   }
+  ],
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  }
+ },
  "totals": {
   "spend": 3000000,
   "revenue": 6580000,
@@ -865,6 +995,159 @@
    "rate": 250
   }
  ],
+ "coverageByCity": {
+  "totalCost": 339000,
+  "totalUnits": 194,
+  "cities": [
+   {
+    "city": "Tripoli",
+    "cost": 128000,
+    "units": 71,
+    "share": 37.75811209439528,
+    "campaigns": 3,
+    "byType": [
+     {
+      "mediaType": "1-Street Lights",
+      "units": 30,
+      "cost": 20000
+     },
+     {
+      "mediaType": "2-Mega Billboards",
+      "units": 6,
+      "cost": 45000
+     },
+     {
+      "mediaType": "3-Billboards",
+      "units": 12,
+      "cost": 15000
+     },
+     {
+      "mediaType": "4-Bridge Banners",
+      "units": 8,
+      "cost": 18000
+     },
+     {
+      "mediaType": "5-Light Screen",
+      "units": 15,
+      "cost": 30000
+     }
+    ]
+   },
+   {
+    "city": "Benghazi",
+    "cost": 92000,
+    "units": 31,
+    "share": 27.13864306784661,
+    "campaigns": 3,
+    "byType": [
+     {
+      "mediaType": "1-Street Lights",
+      "units": 15,
+      "cost": 10000
+     },
+     {
+      "mediaType": "2-Mega Billboards",
+      "units": 12,
+      "cost": 60000
+     },
+     {
+      "mediaType": "5-Light Screen",
+      "units": 4,
+      "cost": 22000
+     }
+    ]
+   },
+   {
+    "city": "Misrata",
+    "cost": 32000,
+    "units": 40,
+    "share": 9.43952802359882,
+    "campaigns": 2,
+    "byType": [
+     {
+      "mediaType": "1-Street Lights",
+      "units": 30,
+      "cost": 20000
+     },
+     {
+      "mediaType": "3-Billboards",
+      "units": 10,
+      "cost": 12000
+     }
+    ]
+   },
+   {
+    "city": "Sabha",
+    "cost": 32000,
+    "units": 10,
+    "share": 9.43952802359882,
+    "campaigns": 1,
+    "byType": [
+     {
+      "mediaType": "3-Billboards",
+      "units": 10,
+      "cost": 32000
+     }
+    ]
+   },
+   {
+    "city": "Khoms",
+    "cost": 21000,
+    "units": 3,
+    "share": 6.1946902654867255,
+    "campaigns": 1,
+    "byType": [
+     {
+      "mediaType": "2-Mega Billboards",
+      "units": 3,
+      "cost": 21000
+     }
+    ]
+   },
+   {
+    "city": "Sirte",
+    "cost": 15000,
+    "units": 25,
+    "share": 4.424778761061947,
+    "campaigns": 1,
+    "byType": [
+     {
+      "mediaType": "1-Street Lights",
+      "units": 25,
+      "cost": 15000
+     }
+    ]
+   },
+   {
+    "city": "Zawiya",
+    "cost": 10000,
+    "units": 8,
+    "share": 2.949852507374631,
+    "campaigns": 1,
+    "byType": [
+     {
+      "mediaType": "3-Billboards",
+      "units": 8,
+      "cost": 10000
+     }
+    ]
+   },
+   {
+    "city": "Tobruk",
+    "cost": 9000,
+    "units": 6,
+    "share": 2.6548672566371683,
+    "campaigns": 1,
+    "byType": [
+     {
+      "mediaType": "4-Bridge Banners",
+      "units": 6,
+      "cost": 9000
+     }
+    ]
+   }
+  ]
+ },
  "coverageByType": {
   "totalUnits": 194,
   "types": [

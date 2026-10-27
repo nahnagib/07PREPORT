@@ -1,4 +1,5 @@
 import React from 'react';
+import { Info } from 'lucide-react';
 import { Card } from './Card';
 import { RadialGauge } from './RadialGauge';
 import { BulletChart } from './BulletChart';
@@ -30,6 +31,8 @@ export interface KpiCardProps {
   actualLabel: string;
   /** Full-precision headline value for the hover tooltip. */
   actualFullValue?: string;
+  /** Optional explanation shown as an info icon (native tooltip) after the title, like ChartPanel's infoText. */
+  infoText?: string;
   /** Formatted to-date-target value, threaded into the gauge/bullet's own target label/tooltip. */
   targetLabel?: string;
   /** Which center visualization to render. 'gauge' for Value/Volume metrics, 'bullet' for ASP --
@@ -121,6 +124,7 @@ export function KpiCard({
   status,
   actualLabel,
   actualFullValue,
+  infoText,
   targetLabel,
   variant = 'gauge',
   icon: Icon,
@@ -216,6 +220,11 @@ export function KpiCard({
           >
             {title}
           </span>
+          {infoText && (
+            <span title={infoText} aria-label={infoText} data-testid="kpi-info" style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
+              <Info size={14} />
+            </span>
+          )}
         </div>
         <SemanticBadge status={status} />
       </div>

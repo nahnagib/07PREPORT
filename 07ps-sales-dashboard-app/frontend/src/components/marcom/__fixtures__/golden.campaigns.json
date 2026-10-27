@@ -7,21 +7,30 @@
   "brands": [
    {
     "id": 1,
-    "name": "Brand A"
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 2,
-    "name": "Brand B"
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 3,
-    "name": "Brand C"
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
    },
    {
     "id": 4,
-    "name": "Brand D"
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
    }
   ],
+  "companies": [],
   "statuses": []
  },
  "options": {
@@ -32,19 +41,37 @@
   "brands": [
    {
     "id": 1,
-    "name": "Brand A"
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 2,
-    "name": "Brand B"
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 3,
-    "name": "Brand C"
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
    },
    {
     "id": 4,
-    "name": "Brand D"
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
+   }
+  ],
+  "companies": [
+   {
+    "key": 1,
+    "name": "Company One"
+   },
+   {
+    "key": 2,
+    "name": "Company Two"
    }
   ],
   "statuses": [
@@ -72,9 +99,112 @@
  },
  "hasData": true,
  "meta": {
-  "missing": []
+  "missing": [
+   "lastYearData"
+  ]
  },
  "today": "2026-09-20",
+ "roi": {
+  "ytd": {
+   "value": 5.6,
+   "status": "green",
+   "unit": "ratio",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null
+  },
+  "lytd": null,
+  "monthly": [
+   {
+    "month": 1,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 2,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 3,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 4,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 5,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 6,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 7,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 8,
+    "current": 5.6,
+    "currentStatus": "green",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 9,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 10,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 11,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 12,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   }
+  ],
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  }
+ },
  "totals": {
   "spend": 120000,
   "revenue": 650000,
@@ -129,6 +259,26 @@
    "rate": 541.6666666666666
   }
  ],
+ "coverageByCity": {
+  "totalCost": 30000,
+  "totalUnits": 45,
+  "cities": [
+   {
+    "city": "Tripoli",
+    "cost": 30000,
+    "units": 45,
+    "share": 100,
+    "campaigns": 1,
+    "byType": [
+     {
+      "mediaType": "1-Street Lights",
+      "units": 45,
+      "cost": 30000
+     }
+    ]
+   }
+  ]
+ },
  "coverageByType": {
   "totalUnits": 45,
   "types": [

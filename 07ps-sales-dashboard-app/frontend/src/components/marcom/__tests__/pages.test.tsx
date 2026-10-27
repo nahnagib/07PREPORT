@@ -20,12 +20,13 @@ const page = (kind: PageKey, name = `demo.${kind}`) => render(views[kind](fixtur
 /** The brief's 24 visuals: id -> [component, the API field it reads]. Also documents the coverage checklist. */
 const VISUALS: Record<PageKey, { id: string; chart: boolean }[]> = {
   spending: [
-    { id: 'spending.spendVsRevenue', chart: true }, { id: 'spending.roiTrend', chart: true }, { id: 'spending.budgetUtilization', chart: true },
+    // "ROI trend -- YTD vs LYTD" moved to Media Campaign Performance (campaigns.roiTrend).
+    { id: 'spending.spendVsRevenue', chart: true }, { id: 'spending.budgetUtilization', chart: true },
     { id: 'spending.brandGrowth', chart: true }, { id: 'spending.cac', chart: false }, { id: 'spending.cpc', chart: false },
   ],
   campaigns: [
-    { id: 'campaigns.spendVsRevenue', chart: true }, { id: 'campaigns.rate', chart: false }, { id: 'campaigns.roiByCampaign', chart: true },
-    { id: 'campaigns.timeline', chart: false }, { id: 'campaigns.coverage', chart: true }, { id: 'campaigns.costByType', chart: true },
+    { id: 'campaigns.spendVsRevenue', chart: true }, { id: 'campaigns.roiTrend', chart: true }, { id: 'campaigns.roiByCampaign', chart: true },
+    { id: 'campaigns.timeline', chart: false }, { id: 'campaigns.cityMap', chart: false }, { id: 'campaigns.costByType', chart: true },
   ],
   digital: [
     { id: 'digital.followers', chart: true }, { id: 'digital.ctr', chart: false }, { id: 'digital.engagementRate', chart: false },
@@ -37,9 +38,9 @@ const VISUALS: Record<PageKey, { id: string; chart: boolean }[]> = {
   ],
 };
 
-describe.each(Object.keys(VISUALS) as PageKey[])('%s page renders all six visuals from the demo data', (kind) => {
+describe.each(Object.keys(VISUALS) as PageKey[])('%s page renders all its visuals from the demo data', (kind) => {
   const html = page(kind);
-  it('has exactly the six expected visuals, in order', () => {
+  it('has exactly the expected visuals, in order', () => {
     expect(visualsIn(html)).toEqual(VISUALS[kind].map((v) => v.id));
   });
   it.each(VISUALS[kind])('$id: title, accessible summary and a screen-reader data table', ({ id }) => {
@@ -58,27 +59,36 @@ describe('Page 1 — MARCOM Spending (demo data)', () => {
   const html = page('spending');
   const d = fixture<SpendingData>('demo.spending');
 
-  it('1: spend and revenue KPI cards plus the clustered chart with the company-revenue overlay toggle', () => {
+  it('1: total spend, total revenue, target budget and spend % of revenue, plus the chart with the company-revenue overlay toggle', () => {
     const v = visualHtml(html, 'spending.spendVsRevenue');
-    expect(v).toContain('data-testid="kpi-spend"');
-    expect(v).toContain('data-testid="kpi-revenue"');
+    for (const id of ['kpi-spend', 'kpi-revenue', 'kpi-budget', 'kpi-spend-pct']) expect(v).toContain(`data-testid="${id}"`);
     expect(flat(v)).toContain('Total Spend');
-    expect(flat(v)).toContain('Revenue Attributed to Marketing');
+    expect(flat(v)).toContain('Total Revenue');
+    expect(flat(v)).toContain('Attributed to marketing');
+    expect(flat(v)).toContain('Budget');
+    expect(flat(v)).not.toContain('Target Budget');
+    expect(flat(v)).toContain('Spend % of Revenue');
+    expect(flat(v)).toMatch(/of budget used/);
+    expect(flat(v)).toMatch(/of company revenue/);
+    expect(flat(v)).toContain('% of revenue'); // right-hand axis
     expect(flat(v)).toContain('Overlay company revenue');
     expect((v.match(/<th scope="row"/g) ?? []).length).toBe(d.totals.spend.series.length); // one row per month in the table
     expect(flat(v)).toContain('LYD'); // axis unit label
   });
 
-  it('2: YTD ROI as "1 : X" with status, LYTD beside it, dashed reference lines from the API bands', () => {
-    const v = visualHtml(html, 'spending.roiTrend');
-    expect(flat(v)).toMatch(/ROI \(YTD\)/);
-    expect(flat(v)).toMatch(/1 : \d/);
-    expect(v).toContain('data-testid="roi-lytd"');
-    expect(flat(v)).toContain('Green above 1 : 5');
-    expect(flat(v)).toContain('Red below 1 : 3');
-    expect((v.match(/recharts-reference-line-line/g) ?? []).length).toBe(2);
-    expect(v).toContain('stroke-dasharray="6 4"');
-    expect(d.roi.bands).toEqual({ greenAbove: 5, redBelow: 3 });
+  it('2: the ROI trend is no longer on this page (moved to Media Campaign Performance)', () => {
+    expect(html).not.toContain('data-visual="spending.roiTrend"');
+    expect(flat(html)).not.toContain('ROI trend');
+  });
+
+  it('3b: budget utilization and growth have a By Brand | By Company toggle and show each brand\'s company', () => {
+    for (const id of ['spending.budgetUtilization', 'spending.brandGrowth']) {
+      const v = visualHtml(html, id);
+      expect(flat(v)).toContain('By Brand');
+      expect(flat(v)).toContain('By Company');
+      expect(flat(v)).toContain('Company One');
+    }
+    expect(d.budgetUtilization.companies.map((c) => c.company)).toEqual(['Company One', 'Company Two', 'Unassigned']);
   });
 
   it('3: budget utilization per brand, neutral bars, 100% reference line, over-budget flag', () => {
@@ -102,7 +112,9 @@ describe('Page 1 — MARCOM Spending (demo data)', () => {
   it('5: CAC card (LYD, % of invoice, RAG) and a per-brand table with a status badge per row', () => {
     const v = visualHtml(html, 'spending.cac');
     expect(testIds(v, 'kpi-cac')).toHaveLength(1);
-    expect(flat(v)).toMatch(/of average invoice/);
+    expect(flat(v)).toContain('CAC % of invoice');
+    expect(flat(v)).toContain('New customers');
+    expect(flat(v)).toContain('Green ≤ 3% · Yellow ≤ 5%');
     const rows = v.match(/data-testid="cac-row"/g) ?? [];
     expect(rows).toHaveLength(4);
     const statuses = [...v.matchAll(/data-testid="cac-row"[\s\S]*?data-status="(\w+)"/g)].map((m) => m[1]);
@@ -119,6 +131,22 @@ describe('Page 1 — MARCOM Spending (demo data)', () => {
   });
 });
 
+describe('Page 2 — ROI trend (moved here from Spending)', () => {
+  const html = page('campaigns');
+  const d = fixture<CampaignsData>('demo.campaigns');
+  it('YTD ROI as "1 : X" with status, LYTD beside it, dashed reference lines from the API bands', () => {
+    const v = visualHtml(html, 'campaigns.roiTrend');
+    expect(flat(v)).toMatch(/ROI \(YTD\)/);
+    expect(flat(v)).toMatch(/1 : \d/);
+    expect(v).toContain('data-testid="roi-lytd"');
+    expect(flat(v)).toContain('Green above 1 : 5');
+    expect(flat(v)).toContain('Red below 1 : 3');
+    expect((v.match(/recharts-reference-line-line/g) ?? []).length).toBe(2);
+    expect(v).toContain('stroke-dasharray="6 4"');
+    expect(d.roi.bands).toEqual({ greenAbove: 5, redBelow: 3 });
+  });
+});
+
 describe('Page 2 — Media Campaign Performance (demo data)', () => {
   const html = page('campaigns');
   const d = fixture<CampaignsData>('demo.campaigns');
@@ -130,12 +158,10 @@ describe('Page 2 — Media Campaign Performance (demo data)', () => {
     expect(revenues).toEqual([...revenues].sort((a, b) => b - a));
   });
 
-  it('2: rate card with the rate % as the headline and total spend / revenue', () => {
-    const v = visualHtml(html, 'campaigns.rate');
-    expect(testIds(v, 'kpi-rate')).toHaveLength(1);
-    expect(flat(v)).toMatch(/\d+\.\d%/);
-    expect(v).toContain('data-testid="rate-spend"');
-    expect(v).toContain('data-testid="rate-revenue"');
+  it('2: the "Total Spend vs Revenue Rate" card is gone; the totals sit under the spend vs revenue title', () => {
+    expect(html).not.toContain('data-visual="campaigns.rate"');
+    expect(flat(html)).not.toContain('Total Spend vs Revenue Rate');
+    expect(flat(visualHtml(html, 'campaigns.spendVsRevenue'))).toMatch(/Total spend LYD [\d,]+ · Total revenue LYD [\d,]+/);
   });
 
   it('3: ROI per campaign with a green / yellow / red legend and two reference lines; n/a campaigns are listed', () => {
@@ -156,12 +182,20 @@ describe('Page 2 — Media Campaign Performance (demo data)', () => {
     expect(v.match(/data-testid="gantt-bar"/g)).toHaveLength(d.timeline.length);
   });
 
-  it('5: coverage donut with the total in the centre and all 5 types in the legend', () => {
-    const v = visualHtml(html, 'campaigns.coverage');
-    expect(v.match(/data-testid="coverage-legend"/g)).toHaveLength(5);
-    expect(v).toContain('data-testid="coverage-total"');
-    expect(flat(v)).toContain(String(d.coverageByType.totalUnits));
-    expect(v).toContain('recharts-pie');
+  it('5: city map of Libya: one bubble per city sized by cost (biggest drawn first), a ranked list and the total', () => {
+    const v = visualHtml(html, 'campaigns.cityMap');
+    expect(html).not.toContain('data-visual="campaigns.coverage"');
+    expect(flat(v)).toContain('Geographic coverage by city');
+    expect(flat(v)).toContain('Bubble size = media cost (LYD)');
+    expect(v).toContain('data-testid="city-map"');
+    const bubbles = [...v.matchAll(/data-testid="city-bubble" data-city="([^"]+)"/g)].map((m) => m[1]);
+    const rows = [...v.matchAll(/data-testid="city-row" data-city="([^"]+)"/g)].map((m) => m[1]);
+    expect(rows).toEqual(d.coverageByCity.cities.map((c) => c.city)); // largest cost first
+    expect(bubbles).toEqual(rows); // every demo city has coordinates
+    const radii = [...v.matchAll(/data-testid="city-bubble"[^>]*>\s*<circle[^>]* r="([\d.]+)"/g)].map((m) => Number(m[1]));
+    expect(radii).toEqual([...radii].sort((a, b) => b - a));
+    expect(flat(v)).toContain('Total media cost');
+    expect(flat(v)).toContain(d.coverageByCity.cities[0].city);
   });
 
   it('6: cost by type as bars, with the bars/bubbles toggle', () => {
@@ -287,6 +321,6 @@ describe('Page 4 — Trade Marketing & Retail (demo data)', () => {
 /** Coverage checklist source of truth: 24 visuals across four pages. */
 describe('coverage', () => {
   it('24 visuals', () => {
-    expect(Object.values(VISUALS).flat()).toHaveLength(24);
+    expect(Object.values(VISUALS).flat()).toHaveLength(23); // 5 + 6 + 6 + 6
   });
 });

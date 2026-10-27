@@ -89,24 +89,32 @@ describe('editing a case', () => {
     expect(applyEdit(aCase({ notes: 'a' }), { notes: '  ' }, NOW).notes).toBeNull();
     expect(code(() => applyEdit(aCase(), { rootCause: 'x'.repeat(2001) }, NOW))).toBe('case.rootCause');
   });
+
+  it('the owner is free text: trimmed, spaces collapsed, empty clears it, at most 120 characters', () => {
+    expect(applyEdit(aCase(), { owner: '  Branch   manager — Misrata ' }, NOW).ownerName).toBe('Branch manager — Misrata');
+    expect(applyEdit(aCase({ ownerName: 'Ali' }), { owner: '' }, NOW).ownerName).toBeNull();
+    expect(applyEdit(aCase({ ownerName: 'Ali' }), { notes: 'x' }, NOW).ownerName).toBe('Ali'); // untouched when not sent
+    expect(code(() => applyEdit(aCase(), { owner: 'x'.repeat(121) }, NOW))).toBe('case.owner');
+  });
 });
 
 describe('filters', () => {
   it('parses the follow-up filters and refuses bad values', () => {
-    expect(parseFollowupQuery({ statuses: 'new,solved', reasonIds: '2', ownerIds: '0,5', search: ' S28 ' })).toMatchObject({
-      statuses: ['NEW', 'SOLVED'], reasonIds: [2], ownerIds: [0, 5], search: 'S28', page: 1, pageSize: 100,
+    expect(parseFollowupQuery({ statuses: 'new,solved', reasonIds: '2', owners: '__none__, Ali Ahmed ', search: ' S28 ' })).toMatchObject({
+      statuses: ['NEW', 'SOLVED'], reasonIds: [2], owners: ['__none__', 'Ali Ahmed'], search: 'S28', page: 1, pageSize: 100,
     });
+    expect(() => parseFollowupQuery({ owners: 'x'.repeat(121) })).toThrow(/owners/);
     expect(() => parseFollowupQuery({ statuses: 'done' })).toThrow(/Unknown status/);
     expect(() => parseFollowupQuery({ dateFrom: '19/10/2026' })).toThrow(/date/);
     expect(() => parseFollowupQuery({ pageSize: '501' })).toThrow(/pageSize/);
   });
 
   it('builds parameterised SQL: global filters on the rating, own filters on the case, "no owner" as IS NULL', () => {
-    const w = followupWhere(parseFollowupQuery({ dateFrom: '2026-10-01', dateTo: '2026-10-19', ownerIds: '0,5', statuses: 'NEW' }), { companyKeys: [1] });
+    const w = followupWhere(parseFollowupQuery({ dateFrom: '2026-10-01', dateTo: '2026-10-19', owners: '__none__,Ali Ahmed', statuses: 'NEW' }), { companyKeys: [1] });
     expect(w.sql).toContain('f.CompanyKey');
     expect(w.sql).toContain('c.rated_at_local >= ?');
-    expect(w.sql).toContain('(c.owner_user_id IN (?) OR c.owner_user_id IS NULL)');
-    expect(w.params).toEqual(expect.arrayContaining([1, '2026-10-01 00:00:00', '2026-10-19', 'NEW', 5]));
+    expect(w.sql).toContain('(c.owner_name IN (?) OR c.owner_name IS NULL)');
+    expect(w.params).toEqual(expect.arrayContaining([1, '2026-10-01 00:00:00', '2026-10-19', 'NEW', 'Ali Ahmed']));
     expect(followupWhere({ search: '50%_' }, {}).params.slice(-4, -1)).toEqual(['%50\\%\\_%', '%50\\%\\_%', '%50\\%\\_%']);
   });
 });

@@ -13,7 +13,7 @@ import {
 } from '../nps/followup';
 import { editOf } from '../../components/nps-followup/CaseDetail';
 
-const base = { reasonId: null, ownerUserId: null, contactedAt: null, solvedAt: null, rootCause: null, actionTaken: null, notes: null, version: 4 };
+const base = { reasonId: null, ownerUserId: null, ownerName: null, contactedAt: null, solvedAt: null, rootCause: null, actionTaken: null, notes: null, version: 4 };
 
 describe('Detractor Follow-up view helpers', () => {
   it('time open reads in hours under two days, then in days', () => {
@@ -26,7 +26,7 @@ describe('Detractor Follow-up view helpers', () => {
 
   it('filters round-trip through the URL; defaults are left out', () => {
     expect(filtersToSearch(EMPTY_FILTERS)).toBe('');
-    const f = { view: 'list' as const, dateFrom: '2026-10-01', statuses: ['NEW' as const], reasonIds: [2], ownerIds: [0], sourceChanged: true, search: 'S28' };
+    const f = { view: 'list' as const, dateFrom: '2026-10-01', statuses: ['NEW' as const], reasonIds: [2], owners: ['__none__', 'Ali Ahmed'], sourceChanged: true, search: 'S28' };
     const q = filtersToSearch(f, 7);
     expect(filtersFromSearch(`?${q}`)).toEqual({ ...f, dateTo: undefined, caseId: 7 });
     expect(filtersFromSearch('?statuses=NEW,BOGUS&view=x').statuses).toEqual(['NEW']);
@@ -60,7 +60,14 @@ describe('Detractor Follow-up view helpers', () => {
 
   it('a save sends only the changed fields with the version it was made on', () => {
     const c = { ...base, status: 'NEW' } as FollowupCase;
-    const form = { status: 'CONTACTED' as const, reasonId: '3', ownerUserId: '', contactedAt: '', solvedAt: '', rootCause: '', actionTaken: '', notes: ' x ' };
+    const form = { status: 'CONTACTED' as const, reasonId: '3', owner: '', contactedAt: '', solvedAt: '', rootCause: '', actionTaken: '', notes: ' x ' };
     expect(editOf(c, form)).toEqual({ version: 4, status: 'CONTACTED', reasonId: 3, notes: ' x ' });
+  });
+
+  it('the owner is typed text: sent trimmed when it changes, null when cleared, not sent when only spaces changed', () => {
+    const form = { status: 'NEW' as const, reasonId: '', owner: '', contactedAt: '', solvedAt: '', rootCause: '', actionTaken: '', notes: '' };
+    expect(editOf({ ...base, status: 'NEW' } as FollowupCase, { ...form, owner: '  Branch manager ' })).toEqual({ version: 4, owner: 'Branch manager' });
+    expect(editOf({ ...base, status: 'NEW', ownerName: 'Ali' } as FollowupCase, form)).toEqual({ version: 4, owner: null });
+    expect(editOf({ ...base, status: 'NEW', ownerName: 'Ali' } as FollowupCase, { ...form, owner: 'Ali ' })).toEqual({ version: 4 });
   });
 });

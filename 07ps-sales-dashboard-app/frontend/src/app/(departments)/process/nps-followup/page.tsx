@@ -15,6 +15,7 @@ import {
   BAND_COLOR,
   BOARD_COLUMNS,
   EMPTY_FILTERS,
+  NO_OWNER,
   STATUSES,
   STATUS_COLOR,
   STATUS_LABEL,
@@ -242,10 +243,10 @@ function OwnFilters({ filters, options, onChange }: { filters: FollowupFilters; 
       </label>
       <label className="ps-kaizen-field">
         <span>Owner</span>
-        <select className="ps-kaizen-input" value={filters.ownerIds[0] ?? ''} onChange={(e) => onChange({ ...filters, ownerIds: one(e.target.value, Number) })}>
+        <select className="ps-kaizen-input" value={filters.owners[0] ?? ''} onChange={(e) => onChange({ ...filters, owners: one(e.target.value, String) })}>
           <option value="">All</option>
-          <option value="0">No owner</option>
-          {(options?.owners ?? []).map((o) => <option key={o.userId} value={o.userId}>{o.name}</option>)}
+          <option value={NO_OWNER}>No owner</option>
+          {(options?.owners ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       </label>
       <form className="ps-kaizen-field" onSubmit={(e) => { e.preventDefault(); onChange({ ...filters, search: search.trim() || undefined }); }}>
@@ -257,7 +258,7 @@ function OwnFilters({ filters, options, onChange }: { filters: FollowupFilters; 
         <input type="checkbox" checked={filters.sourceChanged === true} onChange={(e) => onChange({ ...filters, sourceChanged: e.target.checked ? true : undefined })} />
         Source changed only
       </label>
-      {(filters.dateFrom || filters.dateTo || filters.statuses.length || filters.reasonIds.length || filters.ownerIds.length || filters.search || filters.sourceChanged !== undefined) ? (
+      {(filters.dateFrom || filters.dateTo || filters.statuses.length || filters.reasonIds.length || filters.owners.length || filters.search || filters.sourceChanged !== undefined) ? (
         <Button variant="secondary" onClick={() => onChange({ ...EMPTY_FILTERS, view: filters.view })}>Clear</Button>
       ) : null}
     </section>

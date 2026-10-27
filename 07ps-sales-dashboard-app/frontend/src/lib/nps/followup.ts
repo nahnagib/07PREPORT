@@ -96,7 +96,8 @@ export interface FollowupReason {
 export interface FollowupOptions {
   statuses: FollowupStatus[];
   reasons: FollowupReason[];
-  owners: { userId: number; name: string }[];
+  /** Owner names already used on cases plus active users' names (suggestions for the free-text Owner). */
+  owners: string[];
 }
 
 export interface FollowupBoard {
@@ -120,19 +121,23 @@ export interface FollowupFilters {
   dateTo?: string;
   statuses: FollowupStatus[];
   reasonIds: number[];
-  /** 0 = no owner yet */
-  ownerIds: number[];
+  /** owner names (the Owner is free text); NO_OWNER = no owner yet */
+  owners: string[];
   sourceChanged?: boolean;
   search?: string;
 }
 
-export const EMPTY_FILTERS: FollowupFilters = { view: 'board', statuses: [], reasonIds: [], ownerIds: [] };
+export const EMPTY_FILTERS: FollowupFilters = { view: 'board', statuses: [], reasonIds: [], owners: [] };
+
+/** `owners` filter value meaning "no owner yet" (same token as the API). */
+export const NO_OWNER = '__none__';
 
 export interface CaseEdit {
   version: number;
   status?: FollowupStatus;
   reasonId?: number | null;
-  ownerUserId?: number | null;
+  /** free text; '' clears it */
+  owner?: string | null;
   contactedAt?: string | null;
   solvedAt?: string | null;
   rootCause?: string | null;
@@ -153,7 +158,7 @@ export function filtersFromSearch(search: string): FollowupFilters & { caseId: n
     dateTo: p.get('dateTo') || undefined,
     statuses,
     reasonIds: ints(p.get('reasonIds')).filter((n) => n > 0),
-    ownerIds: ints(p.get('ownerIds')),
+    owners: (p.get('owners') ?? '').split(',').map((o) => o.trim()).filter(Boolean),
     sourceChanged: sc === 'true' ? true : sc === 'false' ? false : undefined,
     search: p.get('search') || undefined,
     caseId: Number.isInteger(caseId) && caseId > 0 ? caseId : null,
@@ -168,7 +173,7 @@ export function filtersToSearch(f: FollowupFilters, caseId: number | null = null
   if (f.dateTo) p.set('dateTo', f.dateTo);
   if (f.statuses.length) p.set('statuses', f.statuses.join(','));
   if (f.reasonIds.length) p.set('reasonIds', f.reasonIds.join(','));
-  if (f.ownerIds.length) p.set('ownerIds', f.ownerIds.join(','));
+  if (f.owners.length) p.set('owners', f.owners.join(','));
   if (f.sourceChanged !== undefined) p.set('sourceChanged', String(f.sourceChanged));
   if (f.search) p.set('search', f.search);
   if (caseId) p.set('case', String(caseId));

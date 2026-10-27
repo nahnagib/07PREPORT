@@ -18,14 +18,29 @@ const status = (html: string, testId: string) => new RegExp(`data-testid="${test
 
 describe('golden: MARCOM Spending', () => {
   const html = render(<SpendingView data={fixture<SpendingData>('golden.spending')} />);
+  it('Total Spend with Budget LYD 55,000, Total Revenue with and Spend % of Revenue 17.9%', () => {
+    const v = visualHtml(html, 'spending.spendVsRevenue');
+    expect(flat(v)).toContain('LYD 55,000');
+    expect(flat(v)).toContain('17.9%'); // 50,000 / 280,000
+    expect(flat(v)).toContain('90.9% of budget used');
+    expect(flat(v)).toContain('4.2% of company revenue'); // 50,000 / 1,200,000
+  });
+});
+
+describe('golden: ROI trend (Media Campaign Performance)', () => {
+  const html = render(<CampaignsView data={fixture<CampaignsData>('golden.campaigns')} />);
   it('ROI 1 : 5.6 -> Green ("On target"); no last-year data yet', () => {
-    const v = visualHtml(html, 'spending.roiTrend');
+    const v = visualHtml(html, 'campaigns.roiTrend');
     const card = testIds(v, 'kpi-roi-ytd')[0];
     expect(card).toContain('data-status="green"');
     expect(flat(v)).toContain('1 : 5.6');
     expect(flat(v)).toContain('On target');
     expect(flat(v)).toContain('No last-year data uploaded');
   });
+});
+
+describe('golden: MARCOM Spending (per brand)', () => {
+  const html = render(<SpendingView data={fixture<SpendingData>('golden.spending')} />);
   it('Budget utilization 90.9%, Brand growth +14.3%', () => {
     expect(flat(visualHtml(html, 'spending.budgetUtilization'))).toContain('90.9%');
     expect(flat(visualHtml(html, 'spending.brandGrowth'))).toContain('+14.3%');
@@ -33,7 +48,7 @@ describe('golden: MARCOM Spending', () => {
   it('CAC LYD 416.67 = 46.3% of a 900 invoice -> Red ("Off target")', () => {
     const v = visualHtml(html, 'spending.cac');
     expect(flat(v)).toContain('LYD 416.67');
-    expect(flat(v)).toContain('46.3% of average invoice');
+    expect(flat(v)).toContain('CAC % of invoice 46.3%');
     expect(status(v, 'kpi-cac')).toBe('red');
     expect(flat(v)).toContain('Off target');
   });
@@ -51,8 +66,8 @@ describe('golden: MARCOM Spending', () => {
 
 describe('golden: Media Campaign Performance', () => {
   const html = render(<CampaignsView data={fixture<CampaignsData>('golden.campaigns')} />);
-  it('rate 541.7%, ROI 1 : 5.42 -> Green', () => {
-    expect(flat(visualHtml(html, 'campaigns.rate'))).toContain('541.7%');
+  it('ROI 1 : 5.42 -> Green; totals LYD 120,000 / LYD 650,000', () => {
+    expect(flat(visualHtml(html, 'campaigns.spendVsRevenue'))).toContain('Total spend LYD 120,000 · Total revenue LYD 650,000');
     const v = visualHtml(html, 'campaigns.roiByCampaign');
     expect(flat(v)).toContain('1 : 5.42');
     expect(flat(v)).toContain('On target');
@@ -64,13 +79,11 @@ describe('golden: Media Campaign Performance', () => {
     expect(flat(v)).toContain('01 Feb 2026');
     expect(flat(v)).toContain('15 Mar 2026');
   });
-  it('45 street-light units / LYD 30,000 appear in the coverage donut and the cost chart', () => {
-    const cov = visualHtml(html, 'campaigns.coverage');
-    expect(flat(cov)).toMatch(/Street Lights 45 100\.0%/);
-    expect(flat(cov)).toContain('45'); // centre total
+  it('Tripoli, 45 street-light units / LYD 30,000 (100%) on the city map and in the cost chart', () => {
+    const map = visualHtml(html, 'campaigns.cityMap');
+    expect(map).toContain('data-testid="city-bubble" data-city="Tripoli"');
+    expect(flat(map)).toMatch(/Tripoli LYD 30,000 100\.0% · 45 units · 1 campaign\(s\)/);
     expect(flat(visualHtml(html, 'campaigns.costByType'))).toContain('LYD 30,000');
-    // the other four media types are still listed, as 0
-    expect(cov.match(/data-testid="coverage-legend"/g)).toHaveLength(5);
   });
 });
 

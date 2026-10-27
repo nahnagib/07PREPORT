@@ -9,24 +9,31 @@ export interface MarcomFilters {
   year?: number;
   fromMonth?: number;
   toMonth?: number;
+  /** Dim_Company keys (migration 0057: brands belong to companies). Narrows the Brand options. */
+  companyKeys: number[];
   brandIds: number[];
   platforms: string[];
   statuses: string[];
   completedOnly: boolean;
 }
 
-export const EMPTY_FILTERS: MarcomFilters = { brandIds: [], platforms: [], statuses: [], completedOnly: false };
+export const EMPTY_FILTERS: MarcomFilters = { companyKeys: [], brandIds: [], platforms: [], statuses: [], completedOnly: false };
 export const STORAGE_KEY = 'marcom.filters.v1';
 
 /** Which controls each page shows. */
-export const PAGE_CONTROLS: Record<PageKey, { months: boolean; brand: boolean; platform: boolean; status: boolean }> = {
-  spending: { months: true, brand: true, platform: false, status: false },
-  campaigns: { months: false, brand: true, platform: false, status: true },
-  digital: { months: true, brand: false, platform: true, status: false },
-  trade: { months: true, brand: true, platform: false, status: false },
+/**
+ * Which controls each page shows. `futureMonths`: months after the latest upload stay selectable and the
+ * default To is December -- campaigns are planned ahead, so that page keeps showing the whole year by default.
+ */
+export const PAGE_CONTROLS: Record<PageKey, { months: boolean; futureMonths: boolean; company: boolean; brand: boolean; platform: boolean; status: boolean }> = {
+  spending: { months: true, futureMonths: false, company: true, brand: true, platform: false, status: false },
+  // Campaigns are date ranges: the API returns every campaign overlapping From..To.
+  campaigns: { months: true, futureMonths: true, company: true, brand: true, platform: false, status: true },
+  digital: { months: true, futureMonths: false, company: false, brand: false, platform: true, status: false },
+  trade: { months: true, futureMonths: false, company: true, brand: true, platform: false, status: false },
 };
 
-const FILTER_KEYS = ['year', 'fromMonth', 'toMonth', 'brandIds', 'platforms', 'status', 'completedOnly'] as const;
+const FILTER_KEYS = ['year', 'fromMonth', 'toMonth', 'companyKeys', 'brandIds', 'platforms', 'status', 'completedOnly'] as const;
 
 const intIn = (v: string | null | undefined, min: number, max: number): number | undefined => {
   if (v === null || v === undefined || !/^\d{1,4}$/.test(v.trim())) return undefined;
@@ -47,6 +54,7 @@ export function parseFilters(search: string | URLSearchParams): MarcomFilters {
     year: intIn(p.get('year'), 2020, 2100),
     fromMonth,
     toMonth,
+    companyKeys: list(p.get('companyKeys')).filter((s) => /^\d+$/.test(s)).map(Number),
     brandIds: list(p.get('brandIds')).filter((s) => /^\d+$/.test(s)).map(Number),
     platforms: list(p.get('platforms')),
     statuses: list(p.get('status')),
@@ -65,6 +73,7 @@ export function toSearchParams(f: MarcomFilters): URLSearchParams {
   if (f.year !== undefined) p.set('year', String(f.year));
   if (f.fromMonth !== undefined) p.set('fromMonth', String(f.fromMonth));
   if (f.toMonth !== undefined) p.set('toMonth', String(f.toMonth));
+  if (f.companyKeys.length) p.set('companyKeys', [...f.companyKeys].sort((a, b) => a - b).join(','));
   if (f.brandIds.length) p.set('brandIds', [...f.brandIds].sort((a, b) => a - b).join(','));
   if (f.platforms.length) p.set('platforms', [...f.platforms].join(','));
   if (f.statuses.length) p.set('status', [...f.statuses].join(','));
@@ -74,20 +83,19 @@ export function toSearchParams(f: MarcomFilters): URLSearchParams {
 
 export const isDefaultFilters = (f: MarcomFilters): boolean => toSearchParams(f).toString() === '';
 
-/**
- * The query string sent to the API for a page: only the params that page understands. Campaigns
- * are date ranges, so that page always asks for the whole year (its own filter bar has no month range).
- */
+/** The query string sent to the API for a page: only the params that page understands. */
 export function apiQuery(page: PageKey, f: MarcomFilters): string {
   const p = new URLSearchParams();
   if (f.year !== undefined) p.set('year', String(f.year));
-  if (page === 'campaigns') {
-    p.set('fromMonth', '1');
+  if (PAGE_CONTROLS[page].futureMonths && f.toMonth === undefined) {
+    // Default view of the campaigns page: the whole year (planned campaigns included).
+    p.set('fromMonth', String(f.fromMonth ?? 1));
     p.set('toMonth', '12');
   } else {
     if (f.fromMonth !== undefined) p.set('fromMonth', String(f.fromMonth));
     if (f.toMonth !== undefined) p.set('toMonth', String(f.toMonth));
   }
+  if (PAGE_CONTROLS[page].company && f.companyKeys.length) p.set('companyKeys', [...f.companyKeys].sort((a, b) => a - b).join(','));
   if ((page === 'spending' || page === 'campaigns' || page === 'trade') && f.brandIds.length) p.set('brandIds', [...f.brandIds].sort((a, b) => a - b).join(','));
   if (page === 'digital' && f.platforms.length) p.set('platforms', f.platforms.join(','));
   if (page === 'campaigns' && f.statuses.length) p.set('status', f.statuses.join(','));
@@ -102,6 +110,20 @@ export function restoreFilters(urlSearch: string, stored: string | null): Marcom
     try { return parseFilters(String(JSON.parse(stored))); } catch { /* corrupt storage: ignore */ }
   }
   return { ...EMPTY_FILTERS };
+}
+
+/**
+ * Brands offered for the current Company selection (all brands when no company is selected). The
+ * cascade: picking a company narrows the Brand options to that company's brands.
+ */
+export function brandsForCompanies<B extends { id: number; companyKey?: number | null }>(brands: B[], companyKeys: number[]): B[] {
+  return companyKeys.length ? brands.filter((b) => b.companyKey !== null && b.companyKey !== undefined && companyKeys.includes(b.companyKey)) : brands;
+}
+
+/** Applies a new Company selection and drops selected brands that no longer belong to it. */
+export function withCompanies<B extends { id: number; companyKey?: number | null }>(f: MarcomFilters, companyKeys: number[], brands: B[]): MarcomFilters {
+  const allowed = new Set(brandsForCompanies(brands, companyKeys).map((b) => b.id));
+  return { ...f, companyKeys, brandIds: f.brandIds.filter((id) => allowed.has(id)) };
 }
 
 export const serializeForStorage = (f: MarcomFilters): string => JSON.stringify(toSearchParams(f).toString());

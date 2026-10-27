@@ -24,7 +24,7 @@ import { OdooLink } from '../nps/OdooLink';
 interface Form {
   status: FollowupStatus;
   reasonId: string;
-  ownerUserId: string;
+  owner: string;
   contactedAt: string;
   solvedAt: string;
   rootCause: string;
@@ -35,7 +35,7 @@ interface Form {
 const formOf = (c: FollowupCase): Form => ({
   status: c.status,
   reasonId: c.reasonId ? String(c.reasonId) : '',
-  ownerUserId: c.ownerUserId ? String(c.ownerUserId) : '',
+  owner: c.ownerName ?? '',
   contactedAt: toInput(c.contactedAt),
   solvedAt: toInput(c.solvedAt),
   rootCause: c.rootCause ?? '',
@@ -49,7 +49,7 @@ export function editOf(c: FollowupCase, f: Form): CaseEdit {
   const before = formOf(c);
   if (f.status !== before.status) edit.status = f.status;
   if (f.reasonId !== before.reasonId) edit.reasonId = f.reasonId ? Number(f.reasonId) : null;
-  if (f.ownerUserId !== before.ownerUserId) edit.ownerUserId = f.ownerUserId ? Number(f.ownerUserId) : null;
+  if (f.owner.trim() !== before.owner.trim()) edit.owner = f.owner.trim() || null;
   if (f.contactedAt !== before.contactedAt) edit.contactedAt = fromInput(f.contactedAt);
   if (f.solvedAt !== before.solvedAt) edit.solvedAt = fromInput(f.solvedAt);
   if (f.rootCause !== before.rootCause) edit.rootCause = f.rootCause;
@@ -168,7 +168,7 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
             <section aria-label="Rating">
               <h3 className="ps-fu-h3">Rating (from the NPS source, read-only)</h3>
               <div className="ps-kaizen-form">
-                {fact('Rated at (Tripoli)', detail.ratedAt?.slice(0, 16))}
+                {fact('Rated at', detail.ratedAt?.slice(0, 16))}
                 {fact('Company', detail.company)}
                 {fact('Customer', detail.customer, true)}
                 {fact('Order', detail.orderRef ? <OdooLink href={detail.orderUrl}>{detail.orderRef}</OdooLink> : null)}
@@ -201,18 +201,20 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
                 </label>
                 <label className="ps-kaizen-field">
                   <span>Owner</span>
-                  <select className="ps-kaizen-input" value={form.ownerUserId} onChange={(e) => set('ownerUserId', e.target.value)} {...invalid('ownerUserId')}>
-                    <option value="">No owner</option>
-                    {(options?.owners ?? []).map((o) => <option key={o.userId} value={o.userId}>{o.name}</option>)}
-                  </select>
+                  {/* Free text (owners are often people without a login); suggestions = names already used + users. */}
+                  <input type="text" className="ps-kaizen-input" value={form.owner} maxLength={120} placeholder="No owner" list="nps-followup-owners"
+                    autoComplete="off" onChange={(e) => set('owner', e.target.value)} {...invalid('owner')} />
+                  <datalist id="nps-followup-owners">
+                    {(options?.owners ?? []).map((o) => <option key={o} value={o} />)}
+                  </datalist>
                 </label>
                 <label className="ps-kaizen-field">
-                  <span>Contacted at (Tripoli)</span>
+                  <span>Contacted at</span>
                   <input type="datetime-local" className="ps-kaizen-input" value={form.contactedAt} onChange={(e) => set('contactedAt', e.target.value)} {...invalid('contactedAt')} />
                 </label>
                 {form.status === 'SOLVED' && (
                   <label className="ps-kaizen-field">
-                    <span>Solved at (Tripoli; empty = now)</span>
+                    <span>Solved at (empty = now)</span>
                     <input type="datetime-local" className="ps-kaizen-input" value={form.solvedAt} onChange={(e) => set('solvedAt', e.target.value)} {...invalid('solvedAt')} />
                   </label>
                 )}

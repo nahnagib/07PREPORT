@@ -17,7 +17,8 @@ import {
   OVERDUE_STATUS_OPTIONS,
   SIZE_TIER_HINT,
   agingColors,
-  dailyTrendPoints,
+  receivablesTrendPoints,
+  type ReceivablesGrain,
   fromIncludeValues,
   includeValues,
   isDefaultFilters,
@@ -29,6 +30,7 @@ import {
   type DebtPageFilters,
   type LabelLang,
 } from '../../../../lib/debt/view';
+
 import { useUrlCurrency } from '../../../../lib/debt/useUrlCurrency';
 import { creditBucket, creditBucketOptions, type CreditBucket } from '../../../../lib/debt/creditPolicy';
 import { CUSTOMER_CATEGORY_DEFINITION } from '../../../../lib/customerCategory';
@@ -47,6 +49,8 @@ import {
   type GroupedBarChartPoint,
   type SelectOption,
 } from '@07ps/ui';
+
+const RECEIVABLES_GRAIN_LABELS: Record<ReceivablesGrain, string> = { day: 'Day', week: 'Week', month: 'Month' };
 
 /**
  * Receivables and Collections (Price / Finance department; was "Debt Report" at /price/debt-report, which redirects
@@ -119,6 +123,7 @@ export default function ReceivablesCollectionsPage() {
   const [showAllPeople, setShowAllPeople] = useState(false);
   const [agingTerm, setAgingTerm] = useState<string | null>(null);
   const [collectionGrain, setCollectionGrain] = useState<CollectionGrain>('week');
+  const [receivablesGrain, setReceivablesGrain] = useState<ReceivablesGrain>('week');
   const [collectionPoint, setCollectionPoint] = useState<CollectionPoint | null>(null);
 
   const scope = useMemo(() => toScope(filters, isSalesperson), [filters, isSalesperson]);
@@ -245,7 +250,7 @@ export default function ReceivablesCollectionsPage() {
     _key: a.agingBucketKey,
     _n: a.lineCount,
   }));
-  const trendPoints = dailyTrendPoints(currency ? (trend.data?.points ?? []).filter((p) => p.currency === currency) : (trend.data?.all ?? []));
+  const trendPoints = receivablesTrendPoints(currency ? (trend.data?.points ?? []).filter((p) => p.currency === currency) : (trend.data?.all ?? []), receivablesGrain);
 
   // ---- customer table ------------------------------------------------------------------------------------------------
   // the page's currency filter decides the rows (the table has no currency filter of its own any more)
@@ -505,7 +510,17 @@ export default function ReceivablesCollectionsPage() {
               />
 
               <div style={grid2}>
-              <ChartPanel title={`Receivables trend · ${viewLabel}`} infoText={`Open invoices per snapshot date (line), split into overdue and not yet due (stacked bars), with the same filters. ${trendNote}`}>
+              <ChartPanel title={`Receivables trend · ${viewLabel}`}
+                infoText={`Open invoices (line), split into overdue and not yet due (stacked bars), with the same filters. Day = each snapshot; Week (Sunday to Saturday) and Month = the balance on the period's last snapshot (receivables are a balance, never added up across days). ${trendNote}`}
+                headerActions={
+                  <div role="group" aria-label="Receivables trend period" style={{ display: 'inline-flex', gap: 4 }}>
+                    {(Object.keys(RECEIVABLES_GRAIN_LABELS) as ReceivablesGrain[]).map((g) => (
+                      <Button key={g} variant={g === receivablesGrain ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setReceivablesGrain(g)} aria-pressed={g === receivablesGrain}>
+                        {RECEIVABLES_GRAIN_LABELS[g]}
+                      </Button>
+                    ))}
+                  </div>
+                }>
                 {trend.error ? (
                   <ErrorState message={trend.error} onRetry={trend.retry} />
                 ) : (
@@ -520,6 +535,11 @@ export default function ReceivablesCollectionsPage() {
                       lines={[{ key: 'total', name: 'Open invoices', color: 'var(--ps-color-text)', yAxisId: 'left', labelFormatter: trendPoints.length <= 8 ? compact : undefined }]}
                       leftAxisFormatter={compact}
                       tooltipFormatters={{ total: full, overdue: full, notDue: full }}
+                      tooltipLabelFormatter={(label) => {
+                        const p = trendPoints.find((x) => x.label === label);
+                        if (!p?.asOf) return label;
+                        return `${receivablesGrain === 'week' ? `Week of ${formatDate(p.periodStart)}` : label} · balance on ${formatDate(p.asOf)}`;
+                      }}
                       connectNulls={false}
                       topPadding={24}
                       height={300}

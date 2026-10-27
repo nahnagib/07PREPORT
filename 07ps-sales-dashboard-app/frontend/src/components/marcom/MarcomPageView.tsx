@@ -24,6 +24,8 @@ export interface MarcomPageViewProps<T extends PageData> {
   onRetry: () => void;
   /** The viewer holds admin_marcom_upload: show the upload link. */
   canUpload: boolean;
+  /** Start with the filter bar expanded (tests). */
+  filtersOpen?: boolean;
   children: (data: T) => React.ReactNode;
 }
 
@@ -100,7 +102,7 @@ export function MarcomPageView<T extends PageData>(p: MarcomPageViewProps<T>) {
         {p.canUpload && data && <UploadLink label={t('header.upload')} />}
       </div>
       {showFilters && data && (
-        <MarcomFilterBar page={p.page} filters={p.filters} options={data.options} applied={data.filters} refreshing={p.refreshing} onChange={p.onFilters} onReset={p.onReset} />
+        <MarcomFilterBar page={p.page} filters={p.filters} options={data.options} applied={data.filters} latest={data.freshness.latestPeriod ?? null} refreshing={p.refreshing} onChange={p.onFilters} onReset={p.onReset} defaultOpen={p.filtersOpen} />
       )}
       {body}
     </div>

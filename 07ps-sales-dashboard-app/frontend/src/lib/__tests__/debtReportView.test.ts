@@ -4,6 +4,8 @@ import { formatCompactMoney, formatMoney } from '../format';
 import {
   DEFAULT_DEBT_FILTERS,
   dailyTrendPoints,
+  receivablesPeriodStart,
+  receivablesTrendPoints,
   activeFilterCount,
   fromIncludeValues,
   includeValues,
@@ -139,5 +141,36 @@ describe('page currency filter (2026-10-15)', () => {
 
   it('drill-down title of the all-currencies view', () => {
     expect(drillTitle('aging', 'Overdue 90+', null)).toBe('Open documents in Overdue 90+ · All currencies (≈ LYD)');
+  });
+});
+
+describe('Receivables trend by day / week / month', () => {
+  const snap = (snapshotDate: string, open: number | null, overdue = 0) => ({ snapshotDate, currency: 'LYD', open, overdue, notDue: open === null ? null : open - overdue, net: open });
+  // Sun 4 Oct .. Sat 10 Oct is one week; 11 Oct starts the next; 1 Nov a new month
+  const pts = [snap('2026-10-05', 100, 10), snap('2026-10-09', 140, 30), snap('2026-10-10', null), snap('2026-10-12', 90, 5), snap('2026-11-01', 70, 7)];
+
+  it('weeks run Sunday to Saturday, months start on the 1st', () => {
+    expect(receivablesPeriodStart('2026-10-10', 'week')).toBe('2026-10-04'); // Saturday -> its Sunday
+    expect(receivablesPeriodStart('2026-10-11', 'week')).toBe('2026-10-11'); // Sunday is its own start
+    expect(receivablesPeriodStart('2026-10-27', 'month')).toBe('2026-10-01');
+  });
+
+  it('a week / month shows its LAST snapshot with a value (a balance is never summed), and says which day', () => {
+    const w = receivablesTrendPoints(pts, 'week');
+    expect(w.map((p) => [p.label, p.total, p.overdue, p.asOf])).toEqual([
+      ['4 Oct 26', 140, 30, '2026-10-09'], // 10 Oct has no value, so 9 Oct closes the week -- not 100 + 140
+      ['11 Oct 26', 90, 5, '2026-10-12'],
+      ['1 Nov 26', 70, 7, '2026-11-01'],
+    ]);
+    const m = receivablesTrendPoints(pts, 'month');
+    expect(m.map((p) => [p.label, p.total, p.asOf])).toEqual([['Oct 2026', 90, '2026-10-12'], ['Nov 2026', 70, '2026-11-01']]);
+  });
+
+  it('days keep one point per calendar day, gaps included', () => {
+    const d = receivablesTrendPoints(pts, 'day');
+    expect(d).toHaveLength(28); // 5 Oct .. 1 Nov
+    expect(d[0]).toMatchObject({ total: 100, asOf: null });
+    expect(d[1].total).toBeNull();
+    expect(receivablesTrendPoints([], 'week')).toEqual([]);
   });
 });

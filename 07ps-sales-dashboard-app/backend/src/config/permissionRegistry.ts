@@ -63,6 +63,12 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   // Edit = change a case (status, reason, owner, dates, notes); the comments still need nps_comments.
   { key: 'nps_followup', label: 'Detractor Follow-up', group: 'data_entry', actions: ['view', 'edit', 'export'] },
   { key: 'nps_followup_reasons', label: 'Detractor Follow-up reasons', group: 'data_entry', actions: CRUD },
+  // "Coming soon" placeholders (2026-10-27): pages announced in the navigation before they are built (View + Export like
+  // every report); migration 0060 grants View to the roles that already see a report of the same department.
+  // Revisit the actions when the page is built.
+  { key: 'quality_assurance', label: 'Quality Assurance (coming soon)', group: 'dashboard', actions: DASHBOARD },
+  { key: 'customer_pulse', label: 'Customer Pulse (coming soon)', group: 'dashboard', actions: DASHBOARD },
+  { key: 'product_development_plan', label: 'Product Development Plan (coming soon)', group: 'dashboard', actions: DASHBOARD },
   // Price (Finance) department. Granted to the full-access roles by migration 0034 (not to Salesperson; an admin may
   // enable it, the API then scopes a salesperson to their own SalespersonKey).
   // key kept from the "Debt Report" days (role grants reference it); the label is what the Roles page shows

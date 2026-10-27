@@ -1,8 +1,9 @@
 import { Rat, R, sum } from './rat';
-import { Kpi, makeKpi, naKpi, classify, Status } from './kpi';
+import { Kpi, makeKpi } from './kpi';
 import * as F from './formulas';
-import { AppliedPeriod, BrandRef, Num, groupBy, monthRange, total } from './common';
+import { AppliedPeriod, BrandRef, Num, companiesOf, groupBy, monthRange, total } from './common';
 import { OVER_BUDGET_ABOVE, RAG_RULES } from './thresholds';
+import { buildRoi } from './roi';
 
 export interface SpendRow {
   year: number; month: number; brandId: number; brand: string;
@@ -15,7 +16,7 @@ export interface SpendingInput extends AppliedPeriod {
   current: SpendRow[];
   /** The same months of year - 1 (already brand-filtered, current rows only). */
   previous: SpendRow[];
-  /** The selected brands (all brands when no filter) -- drives the per-brand rows. */
+  /** The selected brands (all brands when no filter) -- drives the per-brand and per-company rows. */
   brands: BrandRef[];
 }
 
@@ -66,81 +67,6 @@ function budgetBlock(a: Agg) {
   };
 }
 
-/** Page 1 -- MARCOM Spending. Pure: rows in, chart-ready payload out. */
-export function buildSpending(input: SpendingInput) {
-  const { year, fromMonth, toMonth, current, previous, brands } = input;
-  const months = monthRange(fromMonth, toMonth);
-  const cur = aggregate(current);
-  const prev = aggregate(previous);
-  const byMonthCur = groupBy(current, (r) => r.month);
-  const byMonthPrev = groupBy(previous, (r) => r.month);
-
-  const series = (pick: (a: Agg) => Rat) =>
-    months.map((m) => {
-      const rows = byMonthCur.get(m);
-      return { month: m, value: rows ? n(pick(aggregate(rows))) : null };
-    });
-
-  // ROI: cumulative over the selected range, and monthly points for Y and Y-1.
-  const roiYtd = F.roiRatio(cur.revenue, cur.spend);
-  const hasPrev = previous.length > 0;
-  const roiLytd = hasPrev ? F.roiRatio(prev.revenue, prev.spend) : null;
-  const roiMonthly = months.map((m) => {
-    const c = byMonthCur.get(m);
-    const p = byMonthPrev.get(m);
-    const cv = c ? F.roiRatio(aggregate(c).revenue, aggregate(c).spend) : null;
-    const pv = p ? F.roiRatio(aggregate(p).revenue, aggregate(p).spend) : null;
-    return {
-      month: m,
-      current: cv === null ? null : cv.toNumber(),
-      currentStatus: (c ? classify('roi', cv) : 'na') as Status,
-      lastYear: pv === null ? null : pv.toNumber(),
-      lastYearStatus: (p ? classify('roi', pv) : 'na') as Status,
-    };
-  });
-
-  const byBrand = groupBy(current, (r) => r.brandId);
-  const perBrand = brands.map((b) => ({ brand: b, agg: aggregate(byBrand.get(b.id) ?? []) }));
-
-  const meta: { missing: string[] } = { missing: [] };
-  if (!hasPrev) meta.missing.push('lastYearData');
-
-  return {
-    period: { year, fromMonth, toMonth },
-    hasData: current.length > 0,
-    meta,
-    totals: {
-      spend: { total: n(cur.spend), unit: 'lyd', series: series((a) => a.spend) },
-      revenueAttributed: { total: n(cur.revenue), unit: 'lyd', series: series((a) => a.revenue) },
-      companyRevenue: { total: n(cur.companyCurrent), unit: 'lyd', series: series((a) => a.companyCurrent) },
-    },
-    roi: {
-      /** Cumulative over fromMonth..toMonth (= YTD when fromMonth is 1). `previous` is the LYTD ROI when uploaded. */
-      ytd: makeKpi('ratio', roiYtd, { rule: 'roi', direction: 'higher_better', previous: hasPrev ? roiLytd : null }),
-      lytd: hasPrev ? makeKpi('ratio', roiLytd, { rule: 'roi', direction: 'higher_better' }) : null,
-      monthly: roiMonthly,
-      /** Reference lines for the chart, read from the threshold config (green above `greenAbove`, red below `redBelow`). */
-      bands: { greenAbove: Number(RAG_RULES.roi.green.value), redBelow: Number(RAG_RULES.roi.red.value) },
-    },
-    budgetUtilization: {
-      overall: budgetBlock(cur),
-      brands: perBrand.map(({ brand, agg }) => ({ brandId: brand.id, brand: brand.name, ...budgetBlock(agg) })),
-    },
-    brandGrowth: {
-      overall: growthBlock(cur),
-      brands: perBrand.map(({ brand, agg }) => ({ brandId: brand.id, brand: brand.name, ...growthBlock(agg) })),
-    },
-    cac: {
-      overall: cacBlock(cur),
-      brands: perBrand.map(({ brand, agg }) => ({ brandId: brand.id, brand: brand.name, ...cacBlock(agg) })),
-    },
-    cpc: {
-      overall: cpcBlock(cur),
-      brands: perBrand.map(({ brand, agg }) => ({ brandId: brand.id, brand: brand.name, ...cpcBlock(agg) })),
-    },
-  };
-}
-
 function growthBlock(a: Agg) {
   return {
     ...makeKpi('percent', F.brandGrowth(a.companyCurrent, a.companyLy), { direction: 'higher_better' }),
@@ -154,5 +80,83 @@ function cpcBlock(a: Agg) {
     ...makeKpi('lyd', F.cpc(a.post, a.clicks), { rule: 'cpc', direction: 'lower_better' }),
     socialPostCost: n(a.post),
     clicks: n(a.clicks),
+  };
+}
+
+/** Page 1 -- MARCOM Spending. Pure: rows in, chart-ready payload out. */
+export function buildSpending(input: SpendingInput) {
+  const { year, fromMonth, toMonth, current, previous, brands } = input;
+  const months = monthRange(fromMonth, toMonth);
+  const cur = aggregate(current);
+  const byMonthCur = groupBy(current, (r) => r.month);
+  const monthAgg = new Map([...byMonthCur].map(([m, rows]) => [m, aggregate(rows)]));
+
+  const series = (pick: (a: Agg) => Rat) =>
+    months.map((m) => {
+      const a = monthAgg.get(m);
+      return { month: m, value: a ? n(pick(a)) : null };
+    });
+  /** Monthly percent points of a ratio (sum first per month, then divide); null when the month has no data or a zero denominator. */
+  const pctSeries = (f: (a: Agg) => Rat | null) =>
+    months.map((m) => {
+      const a = monthAgg.get(m);
+      return { month: m, value: a ? makeKpi('percent', f(a)).value : null };
+    });
+
+  // ROI is rendered on the Media Campaign Performance page now; kept here so the API shape does not break.
+  const { roi, hasPrev } = buildRoi(current, previous, fromMonth, toMonth);
+
+  const byBrand = groupBy(current, (r) => r.brandId);
+  const brandRef = (b: BrandRef) => ({ brandId: b.id, brand: b.name, companyKey: b.companyKey ?? null, company: b.company ?? null });
+  const perBrand = brands.map((b) => ({ ref: brandRef(b), agg: aggregate(byBrand.get(b.id) ?? []) }));
+  const perCompany = companiesOf(brands).map((c) => ({
+    ref: { companyKey: c.key, company: c.name, brands: c.brandIds.length },
+    agg: aggregate(c.brandIds.flatMap((id) => byBrand.get(id) ?? [])),
+  }));
+
+  const meta: { missing: string[] } = { missing: [] };
+  if (!hasPrev) meta.missing.push('lastYearData');
+
+  const spendPct = (a: Agg) => F.spendPctOfRevenue(a.spend, a.revenue);
+  const spendPctCompany = (a: Agg) => F.spendPctOfRevenue(a.spend, a.companyCurrent);
+
+  return {
+    period: { year, fromMonth, toMonth },
+    hasData: current.length > 0,
+    meta,
+    totals: {
+      spend: { total: n(cur.spend), unit: 'lyd', series: series((a) => a.spend) },
+      revenueAttributed: { total: n(cur.revenue), unit: 'lyd', series: series((a) => a.revenue) },
+      companyRevenue: { total: n(cur.companyCurrent), unit: 'lyd', series: series((a) => a.companyCurrent) },
+      /** Target budget over the range (Σ budget). */
+      budget: { total: n(cur.budget), unit: 'lyd', series: series((a) => a.budget) },
+      /** Σspend ÷ Σrevenue attributed, in percentage points (monthly points summed per month first). */
+      spendPctOfRevenue: { ...makeKpi('percent', spendPct(cur), { direction: 'lower_better' }), series: pctSeries(spendPct) },
+      /** Σspend ÷ Σcompany revenue -- the same share against total company revenue. */
+      spendPctOfCompanyRevenue: { ...makeKpi('percent', spendPctCompany(cur), { direction: 'lower_better' }), series: pctSeries(spendPctCompany) },
+      /** Σspend ÷ Σbudget (same figure as budgetUtilization.overall). */
+      budgetUsed: makeKpi('percent', F.budgetUtilization(cur.spend, cur.budget)),
+    },
+    roi,
+    budgetUtilization: {
+      overall: budgetBlock(cur),
+      brands: perBrand.map(({ ref, agg }) => ({ ...ref, ...budgetBlock(agg) })),
+      companies: perCompany.map(({ ref, agg }) => ({ ...ref, ...budgetBlock(agg) })),
+    },
+    brandGrowth: {
+      overall: growthBlock(cur),
+      brands: perBrand.map(({ ref, agg }) => ({ ...ref, ...growthBlock(agg) })),
+      companies: perCompany.map(({ ref, agg }) => ({ ...ref, ...growthBlock(agg) })),
+    },
+    cac: {
+      /** % of invoice scale for the chart, in percentage points, read from the threshold config (green at or below, red above). */
+      bands: { greenAtMost: Number(RAG_RULES.cacPctOfInvoice.green.value) * 100, redAbove: Number(RAG_RULES.cacPctOfInvoice.red.value) * 100 },
+      overall: cacBlock(cur),
+      brands: perBrand.map(({ ref, agg }) => ({ ...ref, ...cacBlock(agg) })),
+    },
+    cpc: {
+      overall: cpcBlock(cur),
+      brands: perBrand.map(({ ref, agg }) => ({ ...ref, ...cpcBlock(agg) })),
+    },
   };
 }

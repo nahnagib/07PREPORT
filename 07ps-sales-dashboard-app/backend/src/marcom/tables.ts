@@ -39,9 +39,9 @@ export const ADAPTERS: Adapter[] = [
     ],
   },
   {
-    id: 'media', table: 'marcom_campaign_media', keyFields: ['campaignName', 'mediaType'],
+    id: 'media', table: 'marcom_campaign_media', keyFields: ['campaignName', 'mediaType', 'city'],
     fields: [
-      f('campaignName', 'campaign_name', 'text'), f('mediaType', 'media_type', 'text'),
+      f('campaignName', 'campaign_name', 'text'), f('mediaType', 'media_type', 'text'), f('city', 'city', 'text'),
       f('units', 'units', 'int'), f('cost', 'cost', 'money'),
     ],
   },

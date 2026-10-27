@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { apiQuery, EMPTY_FILTERS, hasFilterParams, isDefaultFilters, MarcomFilters, parseFilters, restoreFilters, serializeForStorage, toSearchParams } from '../filters';
+import { apiQuery, brandsForCompanies, withCompanies, EMPTY_FILTERS, hasFilterParams, isDefaultFilters, MarcomFilters, parseFilters, restoreFilters, serializeForStorage, toSearchParams } from '../filters';
 
 const f = (o: Partial<MarcomFilters> = {}): MarcomFilters => ({ ...EMPTY_FILTERS, ...o });
 
@@ -68,8 +68,25 @@ describe('API query per page (only params that page understands)', () => {
     expect(apiQuery('trade', all)).toBe('year=2026&fromMonth=2&toMonth=8&brandIds=1%2C2&completedOnly=true');
     expect(apiQuery('trade', f({ year: 2026 }))).toBe('year=2026');
   });
-  it('campaigns: the whole year (no month filter on that page), brands and status', () => {
-    expect(apiQuery('campaigns', all)).toBe('year=2026&fromMonth=1&toMonth=12&brandIds=1%2C2&status=Ongoing');
+  it('campaigns: the chosen From..To (campaigns overlapping it), brands and status; the whole year by default', () => {
+    expect(apiQuery('campaigns', all)).toBe('year=2026&fromMonth=2&toMonth=8&brandIds=1%2C2&status=Ongoing');
+    expect(apiQuery('campaigns', f({ year: 2026 }))).toBe('year=2026&fromMonth=1&toMonth=12');
+  });
+  it('companyKeys go to the pages with a Company filter only', () => {
+    const c = f({ companyKeys: [2, 1] });
+    expect(apiQuery('spending', c)).toBe('companyKeys=1%2C2');
+    expect(apiQuery('trade', c)).toBe('companyKeys=1%2C2');
+    expect(apiQuery('digital', c)).toBe('');
+  });
+  it('company -> brand cascade: brand options narrow to the company, and brands outside it are dropped', () => {
+    const brands = [{ id: 1, companyKey: 10 }, { id: 2, companyKey: 10 }, { id: 3, companyKey: 20 }, { id: 4, companyKey: null }];
+    expect(brandsForCompanies(brands, []).map((b) => b.id)).toEqual([1, 2, 3, 4]);
+    expect(brandsForCompanies(brands, [10]).map((b) => b.id)).toEqual([1, 2]);
+    expect(withCompanies(f({ brandIds: [1, 3, 4] }), [10], brands)).toMatchObject({ companyKeys: [10], brandIds: [1] });
+    expect(withCompanies(f({ brandIds: [1, 3] }), [], brands).brandIds).toEqual([1, 3]);
+  });
+  it('companyKeys round-trip through the URL', () => {
+    expect(parseFilters(toSearchParams(f({ companyKeys: [3, 1] }))).companyKeys).toEqual([1, 3]);
   });
   it('with no filters, only what the page must send: the API picks its defaults', () => {
     expect(apiQuery('spending', f())).toBe('');

@@ -1,10 +1,10 @@
 'use client';
-import React from 'react';
-import { MarcomFilters, PAGE_CONTROLS, isDefaultFilters } from '../../lib/marcom/filters';
-import { monthName } from '../../lib/marcom/format';
+import React, { useState } from 'react';
+import { ChevronDown, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { MonthInput, Select, formatMonthEdge } from '@07ps/ui';
+import { MarcomFilters, PAGE_CONTROLS, brandsForCompanies, isDefaultFilters, withCompanies } from '../../lib/marcom/filters';
 import { t } from '../../lib/marcom/text';
 import type { Options, PageKey } from '../../lib/marcom/types';
-import { GHOST_BTN } from './MarcomChartCard';
 
 export interface MarcomFilterBarProps {
   page: PageKey;
@@ -12,106 +12,169 @@ export interface MarcomFilterBarProps {
   options: Options;
   /** What the API actually applied (its defaults fill whatever the user left unset). */
   applied: { year: number; fromMonth: number; toMonth: number };
+  /** Latest uploaded month (freshness): months after it have no data and are locked in the calendars. */
+  latest?: { year: number; month: number } | null;
   refreshing?: boolean;
+  /** Start expanded (tests); the other report pages' bar starts collapsed. */
+  defaultOpen?: boolean;
   onChange: (next: MarcomFilters) => void;
   onReset: () => void;
 }
 
-const field: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 3, fontSize: 11, color: 'var(--ps-color-muted-text)', textTransform: 'uppercase', letterSpacing: 0.4 };
-const control: React.CSSProperties = { fontSize: 13, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--ps-color-border)', background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', minWidth: 96, textTransform: 'none', letterSpacing: 0 };
+/** Same field width and label spacing as the shared FilterBar on the sales pages. */
+const fieldBox: React.CSSProperties = { width: 152, flexShrink: 0 };
+const labelSpacerStyle: React.CSSProperties = { display: 'block', fontSize: 12, marginBottom: 4 };
 
-/** Checkbox dropdown built on <details>: keyboard-operable with no extra JS. */
-function MultiSelect({ label, options, selected, onChange }: { label: string; options: { value: string; label: string }[]; selected: string[]; onChange: (next: string[]) => void }) {
-  const summary = selected.length === 0 ? t('filter.all') : selected.length === 1 ? (options.find((o) => o.value === selected[0])?.label ?? selected[0]) : t('filter.selected', { n: selected.length });
-  return (
-    <div style={field}>
-      <span id={`ms-${label}`}>{label}</span>
-      <details style={{ position: 'relative' }} data-testid={`filter-${label}`}>
-        <summary aria-labelledby={`ms-${label}`} style={{ ...control, cursor: 'pointer', listStyle: 'none', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-          <span>{summary}</span><span aria-hidden="true">▾</span>
-        </summary>
-        <div role="group" aria-label={label} style={{ position: 'absolute', zIndex: 20, insetInlineStart: 0, marginTop: 4, minWidth: 190, maxHeight: 260, overflow: 'auto', background: 'var(--ps-color-surface)', border: '1px solid var(--ps-color-border)', borderRadius: 8, boxShadow: 'var(--ps-card-shadow)', padding: 6, textTransform: 'none', letterSpacing: 0, fontSize: 13, color: 'var(--ps-color-text)' }}>
-          {options.map((o) => (
-            <label key={o.value} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 6px', cursor: 'pointer' }}>
-              <input
-                type="checkbox" checked={selected.includes(o.value)}
-                onChange={(e) => onChange(e.target.checked ? [...selected, o.value] : selected.filter((v) => v !== o.value))}
-              />
-              {o.label}
-            </label>
-          ))}
-        </div>
-      </details>
-    </div>
-  );
-}
-
-export function MarcomFilterBar({ page, filters, options, applied, refreshing, onChange, onReset }: MarcomFilterBarProps) {
+/**
+ * MARCOM filter bar, built to the same structure as the shared FilterBar of the other report pages:
+ * collapsible "Filters" header with the active-filter count, @07ps/ui Select dropdowns, the same
+ * Reset filters button -- and From Date / To Date calendars whose DAY is locked (MARCOM data is
+ * monthly: From is always the 1st, To the month's last day). From and To stay in one year (the
+ * API's YTD vs LYTD model is per year); the year comes from the From calendar.
+ */
+export function MarcomFilterBar({ page, filters, options, applied, latest, refreshing, defaultOpen = false, onChange, onReset }: MarcomFilterBarProps) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
   const c = PAGE_CONTROLS[page];
   const year = filters.year ?? applied.year;
   const from = filters.fromMonth ?? applied.fromMonth;
   const to = filters.toMonth ?? applied.toMonth;
-  const years = options.years.includes(year) ? options.years : [...options.years, year].sort((a, b) => a - b);
+
+  const yearsWithData = options.years.length ? options.years : [year];
+  const minYear = Math.min(...yearsWithData, year);
+  const maxYear = Math.max(...yearsWithData, year);
+  /** No data after the latest uploaded month (the campaigns page keeps future months: campaigns are planned ahead). */
+  const afterLatest = (y: number, m: number) => !c.futureMonths && !!latest && (y > latest.year || (y === latest.year && m > latest.month));
+  const lastMonthOf = (y: number) => (!c.futureMonths && latest && y === latest.year ? latest.month : 12);
+
+  const onFrom = (y: number, m: number) => {
+    // Moving to another year moves To into it too (latest month with data there); otherwise To never precedes From.
+    const nextTo = y !== year ? lastMonthOf(y) : Math.max(to, m);
+    onChange({ ...filters, year: y, fromMonth: m, toMonth: Math.max(m, nextTo) });
+  };
+  const onTo = (_y: number, m: number) => onChange({ ...filters, year, fromMonth: from, toMonth: m });
+
+  const companies = options.companies ?? [];
+  const brandOptions = brandsForCompanies(options.brands, filters.companyKeys);
+
+  const activeCount =
+    (c.company ? filters.companyKeys.length : 0) +
+    (c.brand ? filters.brandIds.length : 0) +
+    (c.platform ? filters.platforms.length : 0) +
+    (c.status ? filters.statuses.length : 0);
+  const resetDisabled = isDefaultFilters(filters);
 
   return (
-    <form
+    <div
       role="search" aria-label={t('filter.bar')} data-testid="marcom-filters"
-      onSubmit={(e) => e.preventDefault()}
-      style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', padding: '10px 12px', background: 'var(--ps-color-surface)', border: '1px solid var(--ps-color-border)', borderRadius: 10 }}
+      style={{ background: 'var(--ps-color-surface)', border: '1px solid var(--ps-color-border)', borderRadius: 10 }}
     >
-      <label style={field}>
-        {t('filter.year')}
-        <select style={control} value={year} onChange={(e) => onChange({ ...filters, year: Number(e.target.value), fromMonth: undefined, toMonth: undefined })}>
-          {[...years].sort((a, b) => b - a).map((y) => <option key={y} value={y}>{y}</option>)}
-        </select>
-      </label>
-
-      {c.months && (
-        <>
-          <label style={field}>
-            {t('filter.from')}
-            <select style={control} value={from} onChange={(e) => { const m = Number(e.target.value); onChange({ ...filters, fromMonth: m, toMonth: Math.max(to, m) }); }}>
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{monthName(m, 'long')}</option>)}
-            </select>
-          </label>
-          <label style={field}>
-            {t('filter.to')}
-            <select style={control} value={to} onChange={(e) => { const m = Number(e.target.value); onChange({ ...filters, toMonth: m, fromMonth: Math.min(from, m) }); }}>
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>{monthName(m, 'long')}</option>)}
-            </select>
-          </label>
-        </>
-      )}
-
-      {c.brand && (
-        <MultiSelect
-          label={t('filter.brand')}
-          options={options.brands.map((b) => ({ value: String(b.id), label: b.name }))}
-          selected={filters.brandIds.map(String)}
-          onChange={(v) => onChange({ ...filters, brandIds: v.map(Number) })}
-        />
-      )}
-      {c.platform && (
-        <MultiSelect
-          label={t('filter.platform')}
-          options={(options.platforms ?? []).map((p) => ({ value: p, label: p }))}
-          selected={filters.platforms}
-          onChange={(v) => onChange({ ...filters, platforms: v })}
-        />
-      )}
-      {c.status && (
-        <MultiSelect
-          label={t('filter.status')}
-          options={(options.statuses ?? []).map((s) => ({ value: s, label: s }))}
-          selected={filters.statuses}
-          onChange={(v) => onChange({ ...filters, statuses: v })}
-        />
-      )}
-
-      <button type="button" onClick={onReset} disabled={isDefaultFilters(filters)} style={{ ...GHOST_BTN, opacity: isDefaultFilters(filters) ? 0.5 : 1, cursor: isDefaultFilters(filters) ? 'not-allowed' : 'pointer' }}>
-        {t('filter.reset')}
+      <button
+        type="button" onClick={() => setIsOpen((o) => !o)} aria-expanded={isOpen} data-testid="filters-toggle"
+        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: '8px 16px', color: 'var(--ps-color-text)', fontFamily: 'inherit' }}
+      >
+        <SlidersHorizontal size={14} aria-hidden />
+        <span style={{ fontSize: 13, fontWeight: 600 }}>Filters</span>
+        {activeCount > 0 && (
+          <span data-testid="filters-count" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, fontSize: 11, fontWeight: 700, color: 'var(--ps-color-on-accent)', background: 'var(--ps-color-accent)' }}>
+            {activeCount}
+          </span>
+        )}
+        {c.months && (
+          <span style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginInlineStart: 6, fontVariantNumeric: 'tabular-nums' }} data-testid="filters-period">
+            {formatMonthEdge(year, from, 'start')} – {formatMonthEdge(year, to, 'end')}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        {refreshing && <span role="status" style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>{t('filter.refreshing')}</span>}
+        <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>{isOpen ? 'Hide filters' : 'Show filters'}</span>
+        <ChevronDown size={14} aria-hidden style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }} />
       </button>
-      {refreshing && <span role="status" style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>{t('filter.refreshing')}</span>}
-    </form>
+
+      {isOpen && (
+        <div style={{ display: 'flex', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, padding: '0 16px 4px' }}>
+          {c.months && (
+            <>
+              <div style={fieldBox}>
+                <MonthInput
+                  label={t('filter.fromDate')} edge="start" year={year} month={from} minYear={minYear} maxYear={maxYear}
+                  isMonthDisabled={afterLatest} onChange={onFrom}
+                />
+              </div>
+              <div style={fieldBox}>
+                <MonthInput
+                  label={t('filter.toDate')} edge="end" year={year} month={to} minYear={year} maxYear={year} lockYear
+                  isMonthDisabled={(y, m) => m < from || afterLatest(y, m)} onChange={onTo}
+                />
+              </div>
+            </>
+          )}
+
+          {c.company && (
+            <div style={fieldBox} data-testid="filter-company">
+              <Select
+                label={t('filter.company')}
+                options={companies.map((o) => ({ value: String(o.key), label: o.name }))}
+                value={filters.companyKeys.map(String)}
+                onChange={(v) => onChange(withCompanies(filters, v.map(Number), options.brands))}
+                multiSelect
+                disabled={companies.length === 0}
+                lockedReason={companies.length === 0 ? t('filter.noCompanies') : undefined}
+              />
+            </div>
+          )}
+          {c.brand && (
+            <div style={fieldBox} data-testid="filter-brand">
+              <Select
+                label={t('filter.brand')}
+                options={brandOptions.map((b) => ({ value: String(b.id), label: b.name }))}
+                value={filters.brandIds.map(String)}
+                onChange={(v) => onChange({ ...filters, brandIds: v.map(Number) })}
+                multiSelect searchable
+                disabled={brandOptions.length === 0}
+                lockedReason={brandOptions.length === 0 ? t('filter.noBrands') : undefined}
+              />
+            </div>
+          )}
+          {c.platform && (
+            <div style={fieldBox} data-testid="filter-platform">
+              <Select
+                label={t('filter.platform')}
+                options={(options.platforms ?? []).map((p) => ({ value: p, label: p }))}
+                value={filters.platforms}
+                onChange={(v) => onChange({ ...filters, platforms: v })}
+                multiSelect
+              />
+            </div>
+          )}
+          {c.status && (
+            <div style={fieldBox} data-testid="filter-status">
+              <Select
+                label={t('filter.status')}
+                options={(options.statuses ?? []).map((s) => ({ value: s, label: s }))}
+                value={filters.statuses}
+                onChange={(v) => onChange({ ...filters, statuses: v })}
+                multiSelect
+              />
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+            <span aria-hidden style={labelSpacerStyle}>&nbsp;</span>
+            <button
+              type="button" onClick={onReset} disabled={resetDisabled} aria-label="Reset filters" title="Reset filters"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 12px', borderRadius: 8,
+                border: '1px solid var(--ps-color-border)', background: 'transparent', color: 'var(--ps-color-text)',
+                fontSize: 13, fontFamily: 'inherit', whiteSpace: 'nowrap',
+                cursor: resetDisabled ? 'not-allowed' : 'pointer', opacity: resetDisabled ? 0.45 : 1,
+              }}
+            >
+              <RotateCcw size={14} aria-hidden />
+              {t('filter.reset')}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

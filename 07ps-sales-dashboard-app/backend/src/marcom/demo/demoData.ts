@@ -169,15 +169,17 @@ const CAMPAIGNS: CampaignRow[] = [
   camp('Year-End Mega Sale', 'Brand D', '2026-11-15', '2026-12-31', 'Planned', 0, 0),                        // n/a (zero spend)
 ];
 
-const m = (campaignName: string, mediaType: string, units: number, cost: number): MediaRow => ({ campaignName, mediaType, units, cost });
+const m = (campaignName: string, mediaType: string, city: string, units: number, cost: number): MediaRow => ({ campaignName, mediaType, city, units, cost });
 const MEDIA: MediaRow[] = [
-  m('Ramadan Lighting Campaign', '1-Street Lights', 45, 30_000), m('Ramadan Lighting Campaign', '2-Mega Billboards', 6, 45_000),
-  m('Spring Kitchens Promo', '3-Billboards', 10, 12_000),
-  m('Summer Outdoor Push', '3-Billboards', 20, 25_000), m('Summer Outdoor Push', '4-Bridge Banners', 8, 18_000), m('Summer Outdoor Push', '5-Light Screen', 4, 22_000),
-  m('Eid Billboard Wave', '1-Street Lights', 30, 20_000), m('Eid Billboard Wave', '3-Billboards', 10, 32_000),
-  m('Back To School', '2-Mega Billboards', 12, 60_000), m('Back To School', '4-Bridge Banners', 6, 9_000),
-  m('Autumn Refresh', '5-Light Screen', 15, 30_000),
-  m('National Day Lights', '1-Street Lights', 25, 15_000), m('National Day Lights', '2-Mega Billboards', 3, 21_000),
+  m('Ramadan Lighting Campaign', '1-Street Lights', 'Tripoli', 30, 20_000), m('Ramadan Lighting Campaign', '1-Street Lights', 'Benghazi', 15, 10_000),
+  m('Ramadan Lighting Campaign', '2-Mega Billboards', 'Tripoli', 6, 45_000),
+  m('Spring Kitchens Promo', '3-Billboards', 'Misrata', 10, 12_000),
+  m('Summer Outdoor Push', '3-Billboards', 'Tripoli', 12, 15_000), m('Summer Outdoor Push', '3-Billboards', 'Zawiya', 8, 10_000),
+  m('Summer Outdoor Push', '4-Bridge Banners', 'Tripoli', 8, 18_000), m('Summer Outdoor Push', '5-Light Screen', 'Benghazi', 4, 22_000),
+  m('Eid Billboard Wave', '1-Street Lights', 'Misrata', 30, 20_000), m('Eid Billboard Wave', '3-Billboards', 'Sabha', 10, 32_000),
+  m('Back To School', '2-Mega Billboards', 'Benghazi', 12, 60_000), m('Back To School', '4-Bridge Banners', 'Tobruk', 6, 9_000),
+  m('Autumn Refresh', '5-Light Screen', 'Tripoli', 15, 30_000),
+  m('National Day Lights', '1-Street Lights', 'Sirte', 25, 15_000), m('National Day Lights', '2-Mega Billboards', 'Khoms', 3, 21_000),
 ];
 
 // ---------------------------------------------------------------- P4-B: events (all 8 types, all 4 statuses)

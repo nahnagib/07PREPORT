@@ -81,6 +81,8 @@ function NpsScoreBody() {
   const { effectiveFilters, onFiltersChange, anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
   const filterOptions = useScopedFilterOptions();
   const [grain, setGrain] = useState<NpsGrain>('month');
+  // The Responders Trend has its own Weekly / Monthly / Yearly switch (same choices, independent of the Satisfaction Trend).
+  const [respondersGrain, setRespondersGrain] = useState<NpsGrain>('month');
   const [listPages, setListPages] = useState(1);
 
   const period = useMemo(() => npsPeriod(dateFromDate, dateToDate), [dateFromDate, dateToDate]);
@@ -90,7 +92,8 @@ function NpsScoreBody() {
   const meta = useNpsScore<NpsMeta>(token, authError, retryAuth, 'meta', scope, undefined, allowed);
   const overview = useNpsScore<NpsOverview>(token, authError, retryAuth, 'overview', scope, undefined, allowed);
   const trend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { grain }, allowed);
-  const monthlyTrend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { grain: 'month' }, allowed && grain !== 'month');
+  // Only fetched when it differs from the Satisfaction Trend's grain; otherwise both charts share one response.
+  const respondersOwnTrend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { grain: respondersGrain }, allowed && respondersGrain !== grain);
   const reach = useNpsScore<ReachData>(token, authError, retryAuth, 'reach', scope, undefined, allowed);
   const rate = useNpsScore<NpsResponseRate>(token, authError, retryAuth, 'response-rate', scope, undefined, allowed);
   const followup = useNpsScore<NpsFollowupSummary>(token, authError, retryAuth, 'followup-summary', scope, undefined, allowed);
@@ -126,7 +129,7 @@ function NpsScoreBody() {
       <div className="ps-nps-freshness" data-testid="nps-freshness">
         <span title="The last successful NPS Score load (once a night, full reload), Tripoli time">Data refreshed: <strong>{formatTimestamp(freshness?.lastSuccessUtc ?? null)}</strong></span>
         <span title="Every visual on this page covers this period (rating date / message date, Tripoli time)" data-testid="nps-period"><strong>{periodCaption(period)}</strong></span>
-        <span>Latest rating <strong>{meta.data?.lastRatingAt ? `${meta.data.lastRatingAt.slice(0, 16)} (Tripoli)` : '—'}</strong></span>
+        <span>Latest rating <strong>{meta.data?.lastRatingAt ? `${meta.data.lastRatingAt.slice(0, 16)}` : '—'}</strong></span>
         <span>Ratings since <strong>{longDate(meta.data?.firstRatingDate)}</strong></span>
         <span>Reach since <strong>{longDate(rate.data?.reachStart)}</strong></span>
         {freshness?.lastFailureUtc ? <span style={{ color: 'var(--ps-color-alert)' }}>Last NPS run failed at {formatTimestamp(freshness.lastFailureUtc)}</span> : null}
@@ -151,7 +154,6 @@ function NpsScoreBody() {
                   key={g.key}
                   emphasizeLabel
                   label={g.label}
-                  labelDetail={g.labelAr}
                   value={formatNumber(totals[g.key])}
                   subValue={`${pct(totals[`${g.key}Pct` as const])} of responders`}
                   status={g.key === 'promoters' ? 'success' : g.key === 'passives' ? 'watch' : 'alert'}
@@ -166,7 +168,7 @@ function NpsScoreBody() {
             {/* Row 4: trend */}
             <section className="ps-nps-trends" aria-label="Trends">
               <NpsTrendChart state={trend} grain={grain} onGrainChange={setGrain} />
-              <RespondersTrend state={grain === 'month' ? trend : monthlyTrend} />
+              <RespondersTrend state={respondersGrain === grain ? trend : respondersOwnTrend} grain={respondersGrain} onGrainChange={setRespondersGrain} />
             </section>
 
             {/* Row 5: reasons and follow-up (live from the follow-up cases) */}
@@ -179,7 +181,7 @@ function NpsScoreBody() {
             {/* Row 6: the detractor list (nps_comments) */}
             {canSeeDetractors && (
               <ChartPanel title={`Detractors (${formatNumber(detractors.data?.total ?? totals.detractors)})`}
-                infoText="Every ★ rating of the period, newest first, with its follow-up case (status, reason, owner and time open, live from the Detractor Follow-up page) and the customer's comments (phone numbers and e-mail addresses masked). Click a row to open the case; the order and delivery codes open in Odoo. Visible only with the NPS Score detractor list permission.">
+                infoText="Every ★ rating of the period, newest first, with its follow-up case (status, reason, owner and time open, live from the Detractor Follow-up page) and the customer's comments (phone numbers and e-mail addresses masked). Click a row to open the case (its delivery is on the case card); the order code opens in Odoo. Visible only with the NPS Score detractor list permission.">
                 <DetractorList state={detractors} onMore={() => setListPages((p) => p + 1)} />
               </ChartPanel>
             )}
@@ -200,10 +202,10 @@ function DetractorList({ state, onMore }: { state: ListState; onMore: () => void
   if (state.data.total === 0) return <EmptyState message="No detractors for these filters and dates." />;
   type Row = NpsDetractor & Record<string, unknown>;
   const columns: DataGridColumn<Row>[] = [
-    { key: 'ratedAt', header: 'Date (Tripoli)', width: 140, render: (r) => r.ratedAt?.slice(0, 16) ?? '—' },
+    { key: 'caseId', header: 'Case #', width: 90, render: (r) => (r.caseId !== null ? `#${r.caseId}` : '—'), rawValue: (r) => r.caseId ?? '' },
+    { key: 'ratedAt', header: 'Date', width: 140, render: (r) => r.ratedAt?.slice(0, 16) ?? '—' },
     { key: 'customer', header: 'Customer', width: 200, render: (r) => <span dir="auto">{r.customer ?? '—'}</span> },
     { key: 'orderRef', header: 'Order', render: (r) => (r.orderRef ? <OdooLink href={r.orderUrl}>{r.orderRef}</OdooLink> : '—'), rawValue: (r) => r.orderRef ?? '' },
-    { key: 'deliveryCode', header: 'Delivery', render: (r) => (r.deliveryCode ? <OdooLink href={r.deliveryUrl}>{r.deliveryCode}</OdooLink> : '—'), rawValue: (r) => r.deliveryCode ?? '' },
     { key: 'salesTeam', header: 'Team', render: (r) => <span dir="auto">{r.salesTeam ?? '—'}</span> },
     { key: 'salesperson', header: 'Salesperson', render: (r) => r.salesperson ?? '—' },
     { key: 'status', header: 'Status', render: (r) => (r.status ? <StatusPill status={r.status} /> : 'Not yet a case'), rawValue: (r) => r.status ?? '' },

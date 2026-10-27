@@ -5,9 +5,10 @@ import { MarcomPageView, MarcomPageViewProps } from '../MarcomPageView';
 import { MarcomFilterBar } from '../MarcomFilterBar';
 import { MarcomFreshness } from '../MarcomFreshness';
 import { SpendingView } from '../views/SpendingView';
+import { RoiTrendCard } from '../views/RoiTrendCard';
 import { EMPTY_FILTERS } from '../../../lib/marcom/filters';
 import { MarcomKpiError } from '../../../lib/marcom/api';
-import type { PageKey, SpendingData } from '../../../lib/marcom/types';
+import type { CampaignsData, PageKey, SpendingData } from '../../../lib/marcom/types';
 import { fixture, flat, render, visualsIn } from './helpers';
 
 const noop = () => undefined;
@@ -153,84 +154,79 @@ describe('freshness line', () => {
   });
 });
 
-describe('filter bar', () => {
+describe('filter bar (same structure as the other report pages)', () => {
   const data = fixture<SpendingData>('demo.spending');
   const bar = (page: PageKey, over: Partial<React.ComponentProps<typeof MarcomFilterBar>> = {}) => render(
-    <MarcomFilterBar page={page} filters={EMPTY_FILTERS} options={{ ...data.options, platforms: ['Facebook', 'TikTok'], statuses: ['Planned', 'Ongoing'] }} applied={{ year: 2026, fromMonth: 1, toMonth: 8 }} onChange={noop} onReset={noop} {...over} />,
+    <MarcomFilterBar page={page} filters={EMPTY_FILTERS} options={{ ...data.options, platforms: ['Facebook', 'TikTok'], statuses: ['Planned', 'Ongoing'] }} applied={{ year: 2026, fromMonth: 1, toMonth: 8 }} latest={{ year: 2026, month: 8 }} defaultOpen onChange={noop} onReset={noop} {...over} />,
   );
 
-  it('page 1 / 4: year, month range, brand', () => {
+  it('collapsible "Filters" header like the shared FilterBar; collapsed by default, with the period summary', () => {
+    const closed = bar('spending', { defaultOpen: false });
+    expect(closed).toContain('data-testid="filters-toggle"');
+    expect(closed).toContain('aria-expanded="false"');
+    expect(flat(closed)).toContain('Show filters');
+    expect(flat(closed)).toContain('01 Jan 2026 – 31 Aug 2026');
+    expect(closed).not.toContain('data-testid="month-input-start"');
+  });
+  it('page 1 / 4: From Date, To Date, Company, Brand', () => {
     for (const page of ['spending', 'trade'] as PageKey[]) {
       const html = bar(page);
-      expect(flat(html)).toMatch(/Year.*From.*To.*Brand/);
-      expect(html).not.toContain('data-testid="filter-Platform"');
-      expect(html).not.toContain('data-testid="filter-Campaign status"');
+      expect(flat(html)).toMatch(/From Date.*To Date.*Company.*Brand/);
+      expect(html).not.toContain('data-testid="filter-platform"');
+      expect(html).not.toContain('data-testid="filter-status"');
+      expect(flat(html)).not.toMatch(/\bYear\b/); // the year comes from the calendar
     }
   });
-  it('page 2: year, brand, campaign status (no month range: campaigns are date ranges)', () => {
-    const html = bar('campaigns');
-    expect(flat(html)).toMatch(/Year.*Brand.*Campaign status/);
-    expect(flat(html)).not.toContain('From');
+  it('page 2: From Date, To Date, Company, Brand, Campaign status', () => {
+    expect(flat(bar('campaigns'))).toMatch(/From Date.*To Date.*Company.*Brand.*Campaign status/);
   });
-  it('page 3: year, month range, platform', () => {
+  it('page 3: From Date, To Date, Platform (no Company / Brand: digital has no brand dimension)', () => {
     const html = bar('digital');
-    expect(flat(html)).toMatch(/Year.*From.*To.*Platform/);
-    expect(html).not.toContain('data-testid="filter-Brand"');
+    expect(flat(html)).toMatch(/From Date.*To Date.*Platform/);
+    expect(html).not.toContain('data-testid="filter-brand"');
+    expect(html).not.toContain('data-testid="filter-company"');
   });
-  it('options come from the API: years, brands, platforms, statuses', () => {
-    expect(flat(bar('spending'))).toContain('Brand A');
-    expect(flat(bar('spending'))).toContain('Brand D');
-    expect(flat(bar('digital'))).toContain('TikTok');
-    expect(flat(bar('campaigns'))).toContain('Ongoing');
-    const years = bar('spending').match(/<option[^>]*value="(\d{4})"/g) ?? [];
-    expect(years.map((y) => y.match(/\d{4}/)![0])).toEqual(['2026', '2025']);
-  });
-  it('shows what the API applied when the user set nothing, and selected filters when they did', () => {
+  it('From / To are calendars with the day locked: From = the 1st, To = the month\'s last day', () => {
     const html = bar('spending');
-    expect(html).toContain('<option value="2026" selected');
-    expect(html).toContain('<option value="8" selected');
-    expect(flat(bar('spending', { filters: { ...EMPTY_FILTERS, brandIds: [2] } }))).toContain('Brand B');
-    expect(flat(bar('spending', { filters: { ...EMPTY_FILTERS, brandIds: [1, 2] } }))).toContain('2 selected');
+    expect(html).toContain('aria-label="From Date: 01 Jan 2026"');
+    expect(html).toContain('aria-label="To Date: 31 Aug 2026"');
+    expect(bar('spending', { applied: { year: 2024, fromMonth: 2, toMonth: 2 } })).toContain('aria-label="To Date: 29 Feb 2024"');
   });
-  it('a year with no uploaded data is still selectable (so the empty state is reachable)', () => {
-    expect(bar('spending', { applied: { year: 2031, fromMonth: 1, toMonth: 12 } })).toContain('value="2031"');
+  it('shows the selected filters and counts them on the header badge', () => {
+    const html = bar('spending', { filters: { ...EMPTY_FILTERS, companyKeys: [1], brandIds: [1, 2] } });
+    expect(html).toMatch(/data-testid="filters-count"[^>]*>3</);
   });
-  it('Reset is disabled on the default view and enabled once a filter is set', () => {
-    expect(bar('spending')).toMatch(/<button[^>]*disabled[^>]*>Reset/);
-    expect(bar('spending', { filters: { ...EMPTY_FILTERS, year: 2025 } })).not.toMatch(/<button[^>]*disabled[^>]*>Reset/);
+  it('Reset filters is disabled on the default view and enabled once a filter is set', () => {
+    expect(bar('spending')).toMatch(/<button[^>]*disabled[^>]*aria-label="Reset filters"/);
+    expect(bar('spending', { filters: { ...EMPTY_FILTERS, year: 2025 } })).not.toMatch(/<button[^>]*disabled[^>]*aria-label="Reset filters"/);
   });
-  it('every control is a labelled, native form control (keyboard operable)', () => {
-    const html = bar('spending');
-    expect(html).toContain('role="search"');
-    expect(html.match(/<select/g)).toHaveLength(3);
-    expect(html).toContain('<details');
-    expect(html).toContain('<summary');
-    expect(html).toContain('type="checkbox"');
+  it('company is disabled with a reason when no brand has a company yet', () => {
+    expect(flat(bar('spending', { options: { ...data.options, companies: [] } }))).toContain('No brand is assigned to a company yet');
   });
 });
 
-describe('lastYearData missing', () => {
-  const html = render(<SpendingView data={fixture<SpendingData>('noLastYear.spending')} />);
+describe('lastYearData missing (ROI trend, now on Media Campaign Performance)', () => {
+  const noLy = fixture<SpendingData>('noLastYear.spending');
+  const html = render(<RoiTrendCard roi={noLy.roi} noLastYear />);
   it('shows "No last-year data uploaded" in place of the LYTD card', () => {
     expect(html).toContain('data-testid="no-last-year"');
     expect(flat(html)).toContain('No last-year data uploaded');
     expect(html).not.toContain('data-testid="roi-lytd"');
   });
   it('draws only the current-year ROI line (no fake or zero last-year line) and lists n/a in the table', () => {
-    const roi = html.slice(html.indexOf('data-visual="spending.roiTrend"'), html.indexOf('data-visual="spending.budgetUtilization"'));
-    expect((roi.match(/class="recharts-layer recharts-line"/g) ?? []).length).toBe(1);
-    expect(flat(roi)).toContain('Last year');
-    expect(flat(roi)).not.toMatch(/Last year[^|]*1 : 0\b/);
+    expect((html.match(/class="recharts-layer recharts-line"/g) ?? []).length).toBe(1);
+    expect(flat(html)).toContain('Last year');
+    expect(flat(html)).not.toMatch(/Last year[^|]*1 : 0\b/);
   });
   it('with last-year data the LYTD value sits beside YTD and both lines are drawn', () => {
-    const ok = render(<SpendingView data={fixture<SpendingData>('demo.spending')} />);
+    const d = fixture<CampaignsData>('demo.campaigns');
+    const ok = render(<RoiTrendCard roi={d.roi} noLastYear={d.meta.missing.includes('lastYearData')} />);
     expect(ok).toContain('data-testid="roi-lytd"');
     expect(ok).not.toContain('data-testid="no-last-year"');
-    const roi = ok.slice(ok.indexOf('data-visual="spending.roiTrend"'), ok.indexOf('data-visual="spending.budgetUtilization"'));
-    expect((roi.match(/class="recharts-layer recharts-line"/g) ?? []).length).toBe(2);
+    expect((ok.match(/class="recharts-layer recharts-line"/g) ?? []).length).toBe(2);
   });
-  it('the page still renders all six visuals', () => {
-    expect(visualsIn(html)).toHaveLength(6);
+  it('the spending page still renders all its visuals without last-year data', () => {
+    expect(visualsIn(render(<SpendingView data={noLy} />))).toHaveLength(5);
   });
 });
 

@@ -40,7 +40,7 @@ describe('NPS Score view helpers', () => {
     expect(fmt2(-12.5)).toBe('-12.50');
     expect(fmt2(null)).toBe('—');
     expect(pct(70.0564971)).toBe('70.06%');
-    expect(npsBreakdown(counts({ promotersPct: 70.0564971, detractorsPct: 5.0847457 }))).toBe('Promoters 70.06% − Detractors 5.08%');
+    expect(npsBreakdown(counts({ promotersPct: 70.0564971, detractorsPct: 5.0847457, nps: 64.97175141 }))).toBe('NPS = % Promoters − % Detractors = 70.06% − 5.08% = 64.97');
   });
 
   it('a small sample says "n = x"', () => {

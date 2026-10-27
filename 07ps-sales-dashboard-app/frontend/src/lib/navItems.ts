@@ -1,4 +1,4 @@
-import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store, ClipboardList, HandCoins, Smile, UserCheck } from 'lucide-react';
+import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldCheck, Filter, LineChart, Activity, Boxes, PieChart, RefreshCw, Grid2x2, Wallet, Megaphone, Globe, Store, ClipboardList, HandCoins, Smile, UserCheck, BadgeCheck, HeartPulse, Lightbulb } from 'lucide-react';
 
 /** Which department hub (PromotionHubPage/ProductHubPage via DepartmentHubPage) lists a given
  * report card, and which sidebar tab it's grouped under. Normally matches the `href`'s route
@@ -42,16 +42,26 @@ export const NAV_ITEMS = [
   { label: 'Stock Velocity', icon: Boxes, href: '/product/stock-velocity', pageKey: 'stock_velocity', department: 'product' },
   { label: 'PIM Contribution', icon: PieChart, href: '/product/pim-contribution', pageKey: 'pim_contribution', department: 'product' },
   { label: 'Product Lifecycle', icon: RefreshCw, href: '/product/product-lifecycle', pageKey: 'product_lifecycle', department: 'product' },
+  // "Coming soon" placeholder (2026-10-27): announced in the navigation, opens a placeholder page until it is built.
+  { label: 'Product Development Plan', icon: Lightbulb, href: '/product/product-development-plan', pageKey: 'product_development_plan', department: 'product', comingSoon: true },
   // Process department. The card list/entry screens live under this href (see ROUTE_PAGE_KEYS).
   { label: 'Kaizen Board', icon: ClipboardList, href: '/process/kaizen-board', pageKey: 'kaizen_board', department: 'process' },
   // Process department: customers' delivery ratings (ETL job process_nps, docs/nps-etl.md).
   { label: 'NPS Score', icon: Smile, href: '/process/nps-score', pageKey: 'nps_score', department: 'process' },
   // Process department: one case per detractor rating, followed up by the Excellence Manager (migration 0052).
   { label: 'Detractor Follow-up', icon: UserCheck, href: '/process/nps-followup', pageKey: 'nps_followup', department: 'process' },
+  // "Coming soon" placeholders (2026-10-27): announced in the navigation, each opens a placeholder page until it is built.
+  { label: 'Quality Assurance', icon: BadgeCheck, href: '/process/quality-assurance', pageKey: 'quality_assurance', department: 'process', comingSoon: true },
+  { label: 'Customer Pulse', icon: HeartPulse, href: '/process/customer-pulse', pageKey: 'customer_pulse', department: 'process', comingSoon: true },
   // Price (Finance) department: open customer receivables from the receivables snapshot (finance ETL, 02:00 + 15:00).
   // Was "Debt Report" at /price/debt-report (that URL redirects here, next.config.mjs); the permission key stays debt_report.
   { label: 'Receivables and Collections', icon: HandCoins, href: '/price/receivables-collections', pageKey: 'debt_report', department: 'price' },
 ] as const;
+
+/** A nav entry announced before it is built: shown with a "Coming soon" tag and opening a placeholder page. */
+export function isComingSoon(item: (typeof NAV_ITEMS)[number]): boolean {
+  return 'comingSoon' in item && item.comingSoon === true;
+}
 
 /** Admin Panel sections, in tab order -- AdminLayout's tab row, the Admin nav link's landing
  * section and route->page lookups all read this one list. `adminOnly` sections (ETL Control Center,
@@ -109,7 +119,7 @@ export function pageKeyForPath(pathname: string | null | undefined): string | nu
 /** First page this user can open, in navigation order -- where they land after signing in. Falls
  * back to the hub (which then explains there's nothing to show). */
 export function firstAccessiblePath(canView: (pageKey: string) => boolean, isAdmin: boolean): string {
-  const report = NAV_ITEMS.find((item) => canView(item.pageKey));
+  const report = NAV_ITEMS.find((item) => !isComingSoon(item) && canView(item.pageKey));
   if (report) return report.href;
   return adminNavHref(canView, isAdmin) ?? '/';
 }

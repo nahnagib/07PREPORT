@@ -4,9 +4,10 @@ import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import { AppHeader } from './AppHeader';
 import { Card } from '@07ps/ui';
+import { ComingSoonTag } from './ComingSoonTag';
 import { useAuth } from '../lib/AuthProvider';
 import { getDepartment } from '../lib/departments';
-import { departmentReports, type NavDepartment } from '../lib/navItems';
+import { departmentReports, isComingSoon, type NavDepartment } from '../lib/navItems';
 
 /**
  * Shared body for a department's report-card hub (grid of report cards, each linking to its live
@@ -45,20 +46,24 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
             gap: 'var(--ps-space-3, 16px)',
           }}
         >
-          {items.map(({ label, icon: Icon, href }) => {
-            const live = Boolean(href);
+          {items.map((item) => {
+            const { label, icon: Icon, href } = item;
+            const soon = isComingSoon(item);
+            const live = Boolean(href) && !soon;
             const content = (
               <Card
-                className={live ? 'ps-hub-card' : ''}
+                className={href ? 'ps-hub-card' : ''}
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 12,
                   height: '100%',
-                  opacity: live ? 1 : 0.55,
-                  cursor: live ? 'pointer' : 'not-allowed',
+                  position: 'relative',
+                  opacity: href ? 1 : 0.55,
+                  cursor: href ? 'pointer' : 'not-allowed',
                 }}
               >
+                {soon && <ComingSoonTag style={{ position: 'absolute', top: 14, right: 14 }} />}
                 <div
                   aria-hidden
                   style={{
@@ -76,7 +81,7 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
                 </div>
                 <div style={{ fontSize: 16, fontWeight: 700 }}>{label}</div>
                 <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', flex: 1 }}>
-                  {live ? 'Live report, wired to the validation warehouse.' : 'Not built yet.'}
+                  {live ? 'Live report, wired to the validation warehouse.' : soon ? 'Planned. This page is being prepared.' : 'Not built yet.'}
                 </div>
                 <div
                   style={{
@@ -88,8 +93,8 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
                     color: live ? 'var(--ps-color-accent)' : 'var(--ps-color-muted-text)',
                   }}
                 >
-                  {live ? 'Open report' : 'Coming Soon'}
-                  {live && <ArrowRight size={14} />}
+                  {live ? 'Open report' : soon ? 'Preview' : 'Coming Soon'}
+                  {href && <ArrowRight size={14} />}
                 </div>
               </Card>
             );

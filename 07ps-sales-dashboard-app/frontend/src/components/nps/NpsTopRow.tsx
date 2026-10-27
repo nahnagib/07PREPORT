@@ -2,7 +2,7 @@ import React from 'react';
 import { Reply, Smile, ThumbsUp } from 'lucide-react';
 import { CompactKpiCard, KpiCard } from '@07ps/ui';
 import type { NpsBandScale, NpsCounts, NpsResponseRate } from '../../lib/api';
-import { bandStatus, csatFooter, fmt2, longDate, npsBreakdown, npsFooter, pct, responseRateMetrics, responseRateTooltip, smallSample } from '../../lib/nps/view';
+import { NPS_CONTEXT, bandStatus, csatFooter, fmt2, longDate, npsBreakdown, npsFooter, pct, responseRateMetrics, responseRateTooltip, smallSample } from '../../lib/nps/view';
 
 export type RateState = { data: NpsResponseRate | null; loading: boolean; error: string | null; retry: () => void };
 
@@ -29,6 +29,7 @@ export function NpsTopRow({ totals, thresholds, rate }: {
       <div style={{ ...CELL, ...fade }} data-testid="nps-card" title={totals.belowMinimum ? `${smallSample(totals)}: below the minimum number of responders` : undefined}>
         <KpiCard
           title="NPS Score"
+          infoText={NPS_CONTEXT}
           icon={Smile}
           variant="gauge"
           // the gauge clamps to 0..100 (a negative NPS pins the needle at 0, in red); the headline prints the real value

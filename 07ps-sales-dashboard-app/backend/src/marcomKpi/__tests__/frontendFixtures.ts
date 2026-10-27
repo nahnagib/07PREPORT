@@ -18,20 +18,24 @@ const FRESH = { hasData: true, latestPeriod: { year: 2026, month: 8, label: 'Aug
 const NO_FRESH = { hasData: false };
 
 const demo = buildDemoDataset();
-const brands = DEMO_BRANDS.map((name, i) => ({ id: i + 1, name }));
-const OPTIONS = { years: [2025, 2026], brands };
+// Brand -> company (migration 0057): two companies, and one brand left unassigned to exercise "Unassigned".
+const COMPANIES = [{ key: 1, name: 'Company One' }, { key: 2, name: 'Company Two' }];
+const COMPANY_OF = [COMPANIES[0], COMPANIES[0], COMPANIES[1], null];
+const brands = DEMO_BRANDS.map((name, i) => ({ id: i + 1, name, companyKey: COMPANY_OF[i]?.key ?? null, company: COMPANY_OF[i]?.name ?? null }));
+const OPTIONS = { years: [2025, 2026], brands, companies: COMPANIES };
 
 const filt = (year: number, fromMonth: number, toMonth: number, extra: Record<string, unknown> = {}) => ({ year, fromMonth, toMonth, ...extra });
 const period = (f: { year: number; fromMonth: number; toMonth: number }) => ({ year: f.year, fromMonth: f.fromMonth, toMonth: f.toMonth });
 
 function spending(cur: Parameters<typeof buildSpending>[0]['current'], prev: Parameters<typeof buildSpending>[0]['previous'], sel: typeof brands, from: number, to: number, fresh: unknown = FRESH, years = OPTIONS.years) {
   const f = filt(2026, from, to);
-  return makeEnvelope('spending', { ...f, brands: sel }, { years, brands }, fresh, buildSpending({ ...period(f), current: cur, previous: prev, brands: sel }));
+  return makeEnvelope('spending', { ...f, brands: sel, companies: [] }, { years, brands, companies: COMPANIES }, fresh, buildSpending({ ...period(f), current: cur, previous: prev, brands: sel }));
 }
 
-function campaigns(rows: CampaignRow[], media: Parameters<typeof buildCampaigns>[0]['media'], fresh: unknown = FRESH) {
-  const f = filt(2026, 1, 12);
-  return makeEnvelope('campaigns', { ...f, brands, statuses: [] }, { ...OPTIONS, statuses: CAMPAIGN_STATUSES }, fresh, buildCampaigns({ ...period(f), campaigns: rows, media, today: TODAY }));
+type RoiRows = NonNullable<Parameters<typeof buildCampaigns>[0]['roiRows']>;
+function campaigns(rows: CampaignRow[], media: Parameters<typeof buildCampaigns>[0]['media'], fresh: unknown = FRESH, roiRows?: RoiRows, from = 1, to = 12) {
+  const f = filt(2026, from, to);
+  return makeEnvelope('campaigns', { ...f, brands, companies: [], statuses: [] }, { ...OPTIONS, statuses: CAMPAIGN_STATUSES }, fresh, buildCampaigns({ ...period(f), campaigns: rows, media, today: TODAY, roiRows }));
 }
 
 function digital(social: Parameters<typeof buildDigital>[0]['social'], web: Parameters<typeof buildDigital>[0]['web'], platforms: string[], from: number, to: number, fresh: unknown = FRESH) {
@@ -43,7 +47,7 @@ function trade(rows: Parameters<typeof buildTrade>[0]['trade'], allEvents: Event
   const f = filt(2026, from, to);
   // Like GET /marcom/kpi/trade: only events whose Planned Date falls inside the period.
   const events = allEvents.filter((e) => { const m = Number(e.planned.slice(5, 7)); return e.planned.startsWith('2026-') && m >= from && m <= to; });
-  return makeEnvelope('trade', { ...f, brands, completedOnly: !!opts.completedOnly }, OPTIONS, opts.fresh ?? FRESH, buildTrade({ ...period(f), trade: rows, events, today: TODAY, completedOnly: !!opts.completedOnly }));
+  return makeEnvelope('trade', { ...f, brands, companies: [], completedOnly: !!opts.completedOnly }, OPTIONS, opts.fresh ?? FRESH, buildTrade({ ...period(f), trade: rows, events, today: TODAY, completedOnly: !!opts.completedOnly }));
 }
 
 const y = <T extends { year: number; month: number }>(rows: T[], year: number, from: number, to: number): T[] => rows.filter((r) => r.year === year && r.month >= from && r.month <= to);
@@ -79,13 +83,13 @@ export function buildFrontendFixtures(): Record<string, unknown> {
   return {
     // The template's example rows as real data: the acceptance values.
     'golden.spending': spending(gold.spend, gold.prev, gold.A, 8, 8),
-    'golden.campaigns': campaigns([campaignExample()], [{ campaignName: 'Ramadan Lighting Campaign', mediaType: '1-Street Lights', units: 45, cost: 30000 }]),
+    'golden.campaigns': campaigns([campaignExample()], [{ campaignName: 'Ramadan Lighting Campaign', mediaType: '1-Street Lights', city: 'Tripoli', units: 45, cost: 30000 }], FRESH, { current: gold.spend, previous: [] }),
     'golden.digital': digital([socialExample()], [webExample()], ['Instagram'], 8, 8),
     'golden.trade': trade([tradeExample()], [eventExample()], 8, 8),
 
     // The dev demo seed: every RAG colour, over-budget and negative-growth brands, LYTD.
     'demo.spending': spending(spendCur, spendPrev, brands, 1, 8),
-    'demo.campaigns': campaigns(demo.campaigns, demo.media),
+    'demo.campaigns': campaigns(demo.campaigns, demo.media, FRESH, { current: spendCur, previous: spendPrev }),
     'demo.digital': digital(demo.social, demo.web, [...PLATFORMS], 1, 8),
     'demo.trade': trade(demo.trade, demo.events, 1, 8),
     'demo.tradeCompletedOnly': trade(demo.trade, demo.events, 1, 8, { completedOnly: true }),
@@ -96,7 +100,7 @@ export function buildFrontendFixtures(): Record<string, unknown> {
     'oneMonth.trade': trade(y(demo.trade, 2026, 8, 8), demo.events.filter((e) => e.planned.startsWith('2026-08')), 8, 8),
     'brandNoRows.spending': spending(oneBrand(1), [], brands, 1, 8), // brands 2-4 have no rows -> n/a rows
     'allNull.spending': spending([spendExample({ spend: 0, budget: 0, newCustomers: 0, clicks: 0, companyLy: 0 })], [], [brands[0]], 8, 8),
-    'stress.campaigns': campaigns(stressCampaigns(), demo.media),
+    'stress.campaigns': campaigns(stressCampaigns(), demo.media, FRESH, { current: spendCur, previous: [] }),
     'stress.trade': trade(demo.trade, stressEvents(), 1, 8),
 
     // Empty states.

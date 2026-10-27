@@ -7,6 +7,7 @@ import { PermissionGuard } from '../../../components/AuthGuard';
 import { UploadDropzone } from '../../../components/marcom/UploadDropzone';
 import { UploadPreview } from '../../../components/marcom/UploadPreview';
 import { BatchHistory, RollbackDialog } from '../../../components/marcom/BatchHistory';
+import { BrandCompanyCard } from '../../../components/marcom/BrandCompanyCard';
 import { RemoveBatchDialog } from '../../../components/marcom/RemoveBatchDialog';
 import { useAuth } from '../../../lib/AuthProvider';
 import { BatchDetail, BatchItem, MarcomApiError, RemovePreview, marcomApi } from '../../../lib/marcomApi';
@@ -238,6 +239,8 @@ function Body() {
           </div>
         )}
       </Card>
+
+      <BrandCompanyCard token={token} canEdit={mayUpload} />
 
       <div>
         <h2 style={{ fontSize: 16, margin: '0 0 8px' }}>Import history</h2>

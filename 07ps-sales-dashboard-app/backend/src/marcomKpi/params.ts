@@ -60,6 +60,19 @@ export function parseBrandIds(raw: Raw, known: { id: number; name: string }[]): 
   return [...new Set(ids)];
 }
 
+/** `companyKeys`: Dim_Company keys that at least one MARCOM brand is assigned to. */
+export function parseCompanyKeys(raw: Raw, known: readonly number[]): number[] | undefined {
+  const items = listOf(raw, 'companyKeys');
+  if (!items) return undefined;
+  const keys = items.map((s) => {
+    if (!/^\d+$/.test(s)) throw new KpiParamError(`companyKeys must be whole numbers (got "${s.slice(0, 20)}").`);
+    return Number(s);
+  });
+  const missing = keys.filter((k) => !known.includes(k));
+  if (missing.length) throw new KpiParamError(`Unknown company key(s): ${[...new Set(missing)].join(', ')}.`);
+  return [...new Set(keys)];
+}
+
 function enumList<T extends string>(raw: Raw, key: string, allowed: readonly T[]): T[] | undefined {
   const items = listOf(raw, key);
   if (!items) return undefined;

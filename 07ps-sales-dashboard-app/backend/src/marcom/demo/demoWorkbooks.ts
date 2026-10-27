@@ -72,7 +72,7 @@ export async function buildDemoWorkbooks(data: DemoDataset): Promise<DemoChunk[]
     if (c.withStatic) {
       const p2 = wb.getWorksheet(SHEET_P2)!;
       data.campaigns.forEach((k, n) => { put(p2, 7 + n, [k.name, k.brand, k.start, k.end, k.status, k.spend, k.revenue]); count++; });
-      data.media.forEach((k, n) => { put(p2, 31 + n, [k.campaignName, k.mediaType, k.units, k.cost]); count++; });
+      data.media.forEach((k, n) => { put(p2, 31 + n, [k.campaignName, k.mediaType, k.city ?? '', k.units, k.cost]); count++; });
       data.events.forEach((e, n) => { put(p4, 35 + n, [e.name, e.type, e.brand, e.planned, e.completion, e.status]); count++; });
     }
 

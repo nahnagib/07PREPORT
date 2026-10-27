@@ -18,6 +18,9 @@ const draw = (kind: PageKey, data: unknown) => render(
         : <TradeView data={data as TradeData} filters={EMPTY_FILTERS} setFilters={noop} />,
 );
 
+/** Visuals per page: Spending 5 (ROI trend moved to campaigns), Campaigns 6, Digital 6, Trade 6. */
+const kindVisuals = (fixtureName: string) => ({ spending: 5, campaigns: 6 } as Record<string, number>)[fixtureName.split('.')[1]] ?? 6;
+
 describe('no fixture ever renders NaN, Infinity or "undefined"', () => {
   const dir = path.join(__dirname, '..', '__fixtures__');
   const names = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => f.replace('.json', ''));
@@ -27,20 +30,20 @@ describe('no fixture ever renders NaN, Infinity or "undefined"', () => {
     const html = draw(kind, fixture(name));
     expect(flat(html)).not.toMatch(/NaN|Infinity|undefined/);
     expect(html).not.toMatch(/="NaN"|="Infinity"|="undefined"/);
-    expect(visualsIn(html)).toHaveLength(6);
+    expect(visualsIn(html)).toHaveLength(kindVisuals(name));
   });
 });
 
 describe('one month of data', () => {
-  it('spending renders all six visuals with a single month', () => {
+  it('spending renders all its visuals with a single month', () => {
     const d = fixture<SpendingData>('oneMonth.spending');
     const html = draw('spending', d);
     expect(d.totals.spend.series).toHaveLength(1);
-    expect(visualsIn(html)).toHaveLength(6);
+    expect(visualsIn(html)).toHaveLength(5);
     expect(visualHtml(html, 'spending.spendVsRevenue')).toContain('recharts-surface');
-    // The only arrow is the ROI card's YTD-vs-LYTD comparison (last year's August exists); nothing
-    // else has a month-over-month history to compare, so no other arrow is invented.
-    expect(html.match(/data-testid="kpi-delta"/g) ?? []).toHaveLength(1);
+    // The ROI card (the only YTD-vs-LYTD arrow) moved to the campaigns page; nothing here has a
+    // month-over-month history to compare, so no arrow is invented.
+    expect(html).not.toContain('data-testid="kpi-delta"');
   });
   it('trade renders with a single month (no delta arrows, summary strip of one)', () => {
     const html = draw('trade', fixture('oneMonth.trade'));
@@ -53,7 +56,7 @@ describe('a brand with no rows / all-null KPIs', () => {
   it('brands without data show n/a per row (not 0, not NaN)', () => {
     const html = draw('spending', fixture('brandNoRows.spending'));
     const cac = visualHtml(html, 'spending.cac');
-    const rows = [...cac.matchAll(/data-testid="cac-row"[\s\S]*?<\/tr>/g)].map((m) => flat(m[0]));
+    const rows = [...cac.matchAll(/data-testid="cac-row"[\s\S]*?<\/li>/g)].map((m) => flat(m[0]));
     expect(rows).toHaveLength(4);
     expect(rows[0]).not.toContain('n/a');
     for (const r of rows.slice(1)) expect(r).toContain('n/a');
@@ -61,8 +64,8 @@ describe('a brand with no rows / all-null KPIs', () => {
   });
   it('all-null KPIs: every card says n/a with the explanatory tooltip, and the page still renders', () => {
     const html = draw('spending', fixture('allNull.spending'));
-    expect(visualsIn(html)).toHaveLength(6);
-    for (const id of ['kpi-roi-ytd', 'kpi-cac', 'kpi-cpc']) {
+    expect(visualsIn(html)).toHaveLength(5);
+    for (const id of ['kpi-cac', 'kpi-cpc']) {
       expect(html).toMatch(new RegExp(`data-testid="${id}"[^>]*data-status="na"`));
     }
     expect(html).toContain('Not available: there is no data, or a zero denominator');

@@ -4,7 +4,7 @@
  * a sheet, header label or input column changes -- it is stored on every upload batch, and the
  * parser refuses files whose structure no longer matches what is declared here.
  */
-export const TEMPLATE_VERSION = '1.0';
+export const TEMPLATE_VERSION = '1.1'; // 1.1: City column in P2 Table B (media rows)
 
 export const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -13,6 +13,14 @@ export const MONTHS = [
 
 export const PLATFORMS = ['Facebook', 'Google', 'LinkedIn', 'Instagram', 'TikTok'] as const;
 export const MEDIA_TYPES = ['1-Street Lights', '2-Mega Billboards', '3-Billboards', '4-Bridge Banners', '5-Light Screen'] as const;
+/**
+ * Cities for P2 Table B (the template's Lists!H dropdown). Drives the Media Campaign Performance city map;
+ * the map's coordinates for each city live in frontend/src/lib/marcom/libyaMap.ts. Add a city here, in the
+ * template's Lists sheet and in libyaMap.ts together (templateLists.test.ts checks the first two match).
+ */
+export const CITIES = [
+  'Tripoli', 'Benghazi', 'Misrata', 'Zawiya', 'Zliten', 'Khoms', 'Sirte', 'Bayda', 'Tobruk', 'Derna', 'Ajdabiya', 'Marj', 'Brega', 'Sabha', 'Gharyan', 'Zuwara', 'Sabratha', 'Surman', 'Tarhuna', 'Bani Walid', 'Yafran', 'Nalut', 'Ghadames', 'Jalu', 'Waddan', 'Hun', 'Ubari', 'Murzuq', 'Ghat', 'Kufra',
+] as const;
 export const CAMPAIGN_STATUSES = ['Planned', 'Ongoing', 'Completed', 'On Hold'] as const;
 export const EVENT_TYPES = [
   '1-Professionals', '2-Architects/Designers', '3-Corporate', '4-CSR',
@@ -96,12 +104,13 @@ export const TABLES: TableSpec[] = [
     ],
   },
   {
-    id: 'media', sheet: SHEET_P2, headerRow: 29, lastRow: 59, keyFields: ['campaignName', 'mediaType'],
+    id: 'media', sheet: SHEET_P2, headerRow: 29, lastRow: 59, keyFields: ['campaignName', 'mediaType', 'city'],
     cols: [
       F(1, 'campaignName', 'Campaign Name', 'text'),
       F(2, 'mediaType', 'Media Type', 'enum', { enumValues: MEDIA_TYPES }),
-      F(3, 'units', '# of Locations / Units', 'int'),
-      F(4, 'cost', 'Cost', 'money'),
+      F(3, 'city', 'City', 'enum', { enumValues: CITIES }),
+      F(4, 'units', '# of Locations / Units', 'int'),
+      F(5, 'cost', 'Cost', 'money'),
     ],
   },
   {
@@ -156,7 +165,7 @@ export const TABLES: TableSpec[] = [
 export const TABLE_LABELS: Record<TableSpec['id'], string> = {
   spend: 'P1 MARCOM Spending',
   campaigns: 'P2 Table A - Campaigns',
-  media: 'P2 Table B - OOH coverage',
+  media: 'P2 Table B - OOH coverage by city',
   social: 'P3 Table A - Social media',
   web: 'P3 Table B - Website traffic',
   trade: 'P4 Table A - Trade KPIs',

@@ -26,11 +26,13 @@ export interface Freshness {
   batchId?: number;
 }
 
-export interface BrandRef { id: number; name: string }
+export interface BrandRef { id: number; name: string; companyKey?: number | null; company?: string | null }
+export interface CompanyRef { key: number; name: string }
 
 export interface Options {
   years: number[];
   brands: BrandRef[];
+  companies?: CompanyRef[];
   platforms?: string[];
   statuses?: string[];
 }
@@ -48,19 +50,38 @@ export interface Envelope {
 export interface MonthValue { month: number; value: number | null }
 export interface Series { total: number; unit: string; series: MonthValue[] }
 
-export interface BrandKpi extends Kpi { brandId: number; brand: string }
+export interface BrandKpi extends Kpi { brandId: number; brand: string; companyKey?: number | null; company?: string | null }
+export interface CompanyKpi extends Kpi { companyKey: number | null; company: string; brands: number }
+
+export interface RoiBlock {
+  ytd: Kpi;
+  lytd: Kpi | null;
+  monthly: { month: number; current: number | null; currentStatus: Status; lastYear: number | null; lastYearStatus: Status }[];
+  bands: { greenAbove: number; redBelow: number };
+}
 
 export interface SpendingData extends Envelope {
-  totals: { spend: Series; revenueAttributed: Series; companyRevenue: Series };
-  roi: {
-    ytd: Kpi;
-    lytd: Kpi | null;
-    monthly: { month: number; current: number | null; currentStatus: Status; lastYear: number | null; lastYearStatus: Status }[];
-    bands: { greenAbove: number; redBelow: number };
+  totals: {
+    spend: Series; revenueAttributed: Series; companyRevenue: Series;
+    budget: Series;
+    spendPctOfRevenue: Kpi & { series: MonthValue[] };
+    spendPctOfCompanyRevenue: Kpi & { series: MonthValue[] };
+    budgetUsed: Kpi;
   };
-  budgetUtilization: { overall: Kpi & { spend: number; budget: number; overBudget: boolean }; brands: (BrandKpi & { spend: number; budget: number; overBudget: boolean })[] };
-  brandGrowth: { overall: Kpi & { revenueCurrent: number; revenueLastYear: number }; brands: (BrandKpi & { revenueCurrent: number; revenueLastYear: number })[] };
+  /** Still in the payload for compatibility; rendered on the Media Campaign Performance page. */
+  roi: RoiBlock;
+  budgetUtilization: {
+    overall: Kpi & { spend: number; budget: number; overBudget: boolean };
+    brands: (BrandKpi & { spend: number; budget: number; overBudget: boolean })[];
+    companies: (CompanyKpi & { spend: number; budget: number; overBudget: boolean })[];
+  };
+  brandGrowth: {
+    overall: Kpi & { revenueCurrent: number; revenueLastYear: number };
+    brands: (BrandKpi & { revenueCurrent: number; revenueLastYear: number })[];
+    companies: (CompanyKpi & { revenueCurrent: number; revenueLastYear: number })[];
+  };
   cac: {
+    bands: { greenAtMost: number; redAbove: number };
     overall: Kpi & { pctOfInvoice: Kpi; weightedAvgInvoice: number | null; newCustomers: number; spend: number };
     brands: (BrandKpi & { pctOfInvoice: Kpi; weightedAvgInvoice: number | null; newCustomers: number; spend: number })[];
   };
@@ -69,6 +90,8 @@ export interface SpendingData extends Envelope {
 
 export interface CampaignsData extends Envelope {
   today: string;
+  /** ROI trend -- YTD vs LYTD (moved here from the Spending page). */
+  roi: RoiBlock;
   totals: { spend: number; revenue: number; rate: Kpi };
   spendVsRevenue: { name: string; brandId: number; brand: string; status: string; spend: number; revenue: number }[];
   roiByCampaign: { bands: { greenAbove: number; redBelow: number }; campaigns: { name: string; brand: string; roi: Kpi }[] };
@@ -76,6 +99,11 @@ export interface CampaignsData extends Envelope {
     name: string; brandId: number; brand: string; status: string; start: string; end: string; durationDays: number;
     spend: number; revenue: number; roi: number | null; roiStatus: Status; rate: number | null;
   }[];
+  /** City map (template 1.1). `No city` = media rows uploaded before the City column. */
+  coverageByCity: {
+    totalCost: number; totalUnits: number;
+    cities: { city: string; cost: number; units: number; share: number | null; campaigns: number; byType: { mediaType: string; units: number; cost: number }[] }[];
+  };
   coverageByType: { totalUnits: number; types: { mediaType: string; units: number; share: number | null }[] };
   costByType: { totalCost: number; types: { mediaType: string; cost: number; units: number; costPerUnit: number | null }[] };
 }

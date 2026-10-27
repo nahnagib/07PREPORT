@@ -39,7 +39,7 @@ describe('golden values -- P1 MARCOM Spending', () => {
 describe('golden values -- P2 Media Campaigns', () => {
   const p = buildCampaigns({
     ...period, today: '2026-09-20', campaigns: [campaignExample()],
-    media: [{ campaignName: 'Ramadan Lighting Campaign', mediaType: '1-Street Lights', units: 45, cost: 30000 }],
+    media: [{ campaignName: 'Ramadan Lighting Campaign', mediaType: '1-Street Lights', city: 'Tripoli', units: 45, cost: 30000 }],
   });
 
   it('duration is 42 days (Feb 1 -> Mar 15 2026)', () => {

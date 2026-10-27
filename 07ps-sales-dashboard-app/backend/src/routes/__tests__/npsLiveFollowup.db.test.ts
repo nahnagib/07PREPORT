@@ -61,9 +61,9 @@ describe.skipIf(!RUN)('an edit on the follow-up page shows on the NPS page at on
   afterAll(async () => {
     if (snapshot) {
       await pool.query(
-        `UPDATE nps_followup_case SET status = ?, reason_id = ?, owner_user_id = ?, contacted_at = ?, solved_at = ?, root_cause = ?,
+        `UPDATE nps_followup_case SET status = ?, reason_id = ?, owner_user_id = ?, owner_name = ?, contacted_at = ?, solved_at = ?, root_cause = ?,
                 action_taken = ?, notes = ?, version = ?, updated_by = ?, updated_at = ? WHERE case_id = ?`,
-        [snapshot.status, snapshot.reason_id, snapshot.owner_user_id, snapshot.contacted_at, snapshot.solved_at, snapshot.root_cause,
+        [snapshot.status, snapshot.reason_id, snapshot.owner_user_id, snapshot.owner_name ?? null, snapshot.contacted_at, snapshot.solved_at, snapshot.root_cause,
           snapshot.action_taken, snapshot.notes, snapshot.version, snapshot.updated_by, snapshot.updated_at, snapshot.case_id]);
       await pool.query('DELETE FROM nps_followup_audit WHERE case_id = ? AND audit_id > ?', [snapshot.case_id, lastAudit]);
     }

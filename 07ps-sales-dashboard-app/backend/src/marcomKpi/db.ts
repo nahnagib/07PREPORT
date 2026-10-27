@@ -64,10 +64,22 @@ export async function runCurrent<T = Record<string, unknown>>(table: KpiTable, q
   return rows as T[];
 }
 
-/** Brand master is not versioned (no is_current), so it is read directly. */
-export async function listBrands(): Promise<{ id: number; name: string }[]> {
-  const [rows] = await pool.query('SELECT brand_id AS id, name FROM marcom_brand ORDER BY name');
-  return rows as { id: number; name: string }[];
+/**
+ * Brand master is not versioned (no is_current), so it is read directly -- with the company each brand
+ * belongs to (migration 0057: marcom_brand.company_key = Dim_Company.CompanyKey; name from admin_company,
+ * the same reference-data layer the other report pages' Company filter reads).
+ */
+export async function listBrands(): Promise<{ id: number; name: string; companyKey: number | null; company: string | null }[]> {
+  const [rows] = await pool.query(
+    `SELECT b.brand_id AS id, b.name, b.company_key AS companyKey, c.name AS company
+       FROM marcom_brand b
+       LEFT JOIN (SELECT etl_company_key, MIN(name) AS name FROM admin_company WHERE etl_company_key IS NOT NULL GROUP BY etl_company_key) c
+         ON c.etl_company_key = b.company_key
+      ORDER BY b.name`,
+  );
+  return (rows as { id: number; name: string; companyKey: unknown; company: string | null }[]).map((r) => ({
+    id: Number(r.id), name: r.name, companyKey: r.companyKey === null || r.companyKey === undefined ? null : Number(r.companyKey), company: r.company ?? null,
+  }));
 }
 
 /** Latest uploaded (year, month) across the four month-keyed tables, optionally within one year. */

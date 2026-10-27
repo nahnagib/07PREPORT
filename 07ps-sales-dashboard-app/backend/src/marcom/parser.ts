@@ -234,7 +234,7 @@ type D = ParsedRow['data'];
 const EXAMPLES: Partial<Record<TableId, (d: D) => boolean>> = {
   spend: (d) => d.year === 2026 && d.month === 8 && d.brand === 'Brand A' && d.spend === 50000 && d.revenueAttributed === 280000,
   campaigns: (d) => d.name === 'Ramadan Lighting Campaign' && d.spend === 120000 && d.revenueAttributed === 650000,
-  media: (d) => d.campaignName === 'Ramadan Lighting Campaign' && d.mediaType === '1-Street Lights' && d.units === 45 && d.cost === 30000,
+  media: (d) => d.campaignName === 'Ramadan Lighting Campaign' && d.mediaType === '1-Street Lights' && d.city === 'Tripoli' && d.units === 45 && d.cost === 30000,
   social: (d) => d.year === 2026 && d.month === 8 && d.platform === 'Instagram' && d.followers === 52000 && d.impressions === 180000,
   web: (d) => d.year === 2026 && d.month === 8 && d.bounceVisitors === 3400 && d.totalVisitors === 12000,
   trade: (d) => d.year === 2026 && d.month === 8 && d.compliancePct === 0.94,

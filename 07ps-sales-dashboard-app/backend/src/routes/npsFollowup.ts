@@ -33,7 +33,7 @@ import { buildFollowupExport } from '../services/npsFollowupExportService';
  *   GET    /nps-followup/cases?<filters>&page=&pageSize=   the List view (every case)
  *   GET    /nps-followup/cases/export?<filters>     .xlsx
  *   GET    /nps-followup/cases/:id                  details, comment, history
- *   PATCH  /nps-followup/cases/:id                  { version, status?, reasonId?, ownerUserId?, contactedAt?, solvedAt?,
+ *   PATCH  /nps-followup/cases/:id                  { version, status?, reasonId?, owner? (free text), contactedAt?, solvedAt?,
  *                                                     rootCause?, actionTaken?, notes? } -> 409 when version is stale
  *   GET/POST/PATCH/DELETE /nps-followup/reasons[/:id]
  */

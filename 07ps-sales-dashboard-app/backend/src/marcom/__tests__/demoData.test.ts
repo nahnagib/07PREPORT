@@ -110,7 +110,7 @@ describe('demo workbooks', () => {
       expect(r.issues.filter((i) => i.severity === 'error'), c.label).toEqual([]);
       for (const k of Object.keys(totals) as (keyof typeof totals)[]) totals[k] += r.tables[k].rows.length;
     }
-    expect(totals).toEqual({ spend: data.spend.length, campaigns: 8, media: 13, social: 40, web: 8, trade: 8, events: 20 });
+    expect(totals).toEqual({ spend: data.spend.length, campaigns: 8, media: data.media.length, social: 40, web: 8, trade: 8, events: 20 });
     expect(data.spend).toHaveLength(80); // 4 brands x (12 months of 2025 + 8 months of 2026)
   });
 });

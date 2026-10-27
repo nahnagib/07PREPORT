@@ -7,21 +7,30 @@
   "brands": [
    {
     "id": 1,
-    "name": "Brand A"
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 2,
-    "name": "Brand B"
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 3,
-    "name": "Brand C"
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
    },
    {
     "id": 4,
-    "name": "Brand D"
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
    }
   ],
+  "companies": [],
   "statuses": []
  },
  "options": {
@@ -32,19 +41,37 @@
   "brands": [
    {
     "id": 1,
-    "name": "Brand A"
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 2,
-    "name": "Brand B"
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 3,
-    "name": "Brand C"
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
    },
    {
     "id": 4,
-    "name": "Brand D"
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
+   }
+  ],
+  "companies": [
+   {
+    "key": 1,
+    "name": "Company One"
+   },
+   {
+    "key": 2,
+    "name": "Company Two"
    }
   ],
   "statuses": [
@@ -65,10 +92,112 @@
  "hasData": false,
  "meta": {
   "missing": [
+   "lastYearData",
    "data"
   ]
  },
  "today": "2026-09-20",
+ "roi": {
+  "ytd": {
+   "value": null,
+   "status": "na",
+   "unit": "ratio",
+   "direction": "higher_better",
+   "previous": null,
+   "delta": null
+  },
+  "lytd": null,
+  "monthly": [
+   {
+    "month": 1,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 2,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 3,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 4,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 5,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 6,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 7,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 8,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 9,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 10,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 11,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   },
+   {
+    "month": 12,
+    "current": null,
+    "currentStatus": "na",
+    "lastYear": null,
+    "lastYearStatus": "na"
+   }
+  ],
+  "bands": {
+   "greenAbove": 5,
+   "redBelow": 3
+  }
+ },
  "totals": {
   "spend": 0,
   "revenue": 0,
@@ -88,6 +217,11 @@
   "campaigns": []
  },
  "timeline": [],
+ "coverageByCity": {
+  "totalCost": 0,
+  "totalUnits": 0,
+  "cities": []
+ },
  "coverageByType": {
   "totalUnits": 0,
   "types": [

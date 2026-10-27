@@ -7,6 +7,8 @@ import { Rat, ratio } from './rat';
  * All results are exact fractions/ratios (Rat); percent conversion happens in makeKpi.
  */
 export const roiRatio = (revenueAttributed: Rat, spend: Rat): Rat | null => ratio(revenueAttributed, spend);
+/** Marketing spend as a share of revenue: Σspend ÷ Σrevenue (the inverse view of ROI, shown as %). */
+export const spendPctOfRevenue = (spend: Rat, revenue: Rat): Rat | null => ratio(spend, revenue);
 export const budgetUtilization = (spend: Rat, budget: Rat): Rat | null => ratio(spend, budget);
 export const brandGrowth = (revenueCurrent: Rat, revenueLastYear: Rat): Rat | null => ratio(revenueCurrent.sub(revenueLastYear), revenueLastYear);
 export const cac = (spend: Rat, newCustomers: Rat): Rat | null => ratio(spend, newCustomers);

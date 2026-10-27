@@ -4,26 +4,45 @@
   "year": 2026,
   "fromMonth": 1,
   "toMonth": 12,
-  "brands": []
+  "brands": [],
+  "companies": []
  },
  "options": {
   "years": [],
   "brands": [
    {
     "id": 1,
-    "name": "Brand A"
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 2,
-    "name": "Brand B"
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
    },
    {
     "id": 3,
-    "name": "Brand C"
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
    },
    {
     "id": 4,
-    "name": "Brand D"
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
+   }
+  ],
+  "companies": [
+   {
+    "key": 1,
+    "name": "Company One"
+   },
+   {
+    "key": 2,
+    "name": "Company Two"
    }
   ]
  },
@@ -204,6 +223,177 @@
      "value": null
     }
    ]
+  },
+  "budget": {
+   "total": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": null
+    },
+    {
+     "month": 2,
+     "value": null
+    },
+    {
+     "month": 3,
+     "value": null
+    },
+    {
+     "month": 4,
+     "value": null
+    },
+    {
+     "month": 5,
+     "value": null
+    },
+    {
+     "month": 6,
+     "value": null
+    },
+    {
+     "month": 7,
+     "value": null
+    },
+    {
+     "month": 8,
+     "value": null
+    },
+    {
+     "month": 9,
+     "value": null
+    },
+    {
+     "month": 10,
+     "value": null
+    },
+    {
+     "month": 11,
+     "value": null
+    },
+    {
+     "month": 12,
+     "value": null
+    }
+   ]
+  },
+  "spendPctOfRevenue": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "lower_better",
+   "series": [
+    {
+     "month": 1,
+     "value": null
+    },
+    {
+     "month": 2,
+     "value": null
+    },
+    {
+     "month": 3,
+     "value": null
+    },
+    {
+     "month": 4,
+     "value": null
+    },
+    {
+     "month": 5,
+     "value": null
+    },
+    {
+     "month": 6,
+     "value": null
+    },
+    {
+     "month": 7,
+     "value": null
+    },
+    {
+     "month": 8,
+     "value": null
+    },
+    {
+     "month": 9,
+     "value": null
+    },
+    {
+     "month": 10,
+     "value": null
+    },
+    {
+     "month": 11,
+     "value": null
+    },
+    {
+     "month": 12,
+     "value": null
+    }
+   ]
+  },
+  "spendPctOfCompanyRevenue": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "lower_better",
+   "series": [
+    {
+     "month": 1,
+     "value": null
+    },
+    {
+     "month": 2,
+     "value": null
+    },
+    {
+     "month": 3,
+     "value": null
+    },
+    {
+     "month": 4,
+     "value": null
+    },
+    {
+     "month": 5,
+     "value": null
+    },
+    {
+     "month": 6,
+     "value": null
+    },
+    {
+     "month": 7,
+     "value": null
+    },
+    {
+     "month": 8,
+     "value": null
+    },
+    {
+     "month": 9,
+     "value": null
+    },
+    {
+     "month": 10,
+     "value": null
+    },
+    {
+     "month": 11,
+     "value": null
+    },
+    {
+     "month": 12,
+     "value": null
+    }
+   ]
+  },
+  "budgetUsed": {
+   "value": null,
+   "status": "na",
+   "unit": "percent"
   }
  },
  "roi": {
@@ -316,7 +506,8 @@
    "budget": 0,
    "overBudget": false
   },
-  "brands": []
+  "brands": [],
+  "companies": []
  },
  "brandGrowth": {
   "overall": {
@@ -327,9 +518,14 @@
    "revenueCurrent": 0,
    "revenueLastYear": 0
   },
-  "brands": []
+  "brands": [],
+  "companies": []
  },
  "cac": {
+  "bands": {
+   "greenAtMost": 3,
+   "redAbove": 5
+  },
   "overall": {
    "value": null,
    "status": "na",

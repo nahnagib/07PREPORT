@@ -3,7 +3,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '../lib/AuthProvider';
-import { ADMIN_NAV_ITEM, NAV_ITEMS, adminNavHref, departmentReports } from '../lib/navItems';
+import { ADMIN_NAV_ITEM, NAV_ITEMS, adminNavHref, departmentReports, isComingSoon } from '../lib/navItems';
 import { DEPARTMENTS } from '../lib/departments';
 import { ScrollableNav } from './ScrollableNav';
 
@@ -55,7 +55,9 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
       }}
     >
       <ScrollableNav label="pages" activeKey={active}>
-      {items.map(({ label, icon: Icon, href }) => {
+      {items.map((item) => {
+        const { label, icon: Icon, href } = item;
+        const soon = isComingSoon(item);
         const isActive = label === active;
         const content = (
           <div
@@ -70,14 +72,21 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
               opacity: href ? 1 : 0.55,
             }}
           >
-            <Icon size={18} fill={isActive ? 'currentColor' : 'none'} strokeWidth={isActive ? 1.5 : 1.75} />
+            <span style={{ position: 'relative', display: 'inline-flex' }}>
+              <Icon size={18} fill={isActive ? 'currentColor' : 'none'} strokeWidth={isActive ? 1.5 : 1.75} />
+              {soon && (
+                <span aria-hidden data-testid="nav-soon" style={{ position: 'absolute', top: -6, left: 12, fontSize: 8, fontWeight: 800, lineHeight: 1, padding: '2px 4px', borderRadius: 999, background: 'var(--ps-color-watch-bg)', color: 'var(--ps-color-watch)', whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: 0.3 }}>
+                  Soon
+                </span>
+              )}
+            </span>
             <span style={{ fontSize: 10.5, fontWeight: isActive ? 700 : 600, whiteSpace: 'nowrap' }}>{label}</span>
           </div>
         );
 
         if (href) {
           return (
-            <Link key={label} href={href} aria-label={label} aria-current={isActive ? 'page' : undefined} style={{ textDecoration: 'none' }}>
+            <Link key={label} href={href} aria-label={soon ? `${label} (coming soon)` : label} aria-current={isActive ? 'page' : undefined} style={{ textDecoration: 'none' }}>
               {content}
             </Link>
           );

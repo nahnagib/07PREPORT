@@ -309,7 +309,7 @@ export async function fetchNpsDetractors(pool: Pool, q: NpsQuery, f: Filters, no
     `SELECT f.response_id, f.rated_at_local, f.rating_date, f.company, f.CompanyKey, f.CustomerKey, f.customer, f.order_ref,
             f.delivery_code, f.SalesOrderKey, f.PickingID, f.sales_team, f.salesperson, f.team_branch,
             fc.case_id, fc.status, fc.rated_at_local AS case_rated_at, fc.solved_at,
-            r.name_en AS reason_en, r.name_ar AS reason_ar, o.display_name AS owner_name,
+            r.name_en AS reason_en, r.name_ar AS reason_ar, COALESCE(fc.owner_name, o.display_name) AS owner_name,
             (SELECT GROUP_CONCAT(c.comment_text ORDER BY c.commented_at_utc SEPARATOR '\\n')
                FROM fact_process_nps_comment c WHERE c.response_id = f.response_id) AS comment
        FROM v_process_nps_response f

@@ -27,7 +27,7 @@ const state = (extra: Partial<TrendState> = {}): TrendState => ({ data, loading:
 it('shows NPS and CSAT by default without target lines or a CSAT toggle; preserves the grain controls', () => {
   const onGrainChange = vi.fn();
   render(<NpsTrendChart state={state()} grain="month" onGrainChange={onGrainChange} />);
-  expect(screen.getByText('Trend')).toBeTruthy();
+  expect(screen.getByText('Satisfaction Trend')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'CSAT' })).toBeNull();
   const props: ComboChartProps = chart.mock.lastCall![0];
   expect(props.lines?.map((s) => s.key)).toEqual(['nps', 'npsSmall', 'csat', 'csatSmall']);
@@ -36,24 +36,33 @@ it('shows NPS and CSAT by default without target lines or a CSAT toggle; preserv
   expect(screen.getByRole('button', { name: 'Monthly' }).getAttribute('aria-pressed')).toBe('true');
 });
 
-it('stacks monthly group counts into total responders and formats counts/percentages with the monthly total', () => {
-  render(<RespondersTrend state={state()} />);
+it('same style as the Satisfaction Trend: responders as bars, Promoters / Passives / Detractors as three lines on the same axis', () => {
+  render(<RespondersTrend state={state()} grain="month" onGrainChange={vi.fn()} />);
   const props: ComboChartProps = chart.mock.lastCall![0];
-  expect(props.bars.map((s) => s.stackId)).toEqual(['responders', 'responders', 'responders']);
+  expect(props.bars.map((s) => s.key)).toEqual(['responders']);
+  expect(props.lines?.map((s) => [s.key, s.yAxisId])).toEqual([['promoters', 'left'], ['passives', 'left'], ['detractors', 'left']]);
   expect(props.points.map((p) => p.responders)).toEqual([10, 0]);
   for (const p of props.points) expect(Number(p.promoters) + Number(p.passives) + Number(p.detractors)).toBe(p.responders);
-  expect(props.tooltipLabelFormatter?.('Sep 2026')).toBe('Sep 2026 · Total responders: 10');
   expect(props.tooltipFormatters?.promoters(7, props.points[0])).toBe('7 (70.00%)');
   expect(props.tooltipFormatters?.promoters(0, props.points[1])).toBe('0 (0.00%)');
 });
 
 it('hides stale chart data during filter reload and offers retry on failure', () => {
   const retry = vi.fn();
-  const { rerender } = render(<RespondersTrend state={state({ loading: true })} />);
+  const { rerender } = render(<RespondersTrend state={state({ loading: true })} grain="month" onGrainChange={vi.fn()} />);
   expect(screen.queryByTestId('combo-chart')).toBeNull();
-  rerender(<RespondersTrend state={state({ error: 'Trend unavailable', retry })} />);
+  rerender(<RespondersTrend state={state({ error: 'Trend unavailable', retry })} grain="month" onGrainChange={vi.fn()} />);
   fireEvent.click(screen.getByRole('button', { name: /retry/i }));
   expect(retry).toHaveBeenCalledOnce();
-  rerender(<RespondersTrend state={state({ data: { ...data, points: [] } })} />);
+  rerender(<RespondersTrend state={state({ data: { ...data, points: [] } })} grain="month" onGrainChange={vi.fn()} />);
   expect(screen.getByText('No ratings for these filters and dates.')).toBeTruthy();
+});
+
+it('the Responders Trend has its own Weekly / Monthly / Yearly switch', () => {
+  const onGrainChange = vi.fn();
+  render(<RespondersTrend state={state()} grain="week" onGrainChange={onGrainChange} />);
+  expect(screen.getByRole('group', { name: 'Responders Trend period' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Weekly' }).getAttribute('aria-pressed')).toBe('true');
+  fireEvent.click(screen.getByRole('button', { name: 'Yearly' }));
+  expect(onGrainChange).toHaveBeenCalledWith('year');
 });
