@@ -12,6 +12,8 @@ SALE_ORDER_FIELDS = [
     "id", "name", "opportunity_id", "partner_id", "user_id", "team_id", "company_id",
     "date_order", "create_date", "write_date", "amount_untaxed", "amount_total", "state",
     "invoice_status", "delivery_status", "validity_date", "origin", "client_order_ref",
+    # currency_rate converts amount_total (order currency) to the company currency (LYD), see SalesFactBuilder.
+    "currency_id", "currency_rate",
 ]
 
 

@@ -102,7 +102,14 @@ class SalesFactBuilder:
         out["LeadID"] = self._lead_id_for_opportunity(out["OpportunityID"], pipeline)
         out["JourneyKey"] = self._journey_key(out["LeadID"], out["OpportunityID"], out["SourceQuotationID"])
         out["IsLinkedToOpportunity"] = out["OpportunityID"].notna()
-        out["OrderValue"] = pd.to_numeric(orders.get("amount_total", pd.Series(pd.NA, index=orders.index)), errors="coerce")
+        # OrderValue is in the company currency (LYD), like every other sales amount on the dashboard. Odoo's
+        # amount_total is in the ORDER's currency (e.g. a USD-pricelist quotation), so convert it the way Odoo's
+        # sale.report does: amount / order.currency_rate, with a missing or zero rate treated as 1 (same rule as
+        # departments/sales/sale_report.py). Without this a USD quotation showed its USD number with an LYD label.
+        amount_total = pd.to_numeric(orders.get("amount_total", pd.Series(pd.NA, index=orders.index)), errors="coerce")
+        currency_rate = pd.to_numeric(orders.get("currency_rate", pd.Series(pd.NA, index=orders.index)), errors="coerce")
+        currency_rate = currency_rate.where(currency_rate.notna() & (currency_rate != 0), 1.0)
+        out["OrderValue"] = amount_total / currency_rate
         out["OrderVolume"] = pd.NA
         out["InvoiceStatus"] = orders.get("invoice_status", pd.Series(pd.NA, index=orders.index))
         out["OrderState"] = orders.get("state", pd.Series(pd.NA, index=orders.index))
