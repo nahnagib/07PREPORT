@@ -1120,8 +1120,10 @@ function ImpactCard({
   return (
     <Card style={{ width: '100%', borderInlineStart: `4px solid ${headline.headlineColor}` }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{title}</span>
-        <VisualInfoIcons title={title} {...vh(helpId)} />
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{title}</span>
+          <VisualInfoIcons title={title} {...vh(helpId)} />
+        </div>
         <button type="button" onClick={onExpand} aria-label={`Expand ${title}`} title={`Expand ${title}`} className="ps-cn-icon-btn">
           <Maximize2 size={14} />
         </button>

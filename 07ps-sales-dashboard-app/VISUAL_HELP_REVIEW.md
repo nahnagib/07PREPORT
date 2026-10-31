@@ -1,6 +1,6 @@
 # Visual help review
 
-Current presentation: one hint at the main visual header. Grouped count tiles, MARCOM subcards, quick-insight cards, ordinary table toolbars and Performance Details tables do not repeat explanation icons. An interaction hint appears only for a click that opens details or changes the data/view. Hover, export, sorting, search and expand controls alone do not create one. Formula blocks are limited to rates and scores.
+Current presentation: explanation icons are opt-in through a rate/score equation. Clear counts, values and charts have no question mark, including Tachometer value/volume, Critical Number counters, MoM charts, Invoice Engine cards, Customer Growth count/share/contribution visuals, Pipeline Trend counts, Receivables/Collections trends, Kaizen charts and NPS count/trend charts. The NPS/CSAT/response-rate score cards retain their equations. Calendar cards have neither icon. Missing Value/Days use one interaction hint directly beside the title. The registry retains definitions for reference without automatically displaying them.
 
 Counts below describe registry content, not rendered icons. Some entries are retained for reference and intentionally do not render individual hints.
 
@@ -9,7 +9,7 @@ Counts below describe registry content, not rendered icons. Some entries are ret
 | admin.criticalNumber | 1 | 0 | 0 |
 | promotion.tachometer | 8 | 4 | 0 |
 | promotion.tachometerBreakdown | 7 | 1 | 0 |
-| promotion.criticalNumber | 11 | 2 | 0 |
+| promotion.criticalNumber | 11 | 4 | 0 |
 | promotion.revenueTrend | 5 | 0 | 0 |
 | promotion.invoicesEngine | 8 | 2 | 0 |
 | promotion.customerGrowth | 12 | 5 | 4 |

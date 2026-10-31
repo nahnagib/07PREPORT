@@ -327,3 +327,10 @@ ETL pipeline, and BullMQ-based scheduling.
 - Move Opportunity Activities help to its clickable title; remove repeated icons from count tiles, MARCOM subcards, invoice period totals, quick insights and ordinary table toolbars.
 - Keep definitions short on value/count visuals. Limit formula blocks to rates and scores, and remove generic explanation icons from Performance Details tables.
 - Verified with 471 frontend/shared UI tests and frontend type checking.
+
+## 2026-10-31 — Keep clear visuals free of explanation icons
+
+- Show question marks only for rate/score equations; suppress them for clear value/count charts, Invoice Engine cards, customer shares, Kaizen and NPS trend/count charts.
+- Remove both hint icons from Working Days, Official Holidays, Forced Closures and Weekly Rest Days.
+- Put an interaction hint immediately beside Missing Value/Days titles, describing their detailed chart/table view.
+- Add 41 presentation regression cases; all 512 frontend/shared UI tests pass.

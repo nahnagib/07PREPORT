@@ -5,7 +5,7 @@ import type { VisualHelpContent } from '@07ps/ui';
  * place, keyed by a stable visual id `<department>.<page>.<visual>`. Formulas follow the backend measures
  * (backend/src/measures/*, backend/src/marcomKpi/formulas.ts, config/npsThresholds.ts) and docs/product_data_runbook.md;
  * nothing here is a guess. Pages pass `{...vh('promotion.tachometer.ytdValue')}` to ChartPanel / KpiCard / InsightCard /
- * PerformanceReportTable or their own card headers; components add standard lines (expand to table, export) themselves.
+ * PerformanceReportTable or their own card headers; only actionable drill hints and rate/score explanations are shown; clear visuals stay quiet.
  */
 export interface VisualHelpEntry {
   help: VisualHelpContent;
@@ -116,12 +116,14 @@ export const VISUAL_HELP = {
     help: { definition: 'Fridays (the weekly rest day) from 1 Jan to the as-of date.' },
   },
   'promotion.criticalNumber.missingValue': {
+    interactions: ['Click the trend or ⤢ to see the full chart and breakdown table'],
     help: {
       definition: 'How far the year is ahead of (or behind) the Critical Number pace, in LYD.',
       notes: 'Positive (green) = ahead of pace, negative = behind; days above the number offset days below it.',
     },
   },
   'promotion.criticalNumber.missingDays': {
+    interactions: ['Click the trend or ⤢ to see the full chart and breakdown table'],
     help: {
       definition: 'The Missing Value YTD expressed in working days (same sign: positive = days ahead of pace).',
     },
@@ -500,12 +502,29 @@ export const VISUAL_HELP = {
 
 export type VisualHelpId = keyof typeof VISUAL_HELP;
 
-/** `{ help, interactions }` of one visual, to spread onto its component. */
-export function vh(id: VisualHelpId): VisualHelpEntry {
-  return VISUAL_HELP[id];
+/** Only equations need an explanation icon. Clear counts, values and charts stay quiet. */
+export interface VisualHints {
+  help?: VisualHelpContent;
+  interactions?: readonly string[];
+}
+const NO_HINTS = new Set<VisualHelpId>([
+  'promotion.criticalNumber.workingDays',
+  'promotion.criticalNumber.holidays',
+  'promotion.criticalNumber.closures',
+  'promotion.criticalNumber.restDays',
+]);
+const CLEAR_CHARTS = new Set<VisualHelpId>(['process.npsScore.satisfactionTrend']);
+
+/** Keep the reviewable definitions in the registry, but only render useful hints. */
+export function vh(id: VisualHelpId): VisualHints {
+  if (NO_HINTS.has(id)) return {};
+  const entry: VisualHelpEntry = VISUAL_HELP[id];
+  return {
+    help: entry.help.formula && !CLEAR_CHARTS.has(id) ? entry.help : undefined,
+    interactions: entry.interactions,
+  };
 }
 
-/** Same, for components that only know a string id (e.g. MarcomChartCard's `visual`); undefined when not registered. */
-export function vhById(id: string): VisualHelpEntry | undefined {
-  return (VISUAL_HELP as Record<string, VisualHelpEntry>)[id];
+export function vhById(id: string): VisualHints | undefined {
+  return Object.prototype.hasOwnProperty.call(VISUAL_HELP, id) ? vh(id as VisualHelpId) : undefined;
 }
