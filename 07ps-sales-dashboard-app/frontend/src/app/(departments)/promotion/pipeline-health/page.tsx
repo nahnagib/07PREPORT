@@ -4,6 +4,8 @@ import { ArrowLeft, FileDown, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { OpportunityChainView } from '../../../../components/OpportunityChainView';
+import { OdooLink } from '../../../../components/OdooLink';
+import { rowsToPdfRows } from '../../../../lib/pdfRows';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
@@ -205,15 +207,17 @@ interface OpportunityTableRow extends Record<string, unknown> {
   expectedRevenue: number;
   salesperson: string;
   createdDate: string;
+  odooUrl: string | null;
+  customerOdooUrl: string | null;
 }
 
 const opportunityColumns: Column<OpportunityTableRow>[] = [
-  { key: 'name', header: 'Opportunity Name' },
+  { key: 'name', header: 'Opportunity Name', render: (r) => <OdooLink href={r.odooUrl}>{r.name}</OdooLink> },
   { key: 'stage', header: 'Stage' },
   { key: 'probability', header: 'Probability %' },
   { key: 'expectedCloseDate', header: 'Expected Close Date' },
   { key: 'expectedRevenue', header: 'Value', align: 'right', render: (r) => formatCurrency(r.expectedRevenue) },
-  { key: 'customer', header: 'Customer' },
+  { key: 'customer', header: 'Customer', render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
   { key: 'createdDate', header: 'Created Date' },
@@ -231,6 +235,8 @@ function toTableRow(o: OpportunityDetailRow): OpportunityTableRow {
     expectedRevenue: o.expectedRevenue,
     salesperson: o.salesperson ?? '—',
     createdDate: o.createdDate ?? '—',
+    odooUrl: o.odooUrl ?? null,
+    customerOdooUrl: o.customerOdooUrl ?? null,
   };
 }
 
@@ -260,13 +266,15 @@ interface StageSalesTableRow extends Record<string, unknown> {
   salesperson: string;
   documentDate: string;
   value: number;
+  odooUrl: string | null;
+  customerOdooUrl: string | null;
 }
 
 const stageSalesColumns: Column<StageSalesTableRow>[] = [
-  { key: 'orderNumber', header: 'Order Number' },
+  { key: 'orderNumber', header: 'Order Number', render: (r) => <OdooLink href={r.odooUrl}>{r.orderNumber}</OdooLink> },
   { key: 'documentDate', header: 'Date' },
   { key: 'value', header: 'Value', align: 'right', render: (r) => formatCurrency(r.value) },
-  { key: 'customer', header: 'Customer' },
+  { key: 'customer', header: 'Customer', render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
 ];
@@ -280,6 +288,8 @@ function toStageSalesRows(records: FunnelSalesRecord[]): StageSalesTableRow[] {
     salesperson: r.salesperson ?? '—',
     documentDate: r.documentDate ?? '—',
     value: r.value,
+    odooUrl: r.odooUrl ?? null,
+    customerOdooUrl: r.customerOdooUrl ?? null,
   }));
 }
 
@@ -291,13 +301,20 @@ interface StageDeliveryTableRow extends Record<string, unknown> {
   salesperson: string;
   orderDate: string;
   deliveryStatus: string;
+  deliveryReference: string;
+  odooUrl: string | null;
+  orderOdooUrl: string | null;
+  customerOdooUrl: string | null;
 }
 
+// "Order Number" is the sale order's number (v_sales_deliveries.OrderNumber), so it opens the sale.order; the picking
+// itself (WH/OUT/...) is the "Delivery" column and opens the stock.picking.
 const stageDeliveryColumns: Column<StageDeliveryTableRow>[] = [
-  { key: 'orderNumber', header: 'Order Number' },
+  { key: 'orderNumber', header: 'Order Number', render: (r) => <OdooLink href={r.orderOdooUrl}>{r.orderNumber}</OdooLink> },
+  { key: 'deliveryReference', header: 'Delivery', render: (r) => <OdooLink href={r.odooUrl}>{r.deliveryReference}</OdooLink> },
   { key: 'orderDate', header: 'Order Date' },
   { key: 'deliveryStatus', header: 'Status' },
-  { key: 'customer', header: 'Customer' },
+  { key: 'customer', header: 'Customer', render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
 ];
@@ -311,14 +328,11 @@ function toStageDeliveryRows(records: FunnelDeliveryRecord[]): StageDeliveryTabl
     salesperson: r.salesperson ?? '—',
     orderDate: r.orderDate ?? '—',
     deliveryStatus: r.deliveryStatus ?? '—',
+    deliveryReference: r.deliveryReference ?? '—',
+    odooUrl: r.odooUrl ?? null,
+    orderOdooUrl: r.orderOdooUrl ?? null,
+    customerOdooUrl: r.customerOdooUrl ?? null,
   }));
-}
-
-/** Same "resolve each column's formatted string, falling back to the render function" convention
- * already used inline for the Opportunity Details PDF export -- factored out so the new stage-
- * record PDF exports (linked and "with no Opportunities") can reuse it too. */
-function rowsToPdfRows<T extends Record<string, unknown>>(columns: Column<T>[], rows: T[]): string[][] {
-  return rows.map((row) => columns.map((c) => (c.render ? String(c.render(row)) : String(row[c.key] ?? ''))));
 }
 
 /** Month/bucket drill-downs (Expected Closure / Probabilities Distribution) additionally require

@@ -19,7 +19,7 @@ import {
   type FollowupStatus,
 } from '../../lib/nps/followup';
 import { StatusPill, TimeOpen } from './FollowupBits';
-import { OdooLink } from '../nps/OdooLink';
+import { OdooLink } from '../OdooLink';
 
 interface Form {
   status: FollowupStatus;

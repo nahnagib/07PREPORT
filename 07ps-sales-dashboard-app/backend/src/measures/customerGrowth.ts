@@ -40,6 +40,7 @@ import {
   type Filters,
 } from './filters';
 import { CUSTOMER_CATEGORIES } from '../lib/customerCategory';
+import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -89,6 +90,8 @@ export interface CustomerActivity {
   /** Has at least one sale strictly before the LYTD window's start -- "purchase history prior to
    * that LYTD period" per the Reactivated definition. */
   hasBeforeLytd: boolean;
+  /** The Odoo company of every matching sale when there is only one, else null (sold in several companies). */
+  companyKey: number | null;
 }
 
 export async function fetchCustomerActivitySnapshot(
@@ -108,7 +111,9 @@ export async function fetchCustomerActivitySnapshot(
       COALESCE(SUM(fsl.Value), 0) AS lifetimeValue,
       MAX(CASE WHEN dd.Date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS hasYtd,
       MAX(CASE WHEN dd.Date BETWEEN ? AND ? THEN 1 ELSE 0 END) AS hasLytd,
-      MAX(CASE WHEN dd.Date < ? THEN 1 ELSE 0 END) AS hasBeforeLytd
+      MAX(CASE WHEN dd.Date < ? THEN 1 ELSE 0 END) AS hasBeforeLytd,
+      MIN(fsl.CompanyKey) AS minCompanyKey,
+      MAX(fsl.CompanyKey) AS maxCompanyKey
     FROM v_sales_lines fsl
     JOIN dim_date dd ON fsl.DateKey = dd.DateKey
     JOIN dim_customer dc ON dc.CustomerKey = fsl.CustomerKey
@@ -132,6 +137,7 @@ export async function fetchCustomerActivitySnapshot(
       hasYtd: Number(r.hasYtd) === 1,
       hasLytd: Number(r.hasLytd) === 1,
       hasBeforeLytd: Number(r.hasBeforeLytd) === 1,
+      companyKey: r.minCompanyKey != null && Number(r.minCompanyKey) === Number(r.maxCompanyKey) ? Number(r.minCompanyKey) : null,
     });
   }
   return map;
@@ -204,6 +210,8 @@ export interface CustomerRow {
   customerSegment: string | null;
   customerClass: string | null;
   status: CustomerStatusLabel;
+  /** The customer's res.partner form in Odoo (CustomerKey = commercial partner); null without ODOO_WEB_BASE_URL / ODOO_URL. */
+  customerOdooUrl: string | null;
 }
 
 /** Every customer with at least one sale matching `filters` (all-time, no date bound), joined to
@@ -222,6 +230,7 @@ export async function fetchCustomerRows(
     fetchCustomerActivitySnapshot(pool, effectiveAnchor, filters, scope),
     fetchCustomerDim(pool),
   ]);
+  const base = odooConfiguredBaseUrl();
   const rows: CustomerRow[] = [];
   for (const [customerKey, activity] of activityMap) {
     const dim = dimMap.get(customerKey);
@@ -235,6 +244,7 @@ export async function fetchCustomerRows(
       customerSegment: dim?.customerSegment ?? null,
       customerClass: dim?.customerClass ?? null,
       status: classifyCustomerStatus(activity, dim?.isBlocked ?? false),
+      customerOdooUrl: odooFormUrl(base, 'res.partner', customerKey, activity.companyKey),
     });
   }
   return rows;

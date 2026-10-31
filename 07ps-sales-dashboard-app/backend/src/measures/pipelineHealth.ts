@@ -82,6 +82,7 @@ import {
   type Filters,
 } from './filters';
 import { computeOpportunityDataQuality, type DataQualityOverview } from './dataQuality';
+import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -159,6 +160,11 @@ async function fetchOpportunitiesCountAndValue(pool: Pool, anchor: Date, filters
  * worth comparing the exact Odoo filter used against this query's WHERE clause before assuming
  * either side is wrong.
  */
+/** A warehouse id column as an Odoo record id (odooFormUrl drops anything that is not an integer > 0, e.g. -1 Unknown). */
+function odooId(v: unknown): number | null {
+  return v === null || v === undefined ? null : Number(v);
+}
+
 export interface FunnelSalesRecord {
   orderNumber: string;
   customer: string | null;
@@ -174,6 +180,10 @@ export interface FunnelSalesRecord {
   documentType: string | null;
   /** null = no linked Opportunity ("Tracking > Opportunity" empty on the Odoo form). */
   opportunityId: string | null;
+  /** The sale.order form in Odoo (SalesOrderKey, in its own company); null without ODOO_WEB_BASE_URL / ODOO_URL or id. */
+  odooUrl: string | null;
+  /** The customer's res.partner form (CustomerKey = commercial partner). */
+  customerOdooUrl: string | null;
 }
 
 export interface FunnelDeliveryRecord {
@@ -187,6 +197,11 @@ export interface FunnelDeliveryRecord {
   deliveryReference: string | null;
   deliveryDate: string | null;
   opportunityId: string | null;
+  /** The stock.picking form (PickingID); null for an order with no picking yet. */
+  odooUrl: string | null;
+  /** The sale.order the picking belongs to (SalesOrderID). */
+  orderOdooUrl: string | null;
+  customerOdooUrl: string | null;
 }
 
 export interface FunnelStageRecords {
@@ -195,7 +210,8 @@ export interface FunnelStageRecords {
   deliveries: FunnelDeliveryRecord[];
 }
 
-function toFunnelSalesRecord(r: any): FunnelSalesRecord {
+function toFunnelSalesRecord(r: any, base: string | null): FunnelSalesRecord {
+  const companyKey = odooId(r.companyKey);
   return {
     orderNumber: String(r.orderNumber ?? ''),
     customer: r.customer ?? null,
@@ -207,6 +223,8 @@ function toFunnelSalesRecord(r: any): FunnelSalesRecord {
     orderState: r.orderState ?? null,
     documentType: r.documentType ?? null,
     opportunityId: r.opportunityId != null ? String(r.opportunityId) : null,
+    odooUrl: odooFormUrl(base, 'sale.order', odooId(r.odooOrderId), companyKey),
+    customerOdooUrl: odooFormUrl(base, 'res.partner', odooId(r.partnerId), companyKey),
   };
 }
 
@@ -223,13 +241,15 @@ async function fetchQuotationRecords(pool: Pool, anchor: Date, filters: Filters)
            COALESCE(sap.admin_name_override, fs.Salesperson) AS salesperson,
            fs.QuotationDate AS documentDate, fs.OrderValue AS value,
            fs.OrderDate AS orderDate, fs.OrderState AS orderState, fs.SalesDocumentType AS documentType,
-           fs.OpportunityID AS opportunityId
+           fs.OpportunityID AS opportunityId,
+           fs.SalesOrderKey AS odooOrderId, fs.CustomerKey AS partnerId, fs.CompanyKey AS companyKey
     FROM v_sales_documents fs
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
     WHERE DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${b2bClause('fs')} AND ${excludeCancelledDocumentsClause('fs')} AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
-  return (rows as any[]).map(toFunnelSalesRecord);
+  const base = odooConfiguredBaseUrl();
+  return (rows as any[]).map((r) => toFunnelSalesRecord(r, base));
 }
 
 async function fetchSalesOrderRecords(pool: Pool, anchor: Date, filters: Filters): Promise<FunnelSalesRecord[]> {
@@ -240,14 +260,16 @@ async function fetchSalesOrderRecords(pool: Pool, anchor: Date, filters: Filters
            COALESCE(sap.admin_name_override, fs.Salesperson) AS salesperson,
            fs.QuotationDate AS documentDate, fs.OrderValue AS value,
            fs.OrderDate AS orderDate, fs.OrderState AS orderState, fs.SalesDocumentType AS documentType,
-           fs.OpportunityID AS opportunityId
+           fs.OpportunityID AS opportunityId,
+           fs.SalesOrderKey AS odooOrderId, fs.CustomerKey AS partnerId, fs.CompanyKey AS companyKey
     FROM v_sales_documents fs
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fs.SalespersonKey
     WHERE fs.SalesDocumentType = 'Sales Order' AND DATE(fs.QuotationDate) BETWEEN ? AND ? AND ${b2bClause('fs')}
       AND ${excludeCancelledDocumentsClause('fs')} AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
-  return (rows as any[]).map(toFunnelSalesRecord);
+  const base = odooConfiguredBaseUrl();
+  return (rows as any[]).map((r) => toFunnelSalesRecord(r, base));
 }
 
 /** Row count can exceed the Sales Orders row count -- one order can have multiple partial
@@ -262,12 +284,14 @@ async function fetchDeliveryRecords(pool: Pool, anchor: Date, filters: Filters):
            COALESCE(sap.admin_name_override, fd.Salesperson) AS salesperson,
            fd.OrderDate AS orderDate, fd.DeliveryStatus AS deliveryStatus,
            fd.DeliveryReference AS deliveryReference, fd.DeliveryDate AS deliveryDate,
-           fd.OpportunityID AS opportunityId
+           fd.OpportunityID AS opportunityId,
+           fd.PickingID AS pickingId, fd.SalesOrderID AS odooOrderId, fd.CustomerKey AS partnerId, fd.CompanyKey AS companyKey
     FROM v_sales_deliveries fd
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fd.SalespersonKey
     WHERE fd.OrderDate BETWEEN ? AND ? AND ${b2bClause('fd')} AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const base = odooConfiguredBaseUrl();
   return (rows as any[]).map((r) => ({
     orderNumber: r.orderNumber != null ? String(r.orderNumber) : null,
     customer: r.customer ?? null,
@@ -278,6 +302,9 @@ async function fetchDeliveryRecords(pool: Pool, anchor: Date, filters: Filters):
     deliveryReference: r.deliveryReference != null ? String(r.deliveryReference) : null,
     deliveryDate: r.deliveryDate ? toDateOnlyString(r.deliveryDate) : null,
     opportunityId: r.opportunityId != null ? String(r.opportunityId) : null,
+    odooUrl: odooFormUrl(base, 'stock.picking', odooId(r.pickingId), odooId(r.companyKey)),
+    orderOdooUrl: odooFormUrl(base, 'sale.order', odooId(r.odooOrderId), odooId(r.companyKey)),
+    customerOdooUrl: odooFormUrl(base, 'res.partner', odooId(r.partnerId), odooId(r.companyKey)),
   }));
 }
 
@@ -598,6 +625,9 @@ export interface OpportunityDetailRow {
    * flag is what lets the frontend apply the page's Won/Lost-exclusion policy per drill-down path
    * (month/bucket require it; stage -- Opportunity by Stage's exception -- doesn't). */
   isOpen: boolean;
+  /** The crm.lead form in Odoo (OpportunityID, in its own company); null without ODOO_WEB_BASE_URL / ODOO_URL or id. */
+  odooUrl: string | null;
+  customerOdooUrl: string | null;
 }
 
 /** Unfiltered by Won/Lost at the query level -- this is the shared drill-through target for
@@ -623,12 +653,15 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
       YEAR(fo.ExpectedCloseDate) AS closeYear,
       MONTH(fo.ExpectedCloseDate) AS closeMonth,
       fo.ProbabilityBucket AS probabilityBucket,
-      fo.IsOpen AS isOpen
+      fo.IsOpen AS isOpen,
+      fo.CustomerKey AS partnerId,
+      fo.CompanyKey AS companyKey
     FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const base = odooConfiguredBaseUrl();
   return (rows as any[]).map((r) => ({
     opportunityId: String(r.opportunityId),
     name: String(r.name ?? ''),
@@ -642,6 +675,8 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
     expectedCloseMonth: r.closeMonth != null ? `${MONTH_LABELS[Number(r.closeMonth) - 1]} ${r.closeYear}` : null,
     probabilityBucket: r.probabilityBucket ?? null,
     isOpen: Boolean(Number(r.isOpen ?? 0)),
+    odooUrl: odooFormUrl(base, 'crm.lead', odooId(r.opportunityId), odooId(r.companyKey)),
+    customerOdooUrl: odooFormUrl(base, 'res.partner', odooId(r.partnerId), odooId(r.companyKey)),
   }));
 }
 

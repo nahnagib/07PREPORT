@@ -10,7 +10,7 @@ import { FollowupCharts } from '../../../../components/nps/FollowupCharts';
 import { NpsReach } from '../../../../components/nps/NpsReach';
 import { NpsTopRow } from '../../../../components/nps/NpsTopRow';
 import { NpsTrendChart, RespondersTrend } from '../../../../components/nps/NpsTrends';
-import { OdooLink } from '../../../../components/nps/OdooLink';
+import { OdooLink } from '../../../../components/OdooLink';
 import { StatusPill, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useNpsScore } from '../../../../lib/hooks';

@@ -6,6 +6,20 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Added ("Open in Odoo" links on Pipeline Health and the Customers Table, 2026-10-31)
+- **Pipeline Health drill-downs:** Opportunity Details (all its Stage / Expected Closure / Probability / funnel variants)
+  links the Opportunity Name to `crm.lead`; Quotations and Sales Orders link the Order Number to `sale.order`; Deliveries
+  link the Order Number (the sale order's number) to `sale.order` and show a new **Delivery** column (the picking
+  reference, WH/OUT/...) linked to `stock.picking`. Every Customer cell links to `res.partner`. Each link opens in a new tab
+  in the record's own company (`cids`).
+- **Customer Growth -> Details -> Customers Table:** the Customer Name links to `res.partner`; `cids` only when every
+  matching sale is in one company. Sort, filter and the PDF / Excel export use the plain name.
+- Built by `backend/src/lib/odooLinks.ts` (`ODOO_WEB_BASE_URL`, else `ODOO_URL`; neither set or no id > 0 = plain text,
+  never a guessed host). Ids come from columns the warehouse already has: `OpportunityID`, `SalesOrderKey`, `PickingID`,
+  `SalesOrderID`, `CustomerKey` (commercial partner), `CompanyKey` (Odoo company id). **No ETL change, no migration.**
+- `OdooLink` moved from `components/nps/` to `components/OdooLink.tsx` (shared). The drill-down PDF rows
+  (`lib/pdfRows.ts`) export a linked column's text instead of `[object Object]`.
+
 ### Added (ETL: 30-minute refresh, Phase B step 1 -- incremental sales from an Odoo mirror, 2026-10-21; `docs/etl-phase-b-sales-incremental.md` §10)
 - **Migration 0054:** `raw_odoo_mirror` / `_meta` / `raw_odoo_names` (the Odoo records the sales build reads), `shd_*`
   copies of the 17 sales marts, `etl_shadow_compare` / `etl_shadow_diff`, `fact_sales_lines.SalesLineGroupKey` + `Discount`.

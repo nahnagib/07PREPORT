@@ -5,7 +5,7 @@ import { Gauge, RadialGauge } from '@07ps/ui';
 import type { NpsCounts, NpsFollowupSummary, NpsResponseRate } from '../../../lib/api';
 import { FollowupCharts } from '../FollowupCharts';
 import { NpsTopRow, ResponseRateCard } from '../NpsTopRow';
-import { OdooLink } from '../OdooLink';
+import { OdooLink } from '../../OdooLink';
 import { Waiting } from '../Waiting';
 
 afterEach(cleanup);

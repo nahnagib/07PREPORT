@@ -1912,6 +1912,8 @@ export interface CustomerTableRow {
   customerSegment: string | null;
   customerClass: string | null;
   status: CustomerStatusLabel;
+  /** The customer's res.partner form in Odoo; null when no Odoo URL is configured. */
+  customerOdooUrl: string | null;
 }
 
 export interface CustomerGrowthOverview {
@@ -1998,6 +2000,9 @@ export interface FunnelSalesRecord {
   documentType: string | null;
   /** null = no linked Opportunity ("Tracking > Opportunity" empty on the Odoo form). */
   opportunityId: string | null;
+  /** The sale.order form in Odoo; null when no Odoo URL is configured or there is no id. */
+  odooUrl: string | null;
+  customerOdooUrl: string | null;
 }
 
 export interface FunnelDeliveryRecord {
@@ -2010,6 +2015,11 @@ export interface FunnelDeliveryRecord {
   deliveryReference: string | null;
   deliveryDate: string | null;
   opportunityId: string | null;
+  /** The stock.picking form in Odoo (null for an order with no picking yet). */
+  odooUrl: string | null;
+  /** The sale.order the picking belongs to. */
+  orderOdooUrl: string | null;
+  customerOdooUrl: string | null;
 }
 
 export interface FunnelStageRecords {
@@ -2094,6 +2104,9 @@ export interface OpportunityDetailRow {
   /** Neither Won nor Lost. Unfiltered at the API level -- see pipeline-health/page.tsx's
    * matchesFilter for how each drill-down path applies (or deliberately skips) this. */
   isOpen: boolean;
+  /** The crm.lead form in Odoo; null when no Odoo URL is configured. */
+  odooUrl: string | null;
+  customerOdooUrl: string | null;
 }
 
 export interface DataQualityIssue {

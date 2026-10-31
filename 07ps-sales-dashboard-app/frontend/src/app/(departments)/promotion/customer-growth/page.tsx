@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, FileDown, Info, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
+import { OdooLink } from '../../../../components/OdooLink';
 import { FilterBar } from '../../../../components/FilterBar';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
@@ -504,6 +505,7 @@ export default function CustomerGrowthPage() {
       lastPurchaseDate: r.lastPurchaseDate ?? '—',
       firstPurchaseDate: r.firstPurchaseDate ?? '—',
       groupClass: `${r.customerSegment ?? '—'} / ${r.customerClass ?? '—'}`,
+      customerOdooUrl: r.customerOdooUrl ?? null,
     }));
 
   const newCustomersTableRows = toPeriodCountTableRows(kpis?.newCustomers);
@@ -916,10 +918,12 @@ interface CustomerTableGridRow extends Record<string, unknown> {
   lastPurchaseDate: string;
   firstPurchaseDate: string;
   groupClass: string;
+  customerOdooUrl: string | null;
 }
 
 const customerTableColumns: DataGridColumn<CustomerTableGridRow>[] = [
-  { key: 'name', header: 'Customer Name', width: 220 },
+  // The name opens the customer in Odoo; sort / filter / PDF / Excel use the plain name (rawValue).
+  { key: 'name', header: 'Customer Name', width: 220, render: (r) => <OdooLink href={r.customerOdooUrl}>{r.name}</OdooLink>, rawValue: (r) => r.name },
   { key: 'ytdValue', header: 'YTD Value', align: 'right', width: 140, render: (r) => formatCurrency(r.ytdValue), rawValue: (r) => r.ytdValue },
   { key: 'lifetimeValue', header: 'Lifetime Value', align: 'right', width: 150, render: (r) => formatCurrency(r.lifetimeValue), rawValue: (r) => r.lifetimeValue },
   { key: 'lastPurchaseDate', header: 'Last Purchase Date', width: 150 },

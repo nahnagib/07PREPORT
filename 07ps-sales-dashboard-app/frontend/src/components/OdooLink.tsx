@@ -1,8 +1,8 @@
 import React from 'react';
-import { safeOdooUrl } from '../../lib/debt/view';
+import { safeOdooUrl } from '../lib/debt/view';
 
 /**
- * A document code (WH/OUT/…, S00123) linked to its Odoo form in a new tab. The URL comes from the API (built from the
+ * A document code or name (WH/OUT/…, S00123, a customer) linked to its Odoo form in a new tab. The URL comes from the API (built from the
  * ODOO_URL setting with the record id and its company); without one the code is shown as plain text.
  */
 export function OdooLink({ href, children }: { href: string | null | undefined; children: React.ReactNode }) {
