@@ -14,8 +14,8 @@
  * (null, shown "—"); fewer than NPS_MIN_RESPONDERS (config/npsThresholds.ts) = the value is greyed with "n = x".
  *
  * Dates: RatingDateKey = the rating's local (Africa/Tripoli) date; every rating visual filters on it. The page's default
- * period is year-to-date (1 January -> today, Tripoli). Weeks are the business week, Sunday..Saturday, named by their
- * Sunday (lib/businessWeek.ts -- the Collections week).
+ * period is year-to-date (1 January -> today, Tripoli). Weeks are the business week, Saturday..Friday, named by their
+ * Saturday (lib/businessWeek.ts -- the Collections week).
  * Response rate = responders / (Delivered + Read) x 100: a customer can only answer a message that reached them. The
  * WhatsApp messages have no delivery / order / customer, so BOTH sides use the company and date filters only (ratings
  * by rating date, messages by message date, the same period, from NPS_REACH_START); the other filters are ignored for
@@ -156,7 +156,7 @@ export function npsWhere(q: Pick<NpsQuery, 'dateFrom' | 'dateTo'>, f: Filters, a
 
 const COUNT_COLUMNS = 'SUM(f.nps_level = 3) AS promoters, SUM(f.nps_level = 2) AS passives, SUM(f.nps_level = 1) AS detractors';
 
-/** Every period key of the range at a grain: yyyymmdd of the week's Sunday / yyyymm / yyyy. */
+/** Every period key of the range at a grain: yyyymmdd of the week's Saturday / yyyymm / yyyy. */
 export function periodsBetween(from: string, to: string, grain: NpsGrain): number[] {
   const out: number[] = [];
   if (grain === 'year') {
@@ -181,7 +181,7 @@ export function periodsBetween(from: string, to: string, grain: NpsGrain): numbe
   return out;
 }
 
-/** "20261004" (a week's Sunday) -> "2026-10-04", "202610" -> "2026-10", "2026" -> "2026". */
+/** "20261004" (a week's Saturday) -> "2026-10-04", "202610" -> "2026-10", "2026" -> "2026". */
 export function periodLabel(key: number): string {
   const s = String(key);
   if (s.length === 8) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
@@ -223,7 +223,7 @@ export interface NpsTrend {
 }
 
 /**
- * NPS and CSAT per week (Sunday..Saturday, named by its Sunday) / month / year for the active filters (from the response
+ * NPS and CSAT per week (Saturday..Friday, named by its Saturday) / month / year for the active filters (from the response
  * view -- v_process_nps_trend is per company only). A week cut by the range counts only the ratings inside the range,
  * so the bars always add up to the period's responders.
  */
@@ -556,7 +556,7 @@ export interface NpsResponseRate {
   target: number;
   /** rate - target, in points */
   variancePts: number | null;
-  /** per business week (Sunday..Saturday) of the period, for the sparkline */
+  /** per business week (Saturday..Friday) of the period, for the sparkline */
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
 }
 

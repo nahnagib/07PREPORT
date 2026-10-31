@@ -21,7 +21,7 @@ export function groupBy<T, K>(rows: T[], key: (r: T) => K): Map<K, T[]> {
 }
 
 /** Exact sum of a numeric field across rows. */
-export const total = <T>(rows: T[], pick: (r: T) => Num): Rat => sum(rows.map((r) => R(pick(r))));
+export const total = <T>(rows: T[], pick: (r: T) => Num | Rat): Rat => sum(rows.map((r) => R(pick(r))));
 
 export interface BrandRef {
   id: number; name: string;

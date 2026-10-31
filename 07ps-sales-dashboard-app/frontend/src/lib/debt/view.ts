@@ -187,20 +187,20 @@ export type ReceivablesGrain = 'day' | 'week' | 'month';
 
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** First day of the period holding `iso`: the day, the Sunday of its week (Sunday..Saturday), the 1st of its month. */
+/** First day of the period holding `iso`: the day, the Saturday of its week (Saturday..Friday), the 1st of its month. */
 export function receivablesPeriodStart(iso: string, grain: ReceivablesGrain): string {
   if (grain === 'day') return iso;
   if (grain === 'month') return `${iso.slice(0, 7)}-01`;
   const d = new Date(`${iso}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 1) % 7));
   return d.toISOString().slice(0, 10);
 }
 
 /**
  * Receivables trend points for a grain. Receivables are a BALANCE (what is open on a snapshot date), so a week or a
  * month is never a sum of its days: each period shows its LAST snapshot that has a value (the closing balance), and
- * `asOf` says which day that was. Days keep the gap-preserving daily series (dailyTrendPoints). Weeks run Sunday to
- * Saturday and are named by their Sunday ("4 Oct 26"), months "Oct 2026" -- the same labels as the Collections trend.
+ * `asOf` says which day that was. Days keep the gap-preserving daily series (dailyTrendPoints). Weeks run Saturday to
+ * Friday and are named by their Saturday ("3 Oct 26"), months "Oct 2026" -- the same labels as the Collections trend.
  */
 export function receivablesTrendPoints(points: DebtTrend['points'], grain: ReceivablesGrain): { label: string; total: number | null; overdue: number | null; notDue: number | null; asOf: string | null; periodStart: string }[] {
   if (grain === 'day') return dailyTrendPoints(points).map((p) => ({ ...p, asOf: null, periodStart: p.label }));

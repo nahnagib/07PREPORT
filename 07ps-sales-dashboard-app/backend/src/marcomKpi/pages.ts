@@ -1,3 +1,4 @@
+import { combineSpendRows, type CampaignCost, type OtherCost } from './spendCompatibility';
 import { DateTime } from 'luxon';
 import { getAppTimezone } from '../lib/timezone';
 import { getFreshness } from '../marcom/service';
@@ -51,13 +52,23 @@ async function resolve(raw: Raw) {
 type Resolved = Awaited<ReturnType<typeof resolve>>;
 
 /** Spend rows of `year` and `year - 1`, months fromMonth..toMonth, for the effective brands. */
-function spendRows(r: Resolved, select: string) {
-  return runCurrent<SpendRow & RoiRow>('spend', {
-    select,
-    joins: [BRAND_JOIN],
-    where: [where.in('t.year', [r.year, r.year - 1]), where.between('t.month', r.fromMonth, r.toMonth), r.brandFilter ? where.in('t.brand_id', r.brandFilter) : null],
-    orderBy: 't.year, t.month, t.brand_id',
-  });
+async function spendRows(r: Resolved): Promise<SpendRow[]> {
+  const select = `t.year AS year, t.month AS month, t.brand_id AS brandId, b.name AS brand,
+    t.spend AS spend, t.revenue_attributed AS revenue, t.company_revenue_current AS companyCurrent,
+    t.company_revenue_ly AS companyLy, t.budget AS budget, t.new_customers AS newCustomers,
+    t.avg_invoice AS avgInvoice, t.social_post_cost AS socialPostCost, t.clicks AS clicks`;
+  const query = { select, joins: [BRAND_JOIN], where: [where.in('t.year', [r.year,r.year-1]), where.between('t.month',r.fromMonth,r.toMonth), r.brandFilter ? where.in('t.brand_id',r.brandFilter) : null], orderBy: 't.year, t.month, t.brand_id' };
+  try { return await runCurrent<SpendRow>('spend', query); }
+  catch (error) {
+    if ((error as {code?:string}).code !== 'ER_BAD_FIELD_ERROR' || !String((error as Error).message).includes('spend')) throw error;
+  }
+  // The revised schema retains the old company inputs for review; do not substitute brand revenue for them.
+  const [monthly,campaigns,other] = await Promise.all([
+    runCurrent<SpendRow>('spend',{...query,select:select.replace('t.spend AS spend','0 AS spend').replace('t.company_revenue_current','t.legacy_company_revenue_current').replace('t.company_revenue_ly','t.legacy_company_revenue_ly')}),
+    runCurrent<CampaignCost>('campaigns',{select:"t.brand_id AS brandId, DATE_FORMAT(t.start_date, '%Y-%m-%d') AS start, DATE_FORMAT(t.end_date, '%Y-%m-%d') AS end, t.spend AS spend",where:[where.lte('t.start_date',monthEnd(r.year,r.toMonth)),where.gte('t.end_date',monthStart(r.year-1,r.fromMonth)),r.brandFilter?where.in('t.brand_id',r.brandFilter):null]}),
+    runCurrent<OtherCost>('other',{select:'t.year AS year, t.month AS month, t.brand_id AS brandId, t.amount_lyd AS amount',where:query.where}),
+  ]);
+  return combineSpendRows(monthly,campaigns,other,[r.year-1,r.year],r.fromMonth,r.toMonth,r.selected);
 }
 
 async function envelope<T extends { hasData: boolean; meta: { missing: string[] } }>(
@@ -71,10 +82,7 @@ async function envelope<T extends { hasData: boolean; meta: { missing: string[] 
 
 export async function spendingPage(raw: Raw) {
   const r = await resolve(raw);
-  const rows = await spendRows(r, `t.year AS year, t.month AS month, t.brand_id AS brandId, b.name AS brand,
-             t.spend AS spend, t.revenue_attributed AS revenue, t.company_revenue_current AS companyCurrent,
-             t.company_revenue_ly AS companyLy, t.budget AS budget, t.new_customers AS newCustomers,
-             t.avg_invoice AS avgInvoice, t.social_post_cost AS socialPostCost, t.clicks AS clicks`);
+  const rows = await spendRows(r);
   const payload = buildSpending({
     year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected,
     current: rows.filter((x) => x.year === r.year),
@@ -98,7 +106,7 @@ export async function campaignsPage(raw: Raw) {
     orderBy: 't.start_date, t.name',
   });
   // ROI trend -- YTD vs LYTD (moved here from the Spending page): monthly spend rows, same period and brands.
-  const roiRows = await spendRows(r, 't.year AS year, t.month AS month, t.spend AS spend, t.revenue_attributed AS revenue');
+  const roiRows = await spendRows(r);
   const media = campaigns.length
     ? await runCurrent<MediaRow>('media', {
         select: 't.campaign_name AS campaignName, t.media_type AS mediaType, t.city AS city, t.units AS units, t.cost AS cost',

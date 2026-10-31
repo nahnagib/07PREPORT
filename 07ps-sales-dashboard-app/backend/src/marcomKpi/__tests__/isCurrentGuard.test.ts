@@ -22,7 +22,7 @@ describe('marcomKpi has exactly one SQL entry point', () => {
   it('db.ts only names versioned tables inside the TABLES map (plus the brand master)', () => {
     const src = fs.readFileSync(path.join(dir, 'db.ts'), 'utf8');
     const names = [...src.matchAll(/\bmarcom_[a-z_]+/g)].map((m) => m[0]);
-    const allowed = new Set(['marcom_spend_monthly', 'marcom_campaign', 'marcom_campaign_media', 'marcom_social_monthly', 'marcom_web_monthly', 'marcom_trade_monthly', 'marcom_event', 'marcom_brand']);
+    const allowed = new Set(['marcom_spend_monthly', 'marcom_other_spend', 'marcom_campaign', 'marcom_campaign_media', 'marcom_social_monthly', 'marcom_web_monthly', 'marcom_trade_monthly', 'marcom_event', 'marcom_brand']);
     for (const n of names) expect(allowed.has(n), n).toBe(true);
     // The raw pool is used in exactly three places: the brand master, runCurrent and availableYears
     // (a UNION built from buildCurrentQuery parts, so every branch still carries is_current = 1).

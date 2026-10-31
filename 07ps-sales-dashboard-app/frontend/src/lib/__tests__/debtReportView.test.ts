@@ -149,18 +149,18 @@ describe('Receivables trend by day / week / month', () => {
   // Sun 4 Oct .. Sat 10 Oct is one week; 11 Oct starts the next; 1 Nov a new month
   const pts = [snap('2026-10-05', 100, 10), snap('2026-10-09', 140, 30), snap('2026-10-10', null), snap('2026-10-12', 90, 5), snap('2026-11-01', 70, 7)];
 
-  it('weeks run Sunday to Saturday, months start on the 1st', () => {
-    expect(receivablesPeriodStart('2026-10-10', 'week')).toBe('2026-10-04'); // Saturday -> its Sunday
-    expect(receivablesPeriodStart('2026-10-11', 'week')).toBe('2026-10-11'); // Sunday is its own start
+  it('weeks run Saturday to Friday, months start on the 1st', () => {
+    expect(receivablesPeriodStart('2026-10-10', 'week')).toBe('2026-10-10'); // Saturday starts its own week
+    expect(receivablesPeriodStart('2026-10-11', 'week')).toBe('2026-10-10'); // Sunday belongs to Saturday’s week
     expect(receivablesPeriodStart('2026-10-27', 'month')).toBe('2026-10-01');
   });
 
   it('a week / month shows its LAST snapshot with a value (a balance is never summed), and says which day', () => {
     const w = receivablesTrendPoints(pts, 'week');
     expect(w.map((p) => [p.label, p.total, p.overdue, p.asOf])).toEqual([
-      ['4 Oct 26', 140, 30, '2026-10-09'], // 10 Oct has no value, so 9 Oct closes the week -- not 100 + 140
-      ['11 Oct 26', 90, 5, '2026-10-12'],
-      ['1 Nov 26', 70, 7, '2026-11-01'],
+      ['3 Oct 26', 140, 30, '2026-10-09'], // 10 Oct has no value, so 9 Oct closes the week -- not 100 + 140
+      ['10 Oct 26', 90, 5, '2026-10-12'],
+      ['31 Oct 26', 70, 7, '2026-11-01'],
     ]);
     const m = receivablesTrendPoints(pts, 'month');
     expect(m.map((p) => [p.label, p.total, p.asOf])).toEqual([['Oct 2026', 90, '2026-10-12'], ['Nov 2026', 70, '2026-11-01']]);

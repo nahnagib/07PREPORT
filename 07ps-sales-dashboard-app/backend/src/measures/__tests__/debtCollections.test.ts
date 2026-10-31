@@ -13,10 +13,10 @@ import {
 import { DEFAULT_DEBT_QUERY, DebtQueryError, fetchDebtTrend } from '../debtReport';
 
 describe('collection periods', () => {
-  it('weeks run Sunday..Saturday (reporting/ar_weekly), months from the 1st', () => {
-    expect(periodStart('2026-10-11', 'week')).toBe('2026-10-11'); // a Sunday
-    expect(periodStart('2026-10-17', 'week')).toBe('2026-10-11'); // its Saturday
-    expect(periodEnd('2026-10-11', 'week')).toBe('2026-10-17');
+  it('weeks run Saturday..Friday (reporting/ar_weekly), months from the 1st', () => {
+    expect(periodStart('2026-10-10', 'week')).toBe('2026-10-10'); // a Saturday
+    expect(periodStart('2026-10-16', 'week')).toBe('2026-10-10'); // its Friday
+    expect(periodEnd('2026-10-10', 'week')).toBe('2026-10-16');
     expect(periodStart('2026-09-30', 'month')).toBe('2026-09-01');
     expect(periodEnd('2026-02-01', 'month')).toBe('2026-02-28');
     expect(periodEnd('2026-12-01', 'month')).toBe('2026-12-31');
@@ -24,13 +24,13 @@ describe('collection periods', () => {
   });
 
   it('lists every period of the range, empty ones included', () => {
-    expect(periodsBetween('2026-09-30', '2026-10-12', 'week').map((p) => p.start)).toEqual(['2026-09-27', '2026-10-04', '2026-10-11']);
+    expect(periodsBetween('2026-09-30', '2026-10-12', 'week').map((p) => p.start)).toEqual(['2026-09-26', '2026-10-03', '2026-10-10']);
     expect(periodsBetween('2026-09-29', '2026-10-01', 'day')).toHaveLength(3);
   });
 
   it('defaults: week grain, the last 12 weeks ending with the current one', () => {
     const q = parseCollectionsQuery({}, '2026-10-14');
-    expect([q.grain, q.from, q.to, q.currency]).toEqual(['week', '2026-07-26', '2026-10-17', null]);
+    expect([q.grain, q.from, q.to, q.currency]).toEqual(['week', '2026-07-25', '2026-10-16', null]);
     expect(periodsBetween(q.from, q.to, q.grain)).toHaveLength(12);
     const m = parseCollectionsQuery({ grain: 'month' }, '2026-10-14');
     expect([m.from, m.to]).toEqual(['2025-11-01', '2026-10-31']);
@@ -70,7 +70,7 @@ function fakePool(o: { periods?: Record<string, unknown>[]; snapshots?: string[]
     query: async (sql: string) => {
       sqls.push(sql);
       if (sql.includes('GROUP BY v.currency')) return [[{ currency: 'LYD', n: 9 }, { currency: 'USD', n: 1 }], []];
-      if (sql.includes('MIN(payment_date)')) return [[{ first: '2021-01-03', loaded: '2026-10-11T15:00:00Z' }], []];
+      if (sql.includes('MIN(payment_date)')) return [[{ first: '2021-01-03', loaded: '2026-10-10T15:00:00Z' }], []];
       if (sql.includes('GROUP BY p')) return [o.periods ?? [], []];
       if (sql.includes('SELECT DISTINCT DATE_FORMAT(STR_TO_DATE(SnapshotDateKey')) return [(o.snapshots ?? []).map((d) => ({ d })), []];
       if (sql.includes('AS start_overdue')) return [[o.rate ?? { start_overdue: 0, collected: 0 }], []];
@@ -85,20 +85,20 @@ function fakePool(o: { periods?: Record<string, unknown>[]; snapshots?: string[]
 }
 
 describe('fetchCollectionsTrend', () => {
-  const q = parseCollectionsQuery({ from: '2026-09-27', to: '2026-10-17' });
+  const q = parseCollectionsQuery({ from: '2026-09-26', to: '2026-10-16' });
 
   it('one point per period (zeros where nothing was collected), the most used currency by default', async () => {
-    const t = await fetchCollectionsTrend(fakePool({ periods: [{ p: '2026-10-04', collected: 900, overdue: 600, not_due: 300, other: 0, unapplied: 0, payments: 3 }] }), q, {});
+    const t = await fetchCollectionsTrend(fakePool({ periods: [{ p: '2026-10-03', collected: 900, overdue: 600, not_due: 300, other: 0, unapplied: 0, payments: 3 }] }), q, {});
     expect(t.currency).toBe('LYD');
     expect(t.currencies).toEqual(['LYD', 'USD']);
-    expect(t.points.map((p) => [p.periodStart, p.collected, p.payments])).toEqual([['2026-09-27', 0, 0], ['2026-10-04', 900, 3], ['2026-10-11', 0, 0]]);
+    expect(t.points.map((p) => [p.periodStart, p.collected, p.payments])).toEqual([['2026-09-26', 0, 0], ['2026-10-03', 900, 3], ['2026-10-10', 0, 0]]);
     const p = t.points[1];
     expect(p.appliedOverdue + p.appliedNotDue + p.appliedOther + p.unapplied).toBe(p.collected);
     expect(t.firstPaymentDate).toBe('2021-01-03');
   });
 
   it('collection rate = applied to the start overdue / start overdue, only where a snapshot exists the day before', async () => {
-    const pool = fakePool({ snapshots: ['2026-10-03', '2026-10-08'], rate: { start_overdue: 2000, collected: 500 } });
+    const pool = fakePool({ snapshots: ['2026-10-02', '2026-10-08'], rate: { start_overdue: 2000, collected: 500 } });
     const t = await fetchCollectionsTrend(pool, q, {});
     const rateSql = pool.sqls.find((s) => s.includes('AS start_overdue')) ?? '';
     expect(rateSql).toContain('l.days_past_due >= 0');
@@ -108,7 +108,7 @@ describe('fetchCollectionsTrend', () => {
   });
 
   it('a start overdue of 0 gives no rate', async () => {
-    const t = await fetchCollectionsTrend(fakePool({ snapshots: ['2026-10-03'], rate: { start_overdue: 0, collected: 0 } }), q, {});
+    const t = await fetchCollectionsTrend(fakePool({ snapshots: ['2026-10-02'], rate: { start_overdue: 0, collected: 0 } }), q, {});
     expect(t.points[1].collectionRate).toBeNull();
   });
 });
@@ -121,7 +121,7 @@ describe('fetchCollectionsDrilldown', () => {
     const invoiceList = pool.sqls.find((sql) => sql.includes('SELECT m.payment_id, m.allocation_no, m.document'))!;
     expect(invoiceList).toContain('i.invoice_date < c.payment_date');
     expect(pool.sqls.find((sql) => sql.includes('ORDER BY v.payment_date'))).toContain('e.amount_doc_ccy');
-    expect(d.period).toEqual({ start: '2026-10-04', end: '2026-10-10' });
+    expect(d.period).toEqual({ start: '2026-10-03', end: '2026-10-09' });
     expect(d.rows[0]).toMatchObject({ payment: 'BNK1/1', amount: 600, appliedOverdue: 600, invoices: 'INV/1 (600.00)' });
     expect(d.rows[0].odooUrl).toMatch(/model=account\.payment/);
   });
@@ -132,7 +132,7 @@ describe('fetchCollectionsDrilldown', () => {
   });
 });
 
-describe('fetchDebtTrend gaps (Part 1, 2026-10-11)', () => {
+describe('fetchDebtTrend gaps (Part 1, 2026-10-10)', () => {
   it('a snapshot without any line for the filters is a gap (null), not 0; one with other currencies only is 0', async () => {
     const pool = {
       query: async (sql: string) => {

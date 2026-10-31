@@ -1,3 +1,4 @@
+import { R } from '../../marcomKpi/rat';
 import path from 'node:path';
 import ExcelJS from 'exceljs';
 import { MONTHS, SHEET_P1, SHEET_P2, SHEET_P3, SHEET_P4 } from '../templateConfig';
@@ -43,7 +44,7 @@ export async function buildDemoWorkbooks(data: DemoDataset): Promise<DemoChunk[]
 
     const p1 = wb.getWorksheet(SHEET_P1)!;
     inMonths(data.spend).forEach((r, k) => {
-      put(p1, 7 + k, [r.year, MONTHS[r.month - 1], r.brand, r.spend, r.revenue, r.companyCurrent, r.companyLy, r.budget, r.newCustomers, r.avgInvoice, r.socialPostCost, r.clicks]);
+      put(p1, 7 + k, [r.year, MONTHS[r.month - 1], r.brand, R(r.spend).toNumber(), r.revenue, r.companyCurrent, r.companyLy, r.budget, r.newCustomers, r.avgInvoice, r.socialPostCost, r.clicks]);
       count++;
     });
 

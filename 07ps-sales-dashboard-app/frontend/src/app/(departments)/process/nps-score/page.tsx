@@ -59,7 +59,7 @@ import {
  * Row 1 the Promotion tachometer layout: NPS tachometer · Response Rate (narrow) · CSAT tachometer.
  * Row 2 responders: Total · Promoters · Passives · Detractors (# and % of responders).
  * Row 3 WhatsApp message reach: company/date only.
- * Row 4 the trend: Weekly (Sunday..Saturday) / Monthly / Yearly from the first period with ratings; NPS and CSAT lines
+ * Row 4 the trend: Weekly (Saturday..Friday) / Monthly / Yearly from the first period with ratings; NPS and CSAT lines
  *       plus monthly stacked responders; periods below the minimum faded on the score chart.
  * Row 5 Errors by reason · Detractors by reason · Detractors by status (live from the follow-up cases).
  * Row 6 the detractor list with the follow-up case and the customers' comments: only with the nps_comments permission.

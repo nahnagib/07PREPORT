@@ -10,6 +10,7 @@ import { pool } from '../db/pool';
  */
 const TABLES = {
   spend: 'marcom_spend_monthly',
+  other: 'marcom_other_spend',
   campaigns: 'marcom_campaign',
   media: 'marcom_campaign_media',
   social: 'marcom_social_monthly',

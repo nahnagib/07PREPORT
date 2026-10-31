@@ -61,7 +61,7 @@ export function npsBreakdown(counts: Pick<NpsCounts, 'promotersPct' | 'detractor
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** "2026-10-04" (a week, named by its Sunday) -> "04 Oct", "2026-10" -> "Oct 2026", "2026" -> "2026" (fixed names: browsers disagree on "Sep"). */
+/** "2026-10-03" (a week, named by its Saturday) -> "04 Oct", "2026-10" -> "Oct 2026", "2026" -> "2026" (fixed names: browsers disagree on "Sep"). */
 export function periodLabel(period: string): string {
   const [y, m, d] = period.split('-');
   if (d) return `${d} ${MONTHS[Number(m) - 1]}`;

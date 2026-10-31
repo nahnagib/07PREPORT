@@ -334,3 +334,11 @@ ETL pipeline, and BullMQ-based scheduling.
 - Remove both hint icons from Working Days, Official Holidays, Forced Closures and Weekly Rest Days.
 - Put an interaction hint immediately beside Missing Value/Days titles, describing their detailed chart/table view.
 - Add 41 presentation regression cases; all 512 frontend/shared UI tests pass.
+
+## 2026-10-31 — Saturday business weeks and MARCOM page repair
+
+- Align NPS weekly trends/response-rate sparklines, Collections aggregation/drill-downs, Receivables weekly closing balances and MARCOM timeline ticks to Saturday–Friday. Critical Number already used Saturday–Friday.
+- Support the revised local MARCOM database schema as well as the original schema. Derive total spend from campaign active days plus other expense lines; retain the original company revenue inputs without substituting brand revenue. Keep prorations exact until output.
+- Verified all four MARCOM data handlers against the local database and authenticated endpoints for Spending, Media Campaigns, Digital and Trade. Check live NPS/Collections weekly keys are Saturdays.
+- Rebuild both applications and replace the stale port-13100 frontend with the current main build; ports 3000 and 13100 now serve the same build. No push.
+- Validation: 756 backend tests passed (166 skipped), 512 frontend/shared UI tests passed, frontend type check and frontend/backend builds passed.

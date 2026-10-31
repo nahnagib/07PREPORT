@@ -30,7 +30,7 @@ import { fetchCollectionsDrilldown, fetchCollectionsTrend, parseCollectionsQuery
  *                               on that snapshot, e.g. a company not yet extracted then)
  *   GET /debt-report/collections-trend?currency=&grain=day|week|month&from=&to=
  *                               collections against earlier invoices (measures/debtCollections.ts): overdue / not yet due;
- *                               same-day sales and advances excluded; payment count, collection rate; default the last 12 weeks (Sunday..Saturday)
+ *                               same-day sales and advances excluded; payment count, collection rate; default the last 12 weeks (Saturday..Friday)
  *   GET /debt-report/collections-drilldown?currency=&grain=&period=<first day>
  *                               the payments of one period and the invoices they were applied to
  *   GET /debt-report/customers  one row per company + customer + currency, each with its customer's credit-policy zone

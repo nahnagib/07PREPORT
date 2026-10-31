@@ -105,8 +105,8 @@ describe('parseNpsQuery', () => {
 
   it('periods of a range at each grain', () => {
     expect(periodsBetween('2025-11-15', '2026-02-01', 'month')).toEqual([202511, 202512, 202601, 202602]);
-    // weeks: Sunday..Saturday, named by their Sunday; the first week starts before the range
-    expect(periodsBetween('2025-12-30', '2026-01-14', 'week')).toEqual([20251228, 20260104, 20260111]);
+    // weeks: Saturday..Friday, named by their Saturday; the first week starts before the range
+    expect(periodsBetween('2025-12-30', '2026-01-14', 'week')).toEqual([20251227, 20260103, 20260110]);
     expect(periodsBetween('2024-06-01', '2026-01-02', 'year')).toEqual([2024, 2025, 2026]);
   });
 });
@@ -149,10 +149,10 @@ describe('SQL', () => {
     expect(none.points).toEqual([]);
   });
 
-  it('trend by week: grouped by the Sunday of the rating date (the Collections week), labelled by that Sunday', async () => {
-    const { pool, queries } = fakePool(() => [{ p: 20261004, promoters: 2, passives: 0, detractors: 0 }]);
+  it('trend by week: grouped by the Saturday of the rating date (the Collections week), labelled by that Saturday', async () => {
+    const { pool, queries } = fakePool(() => [{ p: 20261003, promoters: 2, passives: 0, detractors: 0 }]);
     const t = await fetchNpsTrend(pool, parseNpsQuery({ dateFrom: '2026-10-01', dateTo: '2026-10-18', grain: 'week' }, NOW), {});
-    expect(t.points.map((p) => [p.period, p.responders])).toEqual([['2026-10-04', 2], ['2026-10-11', 0], ['2026-10-18', 0]]);
+    expect(t.points.map((p) => [p.period, p.responders])).toEqual([['2026-10-03', 2], ['2026-10-10', 0], ['2026-10-17', 0]]);
     expect(queries[0].sql).toContain('DAYOFWEEK(');
     await expect(fetchNpsTrend(pool, parseNpsQuery({ dateFrom: '2010-01-01', dateTo: '2026-10-31', grain: 'week' }, NOW), {})).rejects.toThrow(NpsQueryError);
   });
@@ -177,13 +177,14 @@ describe('SQL', () => {
 });
 
 describe('business week (lib/businessWeek.ts) = the Collections week', () => {
-  it('Sunday..Saturday, named by the Sunday, for every day of two years', () => {
-    expect(weekStartIso('2026-10-04')).toBe('2026-10-04'); // a Sunday
-    expect(weekStartIso('2026-10-10')).toBe('2026-10-04'); // its Saturday
-    expect(weekStartIso('2026-01-01')).toBe('2025-12-28'); // across the year
+  it('Saturday..Friday, named by the Saturday, for every day of two years', () => {
+    expect(weekStartIso('2026-10-04')).toBe('2026-10-03'); // Sunday belongs to the preceding Saturday
+    expect(weekStartIso('2026-10-10')).toBe('2026-10-10'); // Saturday starts its own week
+    expect(weekStartIso('2026-01-01')).toBe('2025-12-27'); // across the year
     for (let d = new Date('2025-01-01T12:00:00Z'); d < new Date('2027-01-01T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
       const iso = d.toISOString().slice(0, 10);
       expect(weekStartIso(iso), iso).toBe(periodStart(iso, 'week'));
+      expect(new Date(weekStartIso(iso) + 'T12:00:00Z').getUTCDay()).toBe(6);
     }
   });
 });
@@ -214,8 +215,8 @@ describe('response rate = responders / (Delivered + Read)', () => {
     });
   }
 
-  it('starts at NPS_REACH_START, sums both sides per Sunday week of the same period, band and variance from the target', async () => {
-    const { pool: p, queries } = reachPool('2026-10-03', { '2026-10-04': 20, '2026-10-11': 10 }, { '2026-09-27': [10, 20, 40], '2026-10-04': [30, 40, 100], '2026-10-11': [10, 10, 50] });
+  it('starts at NPS_REACH_START, sums both sides per Saturday week of the same period, band and variance from the target', async () => {
+    const { pool: p, queries } = reachPool('2026-10-03', { '2026-10-03': 20, '2026-10-10': 10 }, { '2026-10-03': [40, 60, 140], '2026-10-10': [10, 10, 50] });
     const r = await fetchNpsResponseRate(p, parseNpsQuery({}, NOW), { companyKeys: [1] }, ADMIN);
     expect(r).toMatchObject({ status: 'ready', dateFrom: '2026-10-03', dateTo: '2026-10-18', reachStart: '2026-10-03', companyAndDateOnly: false,
       responders: 30, delivered: 50, read: 70, reached: 120, totalReach: 190, target: 30 });
@@ -223,8 +224,8 @@ describe('response rate = responders / (Delivered + Read)', () => {
     expect(r.band).toBe('yellow');
     expect(r.variancePts).toBeCloseTo(-5, 9);
     expect(r.rateOfReach).toBeCloseTo((30 / 190) * 100, 9);
-    expect(r.weekly.map((w) => [w.weekStart, w.responders, w.reached])).toEqual([['2026-09-27', 0, 30], ['2026-10-04', 20, 70], ['2026-10-11', 10, 20], ['2026-10-18', 0, 0]]);
-    expect(r.weekly[3].rate).toBeNull();
+    expect(r.weekly.map((w) => [w.weekStart, w.responders, w.reached])).toEqual([['2026-10-03', 20, 100], ['2026-10-10', 10, 20], ['2026-10-17', 0, 0]]);
+    expect(r.weekly[2].rate).toBeNull();
     // both sides: the same clamped period and the company only -- never a segment / salesperson condition
     const data = queries.filter((q) => /FROM v_process_nps_(response|reach) /.test(q.sql));
     expect(data).toHaveLength(2);
@@ -236,7 +237,7 @@ describe('response rate = responders / (Delivered + Read)', () => {
   });
 
   it('ignores the team / salesperson / segment / customer filters on BOTH sides and says so', async () => {
-    const { pool: p, queries } = reachPool('2026-10-03', { '2026-10-04': 3 }, { '2026-10-04': [5, 5, 10] });
+    const { pool: p, queries } = reachPool('2026-10-03', { '2026-10-03': 3 }, { '2026-10-03': [5, 5, 10] });
     const r = await fetchNpsResponseRate(p, parseNpsQuery({}, NOW), { segmentKeys: [1, 2], salespersonKeys: [49] }, ADMIN);
     expect(r).toMatchObject({ companyAndDateOnly: true, responders: 3, reached: 10, rate: 30, band: 'green', variancePts: 0 });
     for (const q of queries) expect(q.params).not.toContain(49);

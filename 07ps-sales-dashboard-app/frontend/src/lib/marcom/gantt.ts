@@ -58,7 +58,7 @@ export interface Tick { pos: number; label: string; major: boolean }
 
 export type TickGranularity = 'day' | 'week' | 'month';
 
-/** Day ticks for short ranges, weekly (Mondays) for medium, months only for long ones. */
+/** Day ticks for short ranges, weekly (Saturdays) for medium, months only for long ones. */
 export function tickGranularity(days: number): TickGranularity {
   return days <= 45 ? 'day' : days <= 200 ? 'week' : 'month';
 }
@@ -83,7 +83,7 @@ export function buildTicks(range: GanttRange, monthLabel: (year: number, month: 
       ticks.push({ pos: (d / total) * 100, label: monthLabel(y, date.getUTCMonth() + 1, d === 0 || date.getUTCMonth() === 0), major: true });
     } else if (gran === 'day') {
       ticks.push({ pos: (d / total) * 100, label: String(dom), major: false });
-    } else if (gran === 'week' && date.getUTCDay() === 1) {
+    } else if (gran === 'week' && date.getUTCDay() === 6) {
       ticks.push({ pos: (d / total) * 100, label: String(dom), major: false });
     }
   }

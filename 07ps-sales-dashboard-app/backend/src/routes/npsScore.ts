@@ -27,7 +27,7 @@ import {
  *                               NPS, CSAT, responders, promoters / passives / detractors (# and %)
  *   GET /nps-score/trend?dateFrom=&dateTo=&grain=week|month|year
  *                               NPS, CSAT and responders per period for the active filters, from the first period
- *                               with ratings (weeks = Sunday..Saturday, named by their Sunday)
+ *                               with ratings (weeks = Saturday..Friday, named by their Saturday)
  *   GET /nps-score/response-rate?dateFrom=&dateTo=
  *                               responders / (Delivered + Read): company and date only, from NPS_REACH_START, with a
  *                               weekly series; the same role restriction as /reach

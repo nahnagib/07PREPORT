@@ -7,7 +7,7 @@ import { buildRoi } from './roi';
 
 export interface SpendRow {
   year: number; month: number; brandId: number; brand: string;
-  spend: Num; revenue: Num; companyCurrent: Num; companyLy: Num; budget: Num;
+  spend: Num | Rat; revenue: Num; companyCurrent: Num; companyLy: Num; budget: Num;
   newCustomers: Num; avgInvoice: Num; socialPostCost: Num; clicks: Num;
 }
 

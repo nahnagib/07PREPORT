@@ -82,10 +82,14 @@ describe('axis ticks adapt to the range', () => {
     expect(ticks.filter((t) => !t.major)).toHaveLength(30);
   });
 
-  it('a few months: weekly ticks on Mondays', () => {
+  it('a few months: weekly ticks on Saturdays', () => {
     const ticks = buildTicks({ start: '2026-02-01', end: '2026-05-31' }, label);
     const weeks = ticks.filter((t) => !t.major);
     expect(weeks.length).toBeGreaterThan(12);
+    for (const tick of weeks) {
+      const day = Math.round(tick.pos / 100 * 120);
+      expect(new Date(Date.UTC(2026, 1, 1 + day)).getUTCDay()).toBe(6);
+    }
     expect(weeks.length).toBeLessThan(20);
     expect(ticks.filter((t) => t.major)).toHaveLength(4);
   });

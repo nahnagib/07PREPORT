@@ -2832,7 +2832,7 @@ export function fetchDebtReport<T>(token: string, endpoint: DebtReportEndpoint, 
 // -- NPS Score (Process; backend routes/npsScore.ts, measures/npsScore.ts, config/npsThresholds.ts) -----------------
 export type NpsEndpoint = 'meta' | 'overview' | 'trend' | 'detractors' | 'reach' | 'response-rate' | 'followup-summary';
 export type NpsBand = 'red' | 'yellow' | 'green';
-/** week = Sunday..Saturday, named by its Sunday (the Collections week) */
+/** week = Saturday..Friday, named by its Saturday (the Collections week) */
 export type NpsGrain = 'week' | 'month' | 'year';
 /** A visual's bands: yellow from `yellowFrom`, green from `greenFrom` (both inclusive), the target, the drawn scale. */
 export interface NpsBandScale {

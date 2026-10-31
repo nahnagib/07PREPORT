@@ -1,3 +1,4 @@
+import { weekStartIso, weekStartSql } from '../lib/businessWeek';
 /**
  * Collections trend (Receivables and Collections page, next to the Receivables trend): money collected from customers
  * per day / week / month, from fact_finance_collection through v_finance_collection_trend (migrations 0040 + 0042,
@@ -19,7 +20,7 @@
  * filters (role data scope, salesperson lock) and the page's company / salesperson / branch / segment / channel /
  * customer / customer category filters apply (to the allocation row: the invoice's salesperson + branch, or the
  * customer's for unmatched money). The line-level page filters (overdue status, aging bucket, delivery status, payment
- * term, invoice size) describe open invoices, not payments, and do not apply. Week = Sunday..Saturday (ar_weekly).
+ * term, invoice size) describe open invoices, not payments, and do not apply. Week = Saturday..Friday (ar_weekly).
  */
 import type { Pool } from 'mysql2/promise';
 import { odooWebBaseUrl } from '../config/finance';
@@ -65,11 +66,11 @@ export function todayIn(timeZone = BUSINESS_TIME_ZONE, now = new Date()): string
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
-/** First day of the period holding `iso`: the day, the Sunday of its week (Sunday..Saturday), the 1st of its month. */
+/** First day of the period holding `iso`: the day, the Saturday of its week (Saturday..Friday), the 1st of its month. */
 export function periodStart(iso: string, grain: CollectionGrain): string {
   if (grain === 'day') return iso;
   if (grain === 'month') return `${iso.slice(0, 7)}-01`;
-  return addDays(iso, -toDate(iso).getUTCDay());
+  return weekStartIso(iso);
 }
 
 export function periodEnd(start: string, grain: CollectionGrain): string {
@@ -124,7 +125,7 @@ interface Sql {
 
 const PERIOD_SQL: Record<CollectionGrain, string> = {
   day: 'v.payment_date',
-  week: 'DATE_SUB(v.payment_date, INTERVAL (DAYOFWEEK(v.payment_date) - 1) DAY)',
+  week: weekStartSql('v.payment_date'),
   month: "DATE_FORMAT(v.payment_date, '%Y-%m-01')",
 };
 

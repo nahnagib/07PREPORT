@@ -1,10 +1,11 @@
+import type { Rat } from './rat';
 import { makeKpi, classify, Status } from './kpi';
 import * as F from './formulas';
 import { Num, groupBy, monthRange, total } from './common';
 import { RAG_RULES } from './thresholds';
 
 /** The two columns ROI needs from a spend row. */
-export interface RoiRow { month: number; spend: Num; revenue: Num }
+export interface RoiRow { month: number; spend: Num | Rat; revenue: Num }
 
 /**
  * "ROI trend -- YTD vs LYTD". Pure and shared: the Spending payload keeps it (API compatibility)

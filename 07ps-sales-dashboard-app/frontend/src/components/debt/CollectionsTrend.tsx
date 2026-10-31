@@ -19,7 +19,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 export function periodLabel(p: Pick<CollectionPoint, 'periodStart'>, grain: CollectionGrain): string {
   const [y, m, d] = p.periodStart.split('-').map(Number);
   if (grain === 'month') return `${MONTHS[m - 1]} ${y}`;
-  return `${d} ${MONTHS[m - 1]} ${String(y).slice(2)}`; // a week by its Sunday
+  return `${d} ${MONTHS[m - 1]} ${String(y).slice(2)}`; // a week by its Saturday
 }
 
 /** Tooltip / drill-down title of a period: "Week 4–10 Oct 2026", "Oct 2026", "11 Oct 2026". */
