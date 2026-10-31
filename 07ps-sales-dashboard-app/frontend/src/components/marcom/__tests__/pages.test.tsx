@@ -59,7 +59,7 @@ describe('Page 1 — MARCOM Spending (demo data)', () => {
   const html = page('spending');
   const d = fixture<SpendingData>('demo.spending');
 
-  it('1: total spend, total revenue, target budget and spend % of revenue, plus the chart with the company-revenue overlay toggle', () => {
+  it('1: total spend, total revenue, target budget and spend % of revenue, without a company-revenue overlay', () => {
     const v = visualHtml(html, 'spending.spendVsRevenue');
     for (const id of ['kpi-spend', 'kpi-revenue', 'kpi-budget', 'kpi-spend-pct']) expect(v).toContain(`data-testid="${id}"`);
     expect(flat(v)).toContain('Total Spend');
@@ -71,7 +71,9 @@ describe('Page 1 — MARCOM Spending (demo data)', () => {
     expect(flat(v)).toMatch(/of budget used/);
     expect(flat(v)).toMatch(/of company revenue/);
     expect(flat(v)).toContain('% of revenue'); // right-hand axis
-    expect(flat(v)).toContain('Overlay company revenue');
+    expect(flat(v)).not.toContain('Overlay company revenue');
+    expect(v).not.toContain('type="checkbox"');
+    expect(flat(v)).not.toContain('Total Company Revenue');
     expect((v.match(/<th scope="row"/g) ?? []).length).toBe(d.totals.spend.series.length); // one row per month in the table
     expect(flat(v)).toContain('LYD'); // axis unit label
   });

@@ -342,3 +342,8 @@ ETL pipeline, and BullMQ-based scheduling.
 - Verified all four MARCOM data handlers against the local database and authenticated endpoints for Spending, Media Campaigns, Digital and Trade. Check live NPS/Collections weekly keys are Saturdays.
 - Rebuild both applications and replace the stale port-13100 frontend with the current main build; ports 3000 and 13100 now serve the same build. No push.
 - Validation: 756 backend tests passed (166 skipped), 512 frontend/shared UI tests passed, frontend type check and frontend/backend builds passed.
+
+## 2026-10-31 — Remove company-revenue overlay
+
+- Remove the Overlay company revenue control and chart series from MARCOM Spending, together with its optional company-revenue column in the chart's table view.
+- Verify the remaining spend, revenue, budget and spend-percentage presentation with 107 MARCOM rendering tests.

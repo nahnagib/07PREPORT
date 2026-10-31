@@ -93,7 +93,6 @@ const EN = {
   'p1.spendPctCompany': '{v} of company revenue',
   'p1.pctAxis': '% of revenue',
   'p1.companyRevenue': 'Total Company Revenue',
-  'p1.showCompany': 'Overlay company revenue',
   'p1.roiTrend': 'ROI trend — YTD vs LYTD',
   'p1.roiYtd': 'ROI (YTD)',
   'p1.roiLytd': 'LYTD',

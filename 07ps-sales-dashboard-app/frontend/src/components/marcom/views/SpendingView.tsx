@@ -43,7 +43,6 @@ function SideTick({ x, y, payload, rows }: { x?: number; y?: number; payload?: {
 
 /** Page 1 -- MARCOM Spending. Pure rendering of GET /marcom/kpi/spending. */
 export function SpendingView({ data, refreshing }: Props) {
-  const [overlay, setOverlay] = useState(false);
   const [budgetBy, setBudgetBy] = useState<GroupBy>('brand');
   const [growthBy, setGrowthBy] = useState<GroupBy>('brand');
   const months = data.totals.spend.series.map((s) => s.month);
@@ -56,7 +55,6 @@ export function SpendingView({ data, refreshing }: Props) {
     revenue: tot.revenueAttributed.series[i].value,
     budget: tot.budget.series[i]?.value ?? null,
     pct: tot.spendPctOfRevenue.series[i]?.value ?? null,
-    company: tot.companyRevenue.series[i].value,
   }));
 
   // ---- 3/4. per brand or per company -------------------------------------------------------
@@ -89,10 +87,9 @@ export function SpendingView({ data, refreshing }: Props) {
         summary={`${t('p1.spend')} ${fmtLyd(tot.spend.total)}, ${t('p1.revenue')} ${fmtLyd(tot.revenueAttributed.total)}, ${t('p1.budgetTarget')} ${fmtLyd(tot.budget.total)}, ${t('p1.spendPct')} ${fmtKpiValue(tot.spendPctOfRevenue)}`}
         table={{
           caption: t('p1.spendVsRevenue'),
-          columns: [t('generic.month'), t('p1.spend'), t('p1.revenue'), t('p1.budgetTarget'), t('p1.spendPct'), t('p1.companyRevenue')],
-          rows: flow.map((r) => [r.label, fmtLyd(r.spend), fmtLyd(r.revenue), fmtLyd(r.budget), fmtPct(r.pct), fmtLyd(r.company)]),
+          columns: [t('generic.month'), t('p1.spend'), t('p1.revenue'), t('p1.budgetTarget'), t('p1.spendPct')],
+          rows: flow.map((r) => [r.label, fmtLyd(r.spend), fmtLyd(r.revenue), fmtLyd(r.budget), fmtPct(r.pct)]),
         }}
-        actions={<label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}><input type="checkbox" checked={overlay} onChange={(e) => setOverlay(e.target.checked)} />{t('p1.showCompany')}</label>}
       >
         <Grid min={320} gap={12}>
           <MarcomKpiCard
@@ -130,7 +127,6 @@ export function SpendingView({ data, refreshing }: Props) {
                 <Bar yAxisId="lyd" isAnimationActive={false} dataKey="revenue" name={t('p1.revenue')} fill={SERIES.secondary} radius={[3, 3, 0, 0]} />
                 <Line yAxisId="lyd" isAnimationActive={false} dataKey="budget" name={t('p1.budgetTarget')} stroke={BUDGET_COLOR} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 3 }} connectNulls />
                 <Line yAxisId="pct" isAnimationActive={false} dataKey="pct" name={t('p1.spendPct')} stroke={PCT_COLOR} strokeWidth={2} dot={{ r: 3 }} />
-                {overlay && <Line yAxisId="lyd" isAnimationActive={false} dataKey="company" name={t('p1.companyRevenue')} stroke={SERIES.reference} strokeWidth={2} dot={{ r: 3 }} />}
               </ComposedChart>
             )}
           </ChartBox>
