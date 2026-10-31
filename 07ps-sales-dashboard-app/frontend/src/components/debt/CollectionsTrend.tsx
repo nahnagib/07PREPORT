@@ -1,4 +1,5 @@
 'use client';
+import { vh } from '../../lib/visualHelp';
 import React, { useEffect } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 import { Button, ChartPanel, ComboChart, DataGrid, EmptyState, ErrorState, LoadingSkeleton, type DataGridColumn } from '@07ps/ui';
@@ -75,7 +76,7 @@ export function CollectionsTrendPanel({
     </div>
   );
   return (
-    <ChartPanel title={`Collections trend · ${viewLabel}`} infoText={`${COLLECTIONS_INFO}\n${data?.firstPaymentDate ? `History from ${formatDate(data.firstPaymentDate)}. ` : ''}${hasRate ? 'Collection rate is shown where a snapshot exists at the period start.' : 'Collection rate requires a receivable snapshot on the day before a period starts.'}`} headerActions={header}>
+    <ChartPanel {...vh("price.receivables.collections")} title={`Collections trend · ${viewLabel}`} headerActions={header}>
       {error ? (
         <ErrorState message={error} onRetry={onRetry} />
       ) : loading && !data ? (

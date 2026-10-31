@@ -1,3 +1,4 @@
+import { vh } from '../../lib/visualHelp';
 import React from 'react';
 import { ChartPanel, EmptyState, ErrorState, LoadingSkeleton } from '@07ps/ui';
 import type { NpsFollowupSummary } from '../../lib/api';
@@ -50,11 +51,8 @@ export function FollowupCharts({ state, part }: { state: FollowupState; part: 'r
     );
   }
   return (
-    <ChartPanel
+    <ChartPanel {...vh(part === 'reason' ? 'process.npsScore.byReason' : 'process.npsScore.byStatus')}
       title={part === 'reason' ? 'Detractors by reason' : 'Detractors by status'}
-      infoText={part === 'reason'
-        ? 'The reason recorded on each follow-up case (Detractor Follow-up page), live. "Not yet classified" = a case without a reason yet. Historical and Cancelled cases are left out.'
-        : 'Each follow-up case, live: solved in under 48 hours (teal), in 48 hours to 5 days (amber), in more than 5 days (rose), from the rating time to the time it was solved; or still pending (blue: New, Contacted, In progress). Historical and Cancelled cases are left out.'}
     >
       {body}
     </ChartPanel>

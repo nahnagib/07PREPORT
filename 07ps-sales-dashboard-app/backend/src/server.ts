@@ -1,3 +1,4 @@
+import { adminCriticalNumberRouter } from './routes/admin/criticalNumber';
 import 'dotenv/config';
 import cors from 'cors';
 import express from 'express';
@@ -97,6 +98,7 @@ app.use('/admin/salesteams', adminSalesTeamsRouter);
 app.use('/admin/customer-groups', adminCustomerGroupsRouter);
 app.use('/admin/distribution-channels', adminDistributionChannelsRouter);
 app.use('/admin/companies', adminCompaniesRouter);
+app.use('/admin/critical-number', adminCriticalNumberRouter);
 app.use('/admin/holidays', adminHolidaysRouter);
 app.use('/admin/closures', adminClosuresRouter);
 app.use('/admin/login-history', adminLoginHistoryRouter);

@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useContext } from 'react';
+import { VisualInfoIcons } from '@07ps/ui';
+import { vhById } from '../../lib/visualHelp';
+import { MarcomVisualContext } from './MarcomVisualContext';
 import { ArrowDown, ArrowRight, ArrowUp } from 'lucide-react';
 import { Sparkline } from '@07ps/ui';
 import type { Kpi, Status } from '../../lib/marcom/types';
@@ -39,6 +42,8 @@ export interface MarcomKpiCardProps {
  * `direction`, optional sparkline. "neutral" gets the neutral chip; "na" shows "n/a" with a tooltip.
  */
 export function MarcomKpiCard({ label, kpi, valueText, digits, valueTitle, hint, sparkline, hideStatus, size = 'md', testId, children }: MarcomKpiCardProps) {
+  const visual = useContext(MarcomVisualContext);
+  const content = visual ? vhById(visual) : undefined;
   const status: Status = kpi?.status ?? 'na';
   const text = valueText ?? fmtKpiValue(kpi, digits);
   const isNa = status === 'na' || text === t('generic.na');
@@ -60,7 +65,7 @@ export function MarcomKpiCard({ label, kpi, valueText, digits, valueTitle, hint,
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-        <span style={{ fontSize: small ? 11.5 : 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{label}</span>
+        <span style={{ fontSize: small ? 11.5 : 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{label} {content && <VisualInfoIcons title={label} {...content} />}</span>
         {!hideStatus && <RagBadge status={status} size="sm" />}
       </div>
 

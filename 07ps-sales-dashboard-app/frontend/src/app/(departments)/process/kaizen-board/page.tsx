@@ -1,4 +1,5 @@
 'use client';
+import { vh } from '../../../../lib/visualHelp';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Download } from 'lucide-react';
@@ -107,7 +108,7 @@ function KaizenBoardBody() {
   const responsibleByLabel = new Map(responsible.map((p) => [p.label, p]));
 
   const donut = (title: string, segs: ReturnType<typeof segments>, onClick: (id: string) => void) => (
-    <ChartPanel title={title} infoText={t('kaizen.chart.clickHint')}>
+    <ChartPanel {...vh("process.kaizen.byStatus")} title={title}>
       <DonutChart showTitle={false} segments={segs} valueFormatter={(v) => formatNumber(v)} height={220} onSegmentClick={onClick} />
     </ChartPanel>
   );
@@ -169,7 +170,7 @@ function KaizenBoardBody() {
 
         <section className="ps-kaizen-charts">
           <div className="ps-kaizen-span-all">
-            <ChartPanel title={t('kaizen.chart.byDepartment')} infoText={t('kaizen.chart.clickHint')}>
+            <ChartPanel {...vh("process.kaizen.byDepartment")} title={t('kaizen.chart.byDepartment')}>
               {data.total === 0 ? (
                 <p style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>{t('kaizen.chart.noData')}</p>
               ) : (
@@ -239,7 +240,7 @@ function KaizenBoardBody() {
           {donut(t('kaizen.chart.type'), segments(data.byType), (id) => drill({ typeIds: [Number(id)] }))}
 
           <div className="ps-kaizen-span-all">
-            <ChartPanel title={t('kaizen.chart.responsible')} infoText={t('kaizen.chart.responsibleHint')}>
+            <ChartPanel {...vh("process.kaizen.responsible")} title={t('kaizen.chart.responsible')}>
               {responsible.length === 0 ? (
                 <p style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>{t('kaizen.chart.noData')}</p>
               ) : (

@@ -121,7 +121,7 @@ describe('Receivables status strip', () => {
     expect(shown[1]).toMatch(/^Finance refresh /);
     expect(shown[2]).toMatch(/^Last finance run failed at /);
     expect(screen.queryByRole('tooltip')).toBeNull();
-    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Data scope details' }));
+    fireEvent.mouseEnter(screen.getAllByRole('button', { name: 'About this visual' })[0]);
     expect(screen.getByRole('tooltip').textContent).toContain('Showing Customer debt; inter-company excluded');
     expect(screen.getByRole('tooltip').textContent).toContain('Always excluded: segments Backoffice, Inter Company');
     expect(screen.getByRole('tooltip').textContent).toContain('Amounts per currency; LYD equivalents');

@@ -1,4 +1,5 @@
 'use client';
+import { vh } from '../../../../lib/visualHelp';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
@@ -510,8 +511,7 @@ export default function ReceivablesCollectionsPage() {
               />
 
               <div style={grid2}>
-              <ChartPanel title={`Receivables trend · ${viewLabel}`}
-                infoText={`Open invoices (line), split into overdue and not yet due (stacked bars), with the same filters. Day = each snapshot; Week (Sunday to Saturday) and Month = the balance on the period's last snapshot (receivables are a balance, never added up across days). ${trendNote}`}
+              <ChartPanel {...vh("price.receivables.trend")} title={`Receivables trend · ${viewLabel}`}
                 headerActions={
                   <div role="group" aria-label="Receivables trend period" style={{ display: 'inline-flex', gap: 4 }}>
                     {(Object.keys(RECEIVABLES_GRAIN_LABELS) as ReceivablesGrain[]).map((g) => (
@@ -563,9 +563,8 @@ export default function ReceivablesCollectionsPage() {
                 {(() => {
                   const points = groupPoints(cur?.topCustomers);
                   return (
-                    <ChartPanel
+                    <ChartPanel {...vh("price.receivables.byCustomer")}
                       title={`Overdue by customer · ${viewLabel}`}
-                      infoText={`Top ${meta.data?.topCustomers ?? 15} customers by overdue amount; % of the total overdue. Click a bar for its overdue invoices`}
                       tableColumns={[{ key: 'label', header: 'Customer' }, { key: 'overdueLabel', header: 'Overdue', align: 'right' }, { key: 'pctLabel', header: '% of total', align: 'right' }]}
                       tableRows={(cur?.topCustomers ?? []).map((g) => ({ ...g, overdueLabel: full(g.overdue), pctLabel: pctLabel(g.pctOfOverdue) }))}
                       getRowId={(r) => r.key}
@@ -588,9 +587,8 @@ export default function ReceivablesCollectionsPage() {
                   );
                 })()}
 
-                <ChartPanel
+                <ChartPanel {...vh("price.receivables.aging")}
                   title={`Ageing · ${viewLabel}`}
-                  infoText="Open amount per aging bucket (days past the line's own due date). Not due in blue, overdue in red; due today is not overdue. Click a bar for its invoices"
                   tableColumns={[{ key: 'label', header: 'Bucket' }, { key: 'amountLabel', header: 'Open amount', align: 'right' }, { key: 'lineCount', header: 'Lines', align: 'right' }]}
                   tableRows={(cur?.aging ?? []).map((a) => ({ ...a, id: String(a.agingBucketKey), amountLabel: full(a.amount) }))}
                   getRowId={(r) => r.id}
@@ -627,10 +625,9 @@ export default function ReceivablesCollectionsPage() {
                 ).map(([kind, title, list, info]) => {
                   const points = groupPoints(list, peopleLimit);
                   return (
-                    <ChartPanel
+                    <ChartPanel {...vh("price.receivables.bySalesperson")}
                       key={kind}
                       title={`${title} · ${viewLabel}`}
-                      infoText={info}
                       tableColumns={[{ key: 'label', header: 'Name' }, { key: 'overdueLabel', header: 'Overdue', align: 'right' }, { key: 'pctLabel', header: '% of total', align: 'right' }]}
                       tableRows={(list ?? []).map((g) => ({ ...g, overdueLabel: full(g.overdue), pctLabel: pctLabel(g.pctOfOverdue) }))}
                       getRowId={(r) => r.key}

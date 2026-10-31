@@ -1,3 +1,4 @@
+import { vh } from '../../lib/visualHelp';
 import React from 'react';
 import { Button, ChartPanel, ComboChart, EmptyState, ErrorState, LoadingSkeleton, type ComboChartPoint } from '@07ps/ui';
 import type { NpsGrain, NpsTrend } from '../../lib/api';
@@ -30,7 +31,7 @@ export function NpsTrendChart({ state, grain, onGrainChange }: {
   state: TrendState; grain: NpsGrain; onGrainChange: (grain: NpsGrain) => void;
 }) {
   return (
-    <ChartPanel title="Satisfaction Trend" wrapHeader infoText={TREND_INFO}
+    <ChartPanel {...vh("process.npsScore.satisfactionTrend")} title="Satisfaction Trend" wrapHeader
       headerActions={<GrainSwitch grain={grain} onGrainChange={onGrainChange} label="Satisfaction Trend period" />}>
       <TrendBody state={state}>{(data) => (
         <ComboChart title="Satisfaction Trend" showTitle={false} points={trendPoints(data)}
@@ -55,7 +56,7 @@ export function RespondersTrend({ state, grain, onGrainChange }: {
   state: TrendState; grain: NpsGrain; onGrainChange: (grain: NpsGrain) => void;
 }) {
   return (
-    <ChartPanel title="Responders Trend" wrapHeader infoText={RESPONDERS_TREND_INFO}
+    <ChartPanel {...vh("process.npsScore.respondersTrend")} title="Responders Trend" wrapHeader
       headerActions={<GrainSwitch grain={grain} onGrainChange={onGrainChange} label="Responders Trend period" />}>
       <TrendBody state={state}>{(data) => {
         const points = data.points.map((p) => ({

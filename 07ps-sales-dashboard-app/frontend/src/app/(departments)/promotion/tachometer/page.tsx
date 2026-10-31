@@ -33,6 +33,7 @@ import {
   formatTimestamp,
   formatDate,
 } from '../../../../lib/format';
+import { vh } from '../../../../lib/visualHelp';
 
 /* Cards now fill their grid cells without constraint. Grid proportions (1.5fr 260px 1.5fr)
    ensure consistent sizing across viewport widths. */
@@ -455,6 +456,7 @@ export default function TachometerPage() {
               <div style={{ gridColumn: '1', gridRow: '1', ...CARD_BOX }}>
                 <KpiCard
                   title="YTD Value"
+                  {...vh('promotion.tachometer.ytdValue')}
                   icon={Wallet}
                   variant="gauge"
                   actual={data?.ytdValue.actual ?? 0}
@@ -480,6 +482,7 @@ export default function TachometerPage() {
               <div style={{ gridColumn: '2', gridRow: '1', ...CARD_BOX }}>
                 <CompactKpiCard
                   title="YTD Actual ASP"
+                  {...vh('promotion.tachometer.ytdAsp')}
                   icon={TrendingUp}
                   status={toSemanticStatus(data?.aspYtd.status ?? 'no_target')}
                   valueLabel={formatAsp(data?.aspYtd.actualAsp ?? null)}
@@ -493,6 +496,7 @@ export default function TachometerPage() {
               <div style={{ gridColumn: '2', gridRow: '2', ...CARD_BOX }}>
                 <CompactKpiCard
                   title="MTD Actual ASP"
+                  {...vh('promotion.tachometer.mtdAsp')}
                   icon={TrendingUp}
                   status={toSemanticStatus(data?.aspMtd.status ?? 'no_target')}
                   valueLabel={formatAsp(data?.aspMtd.actualAsp ?? null)}
@@ -506,6 +510,7 @@ export default function TachometerPage() {
               <div style={{ gridColumn: '3', gridRow: '1', ...CARD_BOX }}>
                 <KpiCard
                   title="YTD Volume"
+                  {...vh('promotion.tachometer.ytdVolume')}
                   icon={Package}
                   variant="gauge"
                   actual={data?.ytdVolume.actual ?? 0}
@@ -526,6 +531,7 @@ export default function TachometerPage() {
               <div style={{ gridColumn: '1', gridRow: '2', ...CARD_BOX }}>
                 <KpiCard
                   title="MTD Value"
+                  {...vh('promotion.tachometer.mtdValue')}
                   icon={Wallet}
                   variant="gauge"
                   actual={data?.mtdValue.actual ?? 0}
@@ -546,6 +552,7 @@ export default function TachometerPage() {
               <div style={{ gridColumn: '3', gridRow: '2', ...CARD_BOX }}>
                 <KpiCard
                   title="MTD Volume"
+                  {...vh('promotion.tachometer.mtdVolume')}
                   icon={Package}
                   variant="gauge"
                   actual={data?.mtdVolume.actual ?? 0}
@@ -571,6 +578,7 @@ export default function TachometerPage() {
             >
               <PerformanceReportTable
                 title="Performance Details"
+                {...vh('promotion.tachometer.valueDetails')}
                 rows={valueRows}
                 showStatus
                 showLytdColumn
@@ -580,6 +588,7 @@ export default function TachometerPage() {
               />
               <PerformanceReportTable
                 title="Performance Details"
+                {...vh('promotion.tachometer.volumeAspDetails')}
                 rows={volumeAspRows}
                 showStatus
                 showLytdColumn

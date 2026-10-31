@@ -136,6 +136,7 @@ function makePctMockPool(opts: {
   throwOnSegment?: boolean;
 }): Pool {
   const query = vi.fn(async (sql: string) => {
+    if (sql.includes('FROM dashboard_setting')) return [[]];
     if (sql.includes('FROM admin_company')) {
       if (opts.throwOnCompany) throw Object.assign(new Error("Unknown column 'critical_number_pct' in 'field list'"), { code: 'ER_BAD_FIELD_ERROR' });
       return [opts.companyRows ?? []];

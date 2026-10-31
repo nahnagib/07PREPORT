@@ -21,6 +21,7 @@ import {
   type Column,
   type PerformanceReportRow,
   useCanExport,
+  VisualInfoIcons,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
@@ -35,6 +36,7 @@ import type {
   QuotationRates,
 } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
+import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 
 function formatMillions(value: number): string {
   const fixed = (value / 1_000_000).toFixed(1);
@@ -438,7 +440,10 @@ export default function PipelineTrendPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
               <Card>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--ps-space-2, 8px)', gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Quotation Rates</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Quotation Rates</span>
+                    <VisualInfoIcons title="Quotation Rates" {...vh('promotion.pipelineTrend.quotationRates')} />
+                  </span>
                   {!overview.error && (
                     <ExportPdfButton
                       downloading={downloadingPdf === 'rates'}
@@ -465,7 +470,7 @@ export default function PipelineTrendPage() {
 
               <ChartPanel<AgingTableRow>
                 title="Open Opportunities & Quotations by Aging"
-                infoText="Open Opportunities and open Quotations, each as a 100%-stacked bar by age bucket. A healthy pipeline concentrates in 0-30 days with low 90+. Click a bucket to list the opportunities or quotations in it, with customer and salesperson."
+                {...vh('promotion.pipelineTrend.aging')}
                 style={{ minHeight: 340, flex: '1 1 auto', height: 'auto' }}
                 tableColumns={overview.error ? undefined : agingTableColumns}
                 tableRows={overview.error ? undefined : agingTableRows}
@@ -500,6 +505,7 @@ export default function PipelineTrendPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
               <MonthComboPanel
                 title="Opportunities"
+                helpId="promotion.pipelineTrend.opportunities"
                 points={opportunitiesPoints}
                 loading={overview.loading}
                 error={overview.error ?? undefined}
@@ -510,6 +516,7 @@ export default function PipelineTrendPage() {
               />
               <MonthComboPanel
                 title="Quotations"
+                helpId="promotion.pipelineTrend.quotations"
                 points={quotationsPoints}
                 loading={overview.loading}
                 error={overview.error ?? undefined}
@@ -520,6 +527,7 @@ export default function PipelineTrendPage() {
               />
               <MonthComboPanel
                 title="Sales Orders"
+                helpId="promotion.pipelineTrend.salesOrders"
                 points={salesOrdersPoints}
                 loading={overview.loading}
                 error={overview.error ?? undefined}
@@ -549,6 +557,7 @@ export default function PipelineTrendPage() {
               <div style={{ gridColumn: '1 / -1', minWidth: 0 }}>
                 <PerformanceReportTable
                   title="Performance Details"
+                  {...vh('promotion.pipelineTrend.details')}
                   rows={toExecutiveSummaryRows(data?.quotationRates, data?.aging, data?.opportunitiesByMonth, data?.quotationsByMonth, data?.salesOrdersByMonth)}
                   showStatus
                   showTakeaway
@@ -590,6 +599,7 @@ function AgingDrillPanel({
   return (
     <ChartPanel
       title={`Open ${categoryName} — ${bucketName}`}
+      {...vh('promotion.pipelineTrend.agingDrill')}
       style={{ minHeight: 240 }}
       headerActions={
         <button
@@ -636,6 +646,7 @@ function RateTile({ label, value }: { label: string; value: string }) {
 
 function MonthComboPanel({
   title,
+  helpId,
   points,
   loading,
   error,
@@ -645,6 +656,7 @@ function MonthComboPanel({
   onDownloadPdf,
 }: {
   title: string;
+  helpId: VisualHelpId;
   points: ReturnType<typeof toMonthChartPoints>;
   loading: boolean;
   error?: string;
@@ -656,6 +668,7 @@ function MonthComboPanel({
   return (
     <ChartPanel<MonthTableRow>
       title={title}
+      {...vh(helpId)}
       style={{ minHeight: 260 }}
       tableColumns={error ? undefined : monthTableColumns}
       tableRows={error ? undefined : tableRows}

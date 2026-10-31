@@ -78,6 +78,7 @@ export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string
   { label: 'Forced Closures', href: '/admin/closures', pageKey: 'admin_closures' },
   { label: 'MARCOM Data Upload', href: '/admin/marcom-upload', pageKey: 'admin_marcom_upload' },
   { label: 'Login History', href: '/admin/login-history', pageKey: 'admin_login_history' },
+  { label: 'Critical Number', href: '/admin/critical-number', pageKey: null, adminOnly: true },
   { label: 'ETL Control Center', href: '/admin/etl-control', pageKey: null, adminOnly: true },
   { label: 'Audit Log', href: '/admin/audit-log', pageKey: null, adminOnly: true },
   { label: 'Kaizen Dropdowns', href: '/admin/kaizen-dropdowns', pageKey: null, adminOnly: true },

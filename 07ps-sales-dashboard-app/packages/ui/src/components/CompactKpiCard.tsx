@@ -5,9 +5,14 @@ import { LoadingSkeleton } from './LoadingSkeleton';
 import { Sparkline } from './Sparkline';
 import type { SemanticStatus } from './KpiTile';
 import type { ReferenceMetric } from './GaugeCard';
+import { VisualInfoIcons, type VisualHelpContent } from './VisualHelp';
 
 export interface CompactKpiCardProps {
   title: string;
+  /** "?" — what the visual shows; from frontend/src/lib/visualHelp.ts. */
+  help?: VisualHelpContent;
+  /** "i" — what the user can do with it. */
+  interactions?: readonly string[];
   icon?: React.ComponentType<{ size?: number | string }>;
   status: SemanticStatus;
   /** The headline value, already formatted (e.g. "LYD 87.75", "18.46%"). */
@@ -32,6 +37,8 @@ export interface CompactKpiCardProps {
  */
 export function CompactKpiCard({
   title,
+  help,
+  interactions,
   icon: Icon,
   status,
   valueLabel,
@@ -61,6 +68,7 @@ export function CompactKpiCard({
             </span>
           )}
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{title}</span>
+          <VisualInfoIcons title={title} help={help} interactions={interactions} />
         </div>
         <SemanticBadge status={status} />
       </div>

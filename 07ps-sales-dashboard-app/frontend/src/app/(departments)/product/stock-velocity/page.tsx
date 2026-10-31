@@ -1,4 +1,5 @@
 'use client';
+import { vh } from '../../../../lib/visualHelp';
 import React, { useMemo, useState } from 'react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
@@ -354,13 +355,8 @@ export default function StockVelocityPage() {
                 <KpiTile label="Inventory Value" value={fmtLYD(inventoryValue)} variance={`+ ${fmtLYD(inTransitValue)} in transit`} status="neutral" />
               </div>
 
-              <ChartPanel
+              <ChartPanel {...vh("product.stockVelocity.movers")}
                 title="Fast vs Slow Movers"
-                infoText={
-                  moversDrill
-                    ? `${moversDrill} movers — velocity = volume in the period ÷ ${overview.data?.period.days ?? '—'} days, in each product's own unit`
-                    : 'Products that sold in the period, split at the median daily velocity. Bars = value sold (LYD); click a bar to see the products'
-                }
                 style={{ minHeight: 480 }}
               >
                 <DrillBreadcrumb active={moversDrill} rootLabel="Fast vs Slow" onReset={() => setMoversDrill(null)} />
@@ -396,9 +392,8 @@ export default function StockVelocityPage() {
               </ChartPanel>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
-                <ChartPanel
+                <ChartPanel {...vh("product.stockVelocity.overstock")}
                   title="Overstock Products"
-                  infoText={overstockDrill ? `${overstockDrill} — LYD tied up at stock valuation, highest first` : 'By BCG class — LYD tied up in overstocked or non-moving stock, click a class to drill in'}
                   headerActions={<PdfButton label="Export as PDF" onClick={handleExportOverstockPdf} />}
                 >
                   <DrillBreadcrumb active={overstockDrill} rootLabel="All Classes" onReset={() => setOverstockDrill(null)} />
@@ -430,9 +425,8 @@ export default function StockVelocityPage() {
                   )}
                 </ChartPanel>
 
-                <ChartPanel
+                <ChartPanel {...vh("product.stockVelocity.stockOutRisk")}
                   title="Stock-Out Risk"
-                  infoText={riskDrill ? `${riskDrill} — sorted by urgency, highest first` : 'By BCG class — above-median sellers below the stock-out threshold, click a class to drill in'}
                   headerActions={<PdfButton label="Export as PDF" onClick={handleExportRiskPdf} />}
                 >
                   <DrillBreadcrumb active={riskDrill} rootLabel="All Classes" onReset={() => setRiskDrill(null)} />
@@ -473,7 +467,7 @@ export default function StockVelocityPage() {
                 thresholds of the company that sold more of it this year.
               </p>
 
-              <PerformanceReportTable title="Performance Details" rows={performanceRows} showStatus showTakeaway onExportPdf={handleExportPerformanceTablePdf} />
+              <PerformanceReportTable {...vh("product.stockVelocity.details")} title="Performance Details" rows={performanceRows} showStatus showTakeaway onExportPdf={handleExportPerformanceTablePdf} />
             </>
           )}
         </main>

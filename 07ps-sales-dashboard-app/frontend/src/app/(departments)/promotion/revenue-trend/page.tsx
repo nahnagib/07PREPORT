@@ -29,6 +29,7 @@ import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useRevenueTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { RevenueTrendMonthPoint, RevenueTrendPerformanceRow, RevenueTrendVarianceCard } from '../../../../lib/api';
 import { formatAsp, formatCurrency, formatTimestamp, formatVariance, formatVolume, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
+import { vh } from '../../../../lib/visualHelp';
 
 /** Y-axis tick formatter: currency/volume in millions with an "M" suffix (e.g. "5M", "0.3M"),
  * one decimal place unless it rounds to a whole number. */
@@ -313,6 +314,7 @@ export default function RevenueTrendPage() {
           >
             <ChartPanel<TrendTableRow>
               title="MoM Value"
+              {...vh('promotion.revenueTrend.momValue')}
               style={{ minHeight: 360 }}
               tableColumns={overview.error ? undefined : trendTableColumns}
               tableRows={overview.error ? undefined : valueTableRows}
@@ -346,6 +348,7 @@ export default function RevenueTrendPage() {
 
             <ChartPanel<TrendTableRow>
               title="MoM Volume"
+              {...vh('promotion.revenueTrend.momVolume')}
               style={{ minHeight: 360 }}
               tableColumns={overview.error ? undefined : trendTableColumns}
               tableRows={overview.error ? undefined : volumeTableRows}
@@ -379,6 +382,7 @@ export default function RevenueTrendPage() {
 
             <ChartPanel<TrendTableRow>
               title="MoM ASP"
+              {...vh('promotion.revenueTrend.momAsp')}
               style={{ minHeight: 360 }}
               tableColumns={overview.error ? undefined : trendTableColumns}
               tableRows={overview.error ? undefined : aspTableRows}
@@ -439,6 +443,7 @@ export default function RevenueTrendPage() {
             >
               <PerformanceReportTable
                 title="Performance Details"
+                {...vh('promotion.revenueTrend.details')}
                 rows={toPerformanceRows(overview.data?.performanceDetails)}
                 showLytdColumn
                 lastColumnLabel="Last"
@@ -493,6 +498,7 @@ function VarianceCard({
   return (
     <InsightCard
       label={title}
+      {...vh('promotion.revenueTrend.varianceCard')}
       value={card ? formatVariance(card.variancePct) ?? '—' : '—'}
       status={card == null ? 'neutral' : bad ? 'alert' : 'success'}
       accentBg={bad}

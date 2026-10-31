@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { CreditPolicyChart } from '../CreditPolicyChart';
 import type { CreditCustomer, DebtAging } from '../../../lib/api';
 import { ZONES } from '../../../lib/__tests__/fixtures/creditZones';
@@ -165,14 +165,14 @@ describe('CreditPolicyChart', () => {
     }
   });
 
-  it('moves the explanatory legend into hover details', () => {
+  it('moves the explanatory legend into hover details', async () => {
     render(<CreditPolicyChart {...props} onCustomerClick={() => undefined} />);
     expect(screen.queryByRole('tooltip')).toBeNull();
-    const help = screen.getByRole('button', { name: 'Credit Policy Escalation details' });
+    const help = screen.getByRole('button', { name: 'About this visual' });
     fireEvent.mouseEnter(help);
     for (const text of ['Dot size = overdue amount', 'Each customer appears once', 'Days counted to']) expect(screen.getByRole('tooltip').textContent).toContain(text);
     fireEvent.mouseLeave(help);
-    expect(screen.queryByRole('tooltip')).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
     fireEvent.focus(help);
     expect(screen.getByRole('tooltip')).toBeTruthy();
     fireEvent.keyDown(help, { key: 'Escape' });

@@ -1,4 +1,6 @@
 'use client';
+import { VisualInfoIcons } from '@07ps/ui';
+import { vh } from '../../../../lib/visualHelp';
 import React, { useState } from 'react';
 import { ArrowLeft, FileDown } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
@@ -450,7 +452,7 @@ export default function ActivityMomentumPage() {
                 />
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr', gridTemplateRows: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
-                  <InsightCard
+                  <InsightCard {...vh("promotion.activityMomentum.inactiveRatio")}
                     label="Inactive Deals Ratio"
                     value={data?.rates.inactiveDealsRatio != null ? formatVariance(data.rates.inactiveDealsRatio) ?? '—' : '—'}
                     caption={RATE_DEFINITIONS.inactive}
@@ -458,7 +460,7 @@ export default function ActivityMomentumPage() {
                     accentBg={data?.rates.inactiveDealsRatio != null && data.rates.inactiveDealsRatio > 0.5}
                     loading={overview.loading}
                   />
-                  <InsightCard
+                  <InsightCard {...vh("promotion.activityMomentum.lostRatio")}
                     label="Lost Deals Ratio"
                     value={data?.rates.lostDealsRatio != null ? formatVariance(data.rates.lostDealsRatio) ?? '—' : '—'}
                     caption={RATE_DEFINITIONS.lost}
@@ -471,7 +473,7 @@ export default function ActivityMomentumPage() {
 
               {/* Zone B -- Total Lost Opportunity by Reason (left) + New Opportunities (right) */}
               <div className="ps-invoices-zone">
-                <ChartPanel<ReasonTableRow>
+                <ChartPanel<ReasonTableRow> {...vh("promotion.activityMomentum.lostByReason")}
                   title="Total Lost Opportunity by Reason"
                   style={{ minHeight: 360 }}
                   tableColumns={overview.error ? undefined : reasonTableColumns}
@@ -502,7 +504,7 @@ export default function ActivityMomentumPage() {
                   )}
                 </ChartPanel>
 
-                <ChartPanel<NewOppTableRow>
+                <ChartPanel<NewOppTableRow> {...vh("promotion.activityMomentum.newOpportunities")}
                   title="New Opportunities"
                   style={{ minHeight: 360 }}
                   tableColumns={overview.error ? undefined : newOppTableColumns}
@@ -535,7 +537,7 @@ export default function ActivityMomentumPage() {
               </div>
 
               {!overview.loading && !overview.error && (
-                <PerformanceReportTable
+                <PerformanceReportTable {...vh("promotion.activityMomentum.details")}
                   title="Performance Details"
                   rows={toExecutiveSummaryRows(data?.counts, data?.rates, data?.newOpportunitiesByMonth)}
                   showStatus
@@ -570,7 +572,7 @@ export default function ActivityMomentumPage() {
                 </Card>
               </div>
 
-              <ChartPanel
+              <ChartPanel {...vh("promotion.activityMomentum.table")}
                 title="Opportunity Table"
                 style={{ minHeight: 480 }}
                 headerActions={
@@ -717,7 +719,7 @@ function ActivityCountsPanel({
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
               {formatCountOrDash(t.value)}
             </div>
-            <div style={{ fontSize: 10, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{t.label}</div>
+            <div style={{ fontSize: 10, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{t.label} <VisualInfoIcons title={t.label} {...vh('promotion.activityMomentum.counts')} /></div>
           </div>
         ))}
       </div>

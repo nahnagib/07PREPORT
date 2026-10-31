@@ -1,4 +1,5 @@
 'use client';
+import { vh } from '../../../../lib/visualHelp';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppHeader } from '../../../../components/AppHeader';
@@ -180,8 +181,7 @@ function NpsScoreBody() {
 
             {/* Row 6: the detractor list (nps_comments) */}
             {canSeeDetractors && (
-              <ChartPanel title={`Detractors (${formatNumber(detractors.data?.total ?? totals.detractors)})`}
-                infoText="Every ★ rating of the period, newest first, with its follow-up case (status, reason, owner and time open, live from the Detractor Follow-up page) and the customer's comments (phone numbers and e-mail addresses masked). Click a row to open the case (its delivery is on the case card); the order code opens in Odoo. Visible only with the NPS Score detractor list permission.">
+              <ChartPanel {...vh("process.npsScore.detractors")} title={`Detractors (${formatNumber(detractors.data?.total ?? totals.detractors)})`}>
                 <DetractorList state={detractors} onMore={() => setListPages((p) => p + 1)} />
               </ChartPanel>
             )}

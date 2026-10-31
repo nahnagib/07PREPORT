@@ -15,6 +15,7 @@ import {
   SemanticBadge,
   SEMANTIC_STATUS_LABEL,
   theme,
+  VisualInfoIcons,
 } from '@07ps/ui';
 import { useAuth } from '../../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../../components/AuthGuard';
@@ -35,6 +36,7 @@ import {
   formatTimestamp,
   toSemanticStatus,
 } from '../../../../../lib/format';
+import { vh } from '../../../../../lib/visualHelp';
 
 /**
  * Tachometer drill-down / detail page (Standards Section 3.3 breadcrumb requirement, Section 3.13
@@ -242,6 +244,7 @@ function MetricDetailBody({
           <div style={{ display: 'flex', width: '100%', marginBottom: 'var(--ps-space-4, 24px)' }}>
             <KpiCard
               title={meta.title}
+              {...vh('promotion.tachometerBreakdown.headline')}
               variant="gauge"
               actual={card?.actual ?? 0}
               targetToDate={card?.targetToDate ?? null}
@@ -280,22 +283,25 @@ function MetricDetailBody({
                   gap: 'var(--ps-space-3, 16px)',
                 }}
               >
-                <InsightCard icon={Layers} label="Total Groups" value={String(insights.total)} status="neutral" />
+                <InsightCard icon={Layers} label="Total Groups" {...vh('promotion.tachometerBreakdown.totalGroups')} value={String(insights.total)} status="neutral" />
                 <InsightCard
                   icon={TargetIcon}
                   label="On Target"
+                  {...vh('promotion.tachometerBreakdown.onTarget')}
                   value={`${insights.onTarget} / ${insights.total}`}
                   status={insights.onTarget > 0 ? 'success' : 'neutral'}
                 />
                 <InsightCard
                   icon={AlertTriangle}
                   label="Critical"
+                  {...vh('promotion.tachometerBreakdown.critical')}
                   value={`${insights.critical} / ${insights.total}`}
                   status={insights.critical > 0 ? 'alert' : 'success'}
                 />
                 <InsightCard
                   icon={Award}
                   label="Top Performer"
+                  {...vh('promotion.tachometerBreakdown.topPerformer')}
                   value={insights.best?.groupLabel ?? '—'}
                   caption={insights.best ? formatVariance(insights.best.variancePct) : undefined}
                   status="success"
@@ -303,6 +309,7 @@ function MetricDetailBody({
                 <InsightCard
                   icon={TrendingDown}
                   label="Needs Attention"
+                  {...vh('promotion.tachometerBreakdown.needsAttention')}
                   value={insights.worst?.groupLabel ?? '—'}
                   caption={insights.worst ? formatVariance(insights.worst.variancePct) : undefined}
                   status="alert"
@@ -331,7 +338,10 @@ function MetricDetailBody({
                 borderBottom: '1px solid var(--ps-color-border)',
               }}
             >
-              <h2 style={{ fontSize: theme.table.titleFontSize, fontWeight: 700, margin: 0 }}>Full Breakdown</h2>
+              <h2 style={{ fontSize: theme.table.titleFontSize, fontWeight: 700, margin: 0, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                Full Breakdown
+                <VisualInfoIcons title="Full Breakdown" {...vh('promotion.tachometerBreakdown.table')} />
+              </h2>
             </div>
             <div style={{ padding: 'var(--ps-space-3, 16px)' }}>
               {breakdown.loading && <LoadingSkeleton variant="table" />}

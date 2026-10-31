@@ -1,4 +1,5 @@
 'use client';
+import { vh } from '../../../../lib/visualHelp';
 import React, { useMemo, useState } from 'react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
@@ -358,7 +359,7 @@ export default function ProductLifecyclePage() {
             <KpiTile label="Portfolio Freshness" value={`${freshPct.toFixed(1)}%`} variance={`${newRows.length} SKUs first sold in the last 180 days`} status="neutral" />
           </div>
 
-          <ChartPanel
+          <ChartPanel {...vh("product.productLifecycle.pareto")}
             title="Segment Value — Pareto"
             style={{ minHeight: 420 }}
           >
@@ -434,7 +435,7 @@ export default function ProductLifecyclePage() {
             </div>
           </Card>
 
-          <PerformanceReportTable
+          <PerformanceReportTable {...vh("product.productLifecycle.details")}
             title="Performance Details"
             rows={performanceRows}
             showStatus

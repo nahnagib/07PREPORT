@@ -30,6 +30,7 @@ import {
   type SemanticStatus,
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
+  VisualInfoIcons,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
@@ -37,6 +38,7 @@ import { useCriticalNumberOverview, useRefreshStatus } from '../../../../lib/hoo
 import { formatCompactCurrency, formatCurrency, formatVariance, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
 import type { CriticalNumberOverview } from '../../../../lib/api';
 import { MissingTrendModal, type MissingTrendMetric } from '../../../../components/criticalNumber/MissingTrendModal';
+import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 
 // Not in tokens.css (business-unit accent there is charcoal/blue) -- these are the two brand
 // colors used specifically to tell Majaal/Tika apart in the Forced Closures branch breakdown,
@@ -376,6 +378,7 @@ export default function CriticalNumberPage() {
                 <DailyCounterCard counter={data?.dailyCounter} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
                 <PeriodCounterCard
                   title="Monthly Counter"
+                  helpId="promotion.criticalNumber.monthlyCounter"
                   counter={data?.monthlyCounter}
                   loading={overview.loading}
                   error={overview.error ?? undefined}
@@ -383,6 +386,7 @@ export default function CriticalNumberPage() {
                 />
                 <PeriodCounterCard
                   title="Yearly Counter"
+                  helpId="promotion.criticalNumber.yearlyCounter"
                   counter={data?.yearlyCounter}
                   loading={overview.loading}
                   error={overview.error ?? undefined}
@@ -409,6 +413,7 @@ export default function CriticalNumberPage() {
               <ForcedClosuresCard data={data?.forcedClosuresYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
               <SimpleCountCard
                 title="Weekly Rest Days YTD"
+                helpId="promotion.criticalNumber.restDays"
                 icon={Coffee}
                 value={data?.weeklyRestDaysYtd.value}
                 caption="Standard weekly off"
@@ -429,6 +434,7 @@ export default function CriticalNumberPage() {
             >
               <ImpactCard
                 title="Missing Value YTD"
+                helpId="promotion.criticalNumber.missingValue"
                 description={MISSING_VALUE_DESCRIPTION}
                 value={data?.missingValueYtd.value ?? null}
                 formatMagnitude={formatCompactCurrency}
@@ -444,6 +450,7 @@ export default function CriticalNumberPage() {
               />
               <ImpactCard
                 title="Missing Days YTD"
+                helpId="promotion.criticalNumber.missingDays"
                 description={MISSING_DAYS_DESCRIPTION}
                 value={data?.missingDaysYtd.value ?? null}
                 formatMagnitude={formatDayCount}
@@ -461,6 +468,7 @@ export default function CriticalNumberPage() {
             {!overview.loading && !overview.error && (
               <PerformanceReportTable
                 title="Performance Details"
+                {...vh('promotion.criticalNumber.details')}
                 rows={toExecutiveSummaryRows(data)}
                 showStatus
                 showTakeaway
@@ -574,6 +582,7 @@ function DailyCriticalNumberCard({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--ps-color-muted-text)' }}>
           <Target size={16} />
           <span style={{ fontSize: 13, fontWeight: 600 }}>Daily Critical Number</span>
+          <VisualInfoIcons title="Daily Critical Number" {...vh('promotion.criticalNumber.daily')} />
         </div>
         <div
           style={{
@@ -653,6 +662,7 @@ function DailyCounterCard({
             <GaugeIcon size={16} />
           </span>
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>Daily Counter</span>
+          <VisualInfoIcons title="Daily Counter" {...vh('promotion.criticalNumber.dailyCounter')} />
         </div>
         <PaceBadge status={status} />
       </div>
@@ -739,12 +749,14 @@ function PaceBadge({ status }: { status: SemanticStatus }) {
 
 function PeriodCounterCard({
   title,
+  helpId,
   counter,
   loading,
   error,
   onRetry,
 }: {
   title: string;
+  helpId: VisualHelpId;
   counter?: {
     workingDaysElapsed: number;
     workingDaysTotal: number;
@@ -787,6 +799,7 @@ function PeriodCounterCard({
     <Card style={{ width: '100%', textAlign: 'center' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{title}</span>
+        <VisualInfoIcons title={title} {...vh(helpId)} />
         <PaceBadge status={status} />
       </div>
 
@@ -857,6 +870,7 @@ function WorkingDaysCard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>
         <CalendarCheck2 size={16} />
         <span style={{ fontSize: 13, fontWeight: 600 }}>Working Days YTD</span>
+        <VisualInfoIcons title="Working Days YTD" {...vh('promotion.criticalNumber.workingDays')} />
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ps-color-text)' }}>{value ?? '—'}</div>
       <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>days</div>
@@ -895,6 +909,7 @@ function OfficialHolidaysCard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>
         <CalendarDays size={16} />
         <span style={{ fontSize: 13, fontWeight: 600 }}>Official Holidays YTD</span>
+        <VisualInfoIcons title="Official Holidays YTD" {...vh('promotion.criticalNumber.holidays')} />
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ps-color-text)' }}>{data?.value ?? 0}</div>
       <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>days</div>
@@ -957,6 +972,7 @@ function ForcedClosuresCard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>
         <CalendarOff size={16} />
         <span style={{ fontSize: 13, fontWeight: 600 }}>Forced Closures YTD</span>
+        <VisualInfoIcons title="Forced Closures YTD" {...vh('promotion.criticalNumber.closures')} />
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ps-color-text)' }}>{data?.value ?? 0}</div>
       <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>branch-days</div>
@@ -990,6 +1006,7 @@ function ForcedClosuresCard({
 
 function SimpleCountCard({
   title,
+  helpId,
   icon: Icon,
   value,
   caption,
@@ -998,6 +1015,7 @@ function SimpleCountCard({
   onRetry,
 }: {
   title: string;
+  helpId: VisualHelpId;
   icon: React.ComponentType<{ size?: number | string }>;
   value?: number;
   caption?: string;
@@ -1025,6 +1043,7 @@ function SimpleCountCard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>
         <Icon size={16} />
         <span style={{ fontSize: 13, fontWeight: 600 }}>{title}</span>
+        <VisualInfoIcons title={title} {...vh(helpId)} />
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--ps-color-text)' }}>{value ?? '—'}</div>
       <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>days</div>
@@ -1039,6 +1058,7 @@ function SimpleCountCard({
 
 function ImpactCard({
   title,
+  helpId,
   description,
   value,
   formatMagnitude,
@@ -1053,6 +1073,7 @@ function ImpactCard({
   onExpand,
 }: {
   title: string;
+  helpId: VisualHelpId;
   description: string;
   /** Raw signed backend figure: Target YTD minus Actual YTD -- positive = behind pace (a
    * shortfall), negative = ahead of pace (a surplus). See criticalNumber.ts's computeMissingSummary
@@ -1100,6 +1121,7 @@ function ImpactCard({
     <Card style={{ width: '100%', borderInlineStart: `4px solid ${headline.headlineColor}` }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ps-color-muted-text)' }}>{title}</span>
+        <VisualInfoIcons title={title} {...vh(helpId)} />
         <button type="button" onClick={onExpand} aria-label={`Expand ${title}`} title={`Expand ${title}`} className="ps-cn-icon-btn">
           <Maximize2 size={14} />
         </button>

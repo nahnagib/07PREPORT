@@ -1,13 +1,18 @@
 'use client';
 import React, { useState } from 'react';
-import { Info, Maximize2, X } from 'lucide-react';
+import { Maximize2, X } from 'lucide-react';
 import { Card } from './Card';
 import { DataTable, type Column } from './DataTable';
+import { VisualInfoIcons, type VisualCapabilities, type VisualHelpContent } from './VisualHelp';
 
 export interface ChartPanelProps<T extends Record<string, unknown>> {
   title: string;
-  /** Short explanatory text shown via the header info icon's native tooltip. */
-  infoText?: string;
+  /** "?" — what the visual shows (definition, formula, notes); from frontend/src/lib/visualHelp.ts. */
+  help?: VisualHelpContent;
+  /** "i" — what the user can do with the visual; merged with the lines this component adds itself. */
+  interactions?: readonly string[];
+  /** Standard "i" lines this panel cannot detect itself (e.g. a drill handler inside `children`). */
+  capabilities?: VisualCapabilities;
   children: React.ReactNode;
   /** Table columns/rows for the "expand to table" focus view. Omit to hide the expand action
    * entirely (the panel then just renders `children` inside the standard card chrome). */
@@ -31,7 +36,9 @@ export interface ChartPanelProps<T extends Record<string, unknown>> {
  */
 export function ChartPanel<T extends Record<string, unknown>>({
   title,
-  infoText,
+  help,
+  interactions,
+  capabilities,
   children,
   tableColumns,
   tableRows,
@@ -57,15 +64,8 @@ export function ChartPanel<T extends Record<string, unknown>>({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>
-          {infoText && (
-            <span
-              title={infoText}
-              aria-label={infoText}
-              style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}
-            >
-              <Info size={14} />
-            </span>
-          )}
+          <VisualInfoIcons title={title} help={help} interactions={interactions}
+            capabilities={{ ...capabilities, expandTable: canFocusTable || capabilities?.expandTable }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           {headerActions}

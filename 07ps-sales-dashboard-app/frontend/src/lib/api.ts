@@ -651,6 +651,8 @@ export interface ClosurePatch {
 }
 
 export const adminApi = {
+  getCriticalNumber: (token: string | null) => request<{ value: number }>('/admin/critical-number', token),
+  setCriticalNumber: (token: string | null, value: number) => request<{ value: number }>('/admin/critical-number', token, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value }) }),
   listRoles: (token: string): Promise<AdminRole[]> => request('/admin/users/meta/roles', token),
 
   getSalespersonOptions: (token: string): Promise<SalespersonOption[]> =>

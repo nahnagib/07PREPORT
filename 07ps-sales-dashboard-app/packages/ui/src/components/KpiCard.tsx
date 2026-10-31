@@ -1,5 +1,4 @@
 import React from 'react';
-import { Info } from 'lucide-react';
 import { Card } from './Card';
 import { RadialGauge } from './RadialGauge';
 import { BulletChart } from './BulletChart';
@@ -14,6 +13,7 @@ import type { SemanticStatus } from './KpiTile';
 // GaugeCard.tsx (left in place, unused, per this session's convention) already defines the
 // identical shape.
 import type { ReferenceMetric } from './GaugeCard';
+import { VisualInfoIcons, type VisualHelpContent } from './VisualHelp';
 export type { ReferenceMetric };
 
 export interface KpiTrend {
@@ -31,8 +31,10 @@ export interface KpiCardProps {
   actualLabel: string;
   /** Full-precision headline value for the hover tooltip. */
   actualFullValue?: string;
-  /** Optional explanation shown as an info icon (native tooltip) after the title, like ChartPanel's infoText. */
-  infoText?: string;
+  /** "?" — what the visual shows (definition, formula, notes); from frontend/src/lib/visualHelp.ts. */
+  help?: VisualHelpContent;
+  /** "i" — what the user can do with the visual; merged with the lines this component adds itself. */
+  interactions?: readonly string[];
   /** Formatted to-date-target value, threaded into the gauge/bullet's own target label/tooltip. */
   targetLabel?: string;
   /** Which center visualization to render. 'gauge' for Value/Volume metrics, 'bullet' for ASP --
@@ -124,7 +126,8 @@ export function KpiCard({
   status,
   actualLabel,
   actualFullValue,
-  infoText,
+  help,
+  interactions,
   targetLabel,
   variant = 'gauge',
   icon: Icon,
@@ -220,11 +223,7 @@ export function KpiCard({
           >
             {title}
           </span>
-          {infoText && (
-            <span title={infoText} aria-label={infoText} data-testid="kpi-info" style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
-              <Info size={14} />
-            </span>
-          )}
+          <VisualInfoIcons title={title} help={help} interactions={interactions} capabilities={{ drill: !!onClick }} />
         </div>
         <SemanticBadge status={status} />
       </div>

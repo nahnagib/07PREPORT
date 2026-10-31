@@ -1,4 +1,6 @@
 'use client';
+import { VisualInfoIcons } from '@07ps/ui';
+import { vh } from '../../../../lib/visualHelp';
 import React, { useMemo, useState } from 'react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
@@ -544,7 +546,7 @@ export default function BcgMatrixPage() {
               richer detail (Volume/ASP/GP%/Vol Growth/Movement) is still hover-only, same content
               as the old bubble tooltip (see rowTooltipContent above). */}
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 2 }}>BCG Matrix</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 2 }}>BCG Matrix <VisualInfoIcons title="BCG Matrix" {...vh('product.bcgMatrix.matrix')} /></div>
             <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
               Top {MATRIX_CELL_TOP_N} products per class by Revenue YTD · bar length = revenue relative to that class&apos;s own top product · hover a row for Volume/ASP/GP%/Vol Growth/Movement · {filtered.length} products classified
               {filteredNoCost.length > 0 ? ` · ${filteredNoCost.length} sold this year without a standard cost in Odoo are "${UNCLASSIFIED_NO_COST}" (listed in Product Detail and the data-quality log)` : ''}
@@ -570,7 +572,7 @@ export default function BcgMatrixPage() {
             <Card>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>Portfolio Movement</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>Portfolio Movement <VisualInfoIcons title="Portfolio Movement" {...vh('product.bcgMatrix.movement')} /></div>
                 </div>
                 {movementDrill && <PdfButton label="Export as PDF" onClick={handleExportMovementPdf} />}
               </div>
@@ -605,7 +607,7 @@ export default function BcgMatrixPage() {
             </Card>
 
             <Card>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 2 }}>Product Detail</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 2 }}>Product Detail <VisualInfoIcons title="Product Detail" {...vh('product.bcgMatrix.productDetail')} /></div>
               <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
                 Click a column header to sort · search and per-column filter below each header
               </div>
@@ -628,7 +630,7 @@ export default function BcgMatrixPage() {
           {/* Outside the donut/Product Detail grid above so it spans the full page width rather
               than wrapping into that grid's narrow 4fr column. */}
           {!overview.loading && !overview.error && (
-            <PerformanceReportTable title="Performance Details" rows={performanceRows} showStatus showTakeaway onExportPdf={handleExportPerformanceTablePdf} />
+            <PerformanceReportTable {...vh("product.bcgMatrix.details")} title="Performance Details" rows={performanceRows} showStatus showTakeaway onExportPdf={handleExportPerformanceTablePdf} />
           )}
         </main>
 

@@ -1,3 +1,4 @@
+import { readCriticalNumber } from '../services/criticalNumberSetting';
 /**
  * Critical Number page metric definitions.
  *
@@ -386,7 +387,7 @@ export async function computeDailyCriticalNumber(
     sumCompanyPct(pool, filters.companyKeys ?? []),
     sumSegmentPct(pool, filters.segmentKeys ?? []),
   ]);
-  return DAILY_CRITICAL_NUMBER * (companyPct / 100) * (segmentPct / 100);
+  return (await readCriticalNumber(pool)) * (companyPct / 100) * (segmentPct / 100);
 }
 
 // ---------------------------------------------------------------------------

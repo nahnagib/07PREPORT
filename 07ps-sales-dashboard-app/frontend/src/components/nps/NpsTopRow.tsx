@@ -1,3 +1,4 @@
+import { vh } from '../../lib/visualHelp';
 import React from 'react';
 import { Reply, Smile, ThumbsUp } from 'lucide-react';
 import { CompactKpiCard, KpiCard } from '@07ps/ui';
@@ -27,9 +28,8 @@ export function NpsTopRow({ totals, thresholds, rate }: {
   return (
     <section className="ps-metrics-grid" style={GRID} aria-label="NPS, response rate and CSAT">
       <div style={{ ...CELL, ...fade }} data-testid="nps-card" title={totals.belowMinimum ? `${smallSample(totals)}: below the minimum number of responders` : undefined}>
-        <KpiCard
+        <KpiCard {...vh("process.npsScore.nps")}
           title="NPS Score"
-          infoText={NPS_CONTEXT}
           icon={Smile}
           variant="gauge"
           // the gauge clamps to 0..100 (a negative NPS pins the needle at 0, in red); the headline prints the real value
@@ -49,7 +49,7 @@ export function NpsTopRow({ totals, thresholds, rate }: {
       </div>
 
       <div style={{ ...CELL, ...fade }} data-testid="csat-card">
-        <KpiCard
+        <KpiCard {...vh("process.npsScore.csat")}
           title="CSAT"
           icon={ThumbsUp}
           variant="gauge"
@@ -71,12 +71,12 @@ export function NpsTopRow({ totals, thresholds, rate }: {
 export function ResponseRateCard({ state }: { state: RateState }) {
   const r = state.data;
   if (state.error) {
-    return <CompactKpiCard title="Response Rate" icon={Reply} status="neutral" valueLabel="—" referenceMetrics={[]} notes={[state.error]} testId="rate-card" />;
+    return <CompactKpiCard {...vh("process.npsScore.responseRate")} title="Response Rate" icon={Reply} status="neutral" valueLabel="—" referenceMetrics={[]} notes={[state.error]} testId="rate-card" />;
   }
-  if (!r || state.loading) return <CompactKpiCard title="Response Rate" icon={Reply} status="neutral" valueLabel="" referenceMetrics={[]} loading />;
+  if (!r || state.loading) return <CompactKpiCard {...vh("process.npsScore.responseRate")} title="Response Rate" icon={Reply} status="neutral" valueLabel="" referenceMetrics={[]} loading />;
   if (r.status !== 'ready') {
     const why = r.status === 'restricted' ? 'Unavailable for your assigned data scope.' : 'Waiting for the WhatsApp message data.';
-    return <CompactKpiCard title="Response Rate" icon={Reply} status="neutral" valueLabel="—" referenceMetrics={[]} notes={[why]} testId="rate-card" />;
+    return <CompactKpiCard {...vh("process.npsScore.responseRate")} title="Response Rate" icon={Reply} status="neutral" valueLabel="—" referenceMetrics={[]} notes={[why]} testId="rate-card" />;
   }
   const notes: React.ReactNode[] = [
     <span key="since" data-testid="rate-since">since {longDate(r.reachStart ?? r.dateFrom)}</span>,
@@ -84,7 +84,7 @@ export function ResponseRateCard({ state }: { state: RateState }) {
   ];
   if (r.companyAndDateOnly) notes.push(<strong key="only" data-testid="rate-company-only">Company and date filters only</strong>);
   return (
-    <CompactKpiCard
+    <CompactKpiCard {...vh("process.npsScore.responseRate")}
       title="Response Rate"
       icon={Reply}
       status={bandStatus(r.band)}

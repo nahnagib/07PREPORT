@@ -1,6 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { ArrowLeft, FileDown, Info, Layers } from 'lucide-react';
+import { ArrowLeft, FileDown, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { OdooLink } from '../../../../components/OdooLink';
 import { FilterBar } from '../../../../components/FilterBar';
@@ -28,6 +28,7 @@ import {
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
   useCanExport,
+  VisualInfoIcons,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
@@ -41,6 +42,7 @@ import type {
 } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
 import { CUSTOMER_CATEGORY_DEFINITION, customerCategoryColor, isCustomerCategory } from '../../../../lib/customerCategory';
+import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 
 // Customer Category order, labels, palette and definition: lib/customerCategory.ts (shared with Receivables and Collections).
 
@@ -584,6 +586,7 @@ export default function CustomerGrowthPage() {
               <div className="ps-invoices-kpi-row">
                 <CountMetricPanel
                   title="New Customers"
+                  helpId="promotion.customerGrowth.newCustomers"
                   counts={kpis?.newCustomers}
                   loading={overview.loading}
                   error={overview.error ?? undefined}
@@ -594,6 +597,7 @@ export default function CustomerGrowthPage() {
                 />
                 <CountMetricPanel
                   title="Total Customers"
+                  helpId="promotion.customerGrowth.totalCustomers"
                   counts={kpis?.totalCustomers}
                   loading={overview.loading}
                   error={overview.error ?? undefined}
@@ -617,7 +621,7 @@ export default function CustomerGrowthPage() {
               <div className="ps-invoices-zone">
                 <ChartPanel<TrendTableRow>
                   title="Customers Trend"
-                  infoText="Total Sales Value and Customer Count by year. Click a year to set it as the page's active filter; click it again to clear."
+                  {...vh('promotion.customerGrowth.customersTrend')}
                   style={{ minHeight: 380 }}
                   tableColumns={overview.error ? undefined : trendTableColumns}
                   tableRows={overview.error ? undefined : trendTableRows}
@@ -676,25 +680,25 @@ export default function CustomerGrowthPage() {
                     }}
                   >
                     <RateCard
-                      label="Customer Acquisition"
+                      label="Customer Acquisition" helpId="promotion.customerGrowth.acquisition"
                       pct={data?.rates.customerAcquisitionPct ?? null}
                       goodBadApplies
                       loading={overview.loading}
                     />
                     <RateCard
-                      label="Customer Growth"
+                      label="Customer Growth" helpId="promotion.customerGrowth.growth"
                       pct={data?.rates.customerGrowthPct ?? null}
                       goodBadApplies
                       loading={overview.loading}
                     />
                     <RateCard
-                      label="Retention Rate"
+                      label="Retention Rate" helpId="promotion.customerGrowth.retention"
                       pct={data?.rates.retentionRatePct ?? null}
                       goodBadApplies={false}
                       loading={overview.loading}
                     />
                     <RateCard
-                      label="Churn Rate"
+                      label="Churn Rate" helpId="promotion.customerGrowth.churn"
                       pct={data?.rates.churnRatePct ?? null}
                       goodBadApplies={false}
                       loading={overview.loading}
@@ -707,7 +711,7 @@ export default function CustomerGrowthPage() {
               <div className="ps-invoices-zone">
                 <ChartPanel<ContributionTableRow>
                   title="Customers Contribution"
-                  infoText="Share of total sales value contributed by the Top 10 customers vs. every other customer, year-to-date. Click Top 10 or Other to see that group's customers."
+                  {...vh('promotion.customerGrowth.contribution')}
                   style={{ minHeight: 380 }}
                   tableColumns={overview.error ? undefined : contributionTableColumns}
                   tableRows={overview.error ? undefined : contributionTableRows}
@@ -766,7 +770,7 @@ export default function CustomerGrowthPage() {
 
                 <ChartPanel<CategoryTableRow>
                   title="Customers Category Share"
-                  infoText={`Share of Sales YTD by ${CUSTOMER_CATEGORY_DEFINITION} Sales LYTD stays available in the table below. Enable drill-down to click a category and see its individual customers, or leave it off to click a category and set it as the page's active filter.`}
+                  {...vh('promotion.customerGrowth.categoryShare')}
                   style={{ minHeight: 380 }}
                   tableColumns={overview.error ? undefined : categoryTableColumns}
                   tableRows={overview.error ? undefined : categoryTableRows}
@@ -829,6 +833,7 @@ export default function CustomerGrowthPage() {
               {!overview.loading && !overview.error && (
                 <PerformanceReportTable
                   title="Performance Details"
+                  {...vh('promotion.customerGrowth.details')}
                   rows={toExecutiveSummaryRows(data)}
                   showLytdColumn
                   lastColumnLabel="Last"
@@ -842,7 +847,7 @@ export default function CustomerGrowthPage() {
             <div className="ps-invoices-zone">
               <ChartPanel
                 title="Customers Table"
-                infoText="Lifetime Value is the customer's total recorded sales value across all years within the active business and access filters."
+                {...vh('promotion.customerGrowth.customersTable')}
                 style={{ minHeight: 480 }}
               >
                 {overview.loading ? (
@@ -936,7 +941,7 @@ const customerTableColumns: DataGridColumn<CustomerTableGridRow>[] = [
 
 function CountMetricPanel({
   title,
-  infoText,
+  helpId,
   counts,
   loading,
   error,
@@ -946,7 +951,7 @@ function CountMetricPanel({
   onDownloadPdf,
 }: {
   title: string;
-  infoText?: string;
+  helpId: VisualHelpId;
   counts?: CustomerGrowthPeriodCounts;
   loading: boolean;
   error?: string;
@@ -983,11 +988,7 @@ function CountMetricPanel({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 'var(--ps-space-2, 8px)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>
-          {infoText && (
-            <span title={infoText} aria-label={infoText} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
-              <Info size={13} />
-            </span>
-          )}
+          <VisualInfoIcons title={title} {...vh(helpId)} />
         </div>
         {onDownloadPdf && (
           <ExportPdfButton downloading={!!downloading} disabled={!tableRows || tableRows.length === 0} onClick={onDownloadPdf} />
@@ -1020,8 +1021,12 @@ function CountMetricPanel({
 // Details view's own header block (not clickable, kept visible for context while filtering).
 // ---------------------------------------------------------------------------
 
-const CUSTOMER_STATUS_INFO =
-  'Active Retained: purchased YTD and LYTD. Non-Active: purchased LYTD, not YTD. Reactivated: purchased YTD, not LYTD, with purchase history before LYTD. Blocked: flagged in the operational system, independent of purchasing behavior.';
+/** The Customer Status card's "i" lines for where it sits (the title opens the table only on the summary view). */
+function statusInteractions(titleOpensTable: boolean, canExport: boolean): string[] {
+  return (vh('promotion.customerGrowth.customerStatus').interactions ?? []).filter(
+    (l) => (titleOpensTable || !l.startsWith('Click the title')) && (canExport || !l.startsWith('Export')),
+  );
+}
 
 function CustomerStatusPanel({
   counts,
@@ -1094,12 +1099,11 @@ function CustomerStatusPanel({
           ) : (
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Customer Status</span>
           )}
-          {/* "i" marks an interactive visual: only when the title opens the customer drill-down. */}
-          {onTitleClick && (
-            <span title={CUSTOMER_STATUS_INFO} aria-label={CUSTOMER_STATUS_INFO} style={{ color: 'var(--ps-color-muted-text)', display: 'inline-flex', cursor: 'help', flexShrink: 0 }}>
-              <Info size={13} />
-            </span>
-          )}
+          <VisualInfoIcons
+            title="Customer Status"
+            help={vh('promotion.customerGrowth.customerStatus').help}
+            interactions={statusInteractions(!!onTitleClick, !!onDownloadPdf)}
+          />
         </div>
         {onDownloadPdf && (
           <ExportPdfButton downloading={!!downloading} disabled={!counts} onClick={onDownloadPdf} />
@@ -1135,11 +1139,13 @@ function CustomerStatusPanel({
 
 function RateCard({
   label,
+  helpId,
   pct,
   goodBadApplies,
   loading,
 }: {
   label: string;
+  helpId: VisualHelpId;
   pct: number | null;
   goodBadApplies: boolean;
   loading: boolean;
@@ -1148,6 +1154,7 @@ function RateCard({
   return (
     <InsightCard
       label={label}
+      {...vh(helpId)}
       value={pct != null ? formatVariance(pct) ?? '—' : '—'}
       status={!goodBadApplies || pct == null ? 'neutral' : bad ? 'alert' : 'success'}
       accentBg={goodBadApplies && bad}

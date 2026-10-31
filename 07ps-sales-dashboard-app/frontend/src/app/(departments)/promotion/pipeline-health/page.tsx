@@ -31,6 +31,7 @@ import {
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
   useCanExport,
+  VisualInfoIcons,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
@@ -46,6 +47,7 @@ import type {
   StageBenchmarkRow,
 } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
+import { vh } from '../../../../lib/visualHelp';
 
 // Fixed: --ps-color-watch previously reused here shares the exact same hex as --ps-color-gold
 // (#b8860b), so Quotations and Deliveries rendered as indistinguishable brownish-gold trapezoids/
@@ -669,7 +671,7 @@ export default function PipelineHealthPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
                 <ChartPanel<FunnelTableRow>
                   title="Full Pipeline"
-                  infoText="Opportunities → Quotations → Sales Orders → Deliveries (B2B, current year only). Hover a stage for its count and value; click a stage to see the underlying records, or open the Opportunity chain to follow each opportunity through every stage."
+                  {...vh('promotion.pipelineHealth.fullPipeline')}
                   style={{ minHeight: 380 }}
                   tableColumns={overview.error ? undefined : funnelTableColumns}
                   tableRows={overview.error ? undefined : funnelTableRows}
@@ -733,7 +735,7 @@ export default function PipelineHealthPage() {
               {/* Top-right -- Expected Closure Opportunity */}
               <ChartPanel<ClosureTableRow>
                 title="Expected Closure Opportunity"
-                infoText="Expected Opportunity Count and Value by expected closure month. Click a month to see those opportunities."
+                {...vh('promotion.pipelineHealth.expectedClosure')}
                 style={{ minHeight: 380 }}
                 tableColumns={overview.error ? undefined : closureTableColumns}
                 tableRows={overview.error ? undefined : closureTableRows}
@@ -777,7 +779,7 @@ export default function PipelineHealthPage() {
               {/* Bottom-left -- Opportunity by Stage */}
               <ChartPanel<StageValueTableRow>
                 title="Opportunity by Stage"
-                infoText="Opportunity value by current CRM stage, including Won/Lost. Click a segment to see those opportunities."
+                {...vh('promotion.pipelineHealth.byStage')}
                 style={{ minHeight: 380 }}
                 tableColumns={overview.error ? undefined : stageValueTableColumns}
                 tableRows={overview.error ? undefined : stageValueTableRows}
@@ -816,7 +818,7 @@ export default function PipelineHealthPage() {
               {/* Bottom-right -- Probabilities Distribution */}
               <ChartPanel<ProbabilityTableRow>
                 title="Probabilities Distribution"
-                infoText="Open opportunity count by probability bucket (10-90%). Click a bucket to see those opportunities."
+                {...vh('promotion.pipelineHealth.probability')}
                 style={{ minHeight: 380 }}
                 tableColumns={overview.error ? undefined : probabilityTableColumns}
                 tableRows={overview.error ? undefined : probabilityTableRows}
@@ -856,6 +858,7 @@ export default function PipelineHealthPage() {
             {!overview.loading && !overview.error && (
               <PerformanceReportTable
                 title="Performance Details"
+                {...vh('promotion.pipelineHealth.details')}
                 rows={toExecutiveSummaryRows(data)}
                 showStatus
                 showTakeaway
@@ -867,7 +870,7 @@ export default function PipelineHealthPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
               <ChartPanel
                 title="Full Pipeline — Opportunity chain"
-                infoText="Every B2B opportunity created this year, followed through Quotation, Sales Order and Delivery. Linked through Odoo's opportunity reference on the quotation/order and the order's deliveries."
+                {...vh('promotion.pipelineHealth.chain')}
                 style={{ minHeight: 480 }}
               >
                 {overview.loading ? (
@@ -890,6 +893,7 @@ export default function PipelineHealthPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
               <ChartPanel
                 title={`Opportunity Details${detailsFilter ? ` — ${detailsFilterLabel(detailsFilter)}` : ''}`}
+                {...vh('promotion.pipelineHealth.opportunityDetails')}
                 style={{ minHeight: 480 }}
                 headerActions={
                   <PdfButton
@@ -920,6 +924,7 @@ export default function PipelineHealthPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
               <ChartPanel
                 title={`${stageRecordKind ? FUNNEL_STAGE_LABELS[stageRecordKind] : ''} — Full Pipeline`}
+                {...vh('promotion.pipelineHealth.stageRecords')}
                 style={{ minHeight: 480 }}
                 headerActions={
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -1074,6 +1079,7 @@ function DataQualityCard({ dataQuality, loading }: { dataQuality?: DataQualityOv
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Data Quality</span>
+            <VisualInfoIcons title="Data Quality" {...vh('promotion.pipelineHealth.dataQuality')} />
             <span style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
               {dataQuality.dirtyRecords} of {dataQuality.totalRecords} records ({formatPct(dataQuality.dirtyPct)}) have an issue
             </span>

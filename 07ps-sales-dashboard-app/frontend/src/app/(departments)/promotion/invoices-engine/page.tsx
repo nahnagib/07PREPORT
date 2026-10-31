@@ -22,12 +22,14 @@ import {
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
   useCanExport,
+  VisualInfoIcons,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useInvoicesEngineOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { InvoiceStats, InvoicesEngineKpis, InvoicesEngineScope, InvoiceYearClassBreakdown } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, formatVariance, formatVolume, DISPLAY_LOCALE } from '../../../../lib/format';
+import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 
 // Value-tier labels (renamed from the bare A/B/C/D codes the ETL/warehouse still store -- see
 // backend/src/measures/invoicesEngine.ts's normalizeInvoiceClass). Thresholds are unchanged from
@@ -584,6 +586,7 @@ export default function InvoicesEnginePage() {
             <div className="ps-invoices-kpi-row">
               <MetricPanel
                 title="# of Lines per Invoice"
+                helpId="promotion.invoicesEngine.linesPerInvoice"
                 kpis={kpis}
                 pick={(s) => s.avgLinesPerInvoice}
                 formatter={formatLines}
@@ -596,6 +599,7 @@ export default function InvoicesEnginePage() {
               />
               <MetricPanel
                 title="Sales per Invoice"
+                helpId="promotion.invoicesEngine.salesPerInvoice"
                 kpis={kpis}
                 pick={(s) => s.avgSalesPerInvoice}
                 formatter={formatInvoiceValue}
@@ -609,6 +613,7 @@ export default function InvoicesEnginePage() {
               />
               <MetricPanel
                 title="Volume per Invoice"
+                helpId="promotion.invoicesEngine.volumePerInvoice"
                 kpis={kpis}
                 pick={(s) => s.avgVolumePerInvoice}
                 formatter={formatVolumeOrDash}
@@ -625,7 +630,7 @@ export default function InvoicesEnginePage() {
             <div className="ps-invoices-zone">
               <ChartPanel<SalesTrendTableRow>
                 title="Sales Trend"
-                infoText="Invoice Sales Value and # of Invoices by year. Enable drill-down, then click a year to break it out by Invoice Class."
+                {...vh('promotion.invoicesEngine.salesTrend')}
                 style={{ minHeight: 380 }}
                 tableColumns={overview.error ? undefined : salesTrendTableColumns}
                 tableRows={overview.error ? undefined : salesTrendTableRows}
@@ -747,6 +752,7 @@ export default function InvoicesEnginePage() {
             <div className="ps-invoices-zone">
               <ChartPanel<InvoicesTrendTableRow>
                 title="Invoices Trend"
+                {...vh('promotion.invoicesEngine.invoicesTrend')}
                 style={{ minHeight: 380 }}
                 tableColumns={overview.error ? undefined : invoicesTrendTableColumns}
                 tableRows={overview.error ? undefined : invoicesTrendTableRows}
@@ -788,7 +794,7 @@ export default function InvoicesEnginePage() {
 
               <ChartPanel<ClassificationTableRow>
                 title="Invoices Classification"
-                infoText="Invoice value by Invoice Class, year-to-date. Click a class to set it as the page's active filter; click it again to clear."
+                {...vh('promotion.invoicesEngine.classification')}
                 style={{ minHeight: 380 }}
                 tableColumns={overview.error ? undefined : classificationTableColumns}
                 tableRows={overview.error ? undefined : classificationTableRows}
@@ -825,6 +831,7 @@ export default function InvoicesEnginePage() {
             {!overview.loading && !overview.error && (
               <PerformanceReportTable
                 title="Performance Details"
+                {...vh('promotion.invoicesEngine.details')}
                 rows={toExecutiveSummaryRows(data?.kpis)}
                 showLytdColumn
                 lastColumnLabel="Last"
@@ -854,6 +861,7 @@ export default function InvoicesEnginePage() {
 
 function MetricPanel({
   title,
+  helpId,
   kpis,
   pick,
   formatter,
@@ -866,6 +874,7 @@ function MetricPanel({
   onDownloadPdf,
 }: {
   title: string;
+  helpId: VisualHelpId;
   kpis?: InvoicesEngineKpis;
   pick: (stats: InvoiceStats) => number | null;
   formatter: (value: number | null) => string;
@@ -903,7 +912,10 @@ function MetricPanel({
   return (
     <Card style={{ width: '100%', height: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--ps-space-2, 8px)', gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>{title}</span>
+          <VisualInfoIcons title={title} {...vh(helpId)} />
+        </span>
         {onDownloadPdf && (
           <ExportPdfButton downloading={!!downloading} disabled={!tableRows || tableRows.length === 0} onClick={onDownloadPdf} />
         )}
@@ -979,7 +991,10 @@ function TotalInvoicesCard({
       <div style={{ fontSize: 34, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
         {value != null ? value.toLocaleString(DISPLAY_LOCALE) : '—'}
       </div>
-      <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>{label}</div>
+      <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        {label}
+        <VisualInfoIcons title={label} {...vh('promotion.invoicesEngine.totalInvoices')} size={12} />
+      </div>
     </Card>
   );
 }

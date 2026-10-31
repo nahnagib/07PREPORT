@@ -1,4 +1,7 @@
 'use client';
+import { VisualInfoIcons } from '@07ps/ui';
+import { MarcomVisualContext } from './MarcomVisualContext';
+import { vhById } from '../../lib/visualHelp';
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@07ps/ui';
 import { t } from '../../lib/marcom/text';
@@ -109,7 +112,7 @@ export function MarcomChartCard(p: MarcomChartCardProps) {
   }
 
   return (
-    <section
+    <MarcomVisualContext.Provider value={'marcom.' + p.visual}><section
       data-visual={p.visual}
       aria-busy={busy || undefined}
       aria-label={p.title}
@@ -119,8 +122,8 @@ export function MarcomChartCard(p: MarcomChartCardProps) {
       }}
     >
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 0 }}>
-          <h3 style={{ margin: 0, fontSize: 14.5, fontWeight: 700 }}>{p.title}</h3>
+        <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <h3 style={{ margin: 0, fontSize: 14.5, fontWeight: 700 }}>{p.title}</h3><VisualInfoIcons title={p.title} {...vhById('marcom.' + p.visual)} capabilities={{ expandTable: !!p.table }} />
           {p.subtitle && <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{p.subtitle}</div>}
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -134,7 +137,7 @@ export function MarcomChartCard(p: MarcomChartCardProps) {
       </header>
       {body}
       {p.footer && <footer style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>{p.footer}</footer>}
-    </section>
+    </section></MarcomVisualContext.Provider>
   );
 }
 

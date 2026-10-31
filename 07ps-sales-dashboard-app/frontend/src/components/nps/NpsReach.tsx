@@ -1,3 +1,4 @@
+import { vh } from '../../lib/visualHelp';
 import React from 'react';
 import { ChartPanel, EmptyState, ErrorState, KpiTile, LoadingSkeleton } from '@07ps/ui';
 import type { NpsReach as ReachData } from '../../lib/api';
@@ -55,10 +56,7 @@ export function NpsReach({ state, part }: { state: ReachState; part: 'boxes' | '
   }
   const ready = data?.status === 'ready';
   return (
-    <ChartPanel title={part === 'boxes' ? 'Message reach' : 'Errors by reason'}
-      infoText={part === 'boxes'
-        ? 'WhatsApp feedback messages by message date (Tripoli time) and company. Delivered, Read, Not Delivered (sent) and Error are separate current states; each box shows its share of Total Reach. Counts are messages, not unique recipients.'
-        : 'Failed feedback messages by reason, with the share of all errors. Hover over a slice or hover/focus/tap its legend entry for the cause and fixable details.'}>
+    <ChartPanel {...vh(part === 'boxes' ? 'process.npsScore.reach' : 'process.npsScore.errors')} title={part === 'boxes' ? 'Message reach' : 'Errors by reason'}>
       {data?.companyAndDateOnly && <p style={{ fontSize: 12 }}>Company and date filters only</p>}
       {ready && data.reachStart && <p style={{ fontSize: 12, color: 'var(--ps-color-neutral-text)' }}>Reach data from {formatDate(data.reachStart)}</p>}
       {body}

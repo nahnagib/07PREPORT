@@ -1,4 +1,5 @@
 'use client';
+import { vh } from '../../../../../../lib/visualHelp';
 import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
@@ -237,7 +238,7 @@ export default function BrandDrillDownPage() {
               <BrandProductList rows={listRows} />
 
               <div style={{ marginTop: 'var(--ps-space-4, 24px)' }}>
-                <PerformanceReportTable title="Performance Details" rows={toExecutiveSummaryRows(selected, productRows.length)} showStatus showTakeaway />
+                <PerformanceReportTable {...vh("product.pimContribution.brandDetails")} title="Performance Details" rows={toExecutiveSummaryRows(selected, productRows.length)} showStatus showTakeaway />
               </div>
             </div>
           )}

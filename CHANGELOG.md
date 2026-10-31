@@ -306,3 +306,10 @@ setup as part of preparing the repo for its initial public state.
 07PREPORT sales dashboard, ETL pipeline, and docs — Phase 1 foundation: Tachometer dashboard,
 MySQL warehouse (star schema), JWT auth with role/company/salesperson scoping, the vendored Python
 ETL pipeline, and BullMQ-based scheduling.
+
+## 2026-10-31 — Visual explanations and interactions
+
+- Add shared question-mark definition/formula popovers and interaction lists, supporting hover, focus, tap, Escape and outside click. Exclude icons from image/PDF exports.
+- Centralize visual content in frontend/src/lib/visualHelp.ts; migrate the old explanation prop and remove its temporary alias after testing compatibility.
+- Add an Admin-only Daily Critical Number setting (LYD), applied before existing company/group allocations. Apply migration 0061_daily_critical_number.sql before saving the setting; existing installations retain 560,000 until migrated.
+- Automated verification includes shared UI popovers and registry references. Browser review remains pending: Computer Use refused the existing Chrome window because its current URL could not be determined confidently.

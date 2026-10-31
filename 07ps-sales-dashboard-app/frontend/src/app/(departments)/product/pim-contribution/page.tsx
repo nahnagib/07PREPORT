@@ -1,4 +1,5 @@
 'use client';
+import { vh } from '../../../../lib/visualHelp';
 import React, { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppHeader } from '../../../../components/AppHeader';
@@ -459,15 +460,9 @@ export default function PimContributionPage() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '11fr 9fr', gap: 'var(--ps-space-3, 16px)' }}>
-            <ChartPanel
+            <ChartPanel {...vh("product.pimContribution.hierarchy")}
               style={{ minWidth: 0 }}
               title="Product Hierarchy Contribution"
-              infoText={
-                // "i" = drill-down available, so none once a single product is reached.
-                isLeaf
-                  ? undefined
-                  : `Click a slice or legend row to drill into its ${HIERARCHY_LEVELS[levelIndex! + 1]?.label ?? 'Product'} breakdown`
-              }
               headerActions={
                 <div style={{ display: 'flex', gap: 6 }}>
                   <Button variant={metric === 'value' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setMetric('value')}>
@@ -500,7 +495,7 @@ export default function PimContributionPage() {
               )}
             </ChartPanel>
 
-            <ChartPanel
+            <ChartPanel {...vh("product.pimContribution.asp")}
               style={{ minWidth: 0 }}
               title="Average Selling Price (ASP)"
             >
@@ -526,7 +521,7 @@ export default function PimContributionPage() {
             </ChartPanel>
           </div>
 
-            <PerformanceReportTable
+            <PerformanceReportTable {...vh("product.pimContribution.details")}
               title="Performance Details"
               rows={performanceRows}
               showStatus

@@ -5,6 +5,7 @@ import { Sparkline } from './Sparkline';
 import { SemanticBadge } from './SemanticBadge';
 import { theme } from '../theme';
 import type { SemanticStatus } from './KpiTile';
+import { VisualInfoIcons, type VisualHelpContent } from './VisualHelp';
 
 export interface PerformanceReportRow {
   id: string;
@@ -32,6 +33,10 @@ export interface PerformanceReportRow {
 
 export interface PerformanceReportTableProps {
   title: string;
+  /** "?" — what the visual shows; from frontend/src/lib/visualHelp.ts. */
+  help?: VisualHelpContent;
+  /** "i" — what the user can do with it. */
+  interactions?: readonly string[];
   rows: PerformanceReportRow[];
   /** Adds a trailing Status column (pill badge) -- used by the Volume/ASP table, per the mockup. */
   showStatus?: boolean;
@@ -87,7 +92,7 @@ function trendStatus(v: number | null): SemanticStatus {
  * AspCard's actualAsp/targetAsp) -- never a fabricated per-region or per-product breakdown that
  * this data model doesn't actually back.
  */
-export function PerformanceReportTable({ title, rows, showStatus, showTakeaway, showLytdColumn, lastColumnLabel = 'LYTD', compactColumns, lastUpdatedLabel, filtersSummary, onExportPdf }: PerformanceReportTableProps) {
+export function PerformanceReportTable({ title, help, interactions, rows, showStatus, showTakeaway, showLytdColumn, lastColumnLabel = 'LYTD', compactColumns, lastUpdatedLabel, filtersSummary, onExportPdf }: PerformanceReportTableProps) {
   const canExport = useCanExport();
   const hideVarianceLy = compactColumns && !showLytdColumn;
   const hideTrend = compactColumns && !showLytdColumn;
@@ -114,6 +119,7 @@ export function PerformanceReportTable({ title, rows, showStatus, showTakeaway, 
         }}
       >
         <h3 style={{ fontSize: theme.table.titleFontSize, fontWeight: 700, margin: 0 }}>{title}</h3>
+        <VisualInfoIcons title={title} help={help} interactions={interactions} capabilities={{ exportPdf: !!onExportPdf && canExport }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto' }}>
           {onExportPdf && canExport && (
             <button
