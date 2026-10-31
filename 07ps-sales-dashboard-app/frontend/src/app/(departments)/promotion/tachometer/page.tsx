@@ -394,7 +394,6 @@ export default function TachometerPage() {
     <PermissionGuard pageKey="tachometer">
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
       <AppHeader
-        pageTitle="Promotion Dashboard"
         anchorDate={anchorDate}
         onAnchorDateChange={onAnchorDateChange}
         roleLabel={roleLabel}

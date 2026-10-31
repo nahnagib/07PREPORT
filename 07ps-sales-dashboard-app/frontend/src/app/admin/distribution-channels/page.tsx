@@ -29,7 +29,7 @@ const selectStyle: React.CSSProperties = {
 export default function AdminDistributionChannelsPage() {
   return (
     <PermissionGuard pageKey="admin_distribution_channels">
-      <AdminLayout title="Distribution Channels">
+      <AdminLayout>
         <DistributionChannelsPageBody />
       </AdminLayout>
     </PermissionGuard>

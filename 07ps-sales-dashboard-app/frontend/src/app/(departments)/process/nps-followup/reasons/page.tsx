@@ -72,7 +72,7 @@ function ReasonsBody() {
   );
 
   return (
-    <FollowupShell title="Detractor Follow-up · Reasons" view="reasons">
+    <FollowupShell view="reasons">
       {error ? (
         <ErrorState message={error} onRetry={() => void load()} />
       ) : !rows ? (

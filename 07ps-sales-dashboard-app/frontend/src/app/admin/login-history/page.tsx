@@ -25,7 +25,7 @@ const EVENT_TYPES = [
 export default function AdminLoginHistoryPage() {
   return (
     <PermissionGuard pageKey="admin_login_history">
-      <AdminLayout title="Login History">
+      <AdminLayout>
         <LoginHistoryBody />
       </AdminLayout>
     </PermissionGuard>

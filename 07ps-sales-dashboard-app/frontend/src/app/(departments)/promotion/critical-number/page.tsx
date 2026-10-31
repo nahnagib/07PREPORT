@@ -317,7 +317,6 @@ export default function CriticalNumberPage() {
     <PermissionGuard pageKey="critical_number">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           roleLabel={roleLabel}

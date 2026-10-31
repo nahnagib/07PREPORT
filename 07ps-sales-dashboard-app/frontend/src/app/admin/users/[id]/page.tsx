@@ -26,7 +26,7 @@ const FLAG = { view: 'canView', create: 'canCreate', edit: 'canEdit', delete: 'c
 export default function AdminUserDetailPage() {
   return (
     <PermissionGuard pageKey="admin_users">
-      <AdminLayout title="User Details">
+      <AdminLayout subTitle="User Details">
         <UserDetailBody />
       </AdminLayout>
     </PermissionGuard>

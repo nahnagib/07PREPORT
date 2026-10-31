@@ -11,7 +11,8 @@ import { visibleAdminTabs } from '../lib/navItems';
  * Administration sections, each individually gated by canView so a section a user can't reach
  * doesn't even show as a tab. The ETL Control Center and Audit Log tabs are the exception: they're
  * reserved for the Admin role (see lib/navItems.ts's ADMIN_TABS and backend's requireAdminRole). */
-export function AdminLayout({ title, children }: { title: string; children: React.ReactNode }) {
+/** `subTitle`: a record shown one level below the section (e.g. a user); the section title itself comes from the route. */
+export function AdminLayout({ subTitle, children }: { subTitle?: string; children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, canView, isAdmin, logout } = useAuth();
   const visibleTabs = visibleAdminTabs(canView, isAdmin);
@@ -19,7 +20,7 @@ export function AdminLayout({ title, children }: { title: string; children: Reac
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
       <AppHeader
-        pageTitle={title}
+        subTitle={subTitle}
         anchorDate=""
         onAnchorDateChange={() => {}}
         roleLabel={user?.role.label ?? user?.fullName}

@@ -7,6 +7,7 @@ import { DateInput } from '@07ps/ui';
 import { useBusinessUnit } from './BusinessUnitProvider';
 import { useTheme } from './ThemeProvider';
 import { BASE_PATH } from '../lib/basePath';
+import { APP_TITLE, usePageTitle } from '../lib/pageTitle';
 
 /**
  * Logo asset note: the source BMH files ("BenMussa Black.png" / "BenMussa White.png") are named
@@ -36,7 +37,9 @@ const buLogo: Record<string, { light: string; dark: string; alt: string } | null
 };
 
 export interface AppHeaderProps {
-  pageTitle: string;
+  /** The title is "<Department> — <Page>", derived from the route and the nav config (lib/pageTitle.ts). Only a deeper
+   * page names its extra level here: a Tachometer metric, a brand, a Kaizen card, a user ("› YTD Value Breakdown"). */
+  subTitle?: string | null;
   anchorDate: string;
   onAnchorDateChange: (date: string) => void;
   /** Back button (browser history), shown next to the theme toggle. Pass false where there is
@@ -75,7 +78,7 @@ export interface AppHeaderProps {
  * components.
  */
 export function AppHeader({
-  pageTitle,
+  subTitle,
   anchorDate,
   onAnchorDateChange,
   showBack = true,
@@ -91,9 +94,11 @@ export function AppHeader({
   const secondary = buLogo[businessUnit];
   const router = useRouter();
 
+  const title = usePageTitle(subTitle);
+
   React.useEffect(() => {
-    document.title = pageTitle ? `${pageTitle} | BMH - 7Ps Dashboard` : 'BMH - 7Ps Dashboard';
-  }, [pageTitle]);
+    document.title = `${title.text} | ${APP_TITLE}`;
+  }, [title.text]);
 
   const initials = (roleLabel ?? 'U')
     .split(' ')
@@ -124,7 +129,7 @@ export function AppHeader({
           alt="Ben Moussa Holding"
           width={160}
           height={32}
-          style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 0 }}
+          style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 1, minWidth: 40 }}
           priority
         />
         {secondary && (
@@ -139,11 +144,11 @@ export function AppHeader({
               alt={secondary.alt}
               width={96}
               height={32}
-              style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 0 }}
+              style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 1, minWidth: 40 }}
             />
           </>
         )}
-        <h1 style={{ fontSize: 20, fontWeight: 700, marginInlineStart: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pageTitle}</h1>
+        <PageTitleHeading title={title} />
       </div>
 
       <div className="flex items-center gap-3" style={{ flex: '1 0 auto', justifyContent: 'flex-end' }}>
@@ -287,5 +292,35 @@ export function AppHeader({
         )}
       </div>
     </header>
+  );
+}
+
+const ellipsis: React.CSSProperties = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+
+/**
+ * "<Department> — <Page> › <Sub>" on one line: the department and the sub-page muted, the page bold. When space runs out
+ * the sub-page shrinks first, then the department, so the current page stays readable longest (the heading keeps
+ * at least 8rem; the logos shrink before it does). Each part is its own
+ * dir="auto" run so the separators sit right in RTL text too.
+ */
+function PageTitleHeading({ title }: { title: ReturnType<typeof usePageTitle> }) {
+  const muted: React.CSSProperties = { ...ellipsis, fontWeight: 500, color: 'var(--ps-color-muted-text)' };
+  const sep: React.CSSProperties = { flexShrink: 0, color: 'var(--ps-color-muted-text)', fontWeight: 400, padding: '0 6px' };
+  return (
+    <h1 title={title.text} aria-label={title.text} style={{ display: 'flex', alignItems: 'baseline', minWidth: 'min(8rem, 100%)', fontSize: 20, fontWeight: 700, marginInlineStart: 12, whiteSpace: 'nowrap' }}>
+      {title.context && (
+        <>
+          <span dir="auto" data-testid="title-context" style={{ ...muted, flex: '0 1000 auto' }}>{title.context}</span>
+          <span aria-hidden style={sep}>—</span>
+        </>
+      )}
+      <span dir="auto" data-testid="title-page" style={{ ...ellipsis, flex: '0 1 auto', color: 'var(--ps-color-text)' }}>{title.page}</span>
+      {title.sub && (
+        <>
+          <span aria-hidden style={sep}>›</span>
+          <span dir="auto" data-testid="title-sub" style={{ ...muted, flex: '0 100000 auto' }}>{title.sub}</span>
+        </>
+      )}
+    </h1>
   );
 }

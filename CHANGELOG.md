@@ -6,6 +6,21 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Header title "<Department> — <Page>" on every page, 2026-10-31)
+- The header and the browser tab show **`<Department> — <Page>`** (e.g. `Promotion — Pipeline Health`,
+  `Price — Receivables and Collections`, `Admin — Users`), one level deeper on sub-pages
+  (`Promotion — Tachometer › YTD Value Breakdown`, `Process — Kaizen Board › Manage Kaizen Cards`). Department hubs show
+  `Promotion Dashboard`; the app hub `7Ps Dashboard Hub`. Browser tab: `<title> | BMH - 7Ps Dashboard`.
+- One source of truth: `frontend/src/lib/pageTitle.ts` (`usePageTitle` / `resolvePageTitle`) matches the route against
+  `DEPARTMENTS`, `NAV_ITEMS`, `ADMIN_TABS` and the new `SUB_PAGES` (lib/navItems.ts). A route missing from the config
+  falls back to its department (dev-only console warning), never an empty title.
+- `AppHeader`'s `pageTitle` prop is gone; an optional `subTitle` names a record or metric on deeper pages (Tachometer
+  metric, PIM brand, Kaizen card, admin user). All hardcoded `"Promotion Dashboard"` / `"Product Dashboard"` and static
+  titles removed (pages, `ComingSoonPage`, `DepartmentHubPage`, `DepartmentPlaceholderPage`, `MarcomPage`, `KaizenShell`,
+  `FollowupShell`, `AdminLayout`, legacy `Header`).
+- Styling: department and sub-page muted, page bold, one line; the sub-page then the department ellipsize first, the
+  heading keeps at least 8rem and the logos shrink before it. Each part is `dir="auto"` (the UI has no Arabic labels yet).
+
 ### Added ("Open in Odoo" links on Pipeline Health and the Customers Table, 2026-10-31)
 - **Pipeline Health drill-downs:** Opportunity Details (all its Stage / Expected Closure / Probability / funnel variants)
   links the Opportunity Name to `crm.lead`; Quotations and Sales Orders link the Order Number to `sale.order`; Deliveries

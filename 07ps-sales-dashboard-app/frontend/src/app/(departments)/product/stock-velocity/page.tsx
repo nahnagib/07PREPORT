@@ -297,7 +297,7 @@ export default function StockVelocityPage() {
   return (
     <PermissionGuard pageKey="stock_velocity">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
-        <AppHeader pageTitle="Product Dashboard" anchorDate={anchorDate} onAnchorDateChange={onAnchorDateChange} roleLabel={roleLabel} onLogout={logout} showDateInput={false} />
+        <AppHeader anchorDate={anchorDate} onAnchorDateChange={onAnchorDateChange} roleLabel={roleLabel} onLogout={logout} showDateInput={false} />
 
         <FilterBar
           onReset={() => {

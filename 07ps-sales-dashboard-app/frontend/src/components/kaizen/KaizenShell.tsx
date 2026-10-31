@@ -40,7 +40,7 @@ export function KaizenShell({ titleKey, titleVars, actions, children }: {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 72 }}>
       <AppHeader
-        pageTitle={t(titleKey, titleVars)}
+        subTitle={titleKey === 'kaizen.board' ? undefined : t(titleKey, titleVars)}
         anchorDate=""
         onAnchorDateChange={() => undefined}
         roleLabel={user?.role.label ?? user?.fullName}

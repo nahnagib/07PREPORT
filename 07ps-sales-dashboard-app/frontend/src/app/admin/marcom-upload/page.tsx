@@ -16,7 +16,7 @@ import { canConfirm, initialUploadState, uploadReducer } from '../../../lib/marc
 export default function MarcomUploadPage() {
   return (
     <PermissionGuard pageKey="admin_marcom_upload">
-      <AdminLayout title="MARCOM Data Upload">
+      <AdminLayout>
         <Body />
       </AdminLayout>
     </PermissionGuard>

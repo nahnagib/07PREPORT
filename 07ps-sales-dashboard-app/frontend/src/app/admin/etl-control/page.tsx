@@ -33,7 +33,7 @@ const POLL_INTERVAL_MS = 5000;
 export default function AdminEtlControlPage() {
   return (
     <AdminOnlyGuard>
-      <AdminLayout title="ETL Control Center">
+      <AdminLayout>
         <EtlControlBody />
       </AdminLayout>
     </AdminOnlyGuard>

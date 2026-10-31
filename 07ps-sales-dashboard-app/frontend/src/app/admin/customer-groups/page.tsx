@@ -33,7 +33,7 @@ const selectStyle: React.CSSProperties = {
 export default function AdminCustomerGroupsPage() {
   return (
     <PermissionGuard pageKey="admin_customer_groups">
-      <AdminLayout title="Customer Groups">
+      <AdminLayout>
         <CustomerGroupsPageBody />
       </AdminLayout>
     </PermissionGuard>

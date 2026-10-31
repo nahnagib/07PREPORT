@@ -5,6 +5,7 @@ import { RefreshCw, Download, Bell } from 'lucide-react';
 import { useBusinessUnit } from './BusinessUnitProvider';
 import { useTheme } from './ThemeProvider';
 import { BASE_PATH } from '../lib/basePath';
+import { usePageTitle } from '../lib/pageTitle';
 
 /**
  * Logo asset note: the source BMH files ("BenMussa Black.png" / "BenMussa White.png") are named
@@ -39,7 +40,8 @@ const buLogo: Record<string, { light: string; dark: string; alt: string } | null
  * business unit is selected (Section 3.12). Right: partner badge row + global action cluster
  * (refresh indicator, export, notifications). Fixed height 64px desktop / 56px mobile (Section 3.2).
  */
-export function Header({ pageTitle }: { pageTitle: string }) {
+export function Header({ subTitle }: { subTitle?: string }) {
+  const title = usePageTitle(subTitle);
   const { businessUnit } = useBusinessUnit();
   const { theme, toggle } = useTheme();
   const secondary = buLogo[businessUnit];
@@ -80,7 +82,7 @@ export function Header({ pageTitle }: { pageTitle: string }) {
             />
           </>
         )}
-        <h1 style={{ fontSize: 20, fontWeight: 700, marginLeft: 12 }}>{pageTitle}</h1>
+        <h1 style={{ fontSize: 20, fontWeight: 700, marginLeft: 12 }}>{title.text}</h1>
       </div>
 
       <div className="flex items-center gap-4">

@@ -29,7 +29,7 @@ const selectStyle: React.CSSProperties = {
 export default function AdminClosuresPage() {
   return (
     <PermissionGuard pageKey="admin_closures">
-      <AdminLayout title="Forced Closures">
+      <AdminLayout>
         <ClosuresPageBody />
       </AdminLayout>
     </PermissionGuard>

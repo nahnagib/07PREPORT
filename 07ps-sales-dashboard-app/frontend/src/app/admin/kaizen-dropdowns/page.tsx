@@ -19,7 +19,7 @@ const LISTS: KaizenListKey[] = ['department', 'card_type', 'card_priority'];
 export default function KaizenDropdownsPage() {
   return (
     <AdminOnlyGuard>
-      <AdminLayout title={t('kaizen.dropdownsTitle')}>
+      <AdminLayout>
         <DropdownsBody />
       </AdminLayout>
     </AdminOnlyGuard>

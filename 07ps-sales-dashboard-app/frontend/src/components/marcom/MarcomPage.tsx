@@ -25,7 +25,7 @@ function Inner<T extends PageData>(p: MarcomPageProps<T>) {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
-      <AppHeader pageTitle={p.title} anchorDate="" onAnchorDateChange={() => undefined} roleLabel={user?.role.label ?? user?.fullName} onLogout={logout} showDateInput={false} />
+      <AppHeader anchorDate="" onAnchorDateChange={() => undefined} roleLabel={user?.role.label ?? user?.fullName} onLogout={logout} showDateInput={false} />
       <main style={{ flex: 1 }}>
         <MarcomPageView<T>
           page={p.page} title={p.title} filters={filters} onFilters={setFilters} onReset={reset}

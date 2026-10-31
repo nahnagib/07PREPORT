@@ -40,7 +40,7 @@ function formatDate(iso: string): string {
 export default function AdminRolesPage() {
   return (
     <PermissionGuard pageKey="admin_roles">
-      <AdminLayout title="Roles & Permissions">
+      <AdminLayout>
         <RolesBody />
       </AdminLayout>
     </PermissionGuard>

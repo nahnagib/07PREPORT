@@ -17,7 +17,7 @@ const SCOPE_NOTE =
 export default function AdminHolidaysPage() {
   return (
     <PermissionGuard pageKey="admin_holidays">
-      <AdminLayout title="Official Holidays">
+      <AdminLayout>
         <HolidaysPageBody />
       </AdminLayout>
     </PermissionGuard>

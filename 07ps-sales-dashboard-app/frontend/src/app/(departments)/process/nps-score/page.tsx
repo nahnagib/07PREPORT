@@ -107,7 +107,7 @@ function NpsScoreBody() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
-      <AppHeader pageTitle="NPS Score" anchorDate={anchorDate} onAnchorDateChange={onAnchorDateChange} roleLabel={roleLabel} onLogout={logout} showDateInput={false} />
+      <AppHeader anchorDate={anchorDate} onAnchorDateChange={onAnchorDateChange} roleLabel={roleLabel} onLogout={logout} showDateInput={false} />
       <FilterBar
         filters={effectiveFilters}
         onChange={onFiltersChange}

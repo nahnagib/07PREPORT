@@ -90,6 +90,18 @@ const ROUTE_PAGE_KEYS: { href: string; pageKey: string }[] = [
   { href: '/process/nps-followup/reasons', pageKey: 'nps_followup_reasons' },
 ];
 
+/** Sub-pages one level below a nav entry or admin tab: the third level of the header title (lib/pageTitle.ts), e.g.
+ * "Process — Kaizen Board › Manage Kaizen Cards". Records and metrics (a card number, a brand, a Tachometer metric, a
+ * user) are named by their page through AppHeader's `subTitle` instead. */
+export const SUB_PAGES: readonly { href: string; label: string }[] = [
+  { href: '/process/kaizen-board/cards', label: 'Kaizen Card Details' },
+  { href: '/process/kaizen-board/manage', label: 'Manage Kaizen Cards' },
+  { href: '/process/kaizen-board/manage/new', label: 'New Kaizen Card' },
+  { href: '/process/nps-followup/reasons', label: 'Reasons' },
+  { href: '/product/pim-contribution/brand', label: 'Brand Performance' },
+  { href: '/admin/users/import', label: 'Excel Import' },
+];
+
 /** Admin tabs this user may open. */
 export function visibleAdminTabs(canView: (pageKey: string) => boolean, isAdmin: boolean) {
   return ADMIN_TABS.filter((t) => (t.adminOnly ? isAdmin : t.pageKey !== null && canView(t.pageKey)));

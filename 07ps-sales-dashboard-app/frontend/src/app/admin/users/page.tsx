@@ -55,7 +55,7 @@ function StatusPill({ status }: { status: UserStatus }) {
 export default function AdminUsersPage() {
   return (
     <PermissionGuard pageKey="admin_users">
-      <AdminLayout title="User Management">
+      <AdminLayout>
         <UsersPageBody />
       </AdminLayout>
     </PermissionGuard>

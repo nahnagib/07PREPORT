@@ -21,7 +21,7 @@ const ENTITY_LABEL: Record<string, string> = {
 export default function AdminAuditLogPage() {
   return (
     <AdminOnlyGuard>
-      <AdminLayout title="Audit Log">
+      <AdminLayout>
         <AuditLogBody />
       </AdminLayout>
     </AdminOnlyGuard>

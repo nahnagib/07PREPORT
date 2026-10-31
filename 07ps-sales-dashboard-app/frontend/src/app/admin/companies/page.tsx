@@ -30,7 +30,7 @@ const selectStyle: React.CSSProperties = {
 export default function AdminCompaniesPage() {
   return (
     <PermissionGuard pageKey="admin_companies">
-      <AdminLayout title="Companies">
+      <AdminLayout>
         <CompaniesPageBody />
       </AdminLayout>
     </PermissionGuard>

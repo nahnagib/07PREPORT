@@ -23,8 +23,7 @@ export const FOLLOWUP_BASE = '/process/nps-followup';
  * Chrome for the Detractor Follow-up pages (the Kaizen shell's pattern): header, a sub-nav Board / List / Reasons (each
  * only with its permission), the department bottom nav on phones. `filters` renders under the header, full width.
  */
-export function FollowupShell({ title, view, onView, actions, filters, children }: {
-  title: string;
+export function FollowupShell({ view, onView, actions, filters, children }: {
   view: 'board' | 'list' | 'reasons';
   /** on the board/list page: switch the view in place (the filters stay) */
   onView?: (v: 'board' | 'list') => void;
@@ -41,7 +40,7 @@ export function FollowupShell({ title, view, onView, actions, filters, children 
   ];
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 72 }}>
-      <AppHeader pageTitle={title} anchorDate="" onAnchorDateChange={() => undefined} roleLabel={user?.role.label ?? user?.fullName} onLogout={logout} showDateInput={false} />
+      <AppHeader anchorDate="" onAnchorDateChange={() => undefined} roleLabel={user?.role.label ?? user?.fullName} onLogout={logout} showDateInput={false} />
       {filters}
       <main style={{ flex: 1, padding: 'var(--ps-space-3, 16px)', display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>

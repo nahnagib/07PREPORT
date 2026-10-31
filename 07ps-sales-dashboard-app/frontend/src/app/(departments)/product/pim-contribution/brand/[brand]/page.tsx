@@ -192,7 +192,7 @@ export default function BrandDrillDownPage() {
     <PermissionGuard pageKey="pim_contribution">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle={selected ? `Brand Performance — ${selected.requested}` : 'Brand Performance'}
+          subTitle={selected ? `Brand Performance: ${selected.requested}` : undefined}
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           roleLabel={roleLabel}

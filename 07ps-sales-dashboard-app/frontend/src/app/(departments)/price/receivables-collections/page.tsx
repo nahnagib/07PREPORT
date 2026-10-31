@@ -329,7 +329,7 @@ export default function ReceivablesCollectionsPage() {
   return (
     <PermissionGuard pageKey="debt_report">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
-        <AppHeader pageTitle="Receivables and Collections" anchorDate="" onAnchorDateChange={() => {}} roleLabel={roleLabel} onLogout={logout} showDateInput={false} />
+        <AppHeader anchorDate="" onAnchorDateChange={() => {}} roleLabel={roleLabel} onLogout={logout} showDateInput={false} />
 
         <FilterBar
           onReset={() => setFilters(DEFAULT_DEBT_FILTERS)}

@@ -543,7 +543,6 @@ export default function CustomerGrowthPage() {
     <PermissionGuard pageKey="customer_growth">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           roleLabel={roleLabel}

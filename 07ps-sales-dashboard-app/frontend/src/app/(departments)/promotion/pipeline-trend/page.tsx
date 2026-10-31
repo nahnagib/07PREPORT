@@ -392,7 +392,6 @@ export default function PipelineTrendPage() {
     <PermissionGuard pageKey="pipeline_trend">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle="Promotion Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           roleLabel={roleLabel}

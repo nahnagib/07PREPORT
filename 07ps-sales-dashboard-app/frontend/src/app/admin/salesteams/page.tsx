@@ -45,7 +45,7 @@ const selectStyle: React.CSSProperties = {
 export default function AdminSalesTeamsPage() {
   return (
     <PermissionGuard pageKey="admin_salesteams">
-      <AdminLayout title="Sales Team Management">
+      <AdminLayout>
         <SalesTeamsPageBody />
       </AdminLayout>
     </PermissionGuard>

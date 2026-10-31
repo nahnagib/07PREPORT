@@ -227,7 +227,7 @@ function MetricDetailBody({
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
       <AppHeader
-        pageTitle={`${meta.title} — Breakdown`}
+        subTitle={`${meta.title} Breakdown`}
         anchorDate={anchorDate}
         onAnchorDateChange={handleAnchorDateChange}
         roleLabel={roleLabel}

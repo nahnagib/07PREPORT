@@ -289,7 +289,6 @@ export default function ProductLifecyclePage() {
     <PermissionGuard pageKey="product_lifecycle">
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
         <AppHeader
-          pageTitle="Product Dashboard"
           anchorDate={anchorDate}
           onAnchorDateChange={onAnchorDateChange}
           roleLabel={roleLabel}

@@ -26,7 +26,6 @@ export function DepartmentHubPage({ departmentKey }: { departmentKey: NavDepartm
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppHeader
-        pageTitle={`${department.pTerm} — ${department.name}`}
         anchorDate=""
         onAnchorDateChange={() => {}}
         roleLabel={roleLabel}

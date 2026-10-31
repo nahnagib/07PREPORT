@@ -17,7 +17,6 @@ export function DepartmentPlaceholderPage({ departmentKey }: { departmentKey: st
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <AppHeader
-        pageTitle={`${department.pTerm} — ${department.name}`}
         anchorDate=""
         onAnchorDateChange={() => {}}
         roleLabel={roleLabel}

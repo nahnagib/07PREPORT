@@ -136,7 +136,6 @@ function FollowupBody() {
 
   return (
     <FollowupShell
-      title="Detractor Follow-up"
       view={view}
       onView={(v) => filters && setFilters({ ...filters, view: v, statuses: v === 'board' ? filters.statuses.filter((x) => x !== 'HISTORICAL') : filters.statuses })}
       actions={canExport('nps_followup') ? (

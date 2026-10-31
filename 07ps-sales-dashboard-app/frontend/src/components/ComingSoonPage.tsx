@@ -26,7 +26,7 @@ export function ComingSoonPage({ pageKey, description }: { pageKey: string; desc
   return (
     <PermissionGuard pageKey={pageKey}>
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', paddingBottom: 64 }}>
-        <AppHeader pageTitle={item.label} anchorDate="" onAnchorDateChange={() => {}} roleLabel={user?.role.label ?? user?.fullName} onLogout={logout} showDateInput={false} />
+        <AppHeader anchorDate="" onAnchorDateChange={() => {}} roleLabel={user?.role.label ?? user?.fullName} onLogout={logout} showDateInput={false} />
         <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--ps-space-4, 24px)' }}>
           <Card
             data-testid="coming-soon-page"

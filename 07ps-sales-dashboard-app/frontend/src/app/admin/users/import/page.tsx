@@ -10,7 +10,7 @@ import { adminApi, ApiError, ImportResult, ImportRowError, ImportRowSuccess } fr
 export default function AdminImportPage() {
   return (
     <PermissionGuard pageKey="admin_users" action="create">
-      <AdminLayout title="Excel Import">
+      <AdminLayout>
         <ImportBody />
       </AdminLayout>
     </PermissionGuard>
