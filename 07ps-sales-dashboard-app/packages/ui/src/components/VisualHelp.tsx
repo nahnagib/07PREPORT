@@ -1,5 +1,5 @@
 'use client';
-import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CircleHelp, Info } from 'lucide-react';
 
@@ -40,15 +40,22 @@ export const CAPABILITY_LINES: Record<keyof VisualCapabilities, string> = {
   pageSize: 'Move between pages with Previous / Next',
 };
 
-/** Page lines first, then the standard capability lines not already said (case- and punctuation-insensitive). */
+/** Only explain clicks that reveal data or change the view. Toolbar controls explain themselves. */
+export function isDetailInteraction(line: string): boolean {
+  return /\b(click|tap|drill|open|switch|toggle|select|pick|turn on)\b/i.test(line)
+    && !/\b(export|download|copy|sort|header|search|column|rows per page|previous|next page)\b/i.test(line)
+    && !/expand|view as table|table view|\bfilter any\b/i.test(line);
+}
+
+/** Merge real detail actions without duplicates. Hover and routine toolbar actions never create an icon. */
 export function mergeInteractions(lines: readonly string[] | undefined, capabilities?: VisualCapabilities): string[] {
   const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const out: string[] = [];
   const seen = new Set<string>();
   const add = (s: string) => { const k = key(s); if (s.trim() && !seen.has(k)) { seen.add(k); out.push(s.trim()); } };
-  (lines ?? []).forEach(add);
+  (lines ?? []).filter(isDetailInteraction).forEach(add);
   for (const [cap, on] of Object.entries(capabilities ?? {}) as [keyof VisualCapabilities, boolean | undefined][]) {
-    if (on) add(CAPABILITY_LINES[cap]);
+    if (on && ['drill', 'clickableRows', 'odooLinks'].includes(cap) && !(cap === 'drill' && out.length > 0)) add(CAPABILITY_LINES[cap]);
   }
   return out;
 }
@@ -173,22 +180,15 @@ export interface VisualInfoIconsProps {
 }
 
 
-const warned = new Set<string>();
 
 /**
  * The two icons after a visual's title: "?" (what it shows: definition, formula, notes) then "i" (what you can do with
- * it). Each is hidden when it has nothing to say; a visual with neither logs a dev-only warning.
+ * it). Routine controls and hover do not create interaction icons. Intentionally quiet visuals render nothing.
  */
 export function VisualInfoIcons({ title, help, interactions, capabilities, size = 14 }: VisualInfoIconsProps) {
   const resolved = help?.definition?.trim() ? help : undefined;
   const lines = mergeInteractions(interactions, capabilities);
-  if (!resolved && lines.length === 0) {
-    if (process.env.NODE_ENV !== 'production' && !warned.has(title)) {
-      warned.add(title);
-      console.warn(`[VisualInfoIcons] "${title}" has no help and no interactions (lib/visualHelp.ts)`);
-    }
-    return null;
-  }
+  if (!resolved && lines.length === 0) return null;
   const formulas = resolved?.formula === undefined ? [] : Array.isArray(resolved.formula) ? resolved.formula : [resolved.formula];
   return (
     <span data-html2canvas-ignore="true" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>

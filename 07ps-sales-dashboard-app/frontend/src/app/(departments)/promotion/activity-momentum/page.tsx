@@ -704,6 +704,7 @@ function ActivityCountsPanel({
           ) : (
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Opportunity Activities</span>
           )}
+          {onTitleClick && <VisualInfoIcons title="Opportunity Activities" interactions={vh('promotion.activityMomentum.counts').interactions} />}
         </div>
         {onDownloadPdf && (
           <ExportPdfButton downloading={!!downloading} disabled={!counts} onClick={onDownloadPdf} />
@@ -719,7 +720,7 @@ function ActivityCountsPanel({
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
               {formatCountOrDash(t.value)}
             </div>
-            <div style={{ fontSize: 10, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{t.label} <VisualInfoIcons title={t.label} {...vh('promotion.activityMomentum.counts')} /></div>
+            <div style={{ fontSize: 10, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{t.label}</div>
           </div>
         ))}
       </div>

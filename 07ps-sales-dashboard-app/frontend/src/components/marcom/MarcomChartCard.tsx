@@ -1,6 +1,5 @@
 'use client';
 import { VisualInfoIcons } from '@07ps/ui';
-import { MarcomVisualContext } from './MarcomVisualContext';
 import { vhById } from '../../lib/visualHelp';
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { EmptyState, ErrorState, LoadingSkeleton } from '@07ps/ui';
@@ -112,7 +111,7 @@ export function MarcomChartCard(p: MarcomChartCardProps) {
   }
 
   return (
-    <MarcomVisualContext.Provider value={'marcom.' + p.visual}><section
+    <section
       data-visual={p.visual}
       aria-busy={busy || undefined}
       aria-label={p.title}
@@ -137,7 +136,7 @@ export function MarcomChartCard(p: MarcomChartCardProps) {
       </header>
       {body}
       {p.footer && <footer style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>{p.footer}</footer>}
-    </section></MarcomVisualContext.Provider>
+    </section>
   );
 }
 

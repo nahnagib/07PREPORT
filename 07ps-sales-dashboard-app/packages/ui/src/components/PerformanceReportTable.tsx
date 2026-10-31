@@ -119,7 +119,7 @@ export function PerformanceReportTable({ title, help, interactions, rows, showSt
         }}
       >
         <h3 style={{ fontSize: theme.table.titleFontSize, fontWeight: 700, margin: 0 }}>{title}</h3>
-        <VisualInfoIcons title={title} help={help} interactions={interactions} capabilities={{ exportPdf: !!onExportPdf && canExport }} />
+        <VisualInfoIcons title={title} interactions={interactions} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto' }}>
           {onExportPdf && canExport && (
             <button

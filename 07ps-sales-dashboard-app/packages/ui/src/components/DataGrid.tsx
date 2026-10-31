@@ -1,5 +1,4 @@
 'use client';
-import { VisualInfoIcons } from './VisualHelp';
 import React, { useMemo, useState, useRef, isValidElement } from 'react';
 import {
   type ColumnDef,
@@ -436,7 +435,6 @@ export function DataGrid<T extends Record<string, unknown>>({
 
   return (
     <div>
-      <VisualInfoIcons title="Table controls" capabilities={{ sortable: true, filterable: enableFiltering, search: enableFiltering, exportCsv: canExport, exportPdf: canExport, clickableRows: !!onRowClick, pageSize: true }} />
       {/* Toolbar: global search (left) + export/copy actions (right). */}
       {(enableFiltering || canExport) && (
         <div

@@ -993,7 +993,6 @@ function TotalInvoicesCard({
       </div>
       <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
         {label}
-        <VisualInfoIcons title={label} {...vh('promotion.invoicesEngine.totalInvoices')} size={12} />
       </div>
     </Card>
   );

@@ -320,3 +320,10 @@ ETL pipeline, and BullMQ-based scheduling.
 - Status tiles open Details with that status selected; selecting the same tile again resets All.
 - Filter the rows before passing them to DataGrid, whose CSV/PDF exports use its filtered/sorted row model. No backend status query parameter is needed: the overview already returns classified rows.
 - Add regression coverage for options, exact Blocked matching, 32-row fixture and resetting All. Live-data count and manual export review remain pending the browser access restriction recorded above.
+
+## 2026-10-31 — Reduce visual-help clutter
+
+- Show interaction hints only for actions that open details or change the displayed data/view. Hover, export, sorting, search and expand controls alone no longer produce an “i”.
+- Move Opportunity Activities help to its clickable title; remove repeated icons from count tiles, MARCOM subcards, invoice period totals, quick insights and ordinary table toolbars.
+- Keep definitions short on value/count visuals. Limit formula blocks to rates and scores, and remove generic explanation icons from Performance Details tables.
+- Verified with 471 frontend/shared UI tests and frontend type checking.

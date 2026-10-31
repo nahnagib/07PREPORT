@@ -283,25 +283,22 @@ function MetricDetailBody({
                   gap: 'var(--ps-space-3, 16px)',
                 }}
               >
-                <InsightCard icon={Layers} label="Total Groups" {...vh('promotion.tachometerBreakdown.totalGroups')} value={String(insights.total)} status="neutral" />
+                <InsightCard icon={Layers} label="Total Groups" value={String(insights.total)} status="neutral" />
                 <InsightCard
                   icon={TargetIcon}
                   label="On Target"
-                  {...vh('promotion.tachometerBreakdown.onTarget')}
                   value={`${insights.onTarget} / ${insights.total}`}
                   status={insights.onTarget > 0 ? 'success' : 'neutral'}
                 />
                 <InsightCard
                   icon={AlertTriangle}
                   label="Critical"
-                  {...vh('promotion.tachometerBreakdown.critical')}
                   value={`${insights.critical} / ${insights.total}`}
                   status={insights.critical > 0 ? 'alert' : 'success'}
                 />
                 <InsightCard
                   icon={Award}
                   label="Top Performer"
-                  {...vh('promotion.tachometerBreakdown.topPerformer')}
                   value={insights.best?.groupLabel ?? '—'}
                   caption={insights.best ? formatVariance(insights.best.variancePct) : undefined}
                   status="success"
@@ -309,7 +306,6 @@ function MetricDetailBody({
                 <InsightCard
                   icon={TrendingDown}
                   label="Needs Attention"
-                  {...vh('promotion.tachometerBreakdown.needsAttention')}
                   value={insights.worst?.groupLabel ?? '—'}
                   caption={insights.worst ? formatVariance(insights.worst.variancePct) : undefined}
                   status="alert"

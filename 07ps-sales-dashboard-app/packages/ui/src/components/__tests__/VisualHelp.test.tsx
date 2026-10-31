@@ -13,7 +13,7 @@ const q = () => screen.queryByRole('button', { name: 'About this visual' });
 const i = () => screen.queryByRole('button', { name: 'How to interact' });
 
 describe('"?" and "i" icons', () => {
-  it('show or hide per content: help only, interactions only, both, neither (with a dev warning)', () => {
+  it('show or hide per content: help only, interactions only, both, neither', () => {
     const { rerender } = render(<VisualInfoIcons title="YTD Value" help={help} />);
     expect(q()).not.toBeNull();
     expect(i()).toBeNull();
@@ -26,11 +26,9 @@ describe('"?" and "i" icons', () => {
     const buttons = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'));
     expect(buttons).toEqual(['About this visual', 'How to interact']); // "?" first, then "i"
 
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     rerender(<VisualInfoIcons title="Nothing to say" />);
     expect(q()).toBeNull();
     expect(i()).toBeNull();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"Nothing to say" has no help and no interactions'));
   });
 
   it('"?" popover: title, definition, one formula per line, notes', () => {
@@ -44,7 +42,7 @@ describe('"?" and "i" icons', () => {
   });
 
   it('"i" popover: "What you can do" and a bullet list', () => {
-    render(<VisualInfoIcons title="Customers Table" interactions={['Sort by clicking a header', 'Export CSV / PDF']} />);
+    render(<VisualInfoIcons title="Customers Table" interactions={['Click the title to open the breakdown', 'Click a customer name to open it in Odoo']} />);
     fireEvent.focus(i()!);
     const pop = screen.getByRole('tooltip');
     expect(pop.textContent).toContain('What you can do');
@@ -89,20 +87,27 @@ describe('"?" and "i" icons', () => {
 });
 
 describe('standard capability lines', () => {
+  it('does not show i for hover, export, sorting, filters or expand alone', () => {
+    render(<VisualInfoIcons title="Lost opportunities" help={{ definition: 'Lost opportunities by reason.' }} interactions={['Hover a segment for its count and value', 'Export the visual as PDF']} capabilities={{ expandTable: true, sortable: true, filterable: true, search: true, exportCsv: true, exportPdf: true, pageSize: true }} />);
+    expect(q()).not.toBeNull();
+    expect(i()).toBeNull();
+  });
+  it('keeps only the click that opens details in a mixed list', () => {
+    expect(mergeInteractions(['Hover for values', 'Export PDF', 'Click a bar to list its customers'])).toEqual(['Click a bar to list its customers']);
+  });
 
   it('merges the page lines with the component\'s own capabilities, without duplicates', () => {
     expect(mergeInteractions(['Sort by clicking a column header.', 'Click a bar to filter by month'], { sortable: true, expandTable: true }))
-      .toEqual(['Sort by clicking a column header.', 'Click a bar to filter by month', 'Expand ⤢ to see the data as a table']);
+      .toEqual(['Click a bar to filter by month']);
   });
 
-  it('ChartPanel adds "expand to table" by itself when it has table data; a clickable KpiCard adds the drill line', () => {
+  it('expand alone stays quiet; a clickable KpiCard explains its drill action', () => {
     render(
       <ChartPanel title="Trend" help={help} tableColumns={[{ key: 'a', header: 'A' }]} tableRows={[{ a: 1 }]} getRowId={(r) => String(r.a)}>
         <div />
       </ChartPanel>,
     );
-    fireEvent.mouseEnter(i()!);
-    expect(screen.getByRole('tooltip').textContent).toContain('Expand ⤢ to see the data as a table');
+    expect(i()).toBeNull();
     cleanup();
     render(<KpiCard title="YTD Value" actual={1} targetToDate={2} status="success" actualLabel="LYD 1" referenceMetrics={[]} onClick={() => undefined} />);
     fireEvent.mouseEnter(i()!);

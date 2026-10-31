@@ -23,6 +23,11 @@ describe('RagBadge: icon + word + colour, never colour alone', () => {
 });
 
 describe('MarcomKpiCard', () => {
+  it('leaves explanation and interaction icons to the parent visual', () => {
+    const html = render(<MarcomKpiCard label="CTR" kpi={k()} />);
+    expect(html).not.toContain('About this visual');
+    expect(html).not.toContain('How to interact');
+  });
   it.each([
     ['green', 'On target'], ['yellow', 'Watch'], ['red', 'Off target'], ['neutral', 'No target'],
   ] as [Status, string][])('renders %s with value, label, status chip and a status-coloured edge', (status, word) => {
