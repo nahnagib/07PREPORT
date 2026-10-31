@@ -227,7 +227,7 @@ export const VISUAL_HELP = {
   },
   'promotion.customerGrowth.customerStatus': {
     help: { definition: 'Every customer with sales in your filters, by status this year.', formula: CUSTOMER_STATUS_RULES },
-    interactions: ['Click the title to open the Customers Table', PDF],
+    interactions: ['Click the title to open the Customers Table', 'Click a status tile to filter the Customers Table; click the same status again to reset to All', PDF],
   },
   'promotion.customerGrowth.customersTrend': {
     help: { definition: 'Total sales value (LYD) and customer count by year.' },

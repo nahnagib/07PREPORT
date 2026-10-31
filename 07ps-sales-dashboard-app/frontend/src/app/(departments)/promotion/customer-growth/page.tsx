@@ -1,4 +1,5 @@
 'use client';
+import { STATUS_SLICER_OPTIONS, filterCustomerStatus } from '../../../../lib/customerStatus';
 import React, { useState } from 'react';
 import { ArrowLeft, FileDown, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
@@ -46,13 +47,6 @@ import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 
 // Customer Category order, labels, palette and definition: lib/customerCategory.ts (shared with Receivables and Collections).
 
-const STATUS_SLICER_OPTIONS: { value: CustomerStatusLabel; label: string }[] = [
-  { value: 'Active Retained', label: 'Active Retained' },
-  { value: 'New', label: 'New' },
-  { value: 'Non Active', label: 'Non Active' },
-  { value: 'Reactivated', label: 'Reactivated' },
-  { value: 'Other', label: 'Other' },
-];
 
 /** Y-axis tick formatter for currency values: millions with an "M" suffix -- same convention as
  * Invoices Engine / Revenue Trend's chart axes. */
@@ -135,7 +129,7 @@ function toExecutiveSummaryRows(data?: CustomerGrowthOverview | null): Performan
     ...countRows('newCustomers', 'New Customers', kpis.newCustomers, 'new customers'),
     ...countRows('totalCustomers', 'Total Customers', kpis.totalCustomers, 'total customers'),
     statusRow('activeRetained', 'Active Retained Customers', status.activeRetained, `${status.activeRetained.toLocaleString(DISPLAY_LOCALE)} customers are currently active and retained.`),
-    statusRow('nonActive', 'Non-Active Customers', status.nonActive, `${status.nonActive.toLocaleString(DISPLAY_LOCALE)} customers purchased last year but not this year.`),
+    statusRow('nonActive', 'Non Active Customers', status.nonActive, `${status.nonActive.toLocaleString(DISPLAY_LOCALE)} customers purchased last year but not this year.`),
     statusRow('reactivated', 'Reactivated Customers', status.reactivated, `${status.reactivated.toLocaleString(DISPLAY_LOCALE)} customers have returned after a period without purchases.`),
     statusRow('blocked', 'Blocked Customers', status.blocked, `${status.blocked.toLocaleString(DISPLAY_LOCALE)} customers are flagged as blocked in the operational system.`),
     rateRow('customerAcquisition', 'Customer Acquisition', rates.customerAcquisitionPct, true),
@@ -196,7 +190,7 @@ function toCustomerStatusTableRows(counts?: CustomerStatusCounts): PeriodCountTa
   if (!counts) return [];
   return [
     { id: 'activeRetained', period: 'Active Retained', value: formatCountOrDash(counts.activeRetained) },
-    { id: 'nonActive', period: 'Inactive / Non-Active', value: formatCountOrDash(counts.nonActive) },
+    { id: 'nonActive', period: 'Non Active', value: formatCountOrDash(counts.nonActive) },
     { id: 'blocked', period: 'Blocked', value: formatCountOrDash(counts.blocked) },
     { id: 'reactivated', period: 'Reactivated', value: formatCountOrDash(counts.reactivated) },
   ];
@@ -496,8 +490,7 @@ export default function CustomerGrowthPage() {
     color: customerCategoryColor(i),
   }));
 
-  const tableRows = (data?.customersTable ?? [])
-    .filter((r) => !statusFilter || r.status === statusFilter)
+  const tableRows = filterCustomerStatus(data?.customersTable ?? [], statusFilter)
     .filter((r) => !hasCustomerSelection || selectedCustomerKeys.includes(String(r.customerKey)))
     .map((r) => ({
       customerKey: r.customerKey,
@@ -612,6 +605,7 @@ export default function CustomerGrowthPage() {
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
                   onTitleClick={() => setView('details')}
+                  onStatusClick={(status) => { setStatusFilter(current => current === status ? null : status); setView('details'); }}
                   downloading={downloadingPdf === 'customerStatus'}
                   onDownloadPdf={() => handleDownloadTablePdf('customerStatus', 'Customer Status', periodCountTableColumns, customerStatusTableRows)}
                 />
@@ -1029,6 +1023,7 @@ function statusInteractions(titleOpensTable: boolean, canExport: boolean): strin
 }
 
 function CustomerStatusPanel({
+  onStatusClick,
   counts,
   loading,
   error,
@@ -1037,6 +1032,7 @@ function CustomerStatusPanel({
   downloading,
   onDownloadPdf,
 }: {
+  onStatusClick?: (status: CustomerStatusLabel) => void;
   counts?: CustomerStatusCounts;
   loading: boolean;
   error?: string;
@@ -1063,7 +1059,7 @@ function CustomerStatusPanel({
 
   const tiles = [
     { label: 'Active Retained', value: counts?.activeRetained },
-    { label: 'Inactive / Non-Active', value: counts?.nonActive },
+    { label: 'Non Active', value: counts?.nonActive },
     { label: 'Blocked', value: counts?.blocked },
     { label: 'Reactivated', value: counts?.reactivated },
   ];
@@ -1113,7 +1109,12 @@ function CustomerStatusPanel({
         {tiles.map((t) => (
           <div
             key={t.label}
+            role={onStatusClick ? 'button' : undefined}
+            tabIndex={onStatusClick ? 0 : undefined}
+            onClick={() => onStatusClick?.(t.label as CustomerStatusLabel)}
+            onKeyDown={e => { if (onStatusClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onStatusClick(t.label as CustomerStatusLabel); } }}
             style={{
+              cursor: onStatusClick ? 'pointer' : undefined,
               background: 'var(--ps-color-muted-bg)',
               borderRadius: 'var(--ps-card-radius-sm, 10px)',
               padding: '10px 8px',

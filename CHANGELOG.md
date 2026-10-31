@@ -313,3 +313,10 @@ ETL pipeline, and BullMQ-based scheduling.
 - Centralize visual content in frontend/src/lib/visualHelp.ts; migrate the old explanation prop and remove its temporary alias after testing compatibility.
 - Add an Admin-only Daily Critical Number setting (LYD), applied before existing company/group allocations. Apply migration 0061_daily_critical_number.sql before saving the setting; existing installations retain 560,000 until migrated.
 - Automated verification includes shared UI popovers and registry references. Browser review remains pending: Computer Use refused the existing Chrome window because its current URL could not be determined confidently.
+
+## 2026-10-31 — Blocked Customer Status slicer
+
+- Include Blocked before Other; use Non Active consistently in the card, slicer and Performance Details.
+- Status tiles open Details with that status selected; selecting the same tile again resets All.
+- Filter the rows before passing them to DataGrid, whose CSV/PDF exports use its filtered/sorted row model. No backend status query parameter is needed: the overview already returns classified rows.
+- Add regression coverage for options, exact Blocked matching, 32-row fixture and resetting All. Live-data count and manual export review remain pending the browser access restriction recorded above.
