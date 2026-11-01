@@ -208,35 +208,35 @@ export function buildCrmWhereClause(
 
 /**
  * Opportunity STATUS -- the outcome (OpportunityStatus, migration 0063), never the kanban stage:
- *   New      open / in progress (Odoo won_status 'pending', active), whatever its stage
+ *   Pending  open / in progress (Odoo won_status 'pending', active), whatever its stage
  *   Won      Odoo Won button (won_status 'won')
  *   Lost     Odoo Lost button (won_status 'lost': archived, probability 0) -- it KEEPS its old stage
  *   Archived archived without being marked Lost -- no outcome, left out of every figure
  * Derived by the ETL (data/etl/src/sales_pipeline/crm/crm_status_classifier.py); stage names are never read, so the
  * custom "Won" / "Lost" stages can be removed in Odoo. IsWon / IsLost / IsOpen are the same status as flags.
  */
-export const OPPORTUNITY_STATUSES = ['New', 'Won', 'Lost'] as const;
+export const OPPORTUNITY_STATUSES = ['Won', 'Lost', 'Pending'] as const;
 export type OpportunityStatus = (typeof OPPORTUNITY_STATUSES)[number];
 
-/** Open pipeline only (status New). Every stage-based visual uses this: a lost deal leaves its old stage. */
+/** Open pipeline only (status Pending). Every stage-based visual uses this: a lost deal leaves its old stage. */
 export function openOpportunityClause(alias: string): string {
   const prefix = alias ? `${alias}.` : '';
-  return `${prefix}OpportunityStatus = 'New'`;
+  return `${prefix}OpportunityStatus = 'Pending'`;
 }
 
-/** Every opportunity with an outcome or still open (New / Won / Lost): Archived-but-not-lost records are dropped. */
+/** Every opportunity with an outcome or still open (Pending / Won / Lost): Archived-but-not-lost records are dropped. */
 export function notArchivedClause(alias: string): string {
   const prefix = alias ? `${alias}.` : '';
-  return `${prefix}OpportunityStatus IN ('New', 'Won', 'Lost')`;
+  return `${prefix}OpportunityStatus IN ('Pending', 'Won', 'Lost')`;
 }
 
 /**
- * New + Won (neither Lost nor Archived) -- for widgets that are not about the outcome, such as the opportunity-creation
+ * Pending + Won (neither Lost nor Archived) -- for widgets that are not about the outcome, such as the opportunity-creation
  * trend. Do NOT apply it to widgets that ARE about lost deals (#Lost, Lost Deals Ratio, Lost by Reason).
  */
 export function excludeLostClause(alias: string): string {
   const prefix = alias ? `${alias}.` : '';
-  return `${prefix}OpportunityStatus IN ('New', 'Won')`;
+  return `${prefix}OpportunityStatus IN ('Pending', 'Won')`;
 }
 
 /**
