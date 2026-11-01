@@ -344,9 +344,10 @@ export const VISUAL_HELP = {
   'promotion.activityMomentum.counts': {
     help: {
       definition: 'Opportunities by activity status: active, lost, won, without activity, without next step, created YTD.',
-      formula: ['Without Activity = open B2B, no real quotation, 30+ days since created', 'Without Next Step = open B2B, last quotation 30+ days ago'],
+      formula: ['#YTD = #Active + #Won + #Lost + #W/O Activity + #W/O Next Step', '#W/O Activity = open B2B, no quotation, 30+ days since created', '#W/O Next Step = open B2B, last quotation 30+ days ago', '#Active = open, in neither W/O group'],
+      notes: 'Hover a tile for its definition.',
     },
-    interactions: ['Click the title to open the Opportunity Table'],
+    interactions: ['Click the title to open the Opportunity Table', PDF],
   },
   'promotion.activityMomentum.inactiveRatio': {
     help: { definition: 'Share of open B2B opportunities at risk of going cold.', formula: 'Inactive Deals Ratio = (Without Activity ∪ Without Next Step) ÷ open B2B opportunities', notes: 'An opportunity in both groups counts once.' },
@@ -360,12 +361,12 @@ export const VISUAL_HELP = {
   },
   'promotion.activityMomentum.newOpportunities': {
     help: { definition: 'New opportunities created per month this year.' },
-    interactions: [PDF],
+    interactions: ['Hover a month for its count', PDF],
   },
   'promotion.activityMomentum.details': PERF_DETAILS('activity counts and ratios'),
   'promotion.activityMomentum.table': {
-    help: { definition: 'The opportunities of the activity status chosen in the slicer, with their last quotation and age.' },
-    interactions: ['Pick a status in the Opportunity Status slicer', 'Open "Opportunity Activities" for a row\'s details', 'Download the table as PDF'],
+    help: { definition: 'The opportunities of the activity status chosen in the Opportunity Status slicer, with a totals row.' },
+    interactions: ['Pick a status in the Opportunity Status slicer', PDF],
   },
 
   // ================================================ PRODUCT =========================================================
