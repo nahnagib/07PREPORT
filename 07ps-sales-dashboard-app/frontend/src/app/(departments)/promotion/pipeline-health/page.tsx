@@ -17,7 +17,7 @@ import {
   DonutChart,
   FunnelChart,
   GroupedBarChart,
-  DataTable,
+  DataGrid,
   Button,
   ProgressBar,
   SemanticBadge,
@@ -28,6 +28,7 @@ import {
   PerformanceReportTable,
   SEMANTIC_STATUS_LABEL,
   type Column,
+  type DataGridColumn,
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
   useCanExport,
@@ -221,13 +222,15 @@ interface OpportunityTableRow extends Record<string, unknown> {
   customerOdooUrl: string | null;
 }
 
-const opportunityColumns: Column<OpportunityTableRow>[] = [
-  { key: 'name', header: 'Opportunity Name', render: (r) => <OdooLink href={r.odooUrl}>{r.name}</OdooLink> },
+// Row-level tables (opportunities, quotations / sales orders / deliveries) use DataGrid like the other detail tables:
+// click-to-sort headers, search + column filters, Export CSV and Export as PDF of the filtered, sorted rows.
+const opportunityColumns: DataGridColumn<OpportunityTableRow>[] = [
+  { key: 'name', header: 'Opportunity Name', rawValue: (r) => r.name, render: (r) => <OdooLink href={r.odooUrl}>{r.name}</OdooLink> },
   { key: 'stage', header: 'Stage' },
   { key: 'probability', header: 'Probability %' },
   { key: 'expectedCloseDate', header: 'Expected Close Date' },
   { key: 'expectedRevenue', header: 'Value', align: 'right', render: (r) => formatCurrency(r.expectedRevenue) },
-  { key: 'customer', header: 'Customer', render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
+  { key: 'customer', header: 'Customer', rawValue: (r) => r.customer, render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
   { key: 'createdDate', header: 'Created Date' },
@@ -280,11 +283,11 @@ interface StageSalesTableRow extends Record<string, unknown> {
   customerOdooUrl: string | null;
 }
 
-const stageSalesColumns: Column<StageSalesTableRow>[] = [
-  { key: 'orderNumber', header: 'Order Number', render: (r) => <OdooLink href={r.odooUrl}>{r.orderNumber}</OdooLink> },
+const stageSalesColumns: DataGridColumn<StageSalesTableRow>[] = [
+  { key: 'orderNumber', header: 'Order Number', rawValue: (r) => r.orderNumber, render: (r) => <OdooLink href={r.odooUrl}>{r.orderNumber}</OdooLink> },
   { key: 'documentDate', header: 'Date' },
   { key: 'value', header: 'Value', align: 'right', render: (r) => formatCurrency(r.value) },
-  { key: 'customer', header: 'Customer', render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
+  { key: 'customer', header: 'Customer', rawValue: (r) => r.customer, render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
 ];
@@ -319,12 +322,12 @@ interface StageDeliveryTableRow extends Record<string, unknown> {
 
 // "Order Number" is the sale order's number (v_sales_deliveries.OrderNumber), so it opens the sale.order; the picking
 // itself (WH/OUT/...) is the "Delivery" column and opens the stock.picking.
-const stageDeliveryColumns: Column<StageDeliveryTableRow>[] = [
-  { key: 'orderNumber', header: 'Order Number', render: (r) => <OdooLink href={r.orderOdooUrl}>{r.orderNumber}</OdooLink> },
-  { key: 'deliveryReference', header: 'Delivery', render: (r) => <OdooLink href={r.odooUrl}>{r.deliveryReference}</OdooLink> },
+const stageDeliveryColumns: DataGridColumn<StageDeliveryTableRow>[] = [
+  { key: 'orderNumber', header: 'Order Number', rawValue: (r) => r.orderNumber, render: (r) => <OdooLink href={r.orderOdooUrl}>{r.orderNumber}</OdooLink> },
+  { key: 'deliveryReference', header: 'Delivery', rawValue: (r) => r.deliveryReference, render: (r) => <OdooLink href={r.odooUrl}>{r.deliveryReference}</OdooLink> },
   { key: 'orderDate', header: 'Order Date' },
   { key: 'deliveryStatus', header: 'Status' },
-  { key: 'customer', header: 'Customer', render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
+  { key: 'customer', header: 'Customer', rawValue: (r) => r.customer, render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
 ];
@@ -459,6 +462,10 @@ function widgetNameForFilter(filter: DetailsFilter): string {
   return 'Probabilities Distribution';
 }
 
+function slug(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
 function filterValueForPdf(filter: DetailsFilter): string | undefined {
   if (!filter) return undefined;
   if (filter.type === 'funnelStage') return FUNNEL_STAGE_LABELS[filter.value] ?? filter.value;
@@ -494,8 +501,7 @@ export default function PipelineHealthPage() {
   const [view, setView] = useState<'summary' | 'details' | 'stageRecords' | 'chain'>('summary');
   const [detailsFilter, setDetailsFilter] = useState<DetailsFilter>(null);
   const [stageRecordKind, setStageRecordKind] = useState<StageRecordKind | null>(null);
-  const [downloadingPdf, setDownloadingPdf] = useState(false);
-  const [downloadingStagePdf, setDownloadingStagePdf] = useState<'linked' | 'unlinked' | null>(null);
+  const [downloadingUnlinkedPdf, setDownloadingUnlinkedPdf] = useState(false);
   const [downloadingChartPdf, setDownloadingChartPdf] = useState<string | null>(null);
 
   const filterOptions = useScopedFilterOptions();
@@ -618,20 +624,11 @@ export default function PipelineHealthPage() {
     }
   }
 
-  async function handleDownloadPdf() {
-    setDownloadingPdf(true);
-    try {
-      await exportRowsAsPdf({
-        title: widgetNameForFilter(detailsFilter),
-        subtitle: filterValueForPdf(detailsFilter),
-        columns: opportunityColumns.map((c) => ({ header: c.header, align: c.align })),
-        rows: rowsToPdfRows(opportunityColumns, filteredOpportunities),
-        fileName: `${widgetNameForFilter(detailsFilter).toLowerCase().replace(/\s+/g, '-')}-opportunities`,
-      });
-    } finally {
-      setDownloadingPdf(false);
-    }
-  }
+  // DataGrid's Export CSV / Export as PDF file name and PDF title, e.g. "opportunity-by-stage-proposal-opportunities".
+  const detailsFileName = slug(
+    [widgetNameForFilter(detailsFilter), filterValueForPdf(detailsFilter), 'opportunities'].filter(Boolean).join(' '),
+  );
+  const detailsFilterParts = detailsFilter ? [`${widgetNameForFilter(detailsFilter)}: ${filterValueForPdf(detailsFilter)}`] : undefined;
 
   const isDeliveryStage = stageRecordKind === 'deliveries';
   const activeStageRecords = stageRecordKind ? getStageRecords(stageRecordKind, data?.funnelStageRecords) : [];
@@ -641,24 +638,25 @@ export default function PipelineHealthPage() {
     ? toStageDeliveryRows(linkedStageRecords as FunnelDeliveryRecord[])
     : toStageSalesRows(linkedStageRecords as FunnelSalesRecord[]);
   const stageColumns = isDeliveryStage ? stageDeliveryColumns : stageSalesColumns;
+  const stageLabel = stageRecordKind ? FUNNEL_STAGE_LABELS[stageRecordKind] : '';
 
-  /** `linked` picks which subset gets exported: the same records shown in the drill-down table
-   * (true), or the "with no Opportunities" set the table deliberately excludes (false). */
-  async function handleDownloadStagePdf(linked: boolean) {
+  /** The "with no Opportunities" set the drill-down table deliberately excludes -- exported on its own; the table's
+   * rows themselves export through DataGrid's Export CSV / Export as PDF. */
+  async function handleDownloadUnlinkedStagePdf() {
     if (!stageRecordKind) return;
-    const label = FUNNEL_STAGE_LABELS[stageRecordKind];
-    const subset = linked ? linkedStageRecords : unlinkedStageRecords;
-    const rows = isDeliveryStage ? toStageDeliveryRows(subset as FunnelDeliveryRecord[]) : toStageSalesRows(subset as FunnelSalesRecord[]);
-    setDownloadingStagePdf(linked ? 'linked' : 'unlinked');
+    const rows = isDeliveryStage
+      ? toStageDeliveryRows(unlinkedStageRecords as FunnelDeliveryRecord[])
+      : toStageSalesRows(unlinkedStageRecords as FunnelSalesRecord[]);
+    setDownloadingUnlinkedPdf(true);
     try {
       await exportRowsAsPdf({
-        title: linked ? label : `${label} with no Opportunities`,
+        title: `${stageLabel} with no Opportunities`,
         columns: stageColumns.map((c) => ({ header: c.header, align: c.align })),
         rows: rowsToPdfRows(stageColumns as Column<Record<string, unknown>>[], rows),
-        fileName: linked ? `${label.toLowerCase().replace(/\s+/g, '-')}` : `${label.toLowerCase().replace(/\s+/g, '-')}-no-opportunities`,
+        fileName: `${slug(stageLabel)}-no-opportunities`,
       });
     } finally {
-      setDownloadingStagePdf(null);
+      setDownloadingUnlinkedPdf(false);
     }
   }
 
@@ -984,21 +982,20 @@ export default function PipelineHealthPage() {
                 title={`Opportunity Details${detailsFilter ? ` — ${detailsFilterLabel(detailsFilter)}` : ''}`}
                 {...vh('promotion.pipelineHealth.opportunityDetails')}
                 style={{ minHeight: 480 }}
-                headerActions={
-                  <PdfButton
-                    label="Download as PDF"
-                    downloading={downloadingPdf}
-                    disabled={filteredOpportunities.length === 0}
-                    onClick={handleDownloadPdf}
-                  />
-                }
               >
                 {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
                 ) : overview.error ? (
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
-                  <DataTable columns={opportunityColumns} rows={filteredOpportunities} getRowId={(row) => row.opportunityId} />
+                  <DataGrid<OpportunityTableRow>
+                    columns={opportunityColumns}
+                    rows={filteredOpportunities}
+                    getRowId={(row) => row.opportunityId}
+                    fileName={detailsFileName}
+                    extraFilterParts={detailsFilterParts}
+                    pageSize={25}
+                  />
                 )}
               </ChartPanel>
 
@@ -1016,20 +1013,12 @@ export default function PipelineHealthPage() {
                 {...vh('promotion.pipelineHealth.stageRecords')}
                 style={{ minHeight: 480 }}
                 headerActions={
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <PdfButton
-                      label="Download as PDF"
-                      downloading={downloadingStagePdf === 'linked'}
-                      disabled={linkedStageRecords.length === 0}
-                      onClick={() => handleDownloadStagePdf(true)}
-                    />
-                    <PdfButton
-                      label={`${stageRecordKind ? FUNNEL_STAGE_LABELS[stageRecordKind] : ''} with no Opportunities`}
-                      downloading={downloadingStagePdf === 'unlinked'}
-                      disabled={unlinkedStageRecords.length === 0}
-                      onClick={() => handleDownloadStagePdf(false)}
-                    />
-                  </div>
+                  <PdfButton
+                    label={`${stageLabel} with no Opportunities`}
+                    downloading={downloadingUnlinkedPdf}
+                    disabled={unlinkedStageRecords.length === 0}
+                    onClick={handleDownloadUnlinkedStagePdf}
+                  />
                 }
               >
                 {overview.loading ? (
@@ -1037,9 +1026,23 @@ export default function PipelineHealthPage() {
                 ) : overview.error ? (
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : isDeliveryStage ? (
-                  <DataTable columns={stageDeliveryColumns} rows={linkedStageRows as StageDeliveryTableRow[]} getRowId={(row) => row.id} />
+                  <DataGrid<StageDeliveryTableRow>
+                    key="deliveries"
+                    columns={stageDeliveryColumns}
+                    rows={linkedStageRows as StageDeliveryTableRow[]}
+                    getRowId={(row) => row.id}
+                    fileName={slug(stageLabel)}
+                    pageSize={25}
+                  />
                 ) : (
-                  <DataTable columns={stageSalesColumns} rows={linkedStageRows as StageSalesTableRow[]} getRowId={(row) => row.id} />
+                  <DataGrid<StageSalesTableRow>
+                    key={stageRecordKind ?? 'sales'}
+                    columns={stageSalesColumns}
+                    rows={linkedStageRows as StageSalesTableRow[]}
+                    getRowId={(row) => row.id}
+                    fileName={slug(stageLabel)}
+                    pageSize={25}
+                  />
                 )}
               </ChartPanel>
 

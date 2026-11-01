@@ -158,7 +158,7 @@
 | **Stage** (المرحلة) | موقع الصفقة في عملية البيع: العمود الذي توجد فيه على لوحة CRM في Odoo (New وQualified وProposition وNegotiations …). |
 | **Status** (الحالة) | نتيجة الصفقة كما يسجّلها Odoo: **Won** أو **Lost** أو **Pending** (ما زالت مفتوحة). تُحدَّد بزرّي **Won** و**Lost** في الفرصة على Odoo، وليس بالمرحلة. |
 
-تعرض قائمة الفرص (**Opportunity Details**) الأعمدة **Opportunity Name** و**Stage** و**Probability %** و**Expected Close Date** و**Value** و**Customer** و**Company** و**Salesperson** و**Created Date**، مع زر **Download as PDF**. انقر **Back** للعودة إلى الرسوم.
+تعرض قائمة الفرص (**Opportunity Details**) الأعمدة **Opportunity Name** و**Stage** و**Probability %** و**Expected Close Date** و**Value** و**Customer** و**Company** و**Salesperson** و**Created Date**. وكما في جداول التفاصيل الأخرى، انقر عنوان العمود للترتيب (وانقره مرة أخرى لعكس الترتيب)، واستخدم مربع البحث وفلاتر الأعمدة، ثم **Export CSV** أو **Export as PDF** لتنزيل الصفوف المعروضة. وتعمل قوائم **Quotations** و**Sales Orders** و**Deliveries** المفتوحة من **Full Pipeline** بالطريقة نفسها. انقر **Back** للعودة إلى الرسوم.
 
 > [!NOTE]
 > تحسب رسوم **Opportunities** في Full Pipeline و**Opportunity by Stage** و**Expected Closure Opportunity** و**Probabilities Distribution** الفرص **المفتوحة** فقط (الحالة **Pending**). الصفقة التي تُعلَّم **Lost** في Odoo تبقى في مرحلتها هناك، لكنها تخرج من هذه الرسوم وتظهر بحالة **Lost** في **Opportunity by Status**، وتظهر الصفقات المكسوبة بحالة **Won**. نقل البطاقة إلى عمود "Won" أو "Lost" لا يغيّر حالتها: انقر زر **Won** أو **Lost** في الفرصة. يبقى عمود **Won** في Odoo (ينقل زر **Won** الصفقات إليه)، أما عمود **Lost** فيُطوى.
@@ -204,7 +204,7 @@
 | **Inactive Deals Ratio** | الفرص التي بلا نشاط **أو** بلا خطوة تالية (تُحسب كل فرصة مرة واحدة) كنسبة من فرص B2B المفتوحة. |
 | **Lost Deals Ratio** | الفرص الخاسرة كنسبة من جميع فرص هذه السنة. |
 
-انقر **View Opportunity Activities details** لفتح **Opportunity Table** (الأعمدة: **Created Date** و**Opportunity Name** و**Customer** و**Company** و**Expected Revenue** و**Salesperson** و**Stage**). استخدم **Activity Filter** لعرض الفرص **Active** أو **Lost** أو **Won** أو **Inactive** أو **Without Next Step** فقط. ويشرح **Opportunity Activities definitions** كل مصطلح على الشاشة.
+انقر **View Opportunity Activities details** لفتح **Opportunity Table** (الأعمدة: **Created Date** و**Opportunity Name** و**Customer** و**Company** و**Expected Revenue** و**Salesperson** و**Stage**)، ويظهر فوقه عدد الفرص ومجموع الإيراد المتوقع. انقر عنوان العمود للترتيب، واستخدم **Export CSV** أو **Export as PDF** للتنزيل. استخدم **Activity Filter** لعرض الفرص **Active** أو **Lost** أو **Won** أو **Inactive** أو **Without Next Step** فقط. ويشرح **Opportunity Activities definitions** كل مصطلح على الشاشة.
 
 # الترويج: تقارير MARCOM
 
