@@ -6,7 +6,7 @@ import {
   commitUpload, getBatch, getBatchFile, getFreshness, listBatches, previewRemoveBatch, removeBatch, rollbackBatch, validateUpload,
 } from '../service';
 import { stagingDir } from '../staging';
-import { monthFile, spendFile } from './helpers/workbooks';
+import { monthFile, p1Row, spendFile } from './helpers/workbooks';
 
 // "Remove batch" (any successful batch, not only the latest): removal.ts rules a-d, service.ts removeBatch rules e-g.
 // DB-backed, opt-in like service.test.ts: npm run test:marcom-db --workspace backend
@@ -33,13 +33,12 @@ async function importFile(buf: Buffer, name = 'f.xlsx'): Promise<number> {
 }
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-/** one P1 row: [year, month name, brand, spend, ...fixed values] */
-const sp = (year: number, month: number, brand: string, spend: number): (string | number)[] =>
-  [year, MONTHS[month - 1], brand, spend, 40000, 500000, 400000, 12000, 20, 700, 1000, 500];
+/** one P1 row (template 2.0); `spend` goes into the Finance Booked Total column */
+const sp = (year: number, month: number, brand: string, spend: number): (string | number)[] => p1Row(year, MONTHS[month - 1], brand, spend);
 
 /** live spend rows as "yyyy-mm brand = spend (batch)" */
 async function liveSpend(): Promise<string[]> {
-  return (await q(`SELECT s.year, s.month, b.name, s.spend, s.batch_id FROM marcom_spend_monthly s JOIN marcom_brand b ON b.brand_id = s.brand_id
+  return (await q(`SELECT s.year, s.month, b.name, s.finance_booked_total AS spend, s.batch_id FROM marcom_spend_monthly s JOIN marcom_brand b ON b.brand_id = s.brand_id
                    WHERE s.is_current = 1 ORDER BY s.year, s.month, b.name`))
     .map((r) => `${r.year}-${String(r.month).padStart(2, '0')} ${r.name} = ${r.spend} (${r.batch_id})`);
 }

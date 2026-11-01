@@ -80,12 +80,12 @@ describe('sum first, then divide (never average ratios)', () => {
   it('brand growth is (ΣCurrent - ΣLY) / ΣLY over the range', () => {
     const p = buildSpending({
       year: 2026, fromMonth: 1, toMonth: 2, previous: [], brands: [A],
-      current: [spendExample({ month: 1, companyCurrent: 100, companyLy: 100 }), spendExample({ month: 2, companyCurrent: 300, companyLy: 100 })], // +0% and +200%
+      current: [spendExample({ month: 1, brandRevenue: 100, brandRevenueLy: 100 }), spendExample({ month: 2, brandRevenue: 300, brandRevenueLy: 100 })], // +0% and +200%
     });
     expect(p.brandGrowth.overall.value).toBe(100); // (400 - 200) / 200
     const q = buildSpending({
       year: 2026, fromMonth: 1, toMonth: 2, previous: [], brands: [A],
-      current: [spendExample({ month: 1, companyCurrent: 100, companyLy: 100 }), spendExample({ month: 2, companyCurrent: 900, companyLy: 300 })], // 0% and +200%
+      current: [spendExample({ month: 1, brandRevenue: 100, brandRevenueLy: 100 }), spendExample({ month: 2, brandRevenue: 900, brandRevenueLy: 300 })], // 0% and +200%
     });
     expect(q.brandGrowth.overall.value).toBe(150); // (1000 - 400) / 400; the mean of 0 and 200 would be 100
   });
@@ -95,7 +95,7 @@ describe('zero or missing denominators never produce NaN/Infinity', () => {
   it('spending: zero spend / budget / customers / clicks / LY revenue -> null + na', () => {
     const p = buildSpending({
       year: 2026, fromMonth: 8, toMonth: 8, previous: [], brands: [A],
-      current: [spendExample({ spend: 0, budget: 0, newCustomers: 0, clicks: 0, companyLy: 0 })],
+      current: [spendExample({ spend: 0, budget: 0, newCustomers: 0, clicks: 0, brandRevenueLy: 0 })],
     });
     assertAllFinite(p);
     for (const k of [p.roi.ytd, p.budgetUtilization.overall, p.brandGrowth.overall, p.cac.overall, p.cac.overall.pctOfInvoice, p.cpc.overall]) {

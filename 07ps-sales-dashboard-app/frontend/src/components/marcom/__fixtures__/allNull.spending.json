@@ -89,6 +89,38 @@
     }
    ]
   },
+  "campaignSpend": {
+   "total": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 0
+    }
+   ]
+  },
+  "otherSpend": {
+   "total": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 0
+    }
+   ]
+  },
+  "unallocated": {
+   "total": null,
+   "booked": null,
+   "rows": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": null
+    }
+   ]
+  },
   "revenueAttributed": {
    "total": 280000,
    "unit": "lyd",
@@ -99,13 +131,23 @@
     }
    ]
   },
-  "companyRevenue": {
+  "brandRevenue": {
    "total": 1200000,
    "unit": "lyd",
    "series": [
     {
      "month": 8,
      "value": 1200000
+    }
+   ]
+  },
+  "companyRevenue": {
+   "total": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 0
     }
    ]
   },
@@ -131,7 +173,7 @@
     }
    ]
   },
-  "spendPctOfCompanyRevenue": {
+  "spendPctOfBrandRevenue": {
    "value": 0,
    "status": "neutral",
    "unit": "percent",
@@ -143,12 +185,52 @@
     }
    ]
   },
+  "attributedPct": {
+   "value": 23.333333333333332,
+   "status": "neutral",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
   "budgetUsed": {
    "value": null,
    "status": "na",
    "unit": "percent"
   }
  },
+ "byCategory": {
+  "total": 0,
+  "categories": [
+   {
+    "category": "Campaigns",
+    "isCampaigns": true,
+    "amount": 0,
+    "lines": null,
+    "share": null
+   }
+  ]
+ },
+ "reconciliation": {
+  "overall": {
+   "campaignSpend": 0,
+   "otherSpend": 0,
+   "totalSpend": 0,
+   "booked": null,
+   "unallocated": null
+  },
+  "rows": [
+   {
+    "month": 8,
+    "brandId": 1,
+    "brand": "Brand A",
+    "campaignSpend": 0,
+    "otherSpend": 0,
+    "totalSpend": 0,
+    "booked": null,
+    "unallocated": null
+   }
+  ]
+ },
+ "otherLines": [],
  "roi": {
   "ytd": {
    "value": null,
@@ -179,6 +261,8 @@
    "status": "na",
    "unit": "percent",
    "spend": 0,
+   "campaignSpend": 0,
+   "otherSpend": 0,
    "budget": 0,
    "overBudget": false
   },
@@ -188,10 +272,13 @@
     "brand": "Brand A",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": null,
     "status": "na",
     "unit": "percent",
     "spend": 0,
+    "campaignSpend": 0,
+    "otherSpend": 0,
     "budget": 0,
     "overBudget": false
    }
@@ -205,6 +292,8 @@
     "status": "na",
     "unit": "percent",
     "spend": 0,
+    "campaignSpend": 0,
+    "otherSpend": 0,
     "budget": 0,
     "overBudget": false
    }
@@ -217,7 +306,18 @@
    "unit": "percent",
    "direction": "higher_better",
    "revenueCurrent": 1200000,
-   "revenueLastYear": 0
+   "revenueLastYear": 0,
+   "attributedPct": {
+    "value": 23.333333333333332,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "higher_better"
+   },
+   "brandShare": {
+    "value": null,
+    "status": "na",
+    "unit": "percent"
+   }
   },
   "brands": [
    {
@@ -225,12 +325,24 @@
     "brand": "Brand A",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": null,
     "status": "na",
     "unit": "percent",
     "direction": "higher_better",
     "revenueCurrent": 1200000,
-    "revenueLastYear": 0
+    "revenueLastYear": 0,
+    "attributedPct": {
+     "value": 23.333333333333332,
+     "status": "neutral",
+     "unit": "percent",
+     "direction": "higher_better"
+    },
+    "brandShare": {
+     "value": null,
+     "status": "na",
+     "unit": "percent"
+    }
    }
   ],
   "companies": [
@@ -243,7 +355,18 @@
     "unit": "percent",
     "direction": "higher_better",
     "revenueCurrent": 1200000,
-    "revenueLastYear": 0
+    "revenueLastYear": 0,
+    "attributedPct": {
+     "value": 23.333333333333332,
+     "status": "neutral",
+     "unit": "percent",
+     "direction": "higher_better"
+    },
+    "brandShare": {
+     "value": null,
+     "status": "na",
+     "unit": "percent"
+    }
    }
   ]
  },
@@ -273,6 +396,7 @@
     "brand": "Brand A",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": null,
     "status": "na",
     "unit": "lyd",
@@ -304,6 +428,7 @@
     "brand": "Brand A",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": null,
     "status": "na",
     "unit": "lyd",

@@ -8,7 +8,8 @@ import { t } from '../../../lib/marcom/text';
 import { ChartBox, MarcomChartCard, Segmented } from '../MarcomChartCard';
 import { MarcomKpiCard } from '../MarcomKpiCard';
 import { RagBadge, ragLabel } from '../RagBadge';
-import { legendText, AXIS_TICK, CHART_MARGIN, Grid, GRID_STROKE, plainKpi, TooltipCard, truncate } from './chartKit';
+import { legendText, AXIS_TICK, CHART_MARGIN, Grid, GRID_STROKE, Note, plainKpi, TooltipCard, truncate } from './chartKit';
+import { CategoryCard } from './SpendBreakdown';
 
 interface Props { data: SpendingData; refreshing?: boolean }
 
@@ -43,21 +44,26 @@ function SideTick({ x, y, payload, rows }: { x?: number; y?: number; payload?: {
 
 /** Page 1 -- MARCOM Spending. Pure rendering of GET /marcom/kpi/spending. */
 export function SpendingView({ data, refreshing }: Props) {
-  const [overlay, setOverlay] = useState(false);
   const [budgetBy, setBudgetBy] = useState<GroupBy>('brand');
   const [growthBy, setGrowthBy] = useState<GroupBy>('brand');
   const months = data.totals.spend.series.map((s) => s.month);
   const tot = data.totals;
 
   // ---- 1. spend vs revenue (+ target budget, spend % of revenue) ----------------------------
+  // Total MARCOM Spend is drawn as its two parts (campaign + other), stacked.
   const flow = months.map((m, i) => ({
     label: monthName(m),
     spend: tot.spend.series[i].value,
+    campaign: tot.campaignSpend.series[i]?.value ?? null,
+    other: tot.otherSpend.series[i]?.value ?? null,
     revenue: tot.revenueAttributed.series[i].value,
     budget: tot.budget.series[i]?.value ?? null,
     pct: tot.spendPctOfRevenue.series[i]?.value ?? null,
-    company: tot.companyRevenue.series[i].value,
+    company: tot.brandRevenue.series[i]?.value ?? null,
   }));
+  // Brand-revenue ratios are null when no month has brand revenue (e.g. old-template rows): the line is hidden, never "n/a".
+  const attributedPct = tot.attributedPct.value !== null ? tot.attributedPct : null;
+  const spendPctBrand = tot.spendPctOfBrandRevenue.value !== null ? tot.spendPctOfBrandRevenue : null;
 
   // ---- 3/4. per brand or per company -------------------------------------------------------
   const budgetSrc = budgetBy === 'brand'
@@ -83,59 +89,66 @@ export function SpendingView({ data, refreshing }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {data.meta.revenueNeedsReview ? <Note tone="info"><span data-testid="revenue-review">{t('p1.revenueReview', { n: data.meta.revenueNeedsReview })}</span></Note> : null}
       {/* 1 ------------------------------------------------------------------------------ */}
-      <MarcomChartCard
-        visual="spending.spendVsRevenue" title={t('p1.spendVsRevenue')} refreshing={refreshing} minWidth={Math.max(520, months.length * 70)}
-        summary={`${t('p1.spend')} ${fmtLyd(tot.spend.total)}, ${t('p1.revenue')} ${fmtLyd(tot.revenueAttributed.total)}, ${t('p1.budgetTarget')} ${fmtLyd(tot.budget.total)}, ${t('p1.spendPct')} ${fmtKpiValue(tot.spendPctOfRevenue)}`}
-        table={{
-          caption: t('p1.spendVsRevenue'),
-          columns: [t('generic.month'), t('p1.spend'), t('p1.revenue'), t('p1.budgetTarget'), t('p1.spendPct'), t('p1.companyRevenue')],
-          rows: flow.map((r) => [r.label, fmtLyd(r.spend), fmtLyd(r.revenue), fmtLyd(r.budget), fmtPct(r.pct), fmtLyd(r.company)]),
-        }}
-        actions={<label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}><input type="checkbox" checked={overlay} onChange={(e) => setOverlay(e.target.checked)} />{t('p1.showCompany')}</label>}
-      >
-        <Grid min={320} gap={12}>
-          <MarcomKpiCard
-            testId="kpi-spend" label={t('p1.spend')} kpi={plainKpi('lyd', tot.spend.total)} valueText={fmtLyd(tot.spend.total)} hideStatus sparkline={flow.map((r) => r.spend)}
-            hint={
-              <SecondaryStat testId="kpi-budget" label={t('p1.budgetTarget')} value={fmtLyd(tot.budget.total)}
-                note={<span data-testid="budget-used">{t('p1.budgetUsed', { v: fmtKpiValue(tot.budgetUsed) })}</span>}
-                meter={tot.budgetUsed.value} />
-            }
-          />
-          <MarcomKpiCard
-            testId="kpi-revenue" label={t('p1.revenue')} kpi={plainKpi('lyd', tot.revenueAttributed.total)} valueText={fmtLyd(tot.revenueAttributed.total)} hideStatus sparkline={flow.map((r) => r.revenue)}
-            hint={
-              <>
-                <span>{t('p1.revenueSub')}</span>
-                <SecondaryStat testId="kpi-spend-pct" label={t('p1.spendPct')} value={fmtKpiValue(tot.spendPctOfRevenue)}
-                  note={<span data-testid="spend-pct-company">{t('p1.spendPctCompany', { v: fmtKpiValue(tot.spendPctOfCompanyRevenue) })}</span>} />
-              </>
-            }
-          />
-        </Grid>
-        <div style={{ marginTop: 12 }}>
-          <ChartBox height={320}>
-            {({ width, height }) => (
-              <ComposedChart width={width} height={height} data={flow} margin={{ ...CHART_MARGIN, right: 8 }}>
-                <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={AXIS_TICK} />
-                <YAxis yAxisId="lyd" tick={AXIS_TICK} tickFormatter={fmtCompact} label={{ value: t('unit.lyd'), angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
-                <YAxis yAxisId="pct" orientation="right" tick={AXIS_TICK} tickFormatter={(v) => `${Math.round(Number(v))}%`} label={{ value: t('p1.pctAxis'), angle: 90, position: 'insideRight', fill: SERIES.text, fontSize: 11 }} />
-                <Tooltip content={({ active, payload, label }) => active && payload?.length ? (
-                  <TooltipCard title={label} lines={payload.map((p) => ({ label: String(p.name), value: p.dataKey === 'pct' ? fmtPct(p.value as number) : fmtLyd(p.value as number), color: String(p.color) }))} />
-                ) : null} />
-                <Legend formatter={legendText} />
-                <Bar yAxisId="lyd" isAnimationActive={false} dataKey="spend" name={t('p1.spend')} fill={SERIES.primary} radius={[3, 3, 0, 0]} />
-                <Bar yAxisId="lyd" isAnimationActive={false} dataKey="revenue" name={t('p1.revenue')} fill={SERIES.secondary} radius={[3, 3, 0, 0]} />
-                <Line yAxisId="lyd" isAnimationActive={false} dataKey="budget" name={t('p1.budgetTarget')} stroke={BUDGET_COLOR} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 3 }} connectNulls />
-                <Line yAxisId="pct" isAnimationActive={false} dataKey="pct" name={t('p1.spendPct')} stroke={PCT_COLOR} strokeWidth={2} dot={{ r: 3 }} />
-                {overlay && <Line yAxisId="lyd" isAnimationActive={false} dataKey="company" name={t('p1.companyRevenue')} stroke={SERIES.reference} strokeWidth={2} dot={{ r: 3 }} />}
-              </ComposedChart>
-            )}
-          </ChartBox>
+      <Grid min={320} gap={16}>
+        <MarcomKpiCard
+          testId="kpi-spend" label={t('p1.spend')} kpi={plainKpi('lyd', tot.spend.total)} valueText={fmtLyd(tot.spend.total)} hideStatus sparkline={flow.map((r) => r.spend)}
+          hint={
+            <SecondaryStat testId="kpi-budget" label={t('p1.budgetTarget')} value={fmtLyd(tot.budget.total)}
+              note={<span data-testid="budget-used">{t('p1.budgetUsed', { v: fmtKpiValue(tot.budgetUsed) })}</span>}
+              meter={tot.budgetUsed.value} />
+          }
+        />
+        <MarcomKpiCard
+          testId="kpi-revenue" label={t('p1.revenue')} kpi={plainKpi('lyd', tot.revenueAttributed.total)} valueText={fmtLyd(tot.revenueAttributed.total)} hideStatus sparkline={flow.map((r) => r.revenue)}
+          hint={
+            <>
+              {attributedPct && <span data-testid="attributed-pct">{t('p1.revenueSub', { v: fmtKpiValue(attributedPct) })}</span>}
+              <SecondaryStat testId="kpi-spend-pct" label={t('p1.spendPct')} value={fmtKpiValue(tot.spendPctOfRevenue)}
+                note={spendPctBrand ? <span data-testid="spend-pct-brand">{t('p1.spendPctBrand', { v: fmtKpiValue(spendPctBrand) })}</span> : undefined} />
+            </>
+          }
+        />
+      </Grid>
+
+      {/* Spend vs revenue (~62%) next to spend by category (~38%); wraps to one column, spend chart first, on narrow screens. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+        <div style={{ flex: '1.7 1 520px', minWidth: 0, display: 'grid' }}>
+          <MarcomChartCard
+            visual="spending.spendVsRevenue" title={t('p1.spendVsRevenue')} refreshing={refreshing} minWidth={Math.max(420, months.length * 48)}
+            summary={`${t('p1.spend')} ${fmtLyd(tot.spend.total)}, ${t('p1.revenue')} ${fmtLyd(tot.revenueAttributed.total)}, ${t('p1.budgetTarget')} ${fmtLyd(tot.budget.total)}, ${t('p1.spendPct')} ${fmtKpiValue(tot.spendPctOfRevenue)}`}
+            table={{
+              caption: t('p1.spendVsRevenue'),
+              columns: [t('generic.month'), t('p1.campaignSpend'), t('p1.otherSpend'), t('p1.spend'), t('p1.revenue'), t('p1.budgetTarget'), t('p1.spendPct'), t('p1.companyRevenue')],
+              rows: flow.map((r) => [r.label, fmtLyd(r.campaign), fmtLyd(r.other), fmtLyd(r.spend), fmtLyd(r.revenue), fmtLyd(r.budget), fmtPct(r.pct), fmtLyd(r.company)]),
+            }}
+          >
+            <ChartBox height={320}>
+              {({ width, height }) => (
+                <ComposedChart width={width} height={height} data={flow} margin={{ ...CHART_MARGIN, right: 8 }}>
+                  <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={AXIS_TICK} />
+                  <YAxis yAxisId="lyd" tick={AXIS_TICK} tickFormatter={fmtCompact} label={{ value: t('unit.lyd'), angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
+                  <YAxis yAxisId="pct" orientation="right" tick={AXIS_TICK} tickFormatter={(v) => `${Math.round(Number(v))}%`} label={{ value: t('p1.pctAxis'), angle: 90, position: 'insideRight', fill: SERIES.text, fontSize: 11 }} />
+                  <Tooltip content={({ active, payload, label }) => active && payload?.length ? (
+                    <TooltipCard title={label} lines={payload.map((p) => ({ label: String(p.name), value: p.dataKey === 'pct' ? fmtPct(p.value as number) : fmtLyd(p.value as number), color: String(p.color) }))} />
+                  ) : null} />
+                  <Legend formatter={legendText} />
+                  <Bar yAxisId="lyd" isAnimationActive={false} dataKey="campaign" stackId="spend" name={t('p1.campaignSpend')} fill={SERIES.primary} />
+                  <Bar yAxisId="lyd" isAnimationActive={false} dataKey="other" stackId="spend" name={t('p1.otherSpend')} fill="#56B4E9" radius={[3, 3, 0, 0]} />
+                  <Bar yAxisId="lyd" isAnimationActive={false} dataKey="revenue" name={t('p1.revenue')} fill={SERIES.secondary} radius={[3, 3, 0, 0]} />
+                  <Line yAxisId="lyd" isAnimationActive={false} dataKey="budget" name={t('p1.budgetTarget')} stroke={BUDGET_COLOR} strokeWidth={2} strokeDasharray="6 4" dot={{ r: 3 }} connectNulls />
+                  <Line yAxisId="pct" isAnimationActive={false} dataKey="pct" name={t('p1.spendPct')} stroke={PCT_COLOR} strokeWidth={2} dot={{ r: 3 }} />
+                </ComposedChart>
+              )}
+            </ChartBox>
+          </MarcomChartCard>
         </div>
-      </MarcomChartCard>
+        <div style={{ flex: '1 1 320px', minWidth: 0, display: 'grid' }}>
+          <CategoryCard data={data} refreshing={refreshing} />
+        </div>
+      </div>
 
       <Grid min={440}>
         {/* 3 ---------------------------------------------------------------------------- */}
@@ -183,8 +196,8 @@ export function SpendingView({ data, refreshing }: Props) {
           summary={growthRows.map((b) => `${b.label} ${fmtSignedPct(b.value)}`).join(', ')}
           table={{
             caption: t('p1.growth'),
-            columns: [levelHeader(growthBy), ...(growthBy === 'brand' ? [t('filter.company')] : []), '%', 'Current', 'Last year'],
-            rows: growthSrc.map((b) => [b.label, ...(growthBy === 'brand' ? [b.sub ?? '—'] : []), fmtSignedPct(b.value), fmtLyd(b.revenueCurrent), fmtLyd(b.revenueLastYear)]),
+            columns: [levelHeader(growthBy), ...(growthBy === 'brand' ? [t('filter.company')] : []), '%', 'Current', 'Last year', t('p1.attributedPct'), t('p1.brandShare')],
+            rows: growthSrc.map((b) => [b.label, ...(growthBy === 'brand' ? [b.sub ?? '—'] : []), fmtSignedPct(b.value), fmtLyd(b.revenueCurrent), fmtLyd(b.revenueLastYear), fmtKpiValue(b.attributedPct), fmtKpiValue(b.brandShare)]),
           }}
         >
           <ChartBox height={290}>

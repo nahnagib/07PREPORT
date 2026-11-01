@@ -104,12 +104,12 @@
  "today": "2026-09-20",
  "roi": {
   "ytd": {
-   "value": 4.731138652207591,
+   "value": 4.507910089448297,
    "status": "yellow",
    "unit": "ratio",
    "direction": "higher_better",
    "previous": 3.531138652207591,
-   "delta": 1.2
+   "delta": 0.9767714372407059
   },
   "lytd": {
    "value": 3.531138652207591,
@@ -127,49 +127,49 @@
    },
    {
     "month": 2,
-    "current": 4.812345679012346,
+    "current": 4.143733003708282,
     "currentStatus": "yellow",
     "lastYear": 3.612345679012346,
     "lastYearStatus": "yellow"
    },
    {
     "month": 3,
-    "current": 4.644444444444444,
+    "current": 4.644424481081415,
     "currentStatus": "yellow",
     "lastYear": 3.4444444444444446,
     "lastYearStatus": "yellow"
    },
    {
     "month": 4,
-    "current": 4.484276729559748,
+    "current": 4.451981680779517,
     "currentStatus": "yellow",
     "lastYear": 3.2842767295597484,
     "lastYearStatus": "yellow"
    },
    {
     "month": 5,
-    "current": 4.7768292682926825,
+    "current": 3.917833581613109,
     "currentStatus": "yellow",
     "lastYear": 3.5768292682926828,
     "lastYearStatus": "yellow"
    },
    {
     "month": 6,
-    "current": 4.854335260115607,
+    "current": 4.854334040127157,
     "currentStatus": "yellow",
     "lastYear": 3.654335260115607,
     "lastYearStatus": "yellow"
    },
    {
     "month": 7,
-    "current": 4.592397660818714,
+    "current": 4.592384816620141,
     "currentStatus": "yellow",
     "lastYear": 3.3923976608187134,
     "lastYearStatus": "yellow"
    },
    {
     "month": 8,
-    "current": 4.678571428571429,
+    "current": 4.659768772970544,
     "currentStatus": "yellow",
     "lastYear": 3.4785714285714286,
     "lastYearStatus": "yellow"

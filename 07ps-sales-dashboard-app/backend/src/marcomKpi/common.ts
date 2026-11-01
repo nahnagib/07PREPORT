@@ -1,6 +1,7 @@
 import { Rat, R, sum } from './rat';
 
-export type Num = string | number;
+/** A DB decimal (string), a JS number, or an exact computed amount (e.g. prorated campaign spend). */
+export type Num = string | number | Rat;
 
 export const MONTH_KEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
@@ -28,6 +29,8 @@ export interface BrandRef {
   /** Dim_Company.CompanyKey (= admin_company.etl_company_key) the brand belongs to; null = not assigned (migration 0057). */
   companyKey?: number | null;
   company?: string | null;
+  /** 'GROUP' = group-level entry, not a brand (BMH = group events; migration 0061). Default 'BRAND'. */
+  kind?: 'BRAND' | 'GROUP';
 }
 
 export interface CompanyRef { key: number; name: string }

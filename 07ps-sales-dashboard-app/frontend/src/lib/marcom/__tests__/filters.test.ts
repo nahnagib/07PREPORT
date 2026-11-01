@@ -72,11 +72,11 @@ describe('API query per page (only params that page understands)', () => {
     expect(apiQuery('campaigns', all)).toBe('year=2026&fromMonth=2&toMonth=8&brandIds=1%2C2&status=Ongoing');
     expect(apiQuery('campaigns', f({ year: 2026 }))).toBe('year=2026&fromMonth=1&toMonth=12');
   });
-  it('companyKeys go to the pages with a Company filter only', () => {
+  it('companyKeys go to the pages with a Company filter (all four since template 2.0 split Digital by brand)', () => {
     const c = f({ companyKeys: [2, 1] });
     expect(apiQuery('spending', c)).toBe('companyKeys=1%2C2');
     expect(apiQuery('trade', c)).toBe('companyKeys=1%2C2');
-    expect(apiQuery('digital', c)).toBe('');
+    expect(apiQuery('digital', c)).toBe('companyKeys=1%2C2');
   });
   it('company -> brand cascade: brand options narrow to the company, and brands outside it are dropped', () => {
     const brands = [{ id: 1, companyKey: 10 }, { id: 2, companyKey: 10 }, { id: 3, companyKey: 20 }, { id: 4, companyKey: null }];

@@ -96,12 +96,44 @@
  },
  "totals": {
   "spend": {
-   "total": 168000,
+   "total": 168677.89761570827,
    "unit": "lyd",
    "series": [
     {
      "month": 8,
-     "value": 168000
+     "value": 168677.89761570827
+    }
+   ]
+  },
+  "campaignSpend": {
+   "total": 75220.89761570828,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 75220.89761570828
+    }
+   ]
+  },
+  "otherSpend": {
+   "total": 93457,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 93457
+    }
+   ]
+  },
+  "unallocated": {
+   "total": 1322.102384291725,
+   "booked": 170000,
+   "rows": 4,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 1322.102384291725
     }
    ]
   },
@@ -115,13 +147,23 @@
     }
    ]
   },
-  "companyRevenue": {
+  "brandRevenue": {
    "total": 3596580,
    "unit": "lyd",
    "series": [
     {
      "month": 8,
      "value": 3596580
+    }
+   ]
+  },
+  "companyRevenue": {
+   "total": 8991450,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 8,
+     "value": 8991450
     }
    ]
   },
@@ -136,43 +178,194 @@
    ]
   },
   "spendPctOfRevenue": {
-   "value": 21.374045801526716,
+   "value": 21.460292317520135,
    "status": "neutral",
    "unit": "percent",
    "direction": "lower_better",
    "series": [
     {
      "month": 8,
-     "value": 21.374045801526716
+     "value": 21.460292317520135
     }
    ]
   },
-  "spendPctOfCompanyRevenue": {
-   "value": 4.671104215671555,
+  "spendPctOfBrandRevenue": {
+   "value": 4.689952610972321,
    "status": "neutral",
    "unit": "percent",
    "direction": "lower_better",
    "series": [
     {
      "month": 8,
-     "value": 4.671104215671555
+     "value": 4.689952610972321
     }
    ]
+  },
+  "attributedPct": {
+   "value": 21.854094723320486,
+   "status": "neutral",
+   "unit": "percent",
+   "direction": "higher_better"
   },
   "budgetUsed": {
-   "value": 98.27434922491956,
+   "value": 98.67089652863895,
    "status": "neutral",
    "unit": "percent"
   }
  },
+ "byCategory": {
+  "total": 168677.89761570827,
+  "categories": [
+   {
+    "category": "Campaigns",
+    "isCampaigns": true,
+    "amount": 75220.89761570828,
+    "lines": null,
+    "share": 44.59440073594044
+   },
+   {
+    "category": "Uniforms",
+    "isCampaigns": false,
+    "amount": 56074,
+    "lines": 3,
+    "share": 33.24324098925576
+   },
+   {
+    "category": "Printing & Printouts",
+    "isCampaigns": false,
+    "amount": 37383,
+    "lines": 3,
+    "share": 22.162358274803797
+   }
+  ]
+ },
+ "reconciliation": {
+  "overall": {
+   "campaignSpend": 75220.89761570828,
+   "otherSpend": 93457,
+   "totalSpend": 168677.89761570827,
+   "booked": 170000,
+   "unallocated": 1322.102384291725
+  },
+  "rows": [
+   {
+    "month": 8,
+    "brandId": 1,
+    "brand": "Brand A",
+    "campaignSpend": 50543.47826086957,
+    "otherSpend": 14457,
+    "totalSpend": 65000.47826086957,
+    "booked": 65000,
+    "unallocated": -0.4782608695652174
+   },
+   {
+    "month": 8,
+    "brandId": 2,
+    "brand": "Brand B",
+    "campaignSpend": 0,
+    "otherSpend": 50000,
+    "totalSpend": 50000,
+    "booked": 50000,
+    "unallocated": 0
+   },
+   {
+    "month": 8,
+    "brandId": 3,
+    "brand": "Brand C",
+    "campaignSpend": 0,
+    "otherSpend": 29000,
+    "totalSpend": 29000,
+    "booked": 31000,
+    "unallocated": 2000
+   },
+   {
+    "month": 8,
+    "brandId": 4,
+    "brand": "Brand D",
+    "campaignSpend": 24677.41935483871,
+    "otherSpend": 0,
+    "totalSpend": 24677.41935483871,
+    "booked": 24000,
+    "unallocated": -677.4193548387096
+   }
+  ]
+ },
+ "otherLines": [
+  {
+   "year": 2026,
+   "month": 8,
+   "brandId": 1,
+   "brand": "Brand A",
+   "category": "Printing & Printouts",
+   "description": "Catalogues and flyers",
+   "vendor": null,
+   "amount": 5783,
+   "notes": null
+  },
+  {
+   "year": 2026,
+   "month": 8,
+   "brandId": 1,
+   "brand": "Brand A",
+   "category": "Uniforms",
+   "description": "Showroom staff uniforms",
+   "vendor": null,
+   "amount": 8674,
+   "notes": null
+  },
+  {
+   "year": 2026,
+   "month": 8,
+   "brandId": 2,
+   "brand": "Brand B",
+   "category": "Printing & Printouts",
+   "description": "Catalogues and flyers",
+   "vendor": null,
+   "amount": 20000,
+   "notes": null
+  },
+  {
+   "year": 2026,
+   "month": 8,
+   "brandId": 2,
+   "brand": "Brand B",
+   "category": "Uniforms",
+   "description": "Showroom staff uniforms",
+   "vendor": null,
+   "amount": 30000,
+   "notes": null
+  },
+  {
+   "year": 2026,
+   "month": 8,
+   "brandId": 3,
+   "brand": "Brand C",
+   "category": "Printing & Printouts",
+   "description": "Catalogues and flyers",
+   "vendor": null,
+   "amount": 11600,
+   "notes": null
+  },
+  {
+   "year": 2026,
+   "month": 8,
+   "brandId": 3,
+   "brand": "Brand C",
+   "category": "Uniforms",
+   "description": "Showroom staff uniforms",
+   "vendor": null,
+   "amount": 17400,
+   "notes": null
+  }
+ ],
  "roi": {
   "ytd": {
-   "value": 4.678571428571429,
+   "value": 4.659768772970544,
    "status": "yellow",
    "unit": "ratio",
    "direction": "higher_better",
    "previous": 3.4785714285714286,
-   "delta": 1.2
+   "delta": 1.1811973443991155
   },
   "lytd": {
    "value": 3.4785714285714286,
@@ -183,7 +376,7 @@
   "monthly": [
    {
     "month": 8,
-    "current": 4.678571428571429,
+    "current": 4.659768772970544,
     "currentStatus": "yellow",
     "lastYear": 3.4785714285714286,
     "lastYearStatus": "yellow"
@@ -196,10 +389,12 @@
  },
  "budgetUtilization": {
   "overall": {
-   "value": 98.27434922491956,
+   "value": 98.67089652863895,
    "status": "neutral",
    "unit": "percent",
-   "spend": 168000,
+   "spend": 168677.89761570827,
+   "campaignSpend": 75220.89761570828,
+   "otherSpend": 93457,
    "budget": 170950,
    "overBudget": false
   },
@@ -209,10 +404,13 @@
     "brand": "Brand A",
     "companyKey": 1,
     "company": "Company One",
-    "value": 90.9090909090909,
+    "kind": "BRAND",
+    "value": 90.90975980541198,
     "status": "neutral",
     "unit": "percent",
-    "spend": 65000,
+    "spend": 65000.47826086957,
+    "campaignSpend": 50543.47826086957,
+    "otherSpend": 14457,
     "budget": 71500,
     "overBudget": false
    },
@@ -221,10 +419,13 @@
     "brand": "Brand B",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": 111.11111111111111,
     "status": "neutral",
     "unit": "percent",
     "spend": 50000,
+    "campaignSpend": 0,
+    "otherSpend": 50000,
     "budget": 45000,
     "overBudget": true
    },
@@ -233,10 +434,13 @@
     "brand": "Brand C",
     "companyKey": 2,
     "company": "Company Two",
+    "kind": "BRAND",
     "value": 95.23809523809524,
     "status": "neutral",
     "unit": "percent",
     "spend": 29000,
+    "campaignSpend": 0,
+    "otherSpend": 29000,
     "budget": 30450,
     "overBudget": false
    },
@@ -245,12 +449,15 @@
     "brand": "Brand D",
     "companyKey": null,
     "company": null,
-    "value": 100,
+    "kind": "BRAND",
+    "value": 102.8225806451613,
     "status": "neutral",
     "unit": "percent",
-    "spend": 24000,
+    "spend": 24677.41935483871,
+    "campaignSpend": 24677.41935483871,
+    "otherSpend": 0,
     "budget": 24000,
-    "overBudget": false
+    "overBudget": true
    }
   ],
   "companies": [
@@ -258,10 +465,12 @@
     "companyKey": 1,
     "company": "Company One",
     "brands": 2,
-    "value": 98.71244635193133,
+    "value": 98.71285687628288,
     "status": "neutral",
     "unit": "percent",
-    "spend": 115000,
+    "spend": 115000.47826086957,
+    "campaignSpend": 50543.47826086957,
+    "otherSpend": 64457,
     "budget": 116500,
     "overBudget": false
    },
@@ -273,6 +482,8 @@
     "status": "neutral",
     "unit": "percent",
     "spend": 29000,
+    "campaignSpend": 0,
+    "otherSpend": 29000,
     "budget": 30450,
     "overBudget": false
    },
@@ -280,12 +491,14 @@
     "companyKey": null,
     "company": "Unassigned",
     "brands": 1,
-    "value": 100,
+    "value": 102.8225806451613,
     "status": "neutral",
     "unit": "percent",
-    "spend": 24000,
+    "spend": 24677.41935483871,
+    "campaignSpend": 24677.41935483871,
+    "otherSpend": 0,
     "budget": 24000,
-    "overBudget": false
+    "overBudget": true
    }
   ]
  },
@@ -296,7 +509,18 @@
    "unit": "percent",
    "direction": "higher_better",
    "revenueCurrent": 3596580,
-   "revenueLastYear": 3349600
+   "revenueLastYear": 3349600,
+   "attributedPct": {
+    "value": 21.854094723320486,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "higher_better"
+   },
+   "brandShare": {
+    "value": 40,
+    "status": "neutral",
+    "unit": "percent"
+   }
   },
   "brands": [
    {
@@ -304,48 +528,96 @@
     "brand": "Brand A",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": 14.285714285714286,
     "status": "neutral",
     "unit": "percent",
     "direction": "higher_better",
     "revenueCurrent": 1272000,
-    "revenueLastYear": 1113000
+    "revenueLastYear": 1113000,
+    "attributedPct": {
+     "value": 30.14937106918239,
+     "status": "neutral",
+     "unit": "percent",
+     "direction": "higher_better"
+    },
+    "brandShare": {
+     "value": 40,
+     "status": "neutral",
+     "unit": "percent"
+    }
    },
    {
     "brandId": 2,
     "brand": "Brand B",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": 5,
     "status": "neutral",
     "unit": "percent",
     "direction": "higher_better",
     "revenueCurrent": 957180,
-    "revenueLastYear": 911600
+    "revenueLastYear": 911600,
+    "attributedPct": {
+     "value": 21.939447125932425,
+     "status": "neutral",
+     "unit": "percent",
+     "direction": "higher_better"
+    },
+    "brandShare": {
+     "value": 40,
+     "status": "neutral",
+     "unit": "percent"
+    }
    },
    {
     "brandId": 3,
     "brand": "Brand C",
     "companyKey": 2,
     "company": "Company Two",
+    "kind": "BRAND",
     "value": -8,
     "status": "neutral",
     "unit": "percent",
     "direction": "higher_better",
     "revenueCurrent": 731400,
-    "revenueLastYear": 795000
+    "revenueLastYear": 795000,
+    "attributedPct": {
+     "value": 9.91249658189773,
+     "status": "neutral",
+     "unit": "percent",
+     "direction": "higher_better"
+    },
+    "brandShare": {
+     "value": 40,
+     "status": "neutral",
+     "unit": "percent"
+    }
    },
    {
     "brandId": 4,
     "brand": "Brand D",
     "companyKey": null,
     "company": null,
+    "kind": "BRAND",
     "value": 20,
     "status": "neutral",
     "unit": "percent",
     "direction": "higher_better",
     "revenueCurrent": 636000,
-    "revenueLastYear": 530000
+    "revenueLastYear": 530000,
+    "attributedPct": {
+     "value": 18.867924528301888,
+     "status": "neutral",
+     "unit": "percent",
+     "direction": "higher_better"
+    },
+    "brandShare": {
+     "value": 40,
+     "status": "neutral",
+     "unit": "percent"
+    }
    }
   ],
   "companies": [
@@ -358,7 +630,18 @@
     "unit": "percent",
     "direction": "higher_better",
     "revenueCurrent": 2229180,
-    "revenueLastYear": 2024600
+    "revenueLastYear": 2024600,
+    "attributedPct": {
+     "value": 26.624139818229125,
+     "status": "neutral",
+     "unit": "percent",
+     "direction": "higher_better"
+    },
+    "brandShare": {
+     "value": 40,
+     "status": "neutral",
+     "unit": "percent"
+    }
    },
    {
     "companyKey": 2,
@@ -369,7 +652,18 @@
     "unit": "percent",
     "direction": "higher_better",
     "revenueCurrent": 731400,
-    "revenueLastYear": 795000
+    "revenueLastYear": 795000,
+    "attributedPct": {
+     "value": 9.91249658189773,
+     "status": "neutral",
+     "unit": "percent",
+     "direction": "higher_better"
+    },
+    "brandShare": {
+     "value": 40,
+     "status": "neutral",
+     "unit": "percent"
+    }
    },
    {
     "companyKey": null,
@@ -380,7 +674,18 @@
     "unit": "percent",
     "direction": "higher_better",
     "revenueCurrent": 636000,
-    "revenueLastYear": 530000
+    "revenueLastYear": 530000,
+    "attributedPct": {
+     "value": 18.867924528301888,
+     "status": "neutral",
+     "unit": "percent",
+     "direction": "higher_better"
+    },
+    "brandShare": {
+     "value": 40,
+     "status": "neutral",
+     "unit": "percent"
+    }
    }
   ]
  },
@@ -390,19 +695,19 @@
    "redAbove": 5
   },
   "overall": {
-   "value": 207.92079207920793,
+   "value": 208.75977427686666,
    "status": "yellow",
    "unit": "lyd",
    "direction": "lower_better",
    "pctOfInvoice": {
-    "value": 3.370786516853933,
+    "value": 3.384387993894628,
     "status": "yellow",
     "unit": "percent",
     "direction": "lower_better"
    },
    "weightedAvgInvoice": 6168.316831683168,
    "newCustomers": 808,
-   "spend": 168000
+   "spend": 168677.89761570827
   },
   "brands": [
    {
@@ -410,25 +715,27 @@
     "brand": "Brand A",
     "companyKey": 1,
     "company": "Company One",
-    "value": 125,
+    "kind": "BRAND",
+    "value": 125.00091973244147,
     "status": "green",
     "unit": "lyd",
     "direction": "lower_better",
     "pctOfInvoice": {
-     "value": 2.5,
+     "value": 2.5000183946488295,
      "status": "green",
      "unit": "percent",
      "direction": "lower_better"
     },
     "weightedAvgInvoice": 5000,
     "newCustomers": 520,
-    "spend": 65000
+    "spend": 65000.47826086957
    },
    {
     "brandId": 2,
     "brand": "Brand B",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": 250,
     "status": "yellow",
     "unit": "lyd",
@@ -448,6 +755,7 @@
     "brand": "Brand C",
     "companyKey": 2,
     "company": "Company Two",
+    "kind": "BRAND",
     "value": 604.1666666666666,
     "status": "red",
     "unit": "lyd",
@@ -467,19 +775,20 @@
     "brand": "Brand D",
     "companyKey": null,
     "company": null,
-    "value": 600,
-    "status": "green",
+    "kind": "BRAND",
+    "value": 616.9354838709677,
+    "status": "yellow",
     "unit": "lyd",
     "direction": "lower_better",
     "pctOfInvoice": {
-     "value": 3,
-     "status": "green",
+     "value": 3.0846774193548385,
+     "status": "yellow",
      "unit": "percent",
      "direction": "lower_better"
     },
     "weightedAvgInvoice": 20000,
     "newCustomers": 40,
-    "spend": 24000
+    "spend": 24677.41935483871
    }
   ]
  },
@@ -498,6 +807,7 @@
     "brand": "Brand A",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": 1.8,
     "status": "green",
     "unit": "lyd",
@@ -510,6 +820,7 @@
     "brand": "Brand B",
     "companyKey": 1,
     "company": "Company One",
+    "kind": "BRAND",
     "value": 3.5,
     "status": "yellow",
     "unit": "lyd",
@@ -522,6 +833,7 @@
     "brand": "Brand C",
     "companyKey": 2,
     "company": "Company Two",
+    "kind": "BRAND",
     "value": 7,
     "status": "red",
     "unit": "lyd",
@@ -534,6 +846,7 @@
     "brand": "Brand D",
     "companyKey": null,
     "company": null,
+    "kind": "BRAND",
     "value": 2.5,
     "status": "yellow",
     "unit": "lyd",

@@ -11,6 +11,12 @@ export const roiRatio = (revenueAttributed: Rat, spend: Rat): Rat | null => rati
 export const spendPctOfRevenue = (spend: Rat, revenue: Rat): Rat | null => ratio(spend, revenue);
 export const budgetUtilization = (spend: Rat, budget: Rat): Rat | null => ratio(spend, budget);
 export const brandGrowth = (revenueCurrent: Rat, revenueLastYear: Rat): Rat | null => ratio(revenueCurrent.sub(revenueLastYear), revenueLastYear);
+/** Marketing-attributed share of brand revenue: Σattributed ÷ Σbrand revenue. */
+export const attributedPct = (attributed: Rat, brandRevenue: Rat): Rat | null => ratio(attributed, brandRevenue);
+/** Brand share of the company: Σbrand revenue ÷ Σcompany total revenue. */
+export const brandShare = (brandRevenue: Rat, companyTotal: Rat): Rat | null => ratio(brandRevenue, companyTotal);
+/** Plain part ÷ whole (e.g. a category's share of Total MARCOM Spend). */
+export const ratioOf = (part: Rat, whole: Rat): Rat | null => ratio(part, whole);
 export const cac = (spend: Rat, newCustomers: Rat): Rat | null => ratio(spend, newCustomers);
 /** Σ(avg_invoice × new_customers) ÷ Σnew_customers -- weighted by customers, never a plain mean of invoices. */
 export const weightedAvgInvoice = (invoiceTimesCustomers: Rat, newCustomers: Rat): Rat | null => ratio(invoiceTimesCustomers, newCustomers);

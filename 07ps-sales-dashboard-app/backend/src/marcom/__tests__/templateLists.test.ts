@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 import ExcelJS from 'exceljs';
-import { CAMPAIGN_STATUSES, CITIES, EVENT_STATUSES, EVENT_TYPES, MEDIA_TYPES, MONTHS, PLATFORMS } from '../templateConfig';
+import { CAMPAIGN_STATUSES, CITIES, DEFAULT_SPEND_CATEGORIES, EVENT_STATUSES, EVENT_TYPES, MEDIA_TYPES, MONTHS, PLATFORMS } from '../templateConfig';
 
 const TEMPLATE = path.join(__dirname, '..', '..', '..', 'assets', 'marcom', 'MARCOM_Contribution_Data_Template.xlsx');
 
@@ -34,8 +34,9 @@ describe('template Lists sheet vs templateConfig enums', async () => {
   it('Event_Type', () => expect(column('Event_Type')).toEqual([...EVENT_TYPES]));
   it('Event_Status', () => expect(column('Event_Status')).toEqual([...EVENT_STATUSES]));
   it('City', () => expect(column('City')).toEqual([...CITIES]));
-  it('Brand list is the 4 placeholders (brands are data-driven, not enum-checked)', () => {
-    expect(column('Brand')).toEqual(['Brand A', 'Brand B', 'Brand C', 'Brand D']);
+  it('Spend_Category (P1b) seeds the same list as migration 0061', () => expect(column('Spend_Category')).toEqual([...DEFAULT_SPEND_CATEGORIES]));
+  it('Brand list is the business list (data-driven: the download replaces it with the DB brands)', () => {
+    expect(column('Brand')).toEqual(['Xtreme', 'Majaal', 'Germa', 'BMH']);
   });
 });
 

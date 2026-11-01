@@ -60,7 +60,7 @@ describe.skipIf(!RUN_DB)('marcom service (DB-backed)', () => {
       expect(p1.errorCount).toBe(0);
       const spend = p1.tables.find((t) => t.id === 'spend')!;
       expect(spend).toMatchObject({ rowsFound: 2, insert: 2, update: 0, unchanged: 0 });
-      expect(p1.totals.examplesSkipped).toBe(7);
+      expect(p1.totals.examplesSkipped).toBe(8);
       expect(p1.newBrands.sort()).toEqual(['Brand A', 'Brand B']);
       expect(p1.requiresNewBrandConfirmation).toBe(true);
       expect(p1.period?.label).toMatch(/February/);
@@ -76,7 +76,7 @@ describe.skipIf(!RUN_DB)('marcom service (DB-backed)', () => {
       const p3 = await validateUpload({ buffer: changed, filename: 'feb2.xlsx', actor: ADMIN });
       const s3 = p3.tables.find((t) => t.id === 'spend')!;
       expect(s3).toMatchObject({ insert: 0, update: 2, unchanged: 0 });
-      expect(s3.updates[0].changes).toEqual([{ field: 'spend', old: '10000.00', new: '12345.50' }]);
+      expect(s3.updates[0].changes).toEqual([{ field: 'financeBookedTotal', old: '10000.00', new: '12345.50' }]);
       expect(p3.issues.some((i) => i.code === 'ROW_UPDATES_EXISTING')).toBe(true);
       expect(p3.newBrands).toEqual([]);
     });
@@ -87,9 +87,9 @@ describe.skipIf(!RUN_DB)('marcom service (DB-backed)', () => {
       expect(p.tables.find((t) => t.id === 'spend')!.unchanged).toBe(2);
     });
 
-    it('the blank template imports nothing and reports 7 example rows skipped', async () => {
+    it('the blank template imports nothing and reports 8 example rows skipped', async () => {
       const p = await validateUpload({ buffer: await toBuf(await templateWb()), filename: 't.xlsx', actor: ADMIN });
-      expect(p.totals).toEqual({ insert: 0, update: 0, unchanged: 0, examplesSkipped: 7 });
+      expect(p.totals).toEqual({ insert: 0, update: 0, unchanged: 0, examplesSkipped: 8 });
       expect(p.nothingToImport).toBe(true);
       expect(p.canCommit).toBe(false);
     });
@@ -126,7 +126,7 @@ describe.skipIf(!RUN_DB)('marcom service (DB-backed)', () => {
       await importFile(await monthFile({ month: 'February', spend: 2000 }));
       expect(await count('marcom_spend_monthly')).toBe(2);
       expect(await count('marcom_spend_monthly', '1 = 1')).toBe(4);
-      const [cur] = (await pool.query("SELECT spend FROM marcom_spend_monthly WHERE is_current = 1 ORDER BY brand_id")) as [{ spend: string }[], unknown];
+      const [cur] = (await pool.query("SELECT finance_booked_total AS spend FROM marcom_spend_monthly WHERE is_current = 1 ORDER BY brand_id")) as [{ spend: string }[], unknown];
       expect(cur.map((r) => r.spend)).toEqual(['2000.00', '3000.00']);
     });
   });
@@ -239,7 +239,7 @@ describe.skipIf(!RUN_DB)('marcom service (DB-backed)', () => {
 
     it('refuses a file with blocking errors and writes nothing', async () => {
       const wb = await templateWb();
-      setRow(wb.getWorksheet(P1)!, 7, [2026, 'Agust', 'Brand A', -5, 1, 1, 1, 1, 1, 1, 1, 1]);
+      setRow(wb.getWorksheet(P1)!, 15, [2026, 'Agust', 'Brand A', -5, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
       const p = await validateUpload({ buffer: await toBuf(wb), filename: 'bad.xlsx', actor: ADMIN });
       expect(p.errorCount).toBeGreaterThan(0);
       expect(p.canCommit).toBe(false);
@@ -285,7 +285,7 @@ describe.skipIf(!RUN_DB)('marcom service (DB-backed)', () => {
 
     it('a structure error leaves no staged file or row behind', async () => {
       const wb = await templateWb();
-      wb.getWorksheet(P1)!.getCell('D5').value = 'Spend';
+      wb.getWorksheet(P1)!.getCell('D13').value = 'Spend';
       await expect(validateUpload({ buffer: await toBuf(wb), filename: 'a.xlsx', actor: ADMIN })).rejects.toThrow(/does not match the MARCOM template/);
       expect(fs.readdirSync(stagingDir())).toEqual([]);
       expect(await count('marcom_staged_upload', '1 = 1')).toBe(0);

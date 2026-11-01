@@ -44,7 +44,11 @@ describe.skipIf(!RUN_DB)('demo seed (DB-backed, same path as a real upload)', ()
     expect(s.filters.brands).toHaveLength(4);
     expect(s.roi.lytd).not.toBeNull();
     expect(s.meta.missing).toEqual([]);
-    expect(s.budgetUtilization.brands.filter((b) => b.overBudget)).toHaveLength(1);
+    // Total MARCOM Spend = campaign (prorated) + other: Brand B (budget 90% of plan) is over budget; months where a
+    // campaign alone exceeds the plan push others over too.
+    expect(s.budgetUtilization.brands.filter((b) => b.overBudget).map((b) => b.brand)).toContain('Brand B');
+    expect(s.totals.otherSpend.total).toBeGreaterThan(0);
+    expect(s.totals.unallocated.total).not.toBeNull();
     expect(s.freshness).toMatchObject({ hasData: true, latestPeriod: { year: 2026, month: 8 } });
 
     const c = await campaignsPage({ toMonth: '12' });
@@ -76,14 +80,14 @@ describe.skipIf(!RUN_DB)('demo seed (DB-backed, same path as a real upload)', ()
     await expect(seedDemo({ userId: admin })).rejects.toThrow(/already loaded/);
     await unseedDemo({ userId: admin });
 
-    const real = await validateUpload({ buffer: await spendFile([[2026, 'May', 'Real Brand', 1, 1, 1, 1, 1, 1, 1, 1, 1]]), filename: 'real.xlsx', actor: { id: admin } });
+    const real = await validateUpload({ buffer: await spendFile([[2026, 'May', 'Real Brand', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]), filename: 'real.xlsx', actor: { id: admin } });
     await commitUpload({ stagedUploadId: real.stagedUploadId, actor: { id: admin }, confirmNewBrands: true });
     await expect(seedDemo({ userId: admin })).rejects.toThrow(/Real MARCOM uploads exist/);
   });
 
   it('unseed refuses when a real upload sits on top of the demo data', async () => {
     await seedDemo({ userId: admin });
-    const real = await validateUpload({ buffer: await spendFile([[2026, 'May', 'Real Brand', 1, 1, 1, 1, 1, 1, 1, 1, 1]]), filename: 'real.xlsx', actor: { id: admin } });
+    const real = await validateUpload({ buffer: await spendFile([[2026, 'May', 'Real Brand', 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]), filename: 'real.xlsx', actor: { id: admin } });
     await commitUpload({ stagedUploadId: real.stagedUploadId, actor: { id: admin }, confirmNewBrands: true });
     await expect(unseedDemo({ userId: admin })).rejects.toThrow(/real upload sitting on top/);
     expect(await count('marcom_upload_batch', "status = 'SUCCESS'")).toBe(5); // nothing was rolled back

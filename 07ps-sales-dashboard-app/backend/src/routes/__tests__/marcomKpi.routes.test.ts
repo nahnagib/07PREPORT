@@ -201,7 +201,7 @@ describe.skipIf(!RUN_DB)('/marcom/kpi/* (HTTP, DB-backed)', () => {
     it('every page carries the filter options (years with data, all brands; platforms / statuses where they apply)', async () => {
       const s = await (await get('/marcom/kpi/spending', 'director')).json();
       expect(s.options.years).toEqual([2026]);
-      expect(s.options.brands).toEqual([{ id: expect.any(Number), name: 'Brand A' }]);
+      expect(s.options.brands).toEqual([{ id: expect.any(Number), name: 'Brand A', companyKey: null, company: null, kind: 'BRAND' }]);
       expect((await (await get('/marcom/kpi/digital', 'director')).json()).options.platforms).toEqual(['Facebook', 'Google', 'LinkedIn', 'Instagram', 'TikTok']);
       expect((await (await get('/marcom/kpi/campaigns', 'director')).json()).options.statuses).toEqual(['Planned', 'Ongoing', 'Completed', 'On Hold']);
       // options list ALL brands even when the request filters to one
@@ -215,24 +215,29 @@ describe.skipIf(!RUN_DB)('/marcom/kpi/* (HTTP, DB-backed)', () => {
       const id = brands[0].brand_id;
       const b = await (await get(`/marcom/kpi/spending?brandIds=${id}`, 'director')).json();
       expect(b.filters.brands).toHaveLength(1);
-      expect(b.roi.ytd.value).toBe(5.6);
+      // Jan-Aug: Total MARCOM Spend = the Feb-Mar campaign (120,000) + August other spend (50,000)
+      expect(b.roi.ytd.value).toBeCloseTo(280000 / 170000, 10);
+      expect(b.totals.campaignSpend.total).toBe(120000);
+      expect(b.totals.otherSpend.total).toBe(50000);
       const t = await (await get(`/marcom/kpi/trade?brandIds[]=${id}`, 'director')).json();
       expect(t.eventsTimeline).toHaveLength(1);
     });
   });
 
   describe('only is_current rows are ever read', () => {
-    const rowA = (spend: number) => [2026, 'August', 'Brand A', spend, 280000, 1200000, 1050000, 55000, 120, 900, 8000, 3500];
+    // Template 2.0: Total MARCOM Spend = campaign + other spend; here all of it is one P1b line.
+    const rowA = [2026, 'August', 'Brand A', 1200000, 1050000, 280000, null, 55000, null, 120, 900, 8000, 3500];
+    const otherA = (amount: number) => [2026, 'August', 'Brand A', 'Other', 'Misc', null, amount, null];
 
     it('an update supersedes the old row (no double counting) and rollback restores the earlier value', async () => {
-      await upload(await spendFile([rowA(50000)]));
+      await upload(await spendFile([rowA], [otherA(50000)]));
       const first = await (await get('/marcom/kpi/spending?year=2026&fromMonth=8&toMonth=8', 'director')).json();
       expect(first.totals.spend.total).toBe(50000);
 
-      const second = await upload(await spendFile([rowA(60000)]));
+      const second = await upload(await spendFile([rowA], [otherA(60000)]));
       const after = await (await get('/marcom/kpi/spending?year=2026&fromMonth=8&toMonth=8', 'director')).json();
       expect(after.totals.spend.total).toBe(60000); // not 110000
-      const [hist] = (await pool.query('SELECT COUNT(*) AS n FROM marcom_spend_monthly')) as [{ n: number }[], unknown];
+      const [hist] = (await pool.query('SELECT COUNT(*) AS n FROM marcom_other_spend')) as [{ n: number }[], unknown];
       expect(hist[0].n).toBe(2); // the superseded row still exists...
 
       await svc.rollbackBatch({ batchId: second.batchId, actor: { id: ids.admin }, reason: 'back it out' });
@@ -241,10 +246,10 @@ describe.skipIf(!RUN_DB)('/marcom/kpi/* (HTTP, DB-backed)', () => {
     });
 
     it('LYTD appears once prior-year rows are uploaded, and the ratio is the ratio of sums', async () => {
-      await upload(await spendFile([rowA(50000)]));
+      await upload(await spendFile([rowA], [otherA(50000)]));
       let b = await (await get('/marcom/kpi/spending?year=2026&fromMonth=8&toMonth=8', 'director')).json();
       expect(b.roi.lytd).toBeNull();
-      await upload(await spendFile([[2025, 'August', 'Brand A', 100000, 300000, 1, 1, 1, 1, 1, 1, 1]]));
+      await upload(await spendFile([[2025, 'August', 'Brand A', 1000000, 1, 300000, null, 1, null, 1, 1, 1, 1]], [[2025, 'August', 'Brand A', 'Other', 'Misc', null, 100000, null]]));
       b = await (await get('/marcom/kpi/spending?year=2026&fromMonth=8&toMonth=8', 'director')).json();
       expect(b.roi.lytd).toMatchObject({ value: 3, status: 'yellow' });
       expect(b.roi.ytd).toMatchObject({ value: 5.6, previous: 3 });
@@ -254,8 +259,9 @@ describe.skipIf(!RUN_DB)('/marcom/kpi/* (HTTP, DB-backed)', () => {
     });
 
     it('two months with very different ratios aggregate as ratio of sums (through the database)', async () => {
-      const r = (m: string, spend: number, rev: number) => [2026, m, 'Brand A', spend, rev, 1, 1, 1, 1, 1, 1, 1];
-      await upload(await spendFile([r('January', 100, 1000), r('February', 900, 900)]));
+      const r = (m: string, rev: number) => [2026, m, 'Brand A', 10000, 1, rev, null, 1, null, 1, 1, 1, 1];
+      const o = (m: string, spend: number) => [2026, m, 'Brand A', 'Other', 'Misc', null, spend, null];
+      await upload(await spendFile([r('January', 1000), r('February', 900)], [o('January', 100), o('February', 900)]));
       const b = await (await get('/marcom/kpi/spending?year=2026&fromMonth=1&toMonth=2', 'director')).json();
       expect(b.roi.ytd.value).toBe(1.9);
       expect(b.roi.monthly.map((m: { current: number }) => m.current)).toEqual([10, 1]);

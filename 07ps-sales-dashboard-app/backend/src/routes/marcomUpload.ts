@@ -1,19 +1,20 @@
 import { ErrorRequestHandler, NextFunction, Request, Response, Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
-import path from 'node:path';
 import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { hasPermission } from '../services/permissionService';
 import { ValidationError } from '../lib/errors';
-import { MAX_FILE_BYTES } from '../marcom/templateConfig';
+import { MAX_FILE_BYTES, YEAR_MAX, YEAR_MIN } from '../marcom/templateConfig';
+import { TEMPLATE_FILE, buildTemplate, loadTemplateLists } from '../marcom/templateDownload';
+import { businessToday } from '../marcomKpi/pages';
 import { issuesToCsv } from '../marcom/csv';
 import { isUuid } from '../marcom/staging';
 import {
   MarcomError, auditMarcom, commitUpload, getBatch, getBatchFile, getFreshness, getStagedIssues,
   listBatches, previewRemoveBatch, removeBatch, rollbackBatch, validateUpload,
 } from '../marcom/service';
-import { listBrandCompanies, setBrandCompany } from '../marcom/brandCompany';
+import { listBrandCompanies, setBrandCompany, setBrandKind } from '../marcom/brandCompany';
 
 /**
  * MARCOM Data Upload (admin). Every route sits behind `admin_marcom_upload` -- enforced here on
@@ -24,7 +25,6 @@ export const marcomUploadRouter = Router();
 
 marcomUploadRouter.use(requireAuth, requirePasswordChangeCleared, requirePermission('admin_marcom_upload', 'view'));
 
-const TEMPLATE_FILE = path.join(__dirname, '..', '..', 'assets', 'marcom', 'MARCOM_Contribution_Data_Template.xlsx');
 
 const validateLimiter = rateLimit({
   windowMs: Number(process.env.RATE_LIMIT_MARCOM_WINDOW_MIN ?? 10) * 60_000,
@@ -62,8 +62,23 @@ const intParam = (v: string): number | null => (/^\d{1,12}$/.test(v) ? Number(v)
 
 // ---------------------------------------------------------------- template
 
-marcomUploadRouter.get('/template', (_req, res, next) => {
-  res.download(TEMPLATE_FILE, 'MARCOM_Contribution_Data_Template.xlsx', (err) => { if (err) next(err); });
+// Personalised template: Brand / Category dropdowns from the database, P3 pre-filled for ?year= (default: this year).
+// ?blank=1 returns the shipped file untouched.
+marcomUploadRouter.get('/template', async (req, res, next) => {
+  try {
+    if (req.query.blank === '1') {
+      res.download(TEMPLATE_FILE, 'MARCOM_Contribution_Data_Template.xlsx', (err) => { if (err) next(err); });
+      return;
+    }
+    const y = typeof req.query.year === 'string' && /^\d{4}$/.test(req.query.year) ? Number(req.query.year) : Number(businessToday().slice(0, 4));
+    if (y < YEAR_MIN || y > YEAR_MAX) throw new ValidationError(`year must be between ${YEAR_MIN} and ${YEAR_MAX}.`);
+    const buf = await buildTemplate(y, await loadTemplateLists());
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="MARCOM_Contribution_Data_Template_${y}.xlsx"`);
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ---------------------------------------------------------------- validate (dry run)
@@ -200,6 +215,22 @@ marcomUploadRouter.put('/brands/:id/company', requirePermission('admin_marcom_up
       return;
     }
     res.json(await setBrandCompany(id, raw, req.user!.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Brand vs group entry (migration 0061): BMH = group events, spend only.
+marcomUploadRouter.put('/brands/:id/kind', requirePermission('admin_marcom_upload', 'create'), async (req, res, next) => {
+  try {
+    const id = intParam(req.params.id);
+    if (id === null) { res.status(404).json({ error: 'Brand not found.', code: 'BRAND_NOT_FOUND' }); return; }
+    const kind = req.body?.kind;
+    if (kind !== 'BRAND' && kind !== 'GROUP') {
+      res.status(400).json({ error: 'kind must be BRAND or GROUP.', code: 'BAD_PARAMS' });
+      return;
+    }
+    res.json(await setBrandKind(id, kind, req.user!.id));
   } catch (err) {
     next(err);
   }

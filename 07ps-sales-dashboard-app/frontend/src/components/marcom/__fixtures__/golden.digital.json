@@ -6,7 +6,34 @@
   "toMonth": 8,
   "platforms": [
    "Instagram"
-  ]
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
+   },
+   {
+    "id": 2,
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
+   },
+   {
+    "id": 3,
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
+   },
+   {
+    "id": 4,
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
+   }
+  ],
+  "companies": []
  },
  "options": {
   "years": [
@@ -169,5 +196,41 @@
     "status": "green"
    }
   ]
- }
+ },
+ "byBrand": [
+  {
+   "brandId": 1,
+   "brand": "Brand A",
+   "needsReview": false,
+   "followers": 52000,
+   "impressions": 180000,
+   "clicks": 9500,
+   "engagement": 7300,
+   "ctr": {
+    "value": 5.277777777777778,
+    "status": "green",
+    "unit": "percent",
+    "direction": "higher_better"
+   },
+   "engagementRate": {
+    "value": 4.055555555555555,
+    "status": "yellow",
+    "unit": "percent",
+    "direction": "higher_better"
+   },
+   "visitors": 12000,
+   "bounceRate": {
+    "value": 28.333333333333332,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "lower_better"
+   },
+   "avgSession": {
+    "value": 3.5,
+    "status": "green",
+    "unit": "minutes",
+    "direction": "higher_better"
+   }
+  }
+ ]
 }

@@ -26,7 +26,8 @@ export interface Freshness {
   batchId?: number;
 }
 
-export interface BrandRef { id: number; name: string; companyKey?: number | null; company?: string | null }
+/** kind 'GROUP' = group-level entry, not a brand (BMH = group events): spend only, no brand revenue. */
+export interface BrandRef { id: number; name: string; companyKey?: number | null; company?: string | null; kind?: 'BRAND' | 'GROUP' }
 export interface CompanyRef { key: number; name: string }
 
 export interface Options {
@@ -43,14 +44,14 @@ export interface Envelope {
   options: Options;
   freshness: Freshness;
   hasData: boolean;
-  meta: { missing: string[]; deltaBasis?: string; eventsFilter?: string };
+  meta: { missing: string[]; deltaBasis?: string; eventsFilter?: string; revenueNeedsReview?: number; brandNeedsReview?: number };
   period: { year: number; fromMonth: number; toMonth: number };
 }
 
 export interface MonthValue { month: number; value: number | null }
 export interface Series { total: number; unit: string; series: MonthValue[] }
 
-export interface BrandKpi extends Kpi { brandId: number; brand: string; companyKey?: number | null; company?: string | null }
+export interface BrandKpi extends Kpi { brandId: number; brand: string; companyKey?: number | null; company?: string | null; kind?: 'BRAND' | 'GROUP' }
 export interface CompanyKpi extends Kpi { companyKey: number | null; company: string; brands: number }
 
 export interface RoiBlock {
@@ -60,25 +61,40 @@ export interface RoiBlock {
   bands: { greenAbove: number; redBelow: number };
 }
 
+/** One reconciliation cell: Campaign + Other = Total MARCOM Spend, vs the finance-booked total (when entered). */
+export interface Recon { campaignSpend: number; otherSpend: number; totalSpend: number; booked: number | null; unallocated: number | null }
+
+export interface OtherSpendLine {
+  year: number; month: number; brandId: number; brand: string; category: string;
+  description: string; vendor: string | null; amount: number; notes: string | null;
+}
+
 export interface SpendingData extends Envelope {
   totals: {
-    spend: Series; revenueAttributed: Series; companyRevenue: Series;
+    /** Total MARCOM Spend = campaign (prorated by active days) + other spend. */
+    spend: Series; campaignSpend: Series; otherSpend: Series;
+    unallocated: { total: number | null; booked: number | null; rows: number; unit: string; series: MonthValue[] };
+    revenueAttributed: Series; brandRevenue: Series; companyRevenue: Series;
     budget: Series;
     spendPctOfRevenue: Kpi & { series: MonthValue[] };
-    spendPctOfCompanyRevenue: Kpi & { series: MonthValue[] };
+    spendPctOfBrandRevenue: Kpi & { series: MonthValue[] };
+    attributedPct: Kpi;
     budgetUsed: Kpi;
   };
+  byCategory: { total: number; categories: { category: string; isCampaigns: boolean; amount: number; lines: number | null; share: number | null }[] };
+  reconciliation: { overall: Recon; rows: (Recon & { month: number; brandId: number; brand: string })[] };
+  otherLines: OtherSpendLine[];
   /** Still in the payload for compatibility; rendered on the Media Campaign Performance page. */
   roi: RoiBlock;
   budgetUtilization: {
-    overall: Kpi & { spend: number; budget: number; overBudget: boolean };
-    brands: (BrandKpi & { spend: number; budget: number; overBudget: boolean })[];
-    companies: (CompanyKpi & { spend: number; budget: number; overBudget: boolean })[];
+    overall: Kpi & BudgetExtra;
+    brands: (BrandKpi & BudgetExtra)[];
+    companies: (CompanyKpi & BudgetExtra)[];
   };
   brandGrowth: {
-    overall: Kpi & { revenueCurrent: number; revenueLastYear: number };
-    brands: (BrandKpi & { revenueCurrent: number; revenueLastYear: number })[];
-    companies: (CompanyKpi & { revenueCurrent: number; revenueLastYear: number })[];
+    overall: Kpi & GrowthExtra;
+    brands: (BrandKpi & GrowthExtra)[];
+    companies: (CompanyKpi & GrowthExtra)[];
   };
   cac: {
     bands: { greenAtMost: number; redAbove: number };
@@ -87,6 +103,10 @@ export interface SpendingData extends Envelope {
   };
   cpc: { overall: Kpi & { socialPostCost: number; clicks: number }; brands: (BrandKpi & { socialPostCost: number; clicks: number })[] };
 }
+
+interface BudgetExtra { spend: number; campaignSpend: number; otherSpend: number; budget: number; overBudget: boolean }
+/** Brand-level revenue (template 2.0): growth YoY, marketing-attributed share, brand share of the company total. */
+interface GrowthExtra { revenueCurrent: number; revenueLastYear: number; attributedPct: Kpi; brandShare: Kpi }
 
 export interface CampaignsData extends Envelope {
   today: string;
@@ -115,6 +135,12 @@ export interface DigitalData extends Envelope {
   engagementMonthly: { year: number; month: number; paid: number | null; organic: number | null; organicShare: number | null }[];
   bounceRate: { kpi: Kpi; series: { year: number; month: number; value: number | null }[] };
   avgSession: { kpi: Kpi; series: { year: number; month: number; value: number | null; status: Status }[] };
+  /** Side-by-side comparison, one entry per selected brand (+ "No brand (needs review)" for pre-2.0 rows). */
+  byBrand: {
+    brandId: number | null; brand: string; needsReview: boolean; followers: number | null;
+    impressions: number; clicks: number; engagement: number; ctr: Kpi; engagementRate: Kpi;
+    visitors: number | null; bounceRate: Kpi; avgSession: Kpi;
+  }[];
 }
 
 export interface StockBlock {

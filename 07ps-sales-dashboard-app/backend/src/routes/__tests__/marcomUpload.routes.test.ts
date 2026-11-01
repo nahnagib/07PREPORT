@@ -1,6 +1,7 @@
 import '../../marcom/__tests__/helpers/env';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
+import ExcelJS from 'exceljs';
 import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
@@ -134,11 +135,40 @@ describe.skipIf(!RUN_DB)('/marcom/upload routes (HTTP, DB-backed)', () => {
   });
 
   describe('admin happy paths', () => {
-    it('template download is the exact shipped file', async () => {
-      const r = await call('GET', '/marcom/upload/template', 'admin');
+    it('template download ?blank=1 is the exact shipped file', async () => {
+      const r = await call('GET', '/marcom/upload/template?blank=1', 'admin');
       expect(r.status).toBe(200);
       expect(r.headers.get('content-disposition')).toMatch(/MARCOM_Contribution_Data_Template\.xlsx/);
       expect(Buffer.from(await r.arrayBuffer()).equals(fs.readFileSync(TEMPLATE))).toBe(true);
+    });
+
+    it('the default download lists the DB brands and pre-fills P3 for the year, and parses clean', async () => {
+      const added = ['Zz Xtreme', 'Zz Majaal', 'Zz BMH'];
+      await pool.query("INSERT INTO marcom_brand (name, kind) VALUES ('Zz Xtreme', 'BRAND'), ('Zz Majaal', 'BRAND'), ('Zz BMH', 'GROUP')");
+      try {
+        const [rows] = (await pool.query("SELECT name, kind FROM marcom_brand ORDER BY kind = 'GROUP', name")) as [{ name: string; kind: string }[], unknown];
+        const real = rows.filter((x) => x.kind === 'BRAND').map((x) => x.name);
+        const r = await call('GET', '/marcom/upload/template?year=2027', 'admin');
+        expect(r.status).toBe(200);
+        expect(r.headers.get('content-disposition')).toMatch(/MARCOM_Contribution_Data_Template_2027\.xlsx/);
+        const buf = Buffer.from(await r.arrayBuffer());
+        const wb = new ExcelJS.Workbook();
+        await wb.xlsx.load(buf as never);
+        const lists = wb.getWorksheet('Lists')!;
+        expect(rows.map((_, i) => lists.getRow(i + 2).getCell(1).value)).toEqual(rows.map((x) => x.name)); // groups (BMH) last
+        expect(lists.getRow(rows.length + 2).getCell(1).value).toBeNull();
+        const p3 = wb.getWorksheet('P3 - Digital Performance')!;
+        // 12 months x real brands (groups are not pre-filled) x Facebook / Instagram
+        const last = 7 + 12 * real.length * 2 - 1;
+        expect([1, 2, 3, 4].map((c) => p3.getRow(7).getCell(c).value)).toEqual([2027, 'January', real[0], 'Facebook']);
+        expect([1, 2, 3, 4].map((c) => p3.getRow(last).getCell(c).value)).toEqual([2027, 'December', real[real.length - 1], 'Instagram']);
+        expect(p3.getRow(last + 1).getCell(1).value).toBeNull();
+        expect([1, 2, 3].map((c) => p3.getRow(261).getCell(c).value)).toEqual([2027, 'January', real[0]]);
+        const v = await call('POST', '/marcom/upload/validate', 'admin', { body: form(buf, 'prefilled.xlsx') });
+        expect(await v.json()).toMatchObject({ errorCount: 0, nothingToImport: true });
+      } finally {
+        await pool.query('DELETE FROM marcom_brand WHERE name IN (?)', [added]);
+      }
     });
 
     it('validate returns a preview with stable issue shape; errors.csv and history work', async () => {
@@ -146,7 +176,7 @@ describe.skipIf(!RUN_DB)('/marcom/upload routes (HTTP, DB-backed)', () => {
       expect(r.status).toBe(200);
       const p = await r.json();
       expect(p).toMatchObject({ filename: 'apr.xlsx', errorCount: 0, canCommit: true });
-      expect(p.tables.map((t: { id: string }) => t.id)).toEqual(['spend', 'campaigns', 'media', 'social', 'web', 'trade', 'events']);
+      expect(p.tables.map((t: { id: string }) => t.id)).toEqual(['spend', 'other', 'campaigns', 'media', 'social', 'web', 'trade', 'events']);
 
       const csv = await call('GET', `/marcom/upload/staged/${p.stagedUploadId}/errors.csv`, 'admin');
       expect(csv.status).toBe(200);
@@ -156,7 +186,7 @@ describe.skipIf(!RUN_DB)('/marcom/upload routes (HTTP, DB-backed)', () => {
       const list = await (await call('GET', '/marcom/upload/batches', 'admin')).json();
       expect(list.rows[0]).toMatchObject({ batchId: goodBatch, status: 'SUCCESS', canRollback: true, uploadedBy: { name: 'marcom.route.admin' } });
       const detail = await (await call('GET', `/marcom/upload/batches/${goodBatch}`, 'admin')).json();
-      expect(detail.tables).toHaveLength(7);
+      expect(detail.tables).toHaveLength(8);
       const file = await call('GET', `/marcom/upload/batches/${goodBatch}/file`, 'admin');
       expect(file.status).toBe(200);
       expect(Buffer.from(await file.arrayBuffer()).subarray(0, 2).toString()).toBe('PK');

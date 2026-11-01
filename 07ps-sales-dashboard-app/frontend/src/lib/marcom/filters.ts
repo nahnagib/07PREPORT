@@ -29,7 +29,8 @@ export const PAGE_CONTROLS: Record<PageKey, { months: boolean; futureMonths: boo
   spending: { months: true, futureMonths: false, company: true, brand: true, platform: false, status: false },
   // Campaigns are date ranges: the API returns every campaign overlapping From..To.
   campaigns: { months: true, futureMonths: true, company: true, brand: true, platform: false, status: true },
-  digital: { months: true, futureMonths: false, company: false, brand: false, platform: true, status: false },
+  // Template 2.0: social / web rows are per brand, so Digital filters by company and brand too.
+  digital: { months: true, futureMonths: false, company: true, brand: true, platform: true, status: false },
   trade: { months: true, futureMonths: false, company: true, brand: true, platform: false, status: false },
 };
 

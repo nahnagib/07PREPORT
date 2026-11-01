@@ -106,7 +106,7 @@
  "today": "2026-09-20",
  "roi": {
   "ytd": {
-   "value": 4.731138652207591,
+   "value": 4.507910089448297,
    "status": "yellow",
    "unit": "ratio",
    "direction": "higher_better",
@@ -124,49 +124,49 @@
    },
    {
     "month": 2,
-    "current": 4.812345679012346,
+    "current": 4.143733003708282,
     "currentStatus": "yellow",
     "lastYear": null,
     "lastYearStatus": "na"
    },
    {
     "month": 3,
-    "current": 4.644444444444444,
+    "current": 4.644424481081415,
     "currentStatus": "yellow",
     "lastYear": null,
     "lastYearStatus": "na"
    },
    {
     "month": 4,
-    "current": 4.484276729559748,
+    "current": 4.451981680779517,
     "currentStatus": "yellow",
     "lastYear": null,
     "lastYearStatus": "na"
    },
    {
     "month": 5,
-    "current": 4.7768292682926825,
+    "current": 3.917833581613109,
     "currentStatus": "yellow",
     "lastYear": null,
     "lastYearStatus": "na"
    },
    {
     "month": 6,
-    "current": 4.854335260115607,
+    "current": 4.854334040127157,
     "currentStatus": "yellow",
     "lastYear": null,
     "lastYearStatus": "na"
    },
    {
     "month": 7,
-    "current": 4.592397660818714,
+    "current": 4.592384816620141,
     "currentStatus": "yellow",
     "lastYear": null,
     "lastYearStatus": "na"
    },
    {
     "month": 8,
-    "current": 4.678571428571429,
+    "current": 4.659768772970544,
     "currentStatus": "yellow",
     "lastYear": null,
     "lastYearStatus": "na"

@@ -4,7 +4,7 @@ import { pool } from '../db/pool';
 import { ValidationError } from '../lib/errors';
 import { assertSafeXlsx } from './zipGuard';
 import { runParse } from './parseRunner';
-import { Issue, ParseResult, ParsedRow, TableId, sanitizeText } from './parser';
+import { Issue, ParseResult, ParsedRow, TableId, TemplateStructureError, sanitizeText } from './parser';
 import { ADAPTERS, ADAPTER_BY_ID, Adapter, FieldType, keyOf, normalize, selectCurrentSql } from './tables';
 import { LaterKeys, RemovalPlan, applyRemoval, planCounts, planRemoval } from './removal';
 import { CurrentRow, FieldChange, TableDiff, diffTable, rowOfCell } from './diff';
@@ -95,7 +95,7 @@ export function periodLabel(from: string, to: string): string {
  */
 export function computePeriod(parse: ParseResult): Period | null {
   const ym: string[] = [];
-  for (const t of ['spend', 'social', 'web', 'trade'] as const) {
+  for (const t of ['spend', 'other', 'social', 'web', 'trade'] as const) {
     for (const r of parse.tables[t].rows) {
       if (r.data.year && r.data.month) ym.push(`${r.data.year}-${String(r.data.month).padStart(2, '0')}`);
     }
@@ -110,16 +110,28 @@ export function computePeriod(parse: ParseResult): Period | null {
   return { from: ym[0], to: ym[ym.length - 1], label: periodLabel(ym[0], ym[ym.length - 1]) };
 }
 
-async function loadKnown(q: Q): Promise<{ brands: string[]; campaigns: string[] }> {
-  const brands = (await rows<{ name: string }>(q, 'SELECT name FROM marcom_brand')).map((r) => r.name);
+interface Known { brands: string[]; groupBrands: string[]; categories: string[]; campaigns: string[] }
+
+async function loadKnown(q: Q): Promise<Known> {
+  const brands = await rows<{ name: string; kind: string }>(q, 'SELECT name, kind FROM marcom_brand');
+  const categories = (await rows<{ name: string }>(q, 'SELECT name FROM marcom_spend_category WHERE is_active = 1 ORDER BY sort_order, name')).map((r) => r.name);
   const campaigns = (await rows<{ name: string }>(q, 'SELECT name FROM marcom_campaign WHERE is_current = 1')).map((r) => r.name);
-  return { brands, campaigns };
+  return {
+    brands: brands.map((r) => r.name),
+    groupBrands: brands.filter((r) => r.kind === 'GROUP').map((r) => r.name),
+    categories,
+    campaigns,
+  };
 }
+
+const parseOptions = (k: Known) => ({ knownBrands: k.brands, groupBrands: k.groupBrands, knownCategories: k.categories, knownCampaigns: k.campaigns });
+
+const BRAND_TABLE_IDS = ADAPTERS.filter((a) => a.fields.some((f) => f.type === 'brand')).map((a) => a.id);
 
 function newBrandsOf(parse: ParseResult, known: string[]): string[] {
   const have = new Set(known.map((b) => b.toLowerCase()));
   const out = new Map<string, string>();
-  for (const t of ['spend', 'campaigns', 'events'] as const) {
+  for (const t of BRAND_TABLE_IDS) {
     for (const r of parse.tables[t].rows) {
       const b = r.data.brand;
       if (typeof b === 'string' && !have.has(b.toLowerCase()) && !out.has(b.toLowerCase())) out.set(b.toLowerCase(), b);
@@ -208,7 +220,7 @@ export async function validateUpload(input: { buffer: Buffer; filename: string; 
   const filePath = writeStaged(stagedId, input.buffer);
   try {
     const known = await loadKnown(pool);
-    const parse = await runParse(filePath, filename, { knownBrands: known.brands, knownCampaigns: known.campaigns });
+    const parse = await runParse(filePath, filename, parseOptions(known));
     const diffs = await diffAll(pool, parse);
     const dup = await findDuplicate(pool, hash);
 
@@ -326,18 +338,22 @@ async function withWriteLock<T>(fn: (conn: PoolConnection) => Promise<T>): Promi
 // ---------------------------------------------------------------------------- commit
 
 const toDb = (type: FieldType, v: unknown): string | number | null => {
-  if (v === null || v === undefined || v === '') return null;
+  if (v === null || v === undefined) return null;
+  // '' only reaches here for NOT NULL DEFAULT '' text keys (social account_name); other '' means "no value".
+  if (v === '') return type === 'text' ? '' : null;
   if (type === 'int') return Number(v);
   if (type === 'money' || type === 'dec2' || type === 'pct') return normalize(type, v);
   return String(v);
 };
 
-async function insertRow(conn: Q, a: Adapter, batchId: number, data: ParsedRow['data'], brandIds: Map<string, number>) {
+interface LookupIds { brands: Map<string, number>; categories: Map<string, number> }
+
+async function insertRow(conn: Q, a: Adapter, batchId: number, data: ParsedRow['data'], ids: LookupIds) {
   const cols = a.fields.map((f) => f.col);
   const vals = a.fields.map((f) => {
-    if (f.type === 'brand') {
-      const id = brandIds.get(String(data[f.field]).toLowerCase());
-      if (!id) throw new Error(`brand "${data[f.field]}" was not resolved`);
+    if (f.type === 'brand' || f.type === 'category') {
+      const id = (f.type === 'brand' ? ids.brands : ids.categories).get(String(data[f.field]).toLowerCase());
+      if (!id) throw new Error(`${f.type} "${data[f.field]}" was not resolved`);
       return id;
     }
     return toDb(f.type, data[f.field]);
@@ -379,7 +395,7 @@ export async function commitUpload(input: { stagedUploadId: string; actor: Actor
         await loadStaged(conn, pre.staged_id, input.actor, true);
 
         const known = await loadKnown(conn);
-        const parse = await runParse(filePath, pre.original_filename, { knownBrands: known.brands, knownCampaigns: known.campaigns });
+        const parse = await runParse(filePath, pre.original_filename, parseOptions(known));
         const errors = parse.issues.filter((i) => i.severity === 'error');
         if (errors.length) {
           throw new MarcomError(422, 'BLOCKING_ERRORS', `The file has ${errors.length} blocking error(s) and cannot be imported.`, { issues: errors });
@@ -409,6 +425,11 @@ export async function commitUpload(input: { stagedUploadId: string; actor: Actor
         for (const r of await rows<{ brand_id: number; name: string }>(conn, 'SELECT brand_id, name FROM marcom_brand')) {
           brandIds.set(r.name.toLowerCase(), r.brand_id);
         }
+        const categoryIds = new Map<string, number>();
+        for (const r of await rows<{ category_id: number; name: string }>(conn, 'SELECT category_id, name FROM marcom_spend_category')) {
+          categoryIds.set(r.name.toLowerCase(), r.category_id);
+        }
+        const ids: LookupIds = { brands: brandIds, categories: categoryIds };
 
         for (const a of ADAPTERS) {
           const d = diffs[a.id];
@@ -418,9 +439,9 @@ export async function commitUpload(input: { stagedUploadId: string; actor: Actor
               [batchId, u.existingId],
             );
             if ((res as { affectedRows: number }).affectedRows !== 1) throw new Error(`stale row in ${a.table}`);
-            await insertRow(conn, a, batchId, u.row.data, brandIds);
+            await insertRow(conn, a, batchId, u.row.data, ids);
           }
-          for (const r of d.inserts) await insertRow(conn, a, batchId, r.data, brandIds);
+          for (const r of d.inserts) await insertRow(conn, a, batchId, r.data, ids);
         }
 
         const tables = ADAPTERS.map((a) => ({
@@ -487,6 +508,7 @@ async function laterBatchKeys(q: Q, batchId: number): Promise<LaterKeys> {
     [batchId],
   );
   const out: LaterKeys = new Map();
+  const known = await loadKnown(q);
   for (const b of later) {
     if (!(Number(parseJson(b.summary_json)?.totals?.unchanged ?? 0) > 0)) continue;
     if (!b.has_file) {
@@ -497,7 +519,14 @@ async function laterBatchKeys(q: Q, batchId: number): Promise<LaterKeys> {
     const tmp = crypto.randomUUID();
     const filePath = writeStaged(tmp, file);
     try {
-      const parse = await runParse(filePath, b.filename, {});
+      let parse: ParseResult;
+      try {
+        parse = await runParse(filePath, b.filename, { knownCategories: known.categories });
+      } catch (err) {
+        if (!(err instanceof TemplateStructureError)) throw err;
+        throw new MarcomError(409, 'LATER_FILE_OLD_TEMPLATE',
+          `Batch ${b.batch_id} was uploaded with an older template version, so the removal cannot tell which of its rows it still needs. Remove the later batches first.`);
+      }
       const keys: Partial<Record<TableId, Set<string>>> = {};
       for (const a of ADAPTERS) keys[a.id] = new Set(parse.tables[a.id].rows.map((r) => keyOf(a, r.data)));
       out.set(b.batch_id, keys);
@@ -742,6 +771,7 @@ export async function getFreshness() {
     `SELECT MAX(ym) DIV 100 AS y, MAX(ym) MOD 100 AS m FROM (
        SELECT MAX(year * 100 + month) AS ym FROM marcom_spend_monthly WHERE is_current = 1
        UNION ALL SELECT MAX(year * 100 + month) FROM marcom_social_monthly WHERE is_current = 1
+       UNION ALL SELECT MAX(year * 100 + month) FROM marcom_other_spend WHERE is_current = 1
        UNION ALL SELECT MAX(year * 100 + month) FROM marcom_web_monthly WHERE is_current = 1
        UNION ALL SELECT MAX(year * 100 + month) FROM marcom_trade_monthly WHERE is_current = 1
      ) t`,

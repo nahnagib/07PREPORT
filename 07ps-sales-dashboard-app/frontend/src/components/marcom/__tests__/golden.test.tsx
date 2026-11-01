@@ -18,12 +18,14 @@ const status = (html: string, testId: string) => new RegExp(`data-testid="${test
 
 describe('golden: MARCOM Spending', () => {
   const html = render(<SpendingView data={fixture<SpendingData>('golden.spending')} />);
-  it('Total Spend with Budget LYD 55,000, Total Revenue with and Spend % of Revenue 17.9%', () => {
-    const v = visualHtml(html, 'spending.spendVsRevenue');
+  it('Total MARCOM Spend with Budget LYD 55,000, Revenue Attributed and Spend % of Revenue 17.9%', () => {
+    // the two headline cards sit above the chart card since UI change request #2
+    const v = html.slice(0, html.indexOf('data-visual="spending.byCategory"'));
     expect(flat(v)).toContain('LYD 55,000');
     expect(flat(v)).toContain('17.9%'); // 50,000 / 280,000
     expect(flat(v)).toContain('90.9% of budget used');
-    expect(flat(v)).toContain('4.2% of company revenue'); // 50,000 / 1,200,000
+    expect(flat(v)).toContain('4.2% of brand revenue'); // 50,000 / 1,200,000 (brand-level revenue since template 2.0)
+    expect(flat(v)).toContain('23.3% of brand revenue came from marketing'); // 280,000 / 1,200,000
   });
 });
 

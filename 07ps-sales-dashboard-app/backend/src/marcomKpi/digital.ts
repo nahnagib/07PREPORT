@@ -1,22 +1,44 @@
 import { Rat, R, sum } from './rat';
 import { Kpi, makeKpi, classify, withMonthlyTrend } from './kpi';
 import * as F from './formulas';
-import { AppliedPeriod, Num, groupBy, monthRange, total } from './common';
+import { AppliedPeriod, BrandRef, Num, groupBy, monthRange, total } from './common';
 import { PLATFORMS } from '../marcom/templateConfig';
 
+/**
+ * Social / web rows are per brand since template 2.0 (migration 0061). brandId null = a row uploaded before that
+ * (needs review): it is never assigned to a brand, only counted under "All".
+ */
 export interface SocialRow {
   year: number; month: number; platform: string;
+  brandId?: number | null; brand?: string | null; accountName?: string | null;
   followers: Num; impressions: Num; clicks: Num; paid: Num; organic: Num;
 }
-export interface WebRow { year: number; month: number; bounce: Num; totalVisitors: Num; sessions: Num; minutes: Num }
+export interface WebRow { year: number; month: number; brandId?: number | null; brand?: string | null; bounce: Num; totalVisitors: Num; sessions: Num; minutes: Num }
 
 export interface DigitalInput extends AppliedPeriod {
-  /** Social rows of `year`, months 1..toMonth (platform-filtered; months before fromMonth feed the follower snapshot only). */
+  /** Social rows of `year`, months 1..toMonth (platform/brand-filtered; months before fromMonth feed the follower snapshot only). */
   social: SocialRow[];
-  /** Website rows of `year`, months fromMonth..toMonth. */
+  /** Website rows of `year`, months fromMonth..toMonth (brand-filtered). */
   web: WebRow[];
   /** Selected platforms (all when no filter), in display order. */
   platforms: string[];
+  /** Selected brands (all when no filter) -- one entry each in the brand comparison. */
+  brands?: BrandRef[];
+}
+
+/** Label of the comparison entry holding pre-2.0 rows without a brand. */
+export const NO_BRAND_LABEL = 'No brand (needs review)';
+
+const hasBrand = (r: { brandId?: number | null }) => r.brandId !== null && r.brandId !== undefined;
+
+/**
+ * Pre-2.0 brand-less rows are dropped for any (year, month, platform) -- web: (year, month) -- that already has
+ * branded rows, so a month re-entered per brand is never counted twice.
+ */
+export function dropSupersededLegacy<T extends { year: number; month: number; brandId?: number | null; platform?: string }>(rows: T[]): T[] {
+  const cell = (r: T) => `${r.year}-${r.month}-${r.platform ?? ''}`;
+  const branded = new Set(rows.filter(hasBrand).map(cell));
+  return rows.filter((r) => hasBrand(r) || !branded.has(cell(r)));
 }
 
 /** Last two months (with data) of a monthly series -> exact values for the trend arrow. */
@@ -31,23 +53,38 @@ const sAgg = (rows: SocialRow[]): SAgg => ({
   paid: total(rows, (r) => r.paid), organic: total(rows, (r) => r.organic),
 });
 
+/**
+ * Followers are a snapshot, NEVER summed across months: the latest month (<= toMonth) of each brand + platform +
+ * account, then added across accounts/brands.
+ */
+function latestFollowers(rows: SocialRow[]): { value: Rat | null; asOf: { year: number; month: number } | null } {
+  const latest = new Map<string, SocialRow>();
+  for (const r of rows) {
+    const k = `${r.brandId ?? 'none'}|${r.platform}|${(r.accountName ?? '').toLowerCase()}`;
+    const prev = latest.get(k);
+    if (!prev || r.month > prev.month) latest.set(k, r);
+  }
+  if (!latest.size) return { value: null, asOf: null };
+  const picked = [...latest.values()];
+  const newest = picked.reduce((a, b) => (b.month > a.month ? b : a));
+  return { value: sum(picked.map((r) => R(r.followers))), asOf: { year: newest.year, month: newest.month } };
+}
+
 /** Page 3 -- Digital Performance. */
 export function buildDigital(input: DigitalInput) {
   const { year, fromMonth, toMonth, platforms } = input;
   const months = monthRange(fromMonth, toMonth);
-  const inRange = input.social.filter((r) => r.month >= fromMonth && r.month <= toMonth);
+  const social = dropSupersededLegacy(input.social);
+  const web = dropSupersededLegacy(input.web);
+  const inRange = social.filter((r) => r.month >= fromMonth && r.month <= toMonth);
   const overall = sAgg(inRange);
   const socialByMonth = groupBy(inRange, (r) => r.month);
   const socialByPlatform = groupBy(inRange, (r) => r.platform);
 
-  // ---- followers: latest snapshot per platform (<= toMonth), NEVER summed across months.
-  const followerRows = platforms.map((p) => {
-    const rows = input.social.filter((r) => r.platform === p).sort((a, b) => b.month - a.month);
-    const latest = rows[0];
-    return { platform: p, value: latest ? R(latest.followers) : null, asOf: latest ? { year: latest.year, month: latest.month } : null };
-  });
-  const known = followerRows.filter((f) => f.value !== null);
-  const followerTotal = known.length ? sum(known.map((f) => f.value!)) : null;
+  // ---- followers: latest snapshot per brand + platform + account (<= toMonth), summed per platform.
+  const followerRows = platforms.map((p) => ({ platform: p, ...latestFollowers(social.filter((r) => r.platform === p)) }));
+  const knownF = followerRows.filter((f) => f.value !== null);
+  const followerTotal = knownF.length ? sum(knownF.map((f) => f.value!)) : null;
   const fb = followerRows.find((f) => f.platform === 'Facebook')?.value ?? null;
   const ig = followerRows.find((f) => f.platform === 'Instagram')?.value ?? null;
   const metaTotal = fb === null && ig === null ? null : (fb ?? Rat.ZERO).add(ig ?? Rat.ZERO);
@@ -76,8 +113,10 @@ export function buildDigital(input: DigitalInput) {
   });
 
   // ---- website
-  const webByMonth = groupBy(input.web, (r) => r.month);
-  const wTotals = { bounce: total(input.web, (r) => r.bounce), visitors: total(input.web, (r) => r.totalVisitors), sessions: total(input.web, (r) => r.sessions), minutes: total(input.web, (r) => r.minutes) };
+  type WAgg = { bounce: Rat; visitors: Rat; sessions: Rat; minutes: Rat };
+  const wAgg = (rows: WebRow[]): WAgg => ({ bounce: total(rows, (r) => r.bounce), visitors: total(rows, (r) => r.totalVisitors), sessions: total(rows, (r) => r.sessions), minutes: total(rows, (r) => r.minutes) });
+  const webByMonth = groupBy(web, (r) => r.month);
+  const wTotals = wAgg(web);
   const monthlyBounce = months.map((m) => {
     const rows = webByMonth.get(m);
     return { month: m, value: rows ? F.bounceRate(total(rows, (r) => r.bounce), total(rows, (r) => r.totalVisitors)) : null };
@@ -88,13 +127,47 @@ export function buildDigital(input: DigitalInput) {
   });
   const b = lastTwo(monthlyBounce);
   const s = lastTwo(monthlySession);
+  const bounceKpi = (a: WAgg) => makeKpi('percent', F.bounceRate(a.bounce, a.visitors), { direction: 'lower_better' });
+  const sessionKpi = (a: WAgg) => makeKpi('minutes', F.avgSessionMinutes(a.minutes, a.sessions), { rule: 'avgSessionMinutes', direction: 'higher_better' });
 
-  const hasData = input.social.some((r) => r.month >= fromMonth) || input.web.length > 0;
+  // ---- side-by-side comparison by brand (every KPI of the page, per brand)
+  const legacySocial = inRange.filter((r) => !hasBrand(r));
+  const legacyWeb = web.filter((r) => !hasBrand(r));
+  const entries: { brandId: number | null; brand: string; social: SocialRow[]; followerRows: SocialRow[]; web: WebRow[] }[] = (input.brands ?? []).map((br) => ({
+    brandId: br.id, brand: br.name,
+    social: inRange.filter((r) => r.brandId === br.id),
+    followerRows: social.filter((r) => r.brandId === br.id),
+    web: web.filter((r) => r.brandId === br.id),
+  }));
+  if (legacySocial.length || legacyWeb.length) {
+    entries.push({ brandId: null, brand: NO_BRAND_LABEL, social: legacySocial, followerRows: social.filter((r) => !hasBrand(r)), web: legacyWeb });
+  }
+  const byBrand = entries
+    .filter((e) => e.social.length || e.web.length || e.followerRows.length)
+    .map((e) => {
+      const a = sAgg(e.social);
+      const w = wAgg(e.web);
+      return {
+        brandId: e.brandId, brand: e.brand, needsReview: e.brandId === null,
+        followers: latestFollowers(e.followerRows).value?.toNumber() ?? null,
+        impressions: a.impressions.toNumber(), clicks: a.clicks.toNumber(), engagement: a.paid.add(a.organic).toNumber(),
+        ctr: ctrKpi(a), engagementRate: erKpi(a),
+        visitors: e.web.length ? w.visitors.toNumber() : null,
+        bounceRate: bounceKpi(w), avgSession: sessionKpi(w),
+      };
+    });
+
+  const hasData = social.some((r) => r.month >= fromMonth) || web.length > 0;
+  const meta: { missing: string[]; deltaBasis: string; brandNeedsReview?: number } = { missing: [], deltaBasis: 'lastMonthVsPreviousMonth' };
+  if (legacySocial.length || legacyWeb.length) {
+    meta.missing.push('brandNeedsReview');
+    meta.brandNeedsReview = legacySocial.length + legacyWeb.length;
+  }
 
   return {
     period: { year, fromMonth, toMonth },
     hasData,
-    meta: { missing: [] as string[], deltaBasis: 'lastMonthVsPreviousMonth' },
+    meta,
     followers: {
       platforms: followerRows.map((f) => ({ platform: f.platform, value: f.value === null ? null : f.value.toNumber(), asOf: f.asOf })),
       total: followerTotal === null ? null : followerTotal.toNumber(),
@@ -111,17 +184,18 @@ export function buildDigital(input: DigitalInput) {
     },
     engagementMonthly,
     bounceRate: {
-      kpi: withMonthlyTrend(makeKpi('percent', F.bounceRate(wTotals.bounce, wTotals.visitors), { direction: 'lower_better' }), 'percent', b.last, b.prev),
+      kpi: withMonthlyTrend(bounceKpi(wTotals), 'percent', b.last, b.prev),
       series: monthlyBounce.map((x) => ({ year, month: x.month, value: x.value === null ? null : makeKpi('percent', x.value).value })),
     },
     avgSession: {
-      kpi: withMonthlyTrend(makeKpi('minutes', F.avgSessionMinutes(wTotals.minutes, wTotals.sessions), { rule: 'avgSessionMinutes', direction: 'higher_better' }), 'minutes', s.last, s.prev),
+      kpi: withMonthlyTrend(sessionKpi(wTotals), 'minutes', s.last, s.prev),
       series: monthlySession.map((x) => ({
         year, month: x.month,
         value: x.value === null ? null : x.value.toNumber(),
         status: classify('avgSessionMinutes', x.value),
       })),
     },
+    byBrand,
   };
 }
 

@@ -19,14 +19,15 @@ describe('marcomKpi has exactly one SQL entry point', () => {
     expect(src).not.toMatch(/pool\.query|db\/pool/);
   });
 
-  it('db.ts only names versioned tables inside the TABLES map (plus the brand master)', () => {
+  it('db.ts only names versioned tables inside the TABLES map (plus the brand master and spend-category lookup)', () => {
     const src = fs.readFileSync(path.join(dir, 'db.ts'), 'utf8');
     const names = [...src.matchAll(/\bmarcom_[a-z_]+/g)].map((m) => m[0]);
-    const allowed = new Set(['marcom_spend_monthly', 'marcom_campaign', 'marcom_campaign_media', 'marcom_social_monthly', 'marcom_web_monthly', 'marcom_trade_monthly', 'marcom_event', 'marcom_brand']);
+    const allowed = new Set(['marcom_spend_monthly', 'marcom_campaign', 'marcom_campaign_media', 'marcom_social_monthly', 'marcom_web_monthly', 'marcom_trade_monthly', 'marcom_event', 'marcom_brand', 'marcom_other_spend', 'marcom_spend_category']);
     for (const n of names) expect(allowed.has(n), n).toBe(true);
-    // The raw pool is used in exactly three places: the brand master, runCurrent and availableYears
-    // (a UNION built from buildCurrentQuery parts, so every branch still carries is_current = 1).
-    expect((src.match(/pool\.query/g) ?? []).length).toBe(3);
-    expect((src.match(/buildCurrentQuery\('/g) ?? []).length).toBeGreaterThanOrEqual(6);
+    // The raw pool is used in exactly four places: the brand master, the spend-category lookup (both reference data,
+    // not versioned), runCurrent and availableYears (a UNION built from buildCurrentQuery parts, so every branch still
+    // carries is_current = 1).
+    expect((src.match(/pool\.query/g) ?? []).length).toBe(4);
+    expect((src.match(/buildCurrentQuery\('/g) ?? []).length).toBeGreaterThanOrEqual(7);
   });
 });

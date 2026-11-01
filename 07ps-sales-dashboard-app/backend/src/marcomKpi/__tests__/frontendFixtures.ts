@@ -1,11 +1,12 @@
 import { buildDemoDataset, DEMO_BRANDS } from '../../marcom/demo/demoData';
-import { CAMPAIGN_STATUSES, PLATFORMS } from '../../marcom/templateConfig';
+import { CAMPAIGN_STATUSES, DEFAULT_SPEND_CATEGORIES, PLATFORMS } from '../../marcom/templateConfig';
 import { buildCampaigns, type CampaignRow } from '../campaigns';
 import { buildDigital } from '../digital';
 import { makeEnvelope } from '../envelope';
 import { buildSpending } from '../spending';
 import { buildTrade, type EventRow } from '../trade';
 import { campaignExample, eventExample, socialExample, spendExample, tradeExample, webExample } from './fixtures';
+import { mergeSpendRows } from '../totalSpend';
 
 /**
  * Deterministic API-shaped payloads for the FRONTEND tests (frontend/src/components/marcom/__fixtures__).
@@ -27,9 +28,16 @@ const OPTIONS = { years: [2025, 2026], brands, companies: COMPANIES };
 const filt = (year: number, fromMonth: number, toMonth: number, extra: Record<string, unknown> = {}) => ({ year, fromMonth, toMonth, ...extra });
 const period = (f: { year: number; fromMonth: number; toMonth: number }) => ({ year: f.year, fromMonth: f.fromMonth, toMonth: f.toMonth });
 
-function spending(cur: Parameters<typeof buildSpending>[0]['current'], prev: Parameters<typeof buildSpending>[0]['previous'], sel: typeof brands, from: number, to: number, fresh: unknown = FRESH, years = OPTIONS.years) {
+function spending(cur: Parameters<typeof buildSpending>[0]['current'], prev: Parameters<typeof buildSpending>[0]['previous'], sel: typeof brands, from: number, to: number, fresh: unknown = FRESH, years = OPTIONS.years, otherLines: typeof demo.other = []) {
   const f = filt(2026, from, to);
-  return makeEnvelope('spending', { ...f, brands: sel, companies: [] }, { years, brands, companies: COMPANIES }, fresh, buildSpending({ ...period(f), current: cur, previous: prev, brands: sel }));
+  return makeEnvelope('spending', { ...f, brands: sel, companies: [] }, { years, brands, companies: COMPANIES }, fresh, buildSpending({ ...period(f), current: cur, previous: prev, brands: sel, otherLines, categories: [...DEFAULT_SPEND_CATEGORIES] }));
+}
+
+/** Demo P1 rows merged like GET /marcom/kpi/spending: spend = campaign (prorated by days) + other. */
+function merged(year: number, from: number, to: number) {
+  const cells = Array.from({ length: to - from + 1 }, (_, i) => ({ year, month: from + i }));
+  const campaignsSpend = demo.campaigns.map((c) => ({ brandId: c.brandId, start: c.start, end: c.end, spend: c.spend }));
+  return mergeSpendRows(y(demo.spend, year, from, to), campaignsSpend, y(demo.other, year, from, to), cells, brands, null);
 }
 
 type RoiRows = NonNullable<Parameters<typeof buildCampaigns>[0]['roiRows']>;
@@ -40,7 +48,7 @@ function campaigns(rows: CampaignRow[], media: Parameters<typeof buildCampaigns>
 
 function digital(social: Parameters<typeof buildDigital>[0]['social'], web: Parameters<typeof buildDigital>[0]['web'], platforms: string[], from: number, to: number, fresh: unknown = FRESH) {
   const f = filt(2026, from, to);
-  return makeEnvelope('digital', { ...f, platforms }, { ...OPTIONS, platforms: PLATFORMS }, fresh, buildDigital({ ...period(f), social, web, platforms }));
+  return makeEnvelope('digital', { ...f, platforms, brands, companies: [] }, { ...OPTIONS, platforms: PLATFORMS }, fresh, buildDigital({ ...period(f), social, web, platforms, brands }));
 }
 
 function trade(rows: Parameters<typeof buildTrade>[0]['trade'], allEvents: EventRow[], from: number, to: number, opts: { completedOnly?: boolean; fresh?: unknown } = {}) {
@@ -75,8 +83,9 @@ function stressCampaigns(): CampaignRow[] {
 }
 
 export function buildFrontendFixtures(): Record<string, unknown> {
-  const spendCur = y(demo.spend, 2026, 1, 8);
-  const spendPrev = y(demo.spend, 2025, 1, 8);
+  const spendCur = merged(2026, 1, 8);
+  const spendPrev = merged(2025, 1, 8);
+  const otherCur = y(demo.other, 2026, 1, 8);
   const gold = { spend: [spendExample()], prev: [] as never[], A: [brands[0]] };
   const oneBrand = (id: number) => spendCur.filter((r) => r.brandId === id);
 
@@ -88,7 +97,7 @@ export function buildFrontendFixtures(): Record<string, unknown> {
     'golden.trade': trade([tradeExample()], [eventExample()], 8, 8),
 
     // The dev demo seed: every RAG colour, over-budget and negative-growth brands, LYTD.
-    'demo.spending': spending(spendCur, spendPrev, brands, 1, 8),
+    'demo.spending': spending(spendCur, spendPrev, brands, 1, 8, FRESH, OPTIONS.years, otherCur),
     'demo.campaigns': campaigns(demo.campaigns, demo.media, FRESH, { current: spendCur, previous: spendPrev }),
     'demo.digital': digital(demo.social, demo.web, [...PLATFORMS], 1, 8),
     'demo.trade': trade(demo.trade, demo.events, 1, 8),
@@ -96,10 +105,10 @@ export function buildFrontendFixtures(): Record<string, unknown> {
 
     // Edge cases.
     'noLastYear.spending': spending(spendCur, [], brands, 1, 8, FRESH, [2026]),
-    'oneMonth.spending': spending(y(demo.spend, 2026, 8, 8), y(demo.spend, 2025, 8, 8), brands, 8, 8),
+    'oneMonth.spending': spending(merged(2026, 8, 8), merged(2025, 8, 8), brands, 8, 8, FRESH, OPTIONS.years, y(demo.other, 2026, 8, 8)),
     'oneMonth.trade': trade(y(demo.trade, 2026, 8, 8), demo.events.filter((e) => e.planned.startsWith('2026-08')), 8, 8),
     'brandNoRows.spending': spending(oneBrand(1), [], brands, 1, 8), // brands 2-4 have no rows -> n/a rows
-    'allNull.spending': spending([spendExample({ spend: 0, budget: 0, newCustomers: 0, clicks: 0, companyLy: 0 })], [], [brands[0]], 8, 8),
+    'allNull.spending': spending([spendExample({ spend: 0, campaignSpend: 0, budget: 0, newCustomers: 0, clicks: 0, brandRevenueLy: 0 })], [], [brands[0]], 8, 8),
     'stress.campaigns': campaigns(stressCampaigns(), demo.media, FRESH, { current: spendCur, previous: [] }),
     'stress.trade': trade(demo.trade, stressEvents(), 1, 8),
 
