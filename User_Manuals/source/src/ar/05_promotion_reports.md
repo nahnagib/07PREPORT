@@ -148,20 +148,20 @@
 
 1. **Full Pipeline** (خط الفرص الكامل): قمع يمثّل **Opportunities → Quotations → Sales Orders → Deliveries** (الفرص ← عروض الأسعار ← أوامر البيع ← التسليمات)، مع عدد كل مرحلة ونسبتها وقيمتها أسفله. انقر مرحلةً (أو **Drill-down**) لعرض سجلاتها.
 2. **Opportunity chain** (سلسلة الفرصة): لتتبّع كل فرصة حتى التسليم.
-3. **Stage Benchmark** (مقارنة المراحل): نسبة التحويل الفعلية في كل خطوة (مثل **Opportunity → Quotation**) مقارنةً بالنسبة المستهدفة، مع شارة الحالة.
+3. **Total Pipeline Value** (القيمة الإجمالية لخط الفرص) و**Stage Benchmark** (مقارنة المراحل): تعرض **Total Pipeline Value** الإيراد المتوقع لكل الفرص المفتوحة (**Pending**) مع عددها أسفلها، وتساوي مجموع **Opportunity by Stage** وجزء **Pending** في **Opportunity by Status**. ويعرض **Stage Benchmark** نسبة التحويل الفعلية في كل خطوة (مثل **Opportunity → Quotation**) مقارنةً بالنسبة المستهدفة، مع شارة الحالة. تُحسب على **كل** الفرص التي أُنشئت في الفترة (**Pending** و**Won** و**Lost**): كم منها وصل إلى عرض سعر، ثم أمر بيع، ثم تسليم (يُحتسب التسليم بمجرد بدئه). أما عمود **Opportunities** في القمع فيعرض الفرص المفتوحة فقط، لذلك لا تساوي نسب المقارنة قسمة الأعمدة على بعضها.
 4. **Expected Closure Opportunity**: **Expected Opportunity Count** (أعمدة) و**Expected Opportunity Value** (خط) حسب الشهر المتوقع لإغلاق الصفقات. انقر شهرًا لعرض فرصه.
 
-وفي الأسفل يعرض رسم **Opportunity by Stage** الفرص المفتوحة حسب مرحلتها في CRM، ويعرض رسم **Opportunities by Status** (الفرص حسب الحالة) عدد الفرص **New** (المفتوحة) و**Won** (المكسوبة) و**Lost** (الخاسرة) ونسبتها، مع الإيراد المتوقع عند تمرير المؤشر فوق الجزء، ويجمّع رسم **Probabilities Distribution** الفرص المفتوحة حسب احتمال الفوز. انقر جزءًا أو عمودًا لعرض الفرص. قد يستغرق تحميل هذه الصفحة بضع دقائق.
+وفي الأسفل يعرض رسم **Opportunity by Stage** الفرص المفتوحة حسب مرحلتها في CRM، ويعرض رسم **Opportunity by Status** (الفرص حسب الحالة) بجانبه عدد الفرص **Won** (المكسوبة) و**Lost** (الخاسرة) و**Pending** (المفتوحة) كما في Odoo ونسبتها، مع الإيراد المتوقع عند تمرير المؤشر فوق الجزء، ويجمّع رسم **Probabilities Distribution** الفرص المفتوحة حسب احتمال الفوز. انقر جزءًا أو عمودًا لعرض الفرص. قد يستغرق تحميل هذه الصفحة بضع دقائق.
 
 | المصطلح | المعنى |
 |---|---|
 | **Stage** (المرحلة) | موقع الصفقة في عملية البيع: العمود الذي توجد فيه على لوحة CRM في Odoo (New وQualified وProposition وNegotiations …). |
-| **Status** (الحالة) | نتيجة الصفقة: **New** (ما زالت مفتوحة) أو **Won** أو **Lost**. تُحدَّد بزرّي **Won** و**Lost** في الفرصة على Odoo، وليس بالمرحلة. |
+| **Status** (الحالة) | نتيجة الصفقة كما يسجّلها Odoo: **Won** أو **Lost** أو **Pending** (ما زالت مفتوحة). تُحدَّد بزرّي **Won** و**Lost** في الفرصة على Odoo، وليس بالمرحلة. |
 
 تعرض قائمة الفرص (**Opportunity Details**) الأعمدة **Opportunity Name** و**Stage** و**Probability %** و**Expected Close Date** و**Value** و**Customer** و**Company** و**Salesperson** و**Created Date**، مع زر **Download as PDF**. انقر **Back** للعودة إلى الرسوم.
 
 > [!NOTE]
-> تحسب رسوم **Opportunities** في Full Pipeline و**Opportunity by Stage** و**Expected Closure Opportunity** و**Probabilities Distribution** الفرص **المفتوحة** فقط (الحالة **New**). الصفقة التي تُعلَّم **Lost** في Odoo تبقى في مرحلتها هناك، لكنها تخرج من هذه الرسوم وتظهر بحالة **Lost** في **Opportunities by Status**، وتظهر الصفقات المكسوبة بحالة **Won**. نقل البطاقة إلى عمود اسمه "Won" أو "Lost" لا يغيّر حالتها: انقر زر **Won** أو **Lost** في الفرصة.
+> تحسب رسوم **Opportunities** في Full Pipeline و**Opportunity by Stage** و**Expected Closure Opportunity** و**Probabilities Distribution** الفرص **المفتوحة** فقط (الحالة **Pending**). الصفقة التي تُعلَّم **Lost** في Odoo تبقى في مرحلتها هناك، لكنها تخرج من هذه الرسوم وتظهر بحالة **Lost** في **Opportunity by Status**، وتظهر الصفقات المكسوبة بحالة **Won**. نقل البطاقة إلى عمود "Won" أو "Lost" لا يغيّر حالتها: انقر زر **Won** أو **Lost** في الفرصة. يبقى عمود **Won** في Odoo (ينقل زر **Won** الصفقات إليه)، أما عمود **Lost** فيُطوى.
 
 # الترويج: Pipeline Trend (اتجاه فرص البيع)
 
