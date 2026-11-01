@@ -151,12 +151,17 @@ Further down, **Customers Contribution** compares the **Top 10 Customers** with 
 3. **Stage Benchmark**: each step's actual conversion % (for example **Opportunity → Quotation**) against its target %, with a status badge.
 4. **Expected Closure Opportunity**: **Expected Opportunity Count** (bars) and **Expected Opportunity Value** (line) by the month deals should close. Click a month to list those opportunities.
 
-Further down, **Opportunity by Stage** shows open opportunities by CRM stage and **Probabilities Distribution** groups them by win probability. Click a segment or bar to list the opportunities. This page can take a few minutes to load.
+Further down, **Opportunity by Stage** shows open opportunities by CRM stage, **Opportunities by Status** shows how many opportunities are **New** (open), **Won** or **Lost** (count and %, with the expected revenue when you hover a slice), and **Probabilities Distribution** groups the open opportunities by win probability. Click a segment, slice or bar to list the opportunities. This page can take a few minutes to load.
+
+| Term | Meaning |
+|---|---|
+| **Stage** | Where the deal is in the sales process: the column it sits in on the Odoo CRM board (New, Qualified, Proposition, Negotiations, …). |
+| **Status** | The outcome of the deal: **New** (still open), **Won** or **Lost**. It is set by the **Won** and **Lost** buttons on the opportunity in Odoo, not by the stage. |
 
 The opportunity list (**Opportunity Details**) shows **Opportunity Name**, **Stage**, **Probability %**, **Expected Close Date**, **Value**, **Customer**, **Company**, **Salesperson** and **Created Date**, with **Download as PDF**. Click **Back** to return to the charts.
 
 > [!NOTE]
-> Won and lost opportunities are left out of the pipeline views, because they are no longer "in the pipeline".
+> The Full Pipeline **Opportunities**, **Opportunity by Stage**, **Expected Closure Opportunity** and **Probabilities Distribution** count **open** opportunities only (status **New**). A deal marked **Lost** in Odoo keeps its stage there, but it leaves these charts and appears as **Lost** in **Opportunities by Status**. Won deals appear as **Won**. Moving a card to a column named "Won" or "Lost" does not change its status: click the **Won** or **Lost** button on the opportunity.
 
 # Promotion: Pipeline Trend
 
