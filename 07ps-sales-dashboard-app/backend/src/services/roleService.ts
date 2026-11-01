@@ -350,12 +350,23 @@ export async function duplicateRole(sourceRoleId: number, actorId: number): Prom
     },
     actorId,
   );
-  // the operator (in / not_in, migration 0044) is copied with the values, so an exclusion stays an exclusion
-  await pool.query(
-    `INSERT IGNORE INTO role_data_scope (role_id, dimension, operator, value)
-     SELECT ?, dimension, operator, value FROM role_data_scope WHERE role_id = ?`,
-    [created.role_id, sourceRoleId],
-  );
+  // the operator (in / not_in, migration 0044) and rule number (0056) are copied with the values, so an exclusion
+  // stays an exclusion and two rules on one dimension stay two rules
+  try {
+    await pool.query(
+      `INSERT IGNORE INTO role_data_scope (role_id, dimension, rule_no, operator, value)
+       SELECT ?, dimension, rule_no, operator, value FROM role_data_scope WHERE role_id = ?`,
+      [created.role_id, sourceRoleId],
+    );
+  } catch (err) {
+    if ((err as { code?: string })?.code !== 'ER_BAD_FIELD_ERROR') throw err;
+    // before migration 0056: one rule per dimension, no rule_no column
+    await pool.query(
+      `INSERT IGNORE INTO role_data_scope (role_id, dimension, operator, value)
+       SELECT ?, dimension, operator, value FROM role_data_scope WHERE role_id = ?`,
+      [created.role_id, sourceRoleId],
+    );
+  }
   return created;
 }
 

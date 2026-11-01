@@ -1,8 +1,8 @@
 import type { DataScopeOperator, DataScopeValue } from './api';
 
 /**
- * Pure helpers of the Roles page's data-scope rules (2026-10-15): { dimension, operator: in | not_in, values }, one
- * rule per dimension, rules combined with AND. Enforced by the backend (services/dataScopeService.ts); these only
+ * Pure helpers of the Roles page's data-scope rules (2026-10-15): { dimension, operator: in | not_in, values }; several
+ * rules per dimension since 2026-10-21, every rule combined with AND (same dimension or not), values in a rule OR'd. Enforced by the backend (services/dataScopeService.ts); these only
  * word and lay out what the admin edits.
  */
 
@@ -31,6 +31,77 @@ export function describeRule(dimensionLabel: string, operator: DataScopeOperator
 export function scopeSummary(rules: { dimensionLabel: string; operator: DataScopeOperator; valueLabels: string[] }[]): string {
   const parts = rules.filter((r) => r.valueLabels.length > 0).map((r) => describeRule(r.dimensionLabel, r.operator, r.valueLabels));
   return parts.length === 0 ? 'Users with this role see: all data (no restrictions)' : `Users with this role see: ${parts.join(' · ')}`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Several rules on one dimension (2026-10-21): every rule applies (AND). Mirrors the backend's
+// measures/filters.ts combineDimensionRules -- the server enforces it and refuses a save that matches no data; these
+// only warn and block the Save button early.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface RuleValues {
+  operator: DataScopeOperator;
+  values: string[];
+}
+
+/** The values a dimension's rules allow together: the values every "is" rule lists, minus every value an "is not"
+ * rule excludes. With no "is" rule the start is `domain` (every value of the dimension); null when that is not known
+ * (yet). */
+export function combineRules(rules: RuleValues[], domain: string[] | null): string[] | null {
+  const inRules = rules.filter((r) => r.operator === 'in');
+  const excluded = new Set(rules.filter((r) => r.operator === 'not_in').flatMap((r) => r.values));
+  let allowed: string[];
+  if (inRules.length > 0) {
+    allowed = [...new Set(inRules[0].values)];
+    for (const r of inRules.slice(1)) allowed = allowed.filter((v) => r.values.includes(v));
+  } else {
+    if (!domain) return null;
+    allowed = [...new Set(domain)];
+  }
+  return allowed.filter((v) => !excluded.has(v));
+}
+
+/** True when two or more rules (each with a value) together match no value -- "is [A]" AND "is not [A]", or two
+ * "is" rules with no shared value. A single rule never counts (one "is none of" everything is allowed on its own).
+ * False when it cannot be known yet (only "is not" rules, dimension values not loaded). */
+export function matchesNoData(rules: RuleValues[], domain: string[] | null): boolean {
+  const complete = rules.filter((r) => r.values.length > 0);
+  if (complete.length < 2) return false;
+  const allowed = combineRules(complete, domain);
+  return allowed !== null && allowed.length === 0;
+}
+
+/**
+ * Two rules with the same operator as ONE rule that means the same: "is" AND "is" -> "is" the values both list;
+ * "is not" AND "is not" -> "is not" the values of either. Null for different operators, or two "is" rules with no
+ * shared value (that pair matches no data -- see matchesNoData).
+ */
+export function mergeRules(a: RuleValues, b: RuleValues): RuleValues | null {
+  if (a.operator !== b.operator) return null;
+  if (a.operator === 'in') {
+    const values = a.values.filter((v) => b.values.includes(v));
+    return values.length > 0 ? { operator: 'in', values } : null;
+  }
+  return { operator: 'not_in', values: [...new Set([...a.values, ...b.values])] };
+}
+
+/** The first pair of rules (by position) that mergeRules can turn into one, or null. */
+export function findMergeablePair<T extends RuleValues>(rules: T[]): [T, T] | null {
+  for (let i = 0; i < rules.length; i += 1) {
+    for (let j = i + 1; j < rules.length; j += 1) {
+      if (rules[i].values.length > 0 && rules[j].values.length > 0 && mergeRules(rules[i], rules[j])) return [rules[i], rules[j]];
+    }
+  }
+  return null;
+}
+
+/** Rules grouped by dimension, the groups in `dimensionOrder` (unknown dimensions last), each group's rules in the
+ * given order. */
+export function groupByDimension<T extends { dimension: string }>(rules: T[], dimensionOrder: string[]): { dimension: string; rules: T[] }[] {
+  const groups = new Map<string, T[]>();
+  for (const r of rules) groups.set(r.dimension, [...(groups.get(r.dimension) ?? []), r]);
+  const rank = (d: string) => (dimensionOrder.includes(d) ? dimensionOrder.indexOf(d) : dimensionOrder.length);
+  return [...groups].sort(([a], [b]) => rank(a) - rank(b)).map(([dimension, rs]) => ({ dimension, rules: rs }));
 }
 
 /**

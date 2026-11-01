@@ -7,7 +7,7 @@ import { requirePasswordChangeCleared, requirePermission } from '../middleware/p
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import { dateOnlyUTC } from '../measures/filters';
 import {
-  computeDailyCriticalNumber,
+  computeDailyCriticalNumberSchedule,
   computeDailyCounter,
   computeMonthlyCounter,
   computeYearlyCounter,
@@ -20,6 +20,7 @@ import {
   fetchCompanyNamesByKey,
   fetchLastAvailableDate,
 } from '../measures/criticalNumber';
+import { criticalNumberRowOn, loadCriticalNumberHistory } from '../measures/criticalNumberHistory';
 
 /**
  * Critical Number page KPI endpoint. Same middleware chain and scoping discipline as
@@ -29,8 +30,9 @@ import {
  *
  * One /overview endpoint, not one per card: the page needs the daily critical number, all three
  * counters, and all six calendar/impact cards on a single load, and several of them share the same
- * underlying working-days computation -- fetching them together lets computeDailyCriticalNumber's
- * result be reused instead of recomputed per card.
+ * underlying working-days computation -- fetching them together lets the Daily Critical Number schedule
+ * (computeDailyCriticalNumberSchedule: the value active on each day, scaled by the Company/Customer Group shares) be
+ * loaded once and reused instead of recomputed per card.
  */
 export const criticalNumberRouter = Router();
 
@@ -94,8 +96,11 @@ criticalNumberRouter.get('/overview', async (req, res, next) => {
     const filters = req.scopedFilters!;
     const { requestedAnchor, anchor, isFallback, fallbackDaysAgo, inProgressDate } = await resolveAnchor(req.query.anchorDate);
 
-    const companyNamesByKey = await fetchCompanyNamesByKey(pool);
-    const dailyCriticalNumber = await computeDailyCriticalNumber(pool, anchor, filters, companyNamesByKey);
+    const [companyNamesByKey, criticalNumberOn] = await Promise.all([
+      fetchCompanyNamesByKey(pool),
+      computeDailyCriticalNumberSchedule(pool, filters),
+    ]);
+    const dailyCriticalNumber = criticalNumberOn(anchor);
 
     const [
       dailyCounter,
@@ -107,13 +112,27 @@ criticalNumberRouter.get('/overview', async (req, res, next) => {
       missing,
     ] = await Promise.all([
       computeDailyCounter(pool, anchor, filters, dailyCriticalNumber),
-      computeMonthlyCounter(pool, anchor, filters, companyNamesByKey, dailyCriticalNumber),
-      computeYearlyCounter(pool, anchor, filters, companyNamesByKey, dailyCriticalNumber),
+      computeMonthlyCounter(pool, anchor, filters, companyNamesByKey, criticalNumberOn),
+      computeYearlyCounter(pool, anchor, filters, companyNamesByKey, criticalNumberOn),
       computeWorkingDaysYtd(pool, anchor, filters, companyNamesByKey),
       computeOfficialHolidaysYtd(pool, anchor, filters, companyNamesByKey),
       computeForcedClosuresYtd(pool, anchor, filters, companyNamesByKey),
-      computeMissingSummary(pool, anchor, filters, companyNamesByKey, dailyCriticalNumber, inProgressDate),
+      computeMissingSummary(pool, anchor, filters, companyNamesByKey, criticalNumberOn, inProgressDate),
     ]);
+
+    // Admins only: who set the base value shown on the card, and when ("Updated <date> by <user>").
+    let criticalNumberSource = null;
+    if (req.user?.isAdmin) {
+      const row = criticalNumberRowOn(await loadCriticalNumberHistory(pool), anchor);
+      if (row && row.id > 0) {
+        criticalNumberSource = {
+          baseValue: row.valueLyd,
+          effectiveFrom: row.effectiveFrom,
+          updatedAt: row.createdAt,
+          updatedBy: row.createdByName ?? row.createdByEmail,
+        };
+      }
+    }
 
     res.json({
       anchorDate: anchor.toISOString().slice(0, 10),
@@ -121,6 +140,7 @@ criticalNumberRouter.get('/overview', async (req, res, next) => {
       fallbackDaysAgo,
       requestedDate: requestedAnchor.toISOString().slice(0, 10),
       dailyCriticalNumber,
+      criticalNumberSource,
       dailyCounter,
       monthlyCounter,
       yearlyCounter,
@@ -147,13 +167,15 @@ criticalNumberRouter.get('/missing-trend', async (req, res, next) => {
   try {
     const filters = req.scopedFilters!;
     const { anchor, inProgressDate } = await resolveAnchor(req.query.anchorDate);
-    const companyNamesByKey = await fetchCompanyNamesByKey(pool);
-    const dailyCriticalNumber = await computeDailyCriticalNumber(pool, anchor, filters, companyNamesByKey);
-    const trend = await computeMissingTrend(pool, anchor, filters, companyNamesByKey, dailyCriticalNumber, inProgressDate);
+    const [companyNamesByKey, criticalNumberOn] = await Promise.all([
+      fetchCompanyNamesByKey(pool),
+      computeDailyCriticalNumberSchedule(pool, filters),
+    ]);
+    const trend = await computeMissingTrend(pool, anchor, filters, companyNamesByKey, criticalNumberOn, inProgressDate);
     res.json({
       anchorDate: anchor.toISOString().slice(0, 10),
       inProgressDate: inProgressDate ? inProgressDate.toISOString().slice(0, 10) : null,
-      dailyCriticalNumber,
+      dailyCriticalNumber: criticalNumberOn(anchor),
       ...trend,
     });
   } catch (err) {

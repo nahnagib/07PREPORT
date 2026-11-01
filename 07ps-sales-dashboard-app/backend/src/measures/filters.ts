@@ -327,11 +327,12 @@ export class DataScopeError extends Error {
 }
 
 /**
- * Role data scope as an admin defines it (2026-10-15): one rule per dimension, stored in role_data_scope (one row per
- * value, every row of a role + dimension carrying the same operator; migration 0044).
+ * Role data scope as an admin defines it (2026-10-15; several rules per dimension since 2026-10-21, migration 0056),
+ * stored in role_data_scope: one row per value, the rows of one rule sharing (role, dimension, rule_no) and operator.
  *   in      "is any of"  -- the role sees ONLY these values;
  *   not_in  "is none of" -- the role sees everything EXCEPT these values.
- * Rules on different dimensions combine with AND; a dimension without a rule is unrestricted.
+ * Every rule applies (AND) -- rules on different dimensions and rules on the same dimension alike; within one rule
+ * the values are OR'd. A dimension without a rule is unrestricted.
  */
 export type ScopeOperator = 'in' | 'not_in';
 export const SCOPE_OPERATORS: readonly ScopeOperator[] = ['in', 'not_in'];
@@ -340,6 +341,8 @@ export const SCOPE_DIMENSIONS: readonly ScopeDimension[] = ['companyKeys', 'segm
 
 export interface RoleScopeRule {
   dimension: ScopeDimension;
+  /** Numbers the rules of one role + dimension (1, 2, ...); rows from before migration 0056 are all rule 1. */
+  ruleNo: number;
   operator: ScopeOperator;
   values: string[];
 }
@@ -353,45 +356,79 @@ export function scopeNoMatchValue(dimension: keyof Filters): string {
   return dimension === 'salesTeamKeys' ? '__no_scope_match__' : '-2147483648';
 }
 
-/** The stored role_data_scope rows of one role grouped into rules: one rule per dimension, its values in row order.
- * Rows from before migration 0044 have no operator: they are "in" (exactly the old behaviour, several rows on one
- * dimension = one "is any of" rule with all their values). */
-export function groupScopeRows(rows: { dimension: string; operator?: string | null; value: string }[]): RoleScopeRule[] {
-  const byDimension = new Map<ScopeDimension, RoleScopeRule>();
+/** The stored role_data_scope rows of one role grouped into rules: one rule per (dimension, rule_no), its values in row
+ * order, rules ordered by dimension (first appearance) then rule_no. Rows from before migration 0044 have no operator
+ * ("in"), rows from before 0056 no rule_no (rule 1) -- exactly the old one-rule-per-dimension reading. */
+export function groupScopeRows(rows: { dimension: string; rule_no?: number | string | null; operator?: string | null; value: string }[]): RoleScopeRule[] {
+  const byRule = new Map<string, RoleScopeRule>();
+  const dimensionOrder: ScopeDimension[] = [];
   for (const r of rows) {
     const dimension = r.dimension as ScopeDimension;
     if (!SCOPE_DIMENSIONS.includes(dimension)) continue;
+    const ruleNo = Number(r.rule_no ?? 1) || 1;
     const operator: ScopeOperator = r.operator === 'not_in' ? 'not_in' : 'in';
-    const rule = byDimension.get(dimension);
-    if (!rule) byDimension.set(dimension, { dimension, operator, values: [String(r.value)] });
+    const key = `${dimension}:${ruleNo}`;
+    const rule = byRule.get(key);
+    if (!dimensionOrder.includes(dimension)) dimensionOrder.push(dimension);
+    if (!rule) byRule.set(key, { dimension, ruleNo, operator, values: [String(r.value)] });
     else {
-      // mixed operators on one dimension cannot be saved (setRoleScopeRule replaces the whole rule); if they ever
-      // exist, the exclusion wins -- the stricter reading for "not_in", and an "in" row still restricts below
+      // mixed operators within one rule cannot be saved (a rule is always replaced whole); if they ever exist, the
+      // exclusion wins -- the stricter reading for "not_in", and an "in" row still restricts below
       if (operator === 'not_in') rule.operator = 'not_in';
       if (!rule.values.includes(String(r.value))) rule.values.push(String(r.value));
     }
   }
-  return [...byDimension.values()];
+  return [...byRule.values()].sort(
+    (a, b) => dimensionOrder.indexOf(a.dimension) - dimensionOrder.indexOf(b.dimension) || a.ruleNo - b.ruleNo,
+  );
 }
 
 /**
- * The allowed values per dimension, resolved from the role's rules against `domain` -- every CURRENT key of each
- * dimension that has a "not_in" rule (its dim_* table, the -1 Unknown / Unassigned member included). Resolved on
- * every request, never at save time, so a value added later (a new company) is visible under "is none of"
- * automatically. Unassigned rows carry the -1 member in every fact (no NULL keys: checked on the warehouse
- * 2026-10-15), so they stay visible under "is none of" unless -1 itself is excluded.
+ * The values one dimension's rules allow together (AND): the values every "in" rule lists, minus every value a
+ * "not_in" rule excludes. With no "in" rule the starting set is `domain` -- every CURRENT key of the dimension (its
+ * dim_* table, the -1 Unknown / Unassigned member included). `domain` is only read when the dimension has no "in"
+ * rule. A single rule resolves exactly as before 0056. Pure.
+ */
+export function combineDimensionRules(rules: Pick<RoleScopeRule, 'operator' | 'values'>[], domain: string[] | undefined): string[] {
+  const inRules = rules.filter((r) => r.operator === 'in');
+  const excluded = new Set(rules.filter((r) => r.operator === 'not_in').flatMap((r) => r.values.map(String)));
+  let allowed: string[];
+  if (inRules.length > 0) {
+    allowed = [...new Set(inRules[0].values.map(String))];
+    for (const rule of inRules.slice(1)) {
+      const these = new Set(rule.values.map(String));
+      allowed = allowed.filter((v) => these.has(v));
+    }
+  } else {
+    allowed = [...new Set((domain ?? []).map(String))];
+  }
+  return allowed.filter((v) => !excluded.has(v));
+}
+
+/** The dimensions whose rules need `domain` to resolve: at least one rule, none of them "in". */
+export function dimensionsNeedingDomain(rules: RoleScopeRule[]): ScopeDimension[] {
+  const out: ScopeDimension[] = [];
+  for (const d of SCOPE_DIMENSIONS) {
+    const own = rules.filter((r) => r.dimension === d);
+    if (own.length > 0 && own.every((r) => r.operator === 'not_in')) out.push(d);
+  }
+  return out;
+}
+
+/**
+ * The allowed values per dimension, resolved from the role's rules (combineDimensionRules: every rule of a dimension
+ * applies) against `domain` (see dimensionsNeedingDomain). Resolved on every request, never at save time, so a value
+ * added later (a new company) is visible under "is none of" automatically. Unassigned rows carry the -1 member in
+ * every fact (no NULL keys: checked on the warehouse 2026-10-15), so they stay visible under "is none of" unless -1
+ * itself is excluded. A dimension whose rules leave nothing resolves to the no-match value, never to "unrestricted".
  */
 export function resolveRoleScope(rules: RoleScopeRule[], domain: Partial<Record<ScopeDimension, string[]>>): DataScopeRule[] {
   const out: DataScopeRule[] = [];
-  for (const rule of rules) {
-    let allowed: string[];
-    if (rule.operator === 'in') allowed = [...new Set(rule.values)];
-    else {
-      const excluded = new Set(rule.values.map(String));
-      allowed = (domain[rule.dimension] ?? []).map(String).filter((v) => !excluded.has(v));
-    }
-    if (allowed.length === 0) allowed = [scopeNoMatchValue(rule.dimension)];
-    for (const value of allowed) out.push({ dimension: rule.dimension, value });
+  const dimensions = [...new Set(rules.map((r) => r.dimension))];
+  for (const dimension of dimensions) {
+    let allowed = combineDimensionRules(rules.filter((r) => r.dimension === dimension), domain[dimension]);
+    if (allowed.length === 0) allowed = [scopeNoMatchValue(dimension)];
+    for (const value of allowed) out.push({ dimension, value });
   }
   return out;
 }
@@ -402,8 +439,9 @@ function castScopeValue(dimension: keyof Filters, value: string): string | numbe
 }
 
 /**
- * Generalized version of applySalespersonLock: a role can carry zero or more data-scope rules per
- * dimension (role_data_scope table), grouped here into an "allowed set" per dimension. For each
+ * Generalized version of applySalespersonLock: `rules` are the role's RESOLVED allowed values (resolveRoleScope --
+ * however many rules a dimension has, they arrive here already combined into one allowed set), grouped here into an
+ * "allowed set" per dimension. For each
  * dimension that has rules:
  *   - if the caller didn't request that dimension at all, force it to the allowed set (same "force
  *     rather than leave unrestricted" behavior as the salesperson lock);
