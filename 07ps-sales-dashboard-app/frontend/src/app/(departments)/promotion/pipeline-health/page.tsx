@@ -43,6 +43,7 @@ import type {
   FunnelSalesRecord,
   FunnelStageRecords,
   OpportunityDetailRow,
+  OpportunityStatus,
   PipelineHealthOverview,
   StageBenchmarkRow,
 } from '../../../../lib/api';
@@ -63,6 +64,13 @@ const CATEGORY_PALETTE = [
   'var(--ps-color-last-year)',
   'var(--ps-color-neutral-text)',
 ];
+
+/** Opportunities by Status slice colours: open = accent, Won = success, Lost = alert. */
+const STATUS_COLORS: Record<OpportunityStatus, string> = {
+  New: 'var(--ps-color-accent)',
+  Won: 'var(--ps-color-success)',
+  Lost: 'var(--ps-color-alert)',
+};
 
 function formatMillions(value: number): string {
   const fixed = (value / 1_000_000).toFixed(1);
@@ -121,10 +129,10 @@ function toExecutiveSummaryRows(data?: PipelineHealthOverview | null): Performan
     funnelRow('leads', 'Leads (YTD, B2B)', data.funnel.leads, null, `${formatPlainNumber(data.funnel.leads)} B2B leads created so far this year.`),
     funnelRow(
       'opportunities',
-      'Opportunities (YTD, B2B)',
+      'Open Opportunities (YTD, B2B)',
       data.funnel.opportunities,
       data.funnelValues.opportunities,
-      `${formatPlainNumber(data.funnel.opportunities)} opportunities created YTD, worth ${formatCurrency(data.funnelValues.opportunities)}.`,
+      `${formatPlainNumber(data.funnel.opportunities)} open opportunities created YTD, worth ${formatCurrency(data.funnelValues.opportunities)}.`,
     ),
     funnelRow(
       'quotations',
@@ -188,7 +196,7 @@ const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
   { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
 ];
 
-type DetailsFilter = { type: 'month' | 'stage' | 'bucket' | 'funnelStage'; value: string } | null;
+type DetailsFilter = { type: 'month' | 'stage' | 'bucket' | 'funnelStage' | 'status'; value: string } | null;
 
 const FUNNEL_STAGE_LABELS: Record<string, string> = {
   leads: 'Leads',
@@ -337,12 +345,6 @@ function toStageDeliveryRows(records: FunnelDeliveryRecord[]): StageDeliveryTabl
   }));
 }
 
-/** Month/bucket drill-downs (Expected Closure / Probabilities Distribution) additionally require
- * `isOpen`, matching those charts' own Won/Lost-exclusion at the API level (see
- * backend/src/measures/pipelineHealth.ts's Won/Lost-exclusion policy). Stage does NOT require it --
- * Opportunity by Stage is the page's one deliberate exception that keeps Won/Lost. funnelStage
- * matches by an ID list that's already IsOpen-scoped at the query level, so no extra check needed
- * there either. */
 // ---------------------------------------------------------------------------
 // Summary-view chart PDF exports -- same exportRowsAsPdf mechanism as the drill-down tables above
 // and as Revenue Trend's per-chart tables, applied to the 4 summary charts + Stage Benchmark. Each
@@ -396,6 +398,20 @@ const stageValueTableColumns: Column<StageValueTableRow>[] = [
   { key: 'value', header: 'Value', align: 'right', render: (r) => formatCurrency(r.value) },
 ];
 
+interface StatusTableRow extends Record<string, unknown> {
+  id: string;
+  status: string;
+  count: number;
+  share: string;
+  expectedRevenue: number;
+}
+const statusTableColumns: Column<StatusTableRow>[] = [
+  { key: 'status', header: 'Status' },
+  { key: 'count', header: 'Opportunities', align: 'right' },
+  { key: 'share', header: 'Share', align: 'right' },
+  { key: 'expectedRevenue', header: 'Expected Revenue', align: 'right', render: (r) => formatCurrency(r.expectedRevenue) },
+];
+
 interface ProbabilityTableRow extends Record<string, unknown> {
   id: string;
   bucket: string;
@@ -406,10 +422,14 @@ const probabilityTableColumns: Column<ProbabilityTableRow>[] = [
   { key: 'count', header: 'Opportunities', align: 'right' },
 ];
 
+/** Stage-based drill-downs (month / stage / bucket) list open opportunities only (status New), matching their charts
+ * (backend/src/measures/pipelineHealth.ts's status policy); a status slice lists that status; funnelStage matches by
+ * an ID list that is already open-only at the query level. */
 function matchesFilter(o: OpportunityDetailRow, filter: DetailsFilter, funnelIds?: FunnelOpportunityIds): boolean {
   if (!filter) return true;
+  if (filter.type === 'status') return o.status === filter.value;
   if (filter.type === 'month') return o.isOpen && o.expectedCloseMonth === filter.value;
-  if (filter.type === 'stage') return (o.stage ?? 'Unspecified') === filter.value;
+  if (filter.type === 'stage') return o.isOpen && (o.stage ?? 'Unspecified') === filter.value;
   if (filter.type === 'funnelStage') {
     const ids = funnelIds?.[filter.value as keyof FunnelOpportunityIds];
     return ids != null && ids.includes(o.opportunityId);
@@ -421,6 +441,7 @@ function detailsFilterLabel(filter: DetailsFilter): string {
   if (!filter) return '';
   if (filter.type === 'month') return `Expected to close in ${filter.value}`;
   if (filter.type === 'stage') return `Stage: ${filter.value}`;
+  if (filter.type === 'status') return `Status: ${filter.value}`;
   if (filter.type === 'funnelStage') return `Full Pipeline: ${FUNNEL_STAGE_LABELS[filter.value] ?? filter.value}`;
   return `Probability: ${filter.value}`;
 }
@@ -433,6 +454,7 @@ function widgetNameForFilter(filter: DetailsFilter): string {
   if (!filter) return 'Opportunity Details';
   if (filter.type === 'month') return 'Expected Closure Opportunity';
   if (filter.type === 'stage') return 'Opportunity by Stage';
+  if (filter.type === 'status') return 'Opportunities by Status';
   if (filter.type === 'funnelStage') return 'Full Pipeline';
   return 'Probabilities Distribution';
 }
@@ -531,6 +553,25 @@ export default function PipelineHealthPage() {
     label: s.stage,
     value: s.value,
     color: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
+  }));
+
+  const statusSlices = data?.opportunitiesByStatus.slices ?? [];
+  const statusTotal = statusSlices.reduce((sum, s) => sum + s.count, 0);
+  const statusSegments = statusSlices
+    .filter((s) => s.count > 0)
+    .map((s) => ({
+      id: s.status,
+      label: s.status,
+      value: s.count,
+      color: STATUS_COLORS[s.status],
+      tooltipNote: `Expected revenue: ${formatCurrency(s.expectedRevenue)}`,
+    }));
+  const statusTableRows: StatusTableRow[] = statusSlices.map((s) => ({
+    id: s.status,
+    status: s.status,
+    count: s.count,
+    share: statusTotal > 0 ? `${((s.count / statusTotal) * 100).toFixed(1)}%` : '0.0%',
+    expectedRevenue: s.expectedRevenue,
   }));
 
   const probabilityPoints = (data?.probabilityDistribution ?? []).map((p) => ({ label: p.bucket, count: p.count }));
@@ -776,7 +817,7 @@ export default function PipelineHealthPage() {
                 )}
               </ChartPanel>
 
-              {/* Bottom-left -- Opportunity by Stage */}
+              {/* Opportunity by Stage (open only) */}
               <ChartPanel<StageValueTableRow>
                 title="Opportunity by Stage"
                 {...vh('promotion.pipelineHealth.byStage')}
@@ -815,11 +856,52 @@ export default function PipelineHealthPage() {
                 )}
               </ChartPanel>
 
-              {/* Bottom-right -- Probabilities Distribution */}
+              {/* Opportunities by Status -- the outcome (New / Won / Lost), never the stage */}
+              <ChartPanel<StatusTableRow>
+                title="Opportunities by Status"
+                {...vh('promotion.pipelineHealth.byStatus')}
+                style={{ minHeight: 380 }}
+                tableColumns={overview.error ? undefined : statusTableColumns}
+                tableRows={overview.error ? undefined : statusTableRows}
+                getRowId={(row) => row.id}
+                headerActions={
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <DrillIndicator hint="Click a status to see its opportunities" />
+                    {!overview.error && (
+                      <PdfButton
+                        label="Export as PDF"
+                        downloading={downloadingChartPdf === 'status'}
+                        disabled={statusTotal === 0}
+                        onClick={() => handleDownloadChartPdf('status', 'Opportunities by Status', statusTableColumns, statusTableRows)}
+                      />
+                    )}
+                  </div>
+                }
+              >
+                {overview.loading ? (
+                  <LoadingSkeleton variant="chart" />
+                ) : overview.error ? (
+                  <ErrorState message={overview.error} onRetry={overview.retry} />
+                ) : (
+                  <DonutChart
+                    title="Opportunities by Status"
+                    showTitle={false}
+                    segments={statusSegments}
+                    valueFormatter={(v) => `${v.toLocaleString(DISPLAY_LOCALE)} opportunit${v === 1 ? 'y' : 'ies'}`}
+                    legendTitle="Status"
+                    centerLabel={statusTotal.toLocaleString(DISPLAY_LOCALE)}
+                    centerSubLabel="Opportunities"
+                    onSegmentClick={(id) => openDetails({ type: 'status', value: id })}
+                    showPercentLabels
+                  />
+                )}
+              </ChartPanel>
+
+              {/* Probabilities Distribution */}
               <ChartPanel<ProbabilityTableRow>
                 title="Probabilities Distribution"
                 {...vh('promotion.pipelineHealth.probability')}
-                style={{ minHeight: 380 }}
+                style={{ minHeight: 380, gridColumn: '1 / -1' }}
                 tableColumns={overview.error ? undefined : probabilityTableColumns}
                 tableRows={overview.error ? undefined : probabilityTableRows}
                 getRowId={(row) => row.id}

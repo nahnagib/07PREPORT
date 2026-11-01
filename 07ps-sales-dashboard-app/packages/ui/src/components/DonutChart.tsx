@@ -13,6 +13,8 @@ export interface DonutSegment {
    * the percentage in the tooltip when present. Purely additive: omit for every existing caller
    * that has no such count to show. */
   count?: number;
+  /** Optional extra line for the tooltip, e.g. "Expected revenue: LYD 1.2M" -- additive, omit for existing callers. */
+  tooltipNote?: string;
 }
 
 export interface DonutChartProps {
@@ -203,7 +205,8 @@ export function DonutChart({
                   const count = entry?.payload?.count;
                   const pct = `${((value / total) * 100).toFixed(2)}%`;
                   const countText = typeof count === 'number' ? ` (${count.toLocaleString(DISPLAY_LOCALE)} invoice${count === 1 ? '' : 's'})` : '';
-                  return [`${valueFormatter(value)} -- ${pct}${countText}`, name];
+                  const note = entry?.payload?.tooltipNote;
+                  return [`${valueFormatter(value)} -- ${pct}${countText}${note ? ` · ${note}` : ''}`, name];
                 }}
                 contentStyle={{
                   borderRadius: 10,

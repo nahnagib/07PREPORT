@@ -2160,6 +2160,16 @@ export interface ExpectedClosureMonthPoint {
 export interface StageValueSlice {
   stage: string;
   value: number;
+  count: number;
+}
+
+/** Opportunity status = the outcome set by Odoo's Won / Lost buttons (backend measures/filters.ts). */
+export type OpportunityStatus = 'New' | 'Won' | 'Lost';
+
+export interface OpportunitiesByStatus {
+  slices: { status: OpportunityStatus; count: number; expectedRevenue: number }[];
+  /** Archived without being marked Lost: in no slice. */
+  archivedCount: number;
 }
 
 export interface ProbabilityBucketSlice {
@@ -2179,8 +2189,10 @@ export interface OpportunityDetailRow {
   expectedCloseDate: string | null;
   expectedCloseMonth: string | null;
   probabilityBucket: string | null;
-  /** Neither Won nor Lost. Unfiltered at the API level -- see pipeline-health/page.tsx's
-   * matchesFilter for how each drill-down path applies (or deliberately skips) this. */
+  /** The outcome (New / Won / Lost) -- never the stage. Every status comes from the API; pipeline-health/page.tsx's
+   * matchesFilter applies the status each drill-down path needs. */
+  status: OpportunityStatus;
+  /** status === 'New'. */
   isOpen: boolean;
   /** The crm.lead form in Odoo; null when no Odoo URL is configured. */
   odooUrl: string | null;
@@ -2210,6 +2222,7 @@ export interface PipelineHealthOverview {
   stageBenchmark: StageBenchmarkRow[];
   expectedClosureByMonth: ExpectedClosureMonthPoint[];
   opportunityByStage: StageValueSlice[];
+  opportunitiesByStatus: OpportunitiesByStatus;
   probabilityDistribution: ProbabilityBucketSlice[];
   opportunities: OpportunityDetailRow[];
   /** Admin-only: the backend omits it for every other role. */
