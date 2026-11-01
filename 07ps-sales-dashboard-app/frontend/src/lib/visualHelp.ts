@@ -286,6 +286,7 @@ export const VISUAL_HELP = {
   'promotion.activityMomentum.counts': {
     help: {
       definition: 'Opportunities by activity status: active, lost, won, without activity, without next step, created YTD.',
+      notes: 'Hover a tile for its definition.',
     },
     interactions: ['Click the title to open the Opportunity Table'],
   },
@@ -303,8 +304,8 @@ export const VISUAL_HELP = {
   },
   'promotion.activityMomentum.details': PERF_DETAILS('activity counts and ratios'),
   'promotion.activityMomentum.table': {
-    help: { definition: 'The opportunities of the activity status chosen in the slicer, with their last quotation and age.' },
-    interactions: ['Pick a status in the Opportunity Status slicer', 'Open "Opportunity Activities" for a row\'s details'],
+    help: { definition: 'The opportunities of the activity status chosen in the Opportunity Status slicer, with a totals row.' },
+    interactions: ['Pick a status in the Opportunity Status slicer'],
   },
 
   // ================================================ PRODUCT =========================================================
