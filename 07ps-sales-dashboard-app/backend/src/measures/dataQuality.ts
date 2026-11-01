@@ -15,7 +15,7 @@
  */
 
 import type { Pool } from 'mysql2/promise';
-import { buildCrmWhereClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
+import { buildCrmWhereClause, notArchivedClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
 import { classifyRate, TargetStatus } from './classify';
 
 export const DATA_QUALITY_YELLOW_PCT = 0.02;
@@ -68,7 +68,7 @@ export async function computeOpportunityDataQuality(
       SUM(CASE WHEN ${CONFLICTING_STATUS_FLAGS} THEN 1 ELSE 0 END) AS conflictingStatusFlags,
       SUM(CASE WHEN ${DIRTY} THEN 1 ELSE 0 END) AS dirtyRecords
     FROM v_sales_opportunities fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${notArchivedClause('fo')}
   `;
   const [rows] = await pool.query(sql, [window.start.toISOString().slice(0, 10), window.end.toISOString().slice(0, 10), ...params]);
   const row = (rows as any[])[0];

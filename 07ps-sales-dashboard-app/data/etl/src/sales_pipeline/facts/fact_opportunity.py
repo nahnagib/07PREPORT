@@ -27,6 +27,10 @@ class OpportunityFactBuilder:
         "IsWon",
         "IsLost",
         "IsOpen",
+        # Status = the outcome (Pending / Won / Lost / Archived, crm_status_classifier.py) -- the stage is only the column.
+        "OpportunityStatus",
+        "WonStatus",
+        "ClosedDate",
         "LostReason",
         "LostReasonID",
         "Salesperson",

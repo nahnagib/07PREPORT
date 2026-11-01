@@ -42,33 +42,21 @@
  * ones); Deliveries by their linked order's OrderDate (v_sales_deliveries has no QuotationDate of its
  * own). Every other visual on this page (Expected Closure Opportunity, Opportunity by Stage,
  * Probabilities Distribution, Opportunity Details) is deliberately NOT B2B/YTD-scoped -- only the
- * funnel and the Stage Benchmark that's derived from it (see computeStageBenchmark). Expected
+ * funnel and the Stage Benchmark (computed on its own like-for-like cohort, see computeBenchmarkCohort). Expected
  * Closure Opportunity is anchor-scoped in a different sense, though: it's a forward-looking
  * forecast, not a YTD figure, so it starts at the anchor's own month and runs forward (see
  * fetchExpectedClosureByMonth) rather than being clipped to year-to-date.
  *
- * Won/Lost-exclusion policy: this is a pipeline page -- Lost opportunities are dead, not active
- * pipeline, so most general/summary widgets on this page -- Expected Closure Opportunity and
- * Probabilities Distribution (already excludes both incidentally, since Won/Lost map to the 0%/100%
- * buckets outside the 10-90% range this widget shows) -- exclude Lost via `fo.IsOpen = 1` (the same
- * flag already used this way in measures/activityMomentum.ts and measures/pipelineTrend.ts), so a
- * dead deal doesn't clutter charts about the live/forward pipeline. **The Full Pipeline funnel's
- * Opportunities bar (+ its own drill-down and Stage Benchmark, which is derived from it) is a
- * deliberate exception, verified against live Odoo (2026-09):** Odoo never archives a Won
- * opportunity (only Lost ones), so Odoo's own "Active Opportunities" ground truth already includes
- * Won deals -- this bar matches that by excluding Lost only (`excludeLostClause`, see
- * fetchOpportunitiesCountAndValue/fetchOpportunityStageIds), not `fo.IsOpen = 1`. **Opportunity by
- * Stage is the other deliberate exception** -- it shows both Won and Lost stage segments so the
- * page still has one place to see where every current-stage dollar sits, closed deals included. The
- * shared Opportunity Details drill-down array is unfiltered at the query level (returns every
- * opportunity, Won/Lost/open) so it can back all four drill-down paths; `matchesFilter` on the
- * frontend applies the IsOpen requirement itself for the month/bucket drill-downs (Expected
- * Closure/Probabilities), leaves the stage drill-down unfiltered (Opportunity by Stage's exception),
- * and the funnelStage drill-down matches by an ID list that's already Lost-excluded at the query
- * level (see fetchOpportunityStageIds). The funnel's Quotations/Sales Orders/Deliveries bars stay
- * unfiltered by Won/Lost -- those are v_sales_documents/v_sales_deliveries documents with no IsWon/IsLost
- * concept of their own (they already happened regardless of the linked opportunity's current
- * status).
+ * Status policy (2026-11-01, replaces the 2026-09 Won/Lost-exclusion policy): STAGE is where a deal sits in the
+ * process, STATUS (OpportunityStatus: Pending / Won / Lost, filters.ts) is its outcome, set by Odoo's Won / Lost buttons.
+ * A lost deal keeps its old stage in Odoo, so every stage-based visual -- the Full Pipeline Opportunities bar (+ its
+ * drill-down, chain and Stage Benchmark), Opportunity by Stage, Probabilities Distribution and Expected Closure -- shows
+ * OPEN opportunities only (`openOpportunityClause`, status Pending). Won and Lost are reported by status in Opportunities by
+ * Status. The 2026-09 rule that matched the Opportunities bar to Odoo's "active" count (which includes Won cards) is
+ * replaced: it now matches Odoo's pipeline filtered to won_status = pending. Archived-but-not-lost records are left out
+ * everywhere. The shared Opportunity Details array carries every status (`status`) so it can back every drill-down
+ * path; `matchesFilter` on the frontend applies the status per path. The funnel's Quotations/Sales Orders/Deliveries
+ * bars stay unfiltered by status -- those documents already happened regardless of the opportunity's outcome.
  */
 
 import type { Pool } from 'mysql2/promise';
@@ -77,7 +65,10 @@ import {
   buildCrmWhereClause,
   buildWhereClause,
   excludeCancelledDocumentsClause,
-  excludeLostClause,
+  notArchivedClause,
+  openOpportunityClause,
+  OPPORTUNITY_STATUSES,
+  type OpportunityStatus,
   ytdWindow,
   type Filters,
 } from './filters';
@@ -122,20 +113,15 @@ async function countLeads(pool: Pool, anchor: Date, filters: Filters): Promise<n
   return countRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
 }
 
-/** Excludes Lost only, via `excludeLostClause` -- NOT `fo.IsOpen = 1`. Verified against live Odoo
- * (2026-09): Odoo's own "Active Opportunities" figure (the ground truth this bar must match) is
- * simply the non-archived population -- Odoo archives (active=False) a CRM lead when it's marked
- * Lost, but a Won opportunity stays active=True indefinitely, so Odoo's "active" pool already
- * includes Won deals. Filtering this bar on IsOpen (excludes BOTH Won and Lost) was undercounting
- * against that ground truth by exactly the Won population. Returns count + value
- * (SUM(ExpectedRevenue)) in one query since Stage Benchmark needs the count and the Full Pipeline
- * funnel's hover/legend now needs the value too, and both must stay scoped identically. */
+/** The Full Pipeline Opportunities bar: open opportunities only (status Pending) -- Won deals have their own slice in
+ * Opportunity by Status. Matches Odoo's pipeline filtered to won_status = pending. Returns count + value
+ * (SUM(ExpectedRevenue)) in one query since Stage Benchmark needs the count and the funnel's hover/legend the value. */
 async function fetchOpportunitiesCountAndValue(pool: Pool, anchor: Date, filters: Filters): Promise<{ count: number; value: number }> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT COUNT(*) AS cnt, COALESCE(SUM(fo.ExpectedRevenue), 0) AS val FROM v_sales_opportunities fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${excludeLostClause('fo')}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${openOpportunityClause('fo')}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   const row = (rows as any[])[0];
@@ -426,14 +412,14 @@ async function fetchLeadOpportunityIds(pool: Pool, anchor: Date, filters: Filter
   return fetchIdRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
 }
 
-/** Excludes Lost only, matching fetchOpportunitiesCountAndValue above, so clicking the
- * Opportunities bar drills down into exactly what that bar counted. */
+/** Open only, matching fetchOpportunitiesCountAndValue above, so clicking the Opportunities bar drills down into
+ * exactly what that bar counted. */
 async function fetchOpportunityStageIds(pool: Pool, anchor: Date, filters: Filters): Promise<string[]> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
     SELECT fo.OpportunityID AS opportunityId FROM v_sales_opportunities fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${excludeLostClause('fo')}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${openOpportunityClause('fo')}
   `;
   return fetchIdRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
 }
@@ -453,25 +439,67 @@ export async function fetchFunnelOpportunityIds(pool: Pool, anchor: Date, filter
 
 export interface StageBenchmarkRow {
   transition: string;
+  /** Cohort counts behind actualPct (see computeStageBenchmark): opportunities that reached the "from" / "to" step. */
+  fromCount: number;
+  toCount: number;
   actualPct: number | null;
   targetPct: number;
   status: TargetStatus;
   variancePct: number | null;
 }
 
-const STAGE_TARGETS: { transition: string; target: number; from: keyof FunnelCounts; to: keyof FunnelCounts }[] = [
+const STAGE_TARGETS: { transition: string; target: number; from: keyof BenchmarkCohort; to: keyof BenchmarkCohort }[] = [
   { transition: 'Opportunity → Quotation', target: 0.8, from: 'opportunities', to: 'quotations' },
   { transition: 'Quotation → Sales Order', target: 0.15, from: 'quotations', to: 'salesOrders' },
   { transition: 'Sales Order → Delivery', target: 0.98, from: 'salesOrders', to: 'deliveries' },
 ];
 
-export function computeStageBenchmark(funnel: FunnelCounts): StageBenchmarkRow[] {
+/** The like-for-like population the Stage Benchmark is computed on (option A, 2026-11-01): every B2B opportunity created
+ * in the period whatever its status (Pending + Won + Lost; Archived left out), and how many of THOSE SAME opportunities
+ * reached each later step. The Full Pipeline Opportunities bar shows open (Pending) only, but won deals are the ones that
+ * reached orders, so dividing documents of every deal by open deals would read above 100%. Each step is a subset of the
+ * one before, so no ratio can exceed 100%. */
+export interface BenchmarkCohort {
+  opportunities: number;
+  quotations: number;
+  salesOrders: number;
+  deliveries: number;
+}
+
+async function fetchBenchmarkOpportunityIds(pool: Pool, anchor: Date, filters: Filters): Promise<string[]> {
+  const window = ytdWindow(anchor);
+  const { clause, params } = buildCrmWhereClause(filters, 'fo');
+  const sql = `
+    SELECT fo.OpportunityID AS opportunityId FROM v_sales_opportunities fo
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${notArchivedClause('fo')}
+  `;
+  return fetchIdRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+}
+
+export function computeBenchmarkCohort(cohortIds: string[], stageRecords: FunnelStageRecords): BenchmarkCohort {
+  const cohort = new Set(cohortIds);
+  const reached = (rows: { opportunityId: string | null }[], within: Set<string>) =>
+    new Set(rows.map((r) => r.opportunityId).filter((id): id is string => id != null && within.has(id)));
+  const quoted = reached(stageRecords.quotations, cohort);
+  const ordered = reached(stageRecords.salesOrders, quoted);
+  const delivered = reached(stageRecords.deliveries.filter((d) => isDelivered(d.deliveryStatus)), ordered);
+  return { opportunities: cohort.size, quotations: quoted.size, salesOrders: ordered.size, deliveries: delivered.size };
+}
+
+/** A delivery counts as reached once it has started (Started / Partially / Fully Delivered), not "Not Delivered". */
+function isDelivered(status: string | null): boolean {
+  return status != null && !/^not delivered$/i.test(status.trim());
+}
+
+export function computeStageBenchmark(cohort: BenchmarkCohort): StageBenchmarkRow[] {
   return STAGE_TARGETS.map(({ transition, target, from, to }) => {
-    const fromCount = funnel[from];
-    const toCount = funnel[to];
+    const fromCount = cohort[from];
+    const toCount = cohort[to];
     const actualPct = fromCount > 0 ? toCount / fromCount : null;
     return {
       transition,
+      fromCount,
+      toCount,
       actualPct,
       targetPct: target,
       status: classifyVsTarget(actualPct, target),
@@ -517,7 +545,7 @@ export async function fetchExpectedClosureByMonth(pool: Pool, anchor: Date, filt
       COUNT(*) AS expectedCount,
       COALESCE(SUM(fo.ExpectedRevenue), 0) AS expectedValue
     FROM v_sales_opportunities fo
-    WHERE fo.ExpectedCloseDate >= ? AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND fo.IsOpen = 1
+    WHERE fo.ExpectedCloseDate >= ? AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${openOpportunityClause('fo')}
     GROUP BY YEAR(fo.ExpectedCloseDate), MONTH(fo.ExpectedCloseDate)
     ORDER BY year, month
   `;
@@ -554,25 +582,63 @@ export async function fetchExpectedClosureByMonth(pool: Pool, anchor: Date, filt
 export interface StageValueSlice {
   stage: string;
   value: number;
+  count: number;
 }
 
 /** Only opportunities CREATED in the current year (DATE(OpportunityCreatedDate) from Jan 1 through
- * the anchor) -- earlier-year opportunities are excluded at the query level. Deliberately
- * unfiltered by Won/Lost -- this is the one exception to the page's Won/Lost-exclusion
- * policy (see module docstring), so it stays the one place to see where every current-stage dollar
- * sits, including deals that already closed won or lost. */
+ * the anchor), OPEN only (status Pending): a deal marked Lost keeps its old stage in Odoo, so without the status it would
+ * still count there. Won and Lost are shown by status in Opportunity by Status. */
 export async function fetchOpportunityByStage(pool: Pool, anchor: Date, filters: Filters): Promise<StageValueSlice[]> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
-    SELECT fo.Stage AS stage, COALESCE(SUM(fo.ExpectedRevenue), 0) AS value
+    SELECT fo.Stage AS stage, COALESCE(SUM(fo.ExpectedRevenue), 0) AS value, COUNT(*) AS cnt
     FROM v_sales_opportunities fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${openOpportunityClause('fo')}
     GROUP BY fo.Stage
     ORDER BY value DESC
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
-  return (rows as any[]).map((r) => ({ stage: String(r.stage ?? 'Unspecified'), value: Number(r.value) }));
+  return (rows as any[]).map((r) => ({ stage: String(r.stage ?? 'Unspecified'), value: Number(r.value), count: Number(r.cnt) }));
+}
+
+// ---------------------------------------------------------------------------
+// Opportunity by Status -- the outcome (Odoo won_status: Won / Lost / Pending), never the stage. Same population as Opportunity by Stage
+// (created YTD, page filters + role scope via buildCrmWhereClause) but every status, so the slices add up to every
+// opportunity in scope except the archived-but-not-lost ones, which are counted separately.
+// ---------------------------------------------------------------------------
+
+export interface StatusSlice {
+  status: OpportunityStatus;
+  count: number;
+  expectedRevenue: number;
+}
+
+export interface OpportunitiesByStatus {
+  slices: StatusSlice[];
+  /** Archived without being marked Lost (archived, probability > 0): no outcome, in no slice. */
+  archivedCount: number;
+}
+
+export async function fetchOpportunitiesByStatus(pool: Pool, anchor: Date, filters: Filters): Promise<OpportunitiesByStatus> {
+  const window = ytdWindow(anchor);
+  const { clause, params } = buildCrmWhereClause(filters, 'fo');
+  const sql = `
+    SELECT fo.OpportunityStatus AS status, COUNT(*) AS cnt, COALESCE(SUM(fo.ExpectedRevenue), 0) AS val
+    FROM v_sales_opportunities fo
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+    GROUP BY fo.OpportunityStatus
+  `;
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const byStatus = new Map((rows as any[]).map((r) => [String(r.status), { count: Number(r.cnt), value: Number(r.val) }]));
+  return {
+    slices: OPPORTUNITY_STATUSES.map((status) => ({
+      status,
+      count: byStatus.get(status)?.count ?? 0,
+      expectedRevenue: byStatus.get(status)?.value ?? 0,
+    })),
+    archivedCount: byStatus.get('Archived')?.count ?? 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -594,7 +660,7 @@ export async function fetchProbabilityDistribution(pool: Pool, anchor: Date, fil
   const sql = `
     SELECT fo.ProbabilityBucket AS bucket, COUNT(*) AS cnt
     FROM v_sales_opportunities fo
-    WHERE fo.ProbabilityBucket IN (${placeholders}) AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${excludeLostClause('fo')}
+    WHERE fo.ProbabilityBucket IN (${placeholders}) AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${openOpportunityClause('fo')}
     GROUP BY fo.ProbabilityBucket
   `;
   const [rows] = await pool.query(sql, [...PROBABILITY_BUCKETS, toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -621,21 +687,20 @@ export interface OpportunityDetailRow {
   expectedCloseDate: string | null;
   expectedCloseMonth: string | null;
   probabilityBucket: string | null;
-  /** `fo.IsOpen` -- neither Won nor Lost. Unfiltered at the query level (see below), this row-level
-   * flag is what lets the frontend apply the page's Won/Lost-exclusion policy per drill-down path
-   * (month/bucket require it; stage -- Opportunity by Stage's exception -- doesn't). */
+  /** The outcome (Pending / Won / Lost). Every status is returned (see below); the frontend applies the status each
+   * drill-down path needs (stage/month/bucket: New; a status slice: that status). */
+  status: OpportunityStatus;
+  /** status === 'Pending'. */
   isOpen: boolean;
   /** The crm.lead form in Odoo (OpportunityID, in its own company); null without ODOO_WEB_BASE_URL / ODOO_URL or id. */
   odooUrl: string | null;
   customerOdooUrl: string | null;
 }
 
-/** Unfiltered by Won/Lost at the query level -- this is the shared drill-through target for
- * Expected Closure Opportunity, Opportunity by Stage, Probabilities Distribution, and the Full
- * Pipeline Opportunities bar, which don't all apply the same Won/Lost policy (Opportunity by Stage
- * is the page's one exception that keeps both). Returning the full universe here and filtering by
- * `isOpen` per drill-down path on the frontend (see pipeline-health/page.tsx's matchesFilter) keeps
- * every drill-down table's rows consistent with whichever bar/segment/bucket was clicked. */
+/** Every status (Pending / Won / Lost; Archived left out) -- this is the shared drill-through target for Expected Closure,
+ * Opportunity by Stage, Probabilities Distribution, Opportunity by Status and the Full Pipeline Opportunities bar.
+ * Returning every status here and filtering by `status` per drill-down path on the frontend (see pipeline-health/
+ * page.tsx's matchesFilter) keeps every drill-down table's rows consistent with whichever bar/segment was clicked. */
 export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters: Filters): Promise<OpportunityDetailRow[]> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
@@ -653,12 +718,12 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
       YEAR(fo.ExpectedCloseDate) AS closeYear,
       MONTH(fo.ExpectedCloseDate) AS closeMonth,
       fo.ProbabilityBucket AS probabilityBucket,
-      fo.IsOpen AS isOpen,
+      fo.OpportunityStatus AS status,
       fo.CustomerKey AS partnerId,
       fo.CompanyKey AS companyKey
     FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${notArchivedClause('fo')}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   const base = odooConfiguredBaseUrl();
@@ -674,7 +739,8 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
     expectedCloseDate: r.expectedCloseDate ? toDateOnlyString(r.expectedCloseDate) : null,
     expectedCloseMonth: r.closeMonth != null ? `${MONTH_LABELS[Number(r.closeMonth) - 1]} ${r.closeYear}` : null,
     probabilityBucket: r.probabilityBucket ?? null,
-    isOpen: Boolean(Number(r.isOpen ?? 0)),
+    status: r.status as OpportunityStatus,
+    isOpen: r.status === 'Pending',
     odooUrl: odooFormUrl(base, 'crm.lead', odooId(r.opportunityId), odooId(r.companyKey)),
     customerOdooUrl: odooFormUrl(base, 'res.partner', odooId(r.partnerId), odooId(r.companyKey)),
   }));
@@ -682,7 +748,7 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
 
 // ---------------------------------------------------------------------------
 // Full Pipeline chain -- one row per B2B, current-year opportunity (same population as the funnel's
-// Opportunities bar: created YTD, Lost excluded), with every linked Quotation / Sales Order /
+// Opportunities bar: created YTD, open only), with every linked Quotation / Sales Order /
 // Delivery. Links used (all already in the warehouse, nothing inferred):
 //   Opportunity -> Quotation / Sales Order : v_sales_documents.OpportunityID (one v_sales_documents row is the
 //                                            quotation and, once confirmed, the same row is the SO)
@@ -751,7 +817,7 @@ async function fetchChainOpportunities(pool: Pool, anchor: Date, filters: Filter
            fo.OpportunityCreatedDate AS createdDate, fo.ExpectedRevenue AS expectedRevenue, fo.IsWon AS isWon
     FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${excludeLostClause('fo')}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${openOpportunityClause('fo')}
     ORDER BY fo.OpportunityCreatedDate DESC
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -869,8 +935,14 @@ export interface PipelineHealthOverview {
   funnelStageRecords: FunnelStageRecords;
   opportunityChains: OpportunityChains;
   stageBenchmark: StageBenchmarkRow[];
+  /** The like-for-like population behind stageBenchmark (all statuses; see BenchmarkCohort). */
+  benchmarkCohort: BenchmarkCohort;
+  /** Total Pipeline Value card: open (Pending) opportunities created in the period -- the same population as Opportunity by
+   * Stage and the Pending slice of Opportunity by Status (taken from that slice, so the three always agree). */
+  openPipeline: { count: number; value: number };
   expectedClosureByMonth: ExpectedClosureMonthPoint[];
   opportunityByStage: StageValueSlice[];
+  opportunitiesByStatus: OpportunitiesByStatus;
   probabilityDistribution: ProbabilityBucketSlice[];
   opportunities: OpportunityDetailRow[];
   /** Present only for Admin callers -- see routes/pipelineHealth.ts. */
@@ -879,17 +951,22 @@ export interface PipelineHealthOverview {
 
 export async function computePipelineHealthOverview(pool: Pool, anchor: Date, filters: Filters, includeDataQuality = true): Promise<PipelineHealthOverview> {
   const funnelStageRecords = await fetchFunnelStageRecords(pool, anchor, filters);
-  const [funnelCounted, funnelOpportunityIds, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities, opportunityChains, dataQuality] = await Promise.all([
+  const [funnelCounted, benchmarkIds, funnelOpportunityIds, expectedClosureByMonth, opportunityByStage, opportunitiesByStatus, probabilityDistribution, opportunities, opportunityChains, dataQuality] = await Promise.all([
     computeFunnelCounts(pool, anchor, filters, funnelStageRecords),
+    fetchBenchmarkOpportunityIds(pool, anchor, filters),
     fetchFunnelOpportunityIds(pool, anchor, filters),
     fetchExpectedClosureByMonth(pool, anchor, filters),
     fetchOpportunityByStage(pool, anchor, filters),
+    fetchOpportunitiesByStatus(pool, anchor, filters),
     fetchProbabilityDistribution(pool, anchor, filters),
     fetchOpportunityDetails(pool, anchor, filters),
     computeOpportunityChains(pool, anchor, filters, funnelStageRecords),
     includeDataQuality ? computeOpportunityDataQuality(pool, filters, anchor) : Promise.resolve(undefined),
   ]);
   const { counts: funnel, values: funnelValues } = funnelCounted;
-  const stageBenchmark = computeStageBenchmark(funnel);
-  return { funnel, funnelValues, funnelOpportunityIds, funnelStageRecords, opportunityChains, stageBenchmark, expectedClosureByMonth, opportunityByStage, probabilityDistribution, opportunities, dataQuality };
+  const benchmarkCohort = computeBenchmarkCohort(benchmarkIds, funnelStageRecords);
+  const stageBenchmark = computeStageBenchmark(benchmarkCohort);
+  const pending = opportunitiesByStatus.slices.find((sl) => sl.status === 'Pending');
+  const openPipeline = { count: pending?.count ?? 0, value: pending?.expectedRevenue ?? 0 };
+  return { funnel, funnelValues, funnelOpportunityIds, funnelStageRecords, opportunityChains, stageBenchmark, benchmarkCohort, openPipeline, expectedClosureByMonth, opportunityByStage, opportunitiesByStatus, probabilityDistribution, opportunities, dataQuality };
 }

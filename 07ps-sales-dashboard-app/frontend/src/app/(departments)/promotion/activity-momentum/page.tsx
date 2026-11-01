@@ -14,7 +14,7 @@ import {
   ChartPanel,
   DonutChart,
   TrendChart,
-  DataTable,
+  DataGrid,
   Select,
   Button,
   InsightCard,
@@ -23,6 +23,7 @@ import {
   ErrorState,
   exportRowsAsPdf,
   type Column,
+  type DataGridColumn,
   type PerformanceReportRow,
   useCanExport,
 } from '@07ps/ui';
@@ -281,7 +282,8 @@ interface OpportunityTableRow extends Record<string, unknown> {
   stage: string;
 }
 
-const opportunityColumns: Column<OpportunityTableRow>[] = [
+// Sortable / filterable DataGrid with Export CSV and Export as PDF, like the other detail tables.
+const opportunityColumns: DataGridColumn<OpportunityTableRow>[] = [
   { key: 'createdDate', header: 'Created Date' },
   { key: 'name', header: 'Opportunity Name' },
   { key: 'customer', header: 'Customer' },
@@ -386,10 +388,7 @@ export default function ActivityMomentumPage() {
   ];
 
   const filteredOpportunities = (data?.opportunities ?? []).filter((o) => matchesActivityFilter(o, activityFilter)).map(toTableRow);
-  const totalsRow: Partial<OpportunityTableRow> = {
-    createdDate: 'Total',
-    expectedRevenue: filteredOpportunities.reduce((sum, r) => sum + r.expectedRevenue, 0),
-  };
+  const totalExpectedRevenue = filteredOpportunities.reduce((sum, r) => sum + r.expectedRevenue, 0);
 
   // Counts + Rates combined into one "Opportunity Activities" export (both are Zone A KPI figures,
   // including #Won/#Lost) rather than a separate button for the two floating Rate InsightCards.
@@ -575,29 +574,27 @@ export default function ActivityMomentumPage() {
               <ChartPanel {...vh("promotion.activityMomentum.table")}
                 title="Opportunity Table"
                 style={{ minHeight: 480 }}
-                headerActions={
-                  !overview.error && (
-                    <ExportPdfButton
-                      downloading={downloadingPdf === 'table'}
-                      disabled={filteredOpportunities.length === 0}
-                      onClick={() =>
-                        handleDownloadTablePdf(
-                          'table',
-                          `Opportunity Table${activityFilter ? ` — ${activityFilter}` : ''}`,
-                          opportunityColumns,
-                          filteredOpportunities,
-                        )
-                      }
-                    />
-                  )
-                }
               >
                 {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
                 ) : overview.error ? (
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
-                  <DataTable columns={opportunityColumns} rows={filteredOpportunities} totalsRow={totalsRow} getRowId={(row) => row.opportunityId} />
+                  <>
+                    {/* Replaces the old pinned totals row (DataGrid has none): the total of every row in the table. */}
+                    <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 8 }}>
+                      {filteredOpportunities.length.toLocaleString(DISPLAY_LOCALE)} opportunities · Total expected revenue{' '}
+                      <strong style={{ color: 'var(--ps-color-text)' }}>{formatCurrency(totalExpectedRevenue)}</strong>
+                    </div>
+                    <DataGrid<OpportunityTableRow>
+                      columns={opportunityColumns}
+                      rows={filteredOpportunities}
+                      getRowId={(row) => row.opportunityId}
+                      fileName={`opportunity-table${activityFilter ? `-${activityFilter}` : ''}`}
+                      extraFilterParts={activityFilter ? [`Activity: ${activityFilter}`] : undefined}
+                      pageSize={25}
+                    />
+                  </>
                 )}
               </ChartPanel>
 

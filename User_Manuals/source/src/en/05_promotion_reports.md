@@ -148,15 +148,20 @@ Further down, **Customers Contribution** compares the **Top 10 Customers** with 
 
 1. **Full Pipeline**: a funnel of **Opportunities → Quotations → Sales Orders → Deliveries**, with the count, % and value of each stage listed underneath. Click a stage (or **Drill-down**) to list its records.
 2. **Opportunity chain**: follows each opportunity through to delivery.
-3. **Stage Benchmark**: each step's actual conversion % (for example **Opportunity → Quotation**) against its target %, with a status badge.
+3. **Total Pipeline Value** and **Stage Benchmark**: **Total Pipeline Value** is the expected revenue of all open (**Pending**) opportunities, with their number underneath; it equals the total of **Opportunity by Stage** and the **Pending** slice of **Opportunity by Status**. **Stage Benchmark** shows each step's actual conversion % (for example **Opportunity → Quotation**) against its target %, with a status badge. It is calculated on **every** opportunity created in the period (**Pending**, **Won** and **Lost**): how many of those same opportunities reached a quotation, then a sales order, then a delivery (a delivery counts once it has started). The **Opportunities** bar of the funnel shows open opportunities only, so the benchmark ratios are not the bars divided by each other.
 4. **Expected Closure Opportunity**: **Expected Opportunity Count** (bars) and **Expected Opportunity Value** (line) by the month deals should close. Click a month to list those opportunities.
 
-Further down, **Opportunity by Stage** shows open opportunities by CRM stage and **Probabilities Distribution** groups them by win probability. Click a segment or bar to list the opportunities. This page can take a few minutes to load.
+Further down, **Opportunity by Stage** shows open opportunities by CRM stage, **Opportunity by Status**, next to it, shows how many opportunities are **Won**, **Lost** or **Pending** (still open), as in Odoo (count and %, with the expected revenue when you hover a slice), and **Probabilities Distribution** groups the open opportunities by win probability. Click a segment, slice or bar to list the opportunities. This page can take a few minutes to load.
 
-The opportunity list (**Opportunity Details**) shows **Opportunity Name**, **Stage**, **Probability %**, **Expected Close Date**, **Value**, **Customer**, **Company**, **Salesperson** and **Created Date**, with **Download as PDF**. Click **Back** to return to the charts.
+| Term | Meaning |
+|---|---|
+| **Stage** | Where the deal is in the sales process: the column it sits in on the Odoo CRM board (New, Qualified, Proposition, Negotiations, …). |
+| **Status** | The outcome of the deal, as Odoo records it: **Won**, **Lost** or **Pending** (still open). It is set by the **Won** and **Lost** buttons on the opportunity in Odoo, not by the stage. |
+
+The opportunity list (**Opportunity Details**) shows **Opportunity Name**, **Stage**, **Probability %**, **Expected Close Date**, **Value**, **Customer**, **Company**, **Salesperson** and **Created Date**. Like the other detail tables, click a column header to sort (click again to reverse), use the search box and column filters, and **Export CSV** or **Export as PDF** the rows you are looking at. The **Quotations**, **Sales Orders** and **Deliveries** lists opened from **Full Pipeline** work the same way. Click **Back** to return to the charts.
 
 > [!NOTE]
-> Won and lost opportunities are left out of the pipeline views, because they are no longer "in the pipeline".
+> The Full Pipeline **Opportunities**, **Opportunity by Stage**, **Expected Closure Opportunity** and **Probabilities Distribution** count **open** opportunities only (status **Pending**). A deal marked **Lost** in Odoo keeps its stage there, but it leaves these charts and appears as **Lost** in **Opportunity by Status**. Won deals appear as **Won**. Moving a card to the "Won" or "Lost" column does not change its status: click the **Won** or **Lost** button on the opportunity. The **Won** column stays in Odoo (the **Won** button moves deals there); the **Lost** column is folded.
 
 # Promotion: Pipeline Trend
 
@@ -199,7 +204,7 @@ The opportunity list (**Opportunity Details**) shows **Opportunity Name**, **Sta
 | **Inactive Deals Ratio** | Opportunities without activity **or** without a next step (each counted once), as a share of open B2B opportunities. |
 | **Lost Deals Ratio** | Lost opportunities as a share of all opportunities this year. |
 
-Click **View Opportunity Activities details** to open the **Opportunity Table** (**Created Date**, **Opportunity Name**, **Customer**, **Company**, **Expected Revenue**, **Salesperson**, **Stage**). Use the **Activity Filter** to show only **Active**, **Lost**, **Won**, **Inactive** or **Without Next Step** opportunities. **Opportunity Activities definitions** explains each term on screen.
+Click **View Opportunity Activities details** to open the **Opportunity Table** (**Created Date**, **Opportunity Name**, **Customer**, **Company**, **Expected Revenue**, **Salesperson**, **Stage**), with the number of opportunities and their total expected revenue above it. Click a column header to sort, and use **Export CSV** or **Export as PDF** to download it. Use the **Activity Filter** to show only **Active**, **Lost**, **Won**, **Inactive** or **Without Next Step** opportunities. **Opportunity Activities definitions** explains each term on screen.
 
 # Promotion: MARCOM reports
 

@@ -17,7 +17,7 @@ import {
   DonutChart,
   FunnelChart,
   GroupedBarChart,
-  DataTable,
+  DataGrid,
   Button,
   ProgressBar,
   SemanticBadge,
@@ -28,6 +28,7 @@ import {
   PerformanceReportTable,
   SEMANTIC_STATUS_LABEL,
   type Column,
+  type DataGridColumn,
   type PerformanceReportRow,
   type PerformanceTablePdfColumn,
   useCanExport,
@@ -43,6 +44,7 @@ import type {
   FunnelSalesRecord,
   FunnelStageRecords,
   OpportunityDetailRow,
+  OpportunityStatus,
   PipelineHealthOverview,
   StageBenchmarkRow,
 } from '../../../../lib/api';
@@ -63,6 +65,13 @@ const CATEGORY_PALETTE = [
   'var(--ps-color-last-year)',
   'var(--ps-color-neutral-text)',
 ];
+
+/** Opportunity by Status slice colours (Odoo won_status): Won = success, Lost = alert, Pending (open) = accent. */
+const STATUS_COLORS: Record<OpportunityStatus, string> = {
+  Won: 'var(--ps-color-success)',
+  Lost: 'var(--ps-color-alert)',
+  Pending: 'var(--ps-color-accent)',
+};
 
 function formatMillions(value: number): string {
   const fixed = (value / 1_000_000).toFixed(1);
@@ -121,10 +130,10 @@ function toExecutiveSummaryRows(data?: PipelineHealthOverview | null): Performan
     funnelRow('leads', 'Leads (YTD, B2B)', data.funnel.leads, null, `${formatPlainNumber(data.funnel.leads)} B2B leads created so far this year.`),
     funnelRow(
       'opportunities',
-      'Opportunities (YTD, B2B)',
+      'Open Opportunities (YTD, B2B)',
       data.funnel.opportunities,
       data.funnelValues.opportunities,
-      `${formatPlainNumber(data.funnel.opportunities)} opportunities created YTD, worth ${formatCurrency(data.funnelValues.opportunities)}.`,
+      `${formatPlainNumber(data.funnel.opportunities)} open opportunities created YTD, worth ${formatCurrency(data.funnelValues.opportunities)}.`,
     ),
     funnelRow(
       'quotations',
@@ -188,7 +197,7 @@ const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
   { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
 ];
 
-type DetailsFilter = { type: 'month' | 'stage' | 'bucket' | 'funnelStage'; value: string } | null;
+type DetailsFilter = { type: 'month' | 'stage' | 'bucket' | 'funnelStage' | 'status'; value: string } | null;
 
 const FUNNEL_STAGE_LABELS: Record<string, string> = {
   leads: 'Leads',
@@ -213,13 +222,15 @@ interface OpportunityTableRow extends Record<string, unknown> {
   customerOdooUrl: string | null;
 }
 
-const opportunityColumns: Column<OpportunityTableRow>[] = [
-  { key: 'name', header: 'Opportunity Name', render: (r) => <OdooLink href={r.odooUrl}>{r.name}</OdooLink> },
+// Row-level tables (opportunities, quotations / sales orders / deliveries) use DataGrid like the other detail tables:
+// click-to-sort headers, search + column filters, Export CSV and Export as PDF of the filtered, sorted rows.
+const opportunityColumns: DataGridColumn<OpportunityTableRow>[] = [
+  { key: 'name', header: 'Opportunity Name', rawValue: (r) => r.name, render: (r) => <OdooLink href={r.odooUrl}>{r.name}</OdooLink> },
   { key: 'stage', header: 'Stage' },
   { key: 'probability', header: 'Probability %' },
   { key: 'expectedCloseDate', header: 'Expected Close Date' },
   { key: 'expectedRevenue', header: 'Value', align: 'right', render: (r) => formatCurrency(r.expectedRevenue) },
-  { key: 'customer', header: 'Customer', render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
+  { key: 'customer', header: 'Customer', rawValue: (r) => r.customer, render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
   { key: 'createdDate', header: 'Created Date' },
@@ -272,11 +283,11 @@ interface StageSalesTableRow extends Record<string, unknown> {
   customerOdooUrl: string | null;
 }
 
-const stageSalesColumns: Column<StageSalesTableRow>[] = [
-  { key: 'orderNumber', header: 'Order Number', render: (r) => <OdooLink href={r.odooUrl}>{r.orderNumber}</OdooLink> },
+const stageSalesColumns: DataGridColumn<StageSalesTableRow>[] = [
+  { key: 'orderNumber', header: 'Order Number', rawValue: (r) => r.orderNumber, render: (r) => <OdooLink href={r.odooUrl}>{r.orderNumber}</OdooLink> },
   { key: 'documentDate', header: 'Date' },
   { key: 'value', header: 'Value', align: 'right', render: (r) => formatCurrency(r.value) },
-  { key: 'customer', header: 'Customer', render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
+  { key: 'customer', header: 'Customer', rawValue: (r) => r.customer, render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
 ];
@@ -311,12 +322,12 @@ interface StageDeliveryTableRow extends Record<string, unknown> {
 
 // "Order Number" is the sale order's number (v_sales_deliveries.OrderNumber), so it opens the sale.order; the picking
 // itself (WH/OUT/...) is the "Delivery" column and opens the stock.picking.
-const stageDeliveryColumns: Column<StageDeliveryTableRow>[] = [
-  { key: 'orderNumber', header: 'Order Number', render: (r) => <OdooLink href={r.orderOdooUrl}>{r.orderNumber}</OdooLink> },
-  { key: 'deliveryReference', header: 'Delivery', render: (r) => <OdooLink href={r.odooUrl}>{r.deliveryReference}</OdooLink> },
+const stageDeliveryColumns: DataGridColumn<StageDeliveryTableRow>[] = [
+  { key: 'orderNumber', header: 'Order Number', rawValue: (r) => r.orderNumber, render: (r) => <OdooLink href={r.orderOdooUrl}>{r.orderNumber}</OdooLink> },
+  { key: 'deliveryReference', header: 'Delivery', rawValue: (r) => r.deliveryReference, render: (r) => <OdooLink href={r.odooUrl}>{r.deliveryReference}</OdooLink> },
   { key: 'orderDate', header: 'Order Date' },
   { key: 'deliveryStatus', header: 'Status' },
-  { key: 'customer', header: 'Customer', render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
+  { key: 'customer', header: 'Customer', rawValue: (r) => r.customer, render: (r) => <OdooLink href={r.customerOdooUrl}>{r.customer}</OdooLink> },
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
 ];
@@ -337,12 +348,6 @@ function toStageDeliveryRows(records: FunnelDeliveryRecord[]): StageDeliveryTabl
   }));
 }
 
-/** Month/bucket drill-downs (Expected Closure / Probabilities Distribution) additionally require
- * `isOpen`, matching those charts' own Won/Lost-exclusion at the API level (see
- * backend/src/measures/pipelineHealth.ts's Won/Lost-exclusion policy). Stage does NOT require it --
- * Opportunity by Stage is the page's one deliberate exception that keeps Won/Lost. funnelStage
- * matches by an ID list that's already IsOpen-scoped at the query level, so no extra check needed
- * there either. */
 // ---------------------------------------------------------------------------
 // Summary-view chart PDF exports -- same exportRowsAsPdf mechanism as the drill-down tables above
 // and as Revenue Trend's per-chart tables, applied to the 4 summary charts + Stage Benchmark. Each
@@ -396,6 +401,20 @@ const stageValueTableColumns: Column<StageValueTableRow>[] = [
   { key: 'value', header: 'Value', align: 'right', render: (r) => formatCurrency(r.value) },
 ];
 
+interface StatusTableRow extends Record<string, unknown> {
+  id: string;
+  status: string;
+  count: number;
+  share: string;
+  expectedRevenue: number;
+}
+const statusTableColumns: Column<StatusTableRow>[] = [
+  { key: 'status', header: 'Status' },
+  { key: 'count', header: 'Opportunities', align: 'right' },
+  { key: 'share', header: 'Share', align: 'right' },
+  { key: 'expectedRevenue', header: 'Expected Revenue', align: 'right', render: (r) => formatCurrency(r.expectedRevenue) },
+];
+
 interface ProbabilityTableRow extends Record<string, unknown> {
   id: string;
   bucket: string;
@@ -406,10 +425,14 @@ const probabilityTableColumns: Column<ProbabilityTableRow>[] = [
   { key: 'count', header: 'Opportunities', align: 'right' },
 ];
 
+/** Stage-based drill-downs (month / stage / bucket) list open opportunities only (status Pending), matching their charts
+ * (backend/src/measures/pipelineHealth.ts's status policy); a status slice lists that status; funnelStage matches by
+ * an ID list that is already open-only at the query level. */
 function matchesFilter(o: OpportunityDetailRow, filter: DetailsFilter, funnelIds?: FunnelOpportunityIds): boolean {
   if (!filter) return true;
+  if (filter.type === 'status') return o.status === filter.value;
   if (filter.type === 'month') return o.isOpen && o.expectedCloseMonth === filter.value;
-  if (filter.type === 'stage') return (o.stage ?? 'Unspecified') === filter.value;
+  if (filter.type === 'stage') return o.isOpen && (o.stage ?? 'Unspecified') === filter.value;
   if (filter.type === 'funnelStage') {
     const ids = funnelIds?.[filter.value as keyof FunnelOpportunityIds];
     return ids != null && ids.includes(o.opportunityId);
@@ -421,6 +444,7 @@ function detailsFilterLabel(filter: DetailsFilter): string {
   if (!filter) return '';
   if (filter.type === 'month') return `Expected to close in ${filter.value}`;
   if (filter.type === 'stage') return `Stage: ${filter.value}`;
+  if (filter.type === 'status') return `Status: ${filter.value}`;
   if (filter.type === 'funnelStage') return `Full Pipeline: ${FUNNEL_STAGE_LABELS[filter.value] ?? filter.value}`;
   return `Probability: ${filter.value}`;
 }
@@ -433,8 +457,13 @@ function widgetNameForFilter(filter: DetailsFilter): string {
   if (!filter) return 'Opportunity Details';
   if (filter.type === 'month') return 'Expected Closure Opportunity';
   if (filter.type === 'stage') return 'Opportunity by Stage';
+  if (filter.type === 'status') return 'Opportunity by Status';
   if (filter.type === 'funnelStage') return 'Full Pipeline';
   return 'Probabilities Distribution';
+}
+
+function slug(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 function filterValueForPdf(filter: DetailsFilter): string | undefined {
@@ -472,8 +501,7 @@ export default function PipelineHealthPage() {
   const [view, setView] = useState<'summary' | 'details' | 'stageRecords' | 'chain'>('summary');
   const [detailsFilter, setDetailsFilter] = useState<DetailsFilter>(null);
   const [stageRecordKind, setStageRecordKind] = useState<StageRecordKind | null>(null);
-  const [downloadingPdf, setDownloadingPdf] = useState(false);
-  const [downloadingStagePdf, setDownloadingStagePdf] = useState<'linked' | 'unlinked' | null>(null);
+  const [downloadingUnlinkedPdf, setDownloadingUnlinkedPdf] = useState(false);
   const [downloadingChartPdf, setDownloadingChartPdf] = useState<string | null>(null);
 
   const filterOptions = useScopedFilterOptions();
@@ -533,6 +561,25 @@ export default function PipelineHealthPage() {
     color: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
   }));
 
+  const statusSlices = data?.opportunitiesByStatus.slices ?? [];
+  const statusTotal = statusSlices.reduce((sum, s) => sum + s.count, 0);
+  const statusSegments = statusSlices
+    .filter((s) => s.count > 0)
+    .map((s) => ({
+      id: s.status,
+      label: s.status,
+      value: s.count,
+      color: STATUS_COLORS[s.status],
+      tooltipNote: `Expected revenue: ${formatCurrency(s.expectedRevenue)}`,
+    }));
+  const statusTableRows: StatusTableRow[] = statusSlices.map((s) => ({
+    id: s.status,
+    status: s.status,
+    count: s.count,
+    share: statusTotal > 0 ? `${((s.count / statusTotal) * 100).toFixed(1)}%` : '0.0%',
+    expectedRevenue: s.expectedRevenue,
+  }));
+
   const probabilityPoints = (data?.probabilityDistribution ?? []).map((p) => ({ label: p.bucket, count: p.count }));
 
   const filteredOpportunities = (data?.opportunities ?? [])
@@ -577,20 +624,11 @@ export default function PipelineHealthPage() {
     }
   }
 
-  async function handleDownloadPdf() {
-    setDownloadingPdf(true);
-    try {
-      await exportRowsAsPdf({
-        title: widgetNameForFilter(detailsFilter),
-        subtitle: filterValueForPdf(detailsFilter),
-        columns: opportunityColumns.map((c) => ({ header: c.header, align: c.align })),
-        rows: rowsToPdfRows(opportunityColumns, filteredOpportunities),
-        fileName: `${widgetNameForFilter(detailsFilter).toLowerCase().replace(/\s+/g, '-')}-opportunities`,
-      });
-    } finally {
-      setDownloadingPdf(false);
-    }
-  }
+  // DataGrid's Export CSV / Export as PDF file name and PDF title, e.g. "opportunity-by-stage-proposal-opportunities".
+  const detailsFileName = slug(
+    [widgetNameForFilter(detailsFilter), filterValueForPdf(detailsFilter), 'opportunities'].filter(Boolean).join(' '),
+  );
+  const detailsFilterParts = detailsFilter ? [`${widgetNameForFilter(detailsFilter)}: ${filterValueForPdf(detailsFilter)}`] : undefined;
 
   const isDeliveryStage = stageRecordKind === 'deliveries';
   const activeStageRecords = stageRecordKind ? getStageRecords(stageRecordKind, data?.funnelStageRecords) : [];
@@ -600,24 +638,25 @@ export default function PipelineHealthPage() {
     ? toStageDeliveryRows(linkedStageRecords as FunnelDeliveryRecord[])
     : toStageSalesRows(linkedStageRecords as FunnelSalesRecord[]);
   const stageColumns = isDeliveryStage ? stageDeliveryColumns : stageSalesColumns;
+  const stageLabel = stageRecordKind ? FUNNEL_STAGE_LABELS[stageRecordKind] : '';
 
-  /** `linked` picks which subset gets exported: the same records shown in the drill-down table
-   * (true), or the "with no Opportunities" set the table deliberately excludes (false). */
-  async function handleDownloadStagePdf(linked: boolean) {
+  /** The "with no Opportunities" set the drill-down table deliberately excludes -- exported on its own; the table's
+   * rows themselves export through DataGrid's Export CSV / Export as PDF. */
+  async function handleDownloadUnlinkedStagePdf() {
     if (!stageRecordKind) return;
-    const label = FUNNEL_STAGE_LABELS[stageRecordKind];
-    const subset = linked ? linkedStageRecords : unlinkedStageRecords;
-    const rows = isDeliveryStage ? toStageDeliveryRows(subset as FunnelDeliveryRecord[]) : toStageSalesRows(subset as FunnelSalesRecord[]);
-    setDownloadingStagePdf(linked ? 'linked' : 'unlinked');
+    const rows = isDeliveryStage
+      ? toStageDeliveryRows(unlinkedStageRecords as FunnelDeliveryRecord[])
+      : toStageSalesRows(unlinkedStageRecords as FunnelSalesRecord[]);
+    setDownloadingUnlinkedPdf(true);
     try {
       await exportRowsAsPdf({
-        title: linked ? label : `${label} with no Opportunities`,
+        title: `${stageLabel} with no Opportunities`,
         columns: stageColumns.map((c) => ({ header: c.header, align: c.align })),
         rows: rowsToPdfRows(stageColumns as Column<Record<string, unknown>>[], rows),
-        fileName: linked ? `${label.toLowerCase().replace(/\s+/g, '-')}` : `${label.toLowerCase().replace(/\s+/g, '-')}-no-opportunities`,
+        fileName: `${slug(stageLabel)}-no-opportunities`,
       });
     } finally {
-      setDownloadingStagePdf(null);
+      setDownloadingUnlinkedPdf(false);
     }
   }
 
@@ -710,9 +749,14 @@ export default function PipelineHealthPage() {
                   )}
                 </ChartPanel>
 
-                <Card style={{ width: '100%', height: '100%' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)', minHeight: 0 }}>
+                <TotalPipelineValueCard openPipeline={data?.openPipeline} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+                <Card style={{ width: '100%', flex: 1, minHeight: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--ps-space-2, 8px)', gap: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Stage Benchmark</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Stage Benchmark</span>
+                      <VisualInfoIcons title="Stage Benchmark" {...vh('promotion.pipelineHealth.stageBenchmark')} />
+                    </span>
                     {!overview.error && (
                       <PdfButton
                         label="Export as PDF"
@@ -730,6 +774,7 @@ export default function PipelineHealthPage() {
                     (data?.stageBenchmark ?? []).map((row) => <BenchmarkRow key={row.transition} row={row} />)
                   )}
                 </Card>
+                </div>
               </div>
 
               {/* Top-right -- Expected Closure Opportunity */}
@@ -776,7 +821,7 @@ export default function PipelineHealthPage() {
                 )}
               </ChartPanel>
 
-              {/* Bottom-left -- Opportunity by Stage */}
+              {/* Opportunity by Stage (open only) */}
               <ChartPanel<StageValueTableRow>
                 title="Opportunity by Stage"
                 {...vh('promotion.pipelineHealth.byStage')}
@@ -815,11 +860,53 @@ export default function PipelineHealthPage() {
                 )}
               </ChartPanel>
 
-              {/* Bottom-right -- Probabilities Distribution */}
+              {/* Opportunity by Status -- the outcome (Odoo won_status: Won / Lost / Pending), never the stage; same row and
+                  height as Opportunity by Stage so the two read side by side */}
+              <ChartPanel<StatusTableRow>
+                title="Opportunity by Status"
+                {...vh('promotion.pipelineHealth.byStatus')}
+                style={{ minHeight: 380 }}
+                tableColumns={overview.error ? undefined : statusTableColumns}
+                tableRows={overview.error ? undefined : statusTableRows}
+                getRowId={(row) => row.id}
+                headerActions={
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <DrillIndicator hint="Click a status to see its opportunities" />
+                    {!overview.error && (
+                      <PdfButton
+                        label="Export as PDF"
+                        downloading={downloadingChartPdf === 'status'}
+                        disabled={statusTotal === 0}
+                        onClick={() => handleDownloadChartPdf('status', 'Opportunity by Status', statusTableColumns, statusTableRows)}
+                      />
+                    )}
+                  </div>
+                }
+              >
+                {overview.loading ? (
+                  <LoadingSkeleton variant="chart" />
+                ) : overview.error ? (
+                  <ErrorState message={overview.error} onRetry={overview.retry} />
+                ) : (
+                  <DonutChart
+                    title="Opportunity by Status"
+                    showTitle={false}
+                    segments={statusSegments}
+                    valueFormatter={(v) => `${v.toLocaleString(DISPLAY_LOCALE)} opportunit${v === 1 ? 'y' : 'ies'}`}
+                    legendTitle="Status"
+                    centerLabel={statusTotal.toLocaleString(DISPLAY_LOCALE)}
+                    centerSubLabel="Opportunities"
+                    onSegmentClick={(id) => openDetails({ type: 'status', value: id })}
+                    showPercentLabels
+                  />
+                )}
+              </ChartPanel>
+
+              {/* Probabilities Distribution */}
               <ChartPanel<ProbabilityTableRow>
                 title="Probabilities Distribution"
                 {...vh('promotion.pipelineHealth.probability')}
-                style={{ minHeight: 380 }}
+                style={{ minHeight: 380, gridColumn: '1 / -1' }}
                 tableColumns={overview.error ? undefined : probabilityTableColumns}
                 tableRows={overview.error ? undefined : probabilityTableRows}
                 getRowId={(row) => row.id}
@@ -895,21 +982,20 @@ export default function PipelineHealthPage() {
                 title={`Opportunity Details${detailsFilter ? ` — ${detailsFilterLabel(detailsFilter)}` : ''}`}
                 {...vh('promotion.pipelineHealth.opportunityDetails')}
                 style={{ minHeight: 480 }}
-                headerActions={
-                  <PdfButton
-                    label="Download as PDF"
-                    downloading={downloadingPdf}
-                    disabled={filteredOpportunities.length === 0}
-                    onClick={handleDownloadPdf}
-                  />
-                }
               >
                 {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
                 ) : overview.error ? (
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
-                  <DataTable columns={opportunityColumns} rows={filteredOpportunities} getRowId={(row) => row.opportunityId} />
+                  <DataGrid<OpportunityTableRow>
+                    columns={opportunityColumns}
+                    rows={filteredOpportunities}
+                    getRowId={(row) => row.opportunityId}
+                    fileName={detailsFileName}
+                    extraFilterParts={detailsFilterParts}
+                    pageSize={25}
+                  />
                 )}
               </ChartPanel>
 
@@ -927,20 +1013,12 @@ export default function PipelineHealthPage() {
                 {...vh('promotion.pipelineHealth.stageRecords')}
                 style={{ minHeight: 480 }}
                 headerActions={
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <PdfButton
-                      label="Download as PDF"
-                      downloading={downloadingStagePdf === 'linked'}
-                      disabled={linkedStageRecords.length === 0}
-                      onClick={() => handleDownloadStagePdf(true)}
-                    />
-                    <PdfButton
-                      label={`${stageRecordKind ? FUNNEL_STAGE_LABELS[stageRecordKind] : ''} with no Opportunities`}
-                      downloading={downloadingStagePdf === 'unlinked'}
-                      disabled={unlinkedStageRecords.length === 0}
-                      onClick={() => handleDownloadStagePdf(false)}
-                    />
-                  </div>
+                  <PdfButton
+                    label={`${stageLabel} with no Opportunities`}
+                    downloading={downloadingUnlinkedPdf}
+                    disabled={unlinkedStageRecords.length === 0}
+                    onClick={handleDownloadUnlinkedStagePdf}
+                  />
                 }
               >
                 {overview.loading ? (
@@ -948,9 +1026,23 @@ export default function PipelineHealthPage() {
                 ) : overview.error ? (
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : isDeliveryStage ? (
-                  <DataTable columns={stageDeliveryColumns} rows={linkedStageRows as StageDeliveryTableRow[]} getRowId={(row) => row.id} />
+                  <DataGrid<StageDeliveryTableRow>
+                    key="deliveries"
+                    columns={stageDeliveryColumns}
+                    rows={linkedStageRows as StageDeliveryTableRow[]}
+                    getRowId={(row) => row.id}
+                    fileName={slug(stageLabel)}
+                    pageSize={25}
+                  />
                 ) : (
-                  <DataTable columns={stageSalesColumns} rows={linkedStageRows as StageSalesTableRow[]} getRowId={(row) => row.id} />
+                  <DataGrid<StageSalesTableRow>
+                    key={stageRecordKind ?? 'sales'}
+                    columns={stageSalesColumns}
+                    rows={linkedStageRows as StageSalesTableRow[]}
+                    getRowId={(row) => row.id}
+                    fileName={slug(stageLabel)}
+                    pageSize={25}
+                  />
                 )}
               </ChartPanel>
 
@@ -1100,17 +1192,54 @@ function DataQualityCard({ dataQuality, loading }: { dataQuality?: DataQualityOv
   );
 }
 
+/** Total expected revenue of open (Pending) opportunities -- the same population as Opportunity by Stage and the Pending
+ * slice of Opportunity by Status (the backend takes it from that slice, so the three always agree). */
+function TotalPipelineValueCard({
+  openPipeline,
+  loading,
+  error,
+  onRetry,
+}: {
+  openPipeline?: { count: number; value: number };
+  loading: boolean;
+  error?: string;
+  onRetry: () => void;
+}) {
+  return (
+    <Card style={{ width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Total Pipeline Value</span>
+        <VisualInfoIcons title="Total Pipeline Value" {...vh('promotion.pipelineHealth.totalPipelineValue')} />
+      </div>
+      {loading ? (
+        <LoadingSkeleton variant="kpi" />
+      ) : error ? (
+        <ErrorState message={error} onRetry={onRetry} />
+      ) : (
+        <>
+          <div data-testid="total-pipeline-value" style={{ fontSize: 22, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
+            {formatCurrency(openPipeline?.value ?? 0)}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>
+            {(openPipeline?.count ?? 0).toLocaleString(DISPLAY_LOCALE)} open opportunit{openPipeline?.count === 1 ? 'y' : 'ies'}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function BenchmarkRow({ row }: { row: StageBenchmarkRow }) {
   const status = toSemanticStatus(row.status);
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div style={{ marginBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ps-color-text)' }}>{row.transition}</span>
         <SemanticBadge status={status} />
       </div>
       <ProgressBar actual={row.actualPct ?? 0} targetToDate={row.targetPct} status={status} label={`${row.transition}: ${formatPct(row.actualPct)} of ${formatPct(row.targetPct)} target`} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 11, color: 'var(--ps-color-muted-text)' }}>
-        <span>Actual: {formatPct(row.actualPct)}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2, fontSize: 11, color: 'var(--ps-color-muted-text)' }}>
+        <span>Actual: {formatPct(row.actualPct)} ({row.toCount.toLocaleString(DISPLAY_LOCALE)} of {row.fromCount.toLocaleString(DISPLAY_LOCALE)})</span>
         <span>Target: {formatPct(row.targetPct)}</span>
       </div>
     </div>
