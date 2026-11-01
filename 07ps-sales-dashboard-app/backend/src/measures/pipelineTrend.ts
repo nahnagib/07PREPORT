@@ -32,6 +32,7 @@ import {
   buildWhereClause,
   excludeCancelledDocumentsClause,
   excludeLostClause,
+  openOpportunityClause,
   ytdWindow,
   type DateWindow,
   type Filters,
@@ -196,7 +197,7 @@ function openOpportunityScope(anchor: Date, filters: Filters) {
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const window = ytdWindow(anchor);
   return {
-    where: `fo.IsOpen = 1 AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}`,
+    where: `${openOpportunityClause('fo')} AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}`,
     params: [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params],
   };
 }

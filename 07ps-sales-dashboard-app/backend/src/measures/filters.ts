@@ -207,24 +207,36 @@ export function buildCrmWhereClause(
 }
 
 /**
- * Excludes closed-lost opportunities from a v_sales_opportunities-scoped query. Uses the ETL's own
- * IsLost flag rather than a literal `Stage = 'Lost'` text match -- IsLost is derived from multiple
- * signals (a LostReason being set, OR the record going inactive without being won, OR "lost"
- * appearing in the stage text; see data/etl/src/sales_pipeline/crm/crm_status_classifier.py), so
- * it's a superset of the literal Stage string and the same flag already used everywhere else in
- * this codebase for "is this opportunity lost" (#Lost, Lost Deals Ratio, Total Lost Opportunity by
- * Reason). `COALESCE(...,0) = 0` rather than `<> 1` so a NULL/unclassified IsLost is treated as
- * "not lost" (the safe default) instead of silently dropping the row -- in SQL's three-valued
- * logic, `col <> 1` evaluates to NULL (excluded by WHERE) when col is NULL.
- *
- * Apply this to every general/summary Pipeline widget (charts, drill-downs, KPI counts) that isn't
- * itself about measuring lost deals. Do NOT apply it to widgets that ARE specifically about lost
- * opportunities (#Lost, Lost Deals Ratio, Total Lost Opportunity by Reason, or any future "lost"
- * breakdown) -- those need every lost row to stay meaningful.
+ * Opportunity STATUS -- the outcome (OpportunityStatus, migration 0063), never the kanban stage:
+ *   New      open / in progress (Odoo won_status 'pending', active), whatever its stage
+ *   Won      Odoo Won button (won_status 'won')
+ *   Lost     Odoo Lost button (won_status 'lost': archived, probability 0) -- it KEEPS its old stage
+ *   Archived archived without being marked Lost -- no outcome, left out of every figure
+ * Derived by the ETL (data/etl/src/sales_pipeline/crm/crm_status_classifier.py); stage names are never read, so the
+ * custom "Won" / "Lost" stages can be removed in Odoo. IsWon / IsLost / IsOpen are the same status as flags.
+ */
+export const OPPORTUNITY_STATUSES = ['New', 'Won', 'Lost'] as const;
+export type OpportunityStatus = (typeof OPPORTUNITY_STATUSES)[number];
+
+/** Open pipeline only (status New). Every stage-based visual uses this: a lost deal leaves its old stage. */
+export function openOpportunityClause(alias: string): string {
+  const prefix = alias ? `${alias}.` : '';
+  return `${prefix}OpportunityStatus = 'New'`;
+}
+
+/** Every opportunity with an outcome or still open (New / Won / Lost): Archived-but-not-lost records are dropped. */
+export function notArchivedClause(alias: string): string {
+  const prefix = alias ? `${alias}.` : '';
+  return `${prefix}OpportunityStatus IN ('New', 'Won', 'Lost')`;
+}
+
+/**
+ * New + Won (neither Lost nor Archived) -- for widgets that are not about the outcome, such as the opportunity-creation
+ * trend. Do NOT apply it to widgets that ARE about lost deals (#Lost, Lost Deals Ratio, Lost by Reason).
  */
 export function excludeLostClause(alias: string): string {
   const prefix = alias ? `${alias}.` : '';
-  return `COALESCE(${prefix}IsLost, 0) = 0`;
+  return `${prefix}OpportunityStatus IN ('New', 'Won')`;
 }
 
 /**

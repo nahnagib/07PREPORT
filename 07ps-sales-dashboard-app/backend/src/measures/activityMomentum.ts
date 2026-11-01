@@ -100,7 +100,7 @@
  */
 
 import type { Pool } from 'mysql2/promise';
-import { buildCrmWhereClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
+import { buildCrmWhereClause, notArchivedClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -224,7 +224,7 @@ export async function computeOpportunityActivityCounts(
     FROM (
       SELECT ${activityStatusCaseSql(activityAvailable)} AS status
       FROM v_sales_opportunities fo
-      WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+      WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${notArchivedClause('fo')}
     ) t
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
@@ -278,7 +278,7 @@ export async function computeActivityRates(
       SUM(CASE WHEN fo.IsOpen = 1 AND fo.SalesSegment = 'B2B' THEN 1 ELSE 0 END) AS openCount,
       SUM(CASE WHEN fo.IsOpen = 1 AND (${WITHOUT_ACTIVITY_SQL} OR ${WITHOUT_NEXT_STEP_SQL}) THEN 1 ELSE 0 END) AS atRiskCount
     FROM v_sales_opportunities fo
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${notArchivedClause('fo')}
   `;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
   const row = (rows as any[])[0];
@@ -335,7 +335,7 @@ async function fetchNewOpportunitiesByMonth(pool: Pool, anchor: Date, filters: F
   const sql = `
     SELECT YEAR(fo.OpportunityCreatedDate) AS yr, MONTH(fo.OpportunityCreatedDate) AS mo, COUNT(*) AS cnt
     FROM v_sales_opportunities fo
-    WHERE YEAR(fo.OpportunityCreatedDate) = ? AND ${clause}
+    WHERE YEAR(fo.OpportunityCreatedDate) = ? AND ${clause} AND ${notArchivedClause('fo')}
     GROUP BY YEAR(fo.OpportunityCreatedDate), MONTH(fo.OpportunityCreatedDate)
   `;
   const [rows] = await pool.query(sql, [year, ...params]);
@@ -392,7 +392,7 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
   selectParts.push(`${activityStatusCaseSql(activityAvailable)} AS activityStatus`);
   const sql = `SELECT ${selectParts.join(', ')} FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
-    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause}`;
+    WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${notArchivedClause('fo')}`;
   const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
 
   const ytdStartStr = toDateOnlyString(window.start);
