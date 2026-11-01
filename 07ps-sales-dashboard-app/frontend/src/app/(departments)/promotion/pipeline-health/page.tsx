@@ -65,11 +65,11 @@ const CATEGORY_PALETTE = [
   'var(--ps-color-neutral-text)',
 ];
 
-/** Opportunities by Status slice colours: open = accent, Won = success, Lost = alert. */
+/** Opportunity by Status slice colours (Odoo won_status): Won = success, Lost = alert, Pending (open) = accent. */
 const STATUS_COLORS: Record<OpportunityStatus, string> = {
-  New: 'var(--ps-color-accent)',
   Won: 'var(--ps-color-success)',
   Lost: 'var(--ps-color-alert)',
+  Pending: 'var(--ps-color-accent)',
 };
 
 function formatMillions(value: number): string {
@@ -422,7 +422,7 @@ const probabilityTableColumns: Column<ProbabilityTableRow>[] = [
   { key: 'count', header: 'Opportunities', align: 'right' },
 ];
 
-/** Stage-based drill-downs (month / stage / bucket) list open opportunities only (status New), matching their charts
+/** Stage-based drill-downs (month / stage / bucket) list open opportunities only (status Pending), matching their charts
  * (backend/src/measures/pipelineHealth.ts's status policy); a status slice lists that status; funnelStage matches by
  * an ID list that is already open-only at the query level. */
 function matchesFilter(o: OpportunityDetailRow, filter: DetailsFilter, funnelIds?: FunnelOpportunityIds): boolean {
@@ -454,7 +454,7 @@ function widgetNameForFilter(filter: DetailsFilter): string {
   if (!filter) return 'Opportunity Details';
   if (filter.type === 'month') return 'Expected Closure Opportunity';
   if (filter.type === 'stage') return 'Opportunity by Stage';
-  if (filter.type === 'status') return 'Opportunities by Status';
+  if (filter.type === 'status') return 'Opportunity by Status';
   if (filter.type === 'funnelStage') return 'Full Pipeline';
   return 'Probabilities Distribution';
 }
@@ -751,9 +751,14 @@ export default function PipelineHealthPage() {
                   )}
                 </ChartPanel>
 
-                <Card style={{ width: '100%', height: '100%' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)', minHeight: 0 }}>
+                <TotalPipelineValueCard openPipeline={data?.openPipeline} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+                <Card style={{ width: '100%', flex: 1, minHeight: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--ps-space-2, 8px)', gap: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Stage Benchmark</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Stage Benchmark</span>
+                      <VisualInfoIcons title="Stage Benchmark" {...vh('promotion.pipelineHealth.stageBenchmark')} />
+                    </span>
                     {!overview.error && (
                       <PdfButton
                         label="Export as PDF"
@@ -771,6 +776,7 @@ export default function PipelineHealthPage() {
                     (data?.stageBenchmark ?? []).map((row) => <BenchmarkRow key={row.transition} row={row} />)
                   )}
                 </Card>
+                </div>
               </div>
 
               {/* Top-right -- Expected Closure Opportunity */}
@@ -856,9 +862,10 @@ export default function PipelineHealthPage() {
                 )}
               </ChartPanel>
 
-              {/* Opportunities by Status -- the outcome (New / Won / Lost), never the stage */}
+              {/* Opportunity by Status -- the outcome (Odoo won_status: Won / Lost / Pending), never the stage; same row and
+                  height as Opportunity by Stage so the two read side by side */}
               <ChartPanel<StatusTableRow>
-                title="Opportunities by Status"
+                title="Opportunity by Status"
                 {...vh('promotion.pipelineHealth.byStatus')}
                 style={{ minHeight: 380 }}
                 tableColumns={overview.error ? undefined : statusTableColumns}
@@ -872,7 +879,7 @@ export default function PipelineHealthPage() {
                         label="Export as PDF"
                         downloading={downloadingChartPdf === 'status'}
                         disabled={statusTotal === 0}
-                        onClick={() => handleDownloadChartPdf('status', 'Opportunities by Status', statusTableColumns, statusTableRows)}
+                        onClick={() => handleDownloadChartPdf('status', 'Opportunity by Status', statusTableColumns, statusTableRows)}
                       />
                     )}
                   </div>
@@ -884,7 +891,7 @@ export default function PipelineHealthPage() {
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
                   <DonutChart
-                    title="Opportunities by Status"
+                    title="Opportunity by Status"
                     showTitle={false}
                     segments={statusSegments}
                     valueFormatter={(v) => `${v.toLocaleString(DISPLAY_LOCALE)} opportunit${v === 1 ? 'y' : 'ies'}`}
@@ -1182,17 +1189,54 @@ function DataQualityCard({ dataQuality, loading }: { dataQuality?: DataQualityOv
   );
 }
 
+/** Total expected revenue of open (Pending) opportunities -- the same population as Opportunity by Stage and the Pending
+ * slice of Opportunity by Status (the backend takes it from that slice, so the three always agree). */
+function TotalPipelineValueCard({
+  openPipeline,
+  loading,
+  error,
+  onRetry,
+}: {
+  openPipeline?: { count: number; value: number };
+  loading: boolean;
+  error?: string;
+  onRetry: () => void;
+}) {
+  return (
+    <Card style={{ width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Total Pipeline Value</span>
+        <VisualInfoIcons title="Total Pipeline Value" {...vh('promotion.pipelineHealth.totalPipelineValue')} />
+      </div>
+      {loading ? (
+        <LoadingSkeleton variant="kpi" />
+      ) : error ? (
+        <ErrorState message={error} onRetry={onRetry} />
+      ) : (
+        <>
+          <div data-testid="total-pipeline-value" style={{ fontSize: 22, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
+            {formatCurrency(openPipeline?.value ?? 0)}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>
+            {(openPipeline?.count ?? 0).toLocaleString(DISPLAY_LOCALE)} open opportunit{openPipeline?.count === 1 ? 'y' : 'ies'}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function BenchmarkRow({ row }: { row: StageBenchmarkRow }) {
   const status = toSemanticStatus(row.status);
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div style={{ marginBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, gap: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ps-color-text)' }}>{row.transition}</span>
         <SemanticBadge status={status} />
       </div>
       <ProgressBar actual={row.actualPct ?? 0} targetToDate={row.targetPct} status={status} label={`${row.transition}: ${formatPct(row.actualPct)} of ${formatPct(row.targetPct)} target`} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: 11, color: 'var(--ps-color-muted-text)' }}>
-        <span>Actual: {formatPct(row.actualPct)}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2, fontSize: 11, color: 'var(--ps-color-muted-text)' }}>
+        <span>Actual: {formatPct(row.actualPct)} ({row.toCount.toLocaleString(DISPLAY_LOCALE)} of {row.fromCount.toLocaleString(DISPLAY_LOCALE)})</span>
         <span>Target: {formatPct(row.targetPct)}</span>
       </div>
     </div>

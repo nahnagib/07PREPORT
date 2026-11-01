@@ -2143,6 +2143,9 @@ export interface OpportunityChains {
 
 export interface StageBenchmarkRow {
   transition: string;
+  /** Like-for-like cohort counts behind actualPct (all statuses, backend computeBenchmarkCohort). */
+  fromCount: number;
+  toCount: number;
   actualPct: number | null;
   targetPct: number;
   status: TargetStatus;
@@ -2163,8 +2166,8 @@ export interface StageValueSlice {
   count: number;
 }
 
-/** Opportunity status = the outcome set by Odoo's Won / Lost buttons (backend measures/filters.ts). */
-export type OpportunityStatus = 'New' | 'Won' | 'Lost';
+/** Opportunity status = Odoo's won_status (won / lost / pending), set by the Won / Lost buttons (backend measures/filters.ts). */
+export type OpportunityStatus = 'Won' | 'Lost' | 'Pending';
 
 export interface OpportunitiesByStatus {
   slices: { status: OpportunityStatus; count: number; expectedRevenue: number }[];
@@ -2189,10 +2192,10 @@ export interface OpportunityDetailRow {
   expectedCloseDate: string | null;
   expectedCloseMonth: string | null;
   probabilityBucket: string | null;
-  /** The outcome (New / Won / Lost) -- never the stage. Every status comes from the API; pipeline-health/page.tsx's
+  /** The outcome (Won / Lost / Pending) -- never the stage. Every status comes from the API; pipeline-health/page.tsx's
    * matchesFilter applies the status each drill-down path needs. */
   status: OpportunityStatus;
-  /** status === 'New'. */
+  /** status === 'Pending'. */
   isOpen: boolean;
   /** The crm.lead form in Odoo; null when no Odoo URL is configured. */
   odooUrl: string | null;
@@ -2220,6 +2223,10 @@ export interface PipelineHealthOverview {
   funnelStageRecords: FunnelStageRecords;
   opportunityChains: OpportunityChains;
   stageBenchmark: StageBenchmarkRow[];
+  /** Opportunities created in the period, any status (Pending + Won + Lost), and how many of them reached each step. */
+  benchmarkCohort: { opportunities: number; quotations: number; salesOrders: number; deliveries: number };
+  /** Total Pipeline Value card: open (Pending) opportunities = the Pending slice = the sum of Opportunity by Stage. */
+  openPipeline: { count: number; value: number };
   expectedClosureByMonth: ExpectedClosureMonthPoint[];
   opportunityByStage: StageValueSlice[];
   opportunitiesByStatus: OpportunitiesByStatus;

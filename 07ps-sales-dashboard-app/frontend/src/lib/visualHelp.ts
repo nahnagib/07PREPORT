@@ -227,7 +227,7 @@ export const VISUAL_HELP = {
   'promotion.pipelineHealth.fullPipeline': {
     help: {
       definition: 'B2B opportunities created this year and how many reached Quotation, Sales Order and Delivery. Each stage counts distinct opportunities, so it is a subset of the stage before. Stage Benchmark compares each step with its target.',
-      notes: 'Opportunities = open opportunities only (status New). Won and Lost deals are in Opportunities by Status.',
+      notes: 'The Opportunities bar shows open (Pending) opportunities only; Won and Lost deals are in Opportunity by Status. Stage Benchmark is calculated on every opportunity created in the period (Pending + Won + Lost), so its ratios differ from the bars.',
     },
     interactions: ['Click a stage to see its records (quotations, orders, deliveries)', 'Open the Opportunity chain to follow each opportunity through every stage'],
   },
@@ -238,13 +238,22 @@ export const VISUAL_HELP = {
   'promotion.pipelineHealth.byStage': {
     help: {
       definition: 'Expected revenue (LYD) of open opportunities by current CRM stage. Stage = where the deal is in the process.',
-      notes: 'A deal marked Lost in Odoo keeps its stage there, but leaves this chart. Won and Lost are in Opportunities by Status.',
+      notes: 'A deal marked Lost in Odoo keeps its stage there, but leaves this chart. Won and Lost are in Opportunity by Status.',
     },
     interactions: ['Click a segment to see those opportunities'],
   },
+  'promotion.pipelineHealth.totalPipelineValue': {
+    help: { definition: 'Total expected revenue of open (pending) opportunities. Won and lost deals are not included.' },
+  },
+  'promotion.pipelineHealth.stageBenchmark': {
+    help: {
+      definition: 'Conversion at each step against its target, on every opportunity created in the period (Pending + Won + Lost): how many of the same opportunities reached Quotation, then Sales Order, then Delivery.',
+      notes: 'The Full Pipeline Opportunities bar shows open opportunities only, so the ratios here are not the bars divided by each other. A delivery counts once it has started.',
+    },
+  },
   'promotion.pipelineHealth.byStatus': {
     help: {
-      definition: 'Opportunities created this year by status: New (open), Won or Lost. Status = the outcome, set by the Won / Lost buttons in Odoo, whatever the stage.',
+      definition: 'Opportunities created this year by Odoo status: Won, Lost or Pending (still open). Status = the outcome, set by the Won / Lost buttons in Odoo, whatever the stage.',
       notes: 'Records archived in Odoo without being marked Lost are left out.',
     },
     interactions: ['Hover a slice for its expected revenue', 'Click a status to see those opportunities'],
