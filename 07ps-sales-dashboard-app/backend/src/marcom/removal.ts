@@ -1,5 +1,5 @@
 import type { PoolConnection } from 'mysql2/promise';
-import { ADAPTERS, Adapter, keyOf } from './tables';
+import { ADAPTERS, Adapter, keyOf, lookupJoins, selectCol } from './tables';
 import { TABLE_LABELS } from './templateConfig';
 import type { TableId } from './parser';
 
@@ -70,15 +70,9 @@ export type LaterKeys = Map<number, Partial<Record<TableId, Set<string>>>>;
 const BRAND_TABLES = ADAPTERS.filter((a) => a.fields.some((f) => f.type === 'brand'));
 
 function rowsSql(a: Adapter, where: string): string {
-  const hasBrand = a.fields.some((x) => x.type === 'brand');
-  const cols = a.keyFields.map((k) => {
-    const x = a.fields.find((f) => f.field === k)!;
-    if (x.type === 'brand') return 'b.name AS `brand`';
-    if (x.type === 'date') return `DATE_FORMAT(t.${x.col}, '%Y-%m-%d') AS \`${x.field}\``;
-    return `t.${x.col} AS \`${x.field}\``;
-  });
+  const cols = a.keyFields.map((k) => selectCol(a.fields.find((f) => f.field === k)!));
   return `SELECT t.id, t.batch_id, t.is_current, t.superseded_by_batch, ${cols.join(', ')} FROM ${a.table} t ` +
-    `${hasBrand ? 'JOIN marcom_brand b ON b.brand_id = t.brand_id ' : ''}WHERE ${where}`;
+    `${lookupJoins(a)}WHERE ${where}`;
 }
 
 /** "2026-03 · Brand A" style label of a natural key. */

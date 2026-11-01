@@ -10,7 +10,34 @@
    "LinkedIn",
    "Instagram",
    "TikTok"
-  ]
+  ],
+  "brands": [
+   {
+    "id": 1,
+    "name": "Brand A",
+    "companyKey": 1,
+    "company": "Company One"
+   },
+   {
+    "id": 2,
+    "name": "Brand B",
+    "companyKey": 1,
+    "company": "Company One"
+   },
+   {
+    "id": 3,
+    "name": "Brand C",
+    "companyKey": 2,
+    "company": "Company Two"
+   },
+   {
+    "id": 4,
+    "name": "Brand D",
+    "companyKey": null,
+    "company": null
+   }
+  ],
+  "companies": []
  },
  "options": {
   "years": [
@@ -86,7 +113,7 @@
   "platforms": [
    {
     "platform": "Facebook",
-    "value": 46400,
+    "value": 69600,
     "asOf": {
      "year": 2026,
      "month": 8
@@ -110,7 +137,7 @@
    },
    {
     "platform": "Instagram",
-    "value": 61600,
+    "value": 92400,
     "asOf": {
      "year": 2026,
      "month": 8
@@ -125,17 +152,17 @@
     }
    }
   ],
-  "total": 174600,
-  "metaTotal": 108000
+  "total": 228600,
+  "metaTotal": 162000
  },
  "ctr": {
   "overall": {
-   "value": 5.4824131315284585,
+   "value": 5.488693983828971,
    "status": "green",
    "unit": "percent",
    "direction": "higher_better",
-   "previous": 5.482456140350878,
-   "delta": -0.000327789416677355
+   "previous": 5.488721804511278,
+   "delta": -0.000212055207657026
   },
   "byPlatform": [
    {
@@ -187,18 +214,18 @@
  },
  "engagementRate": {
   "overall": {
-   "value": 5.48313792368365,
+   "value": 5.463386779955233,
    "status": "green",
    "unit": "percent",
    "direction": "higher_better",
-   "previous": 5.483142639206712,
-   "delta": -0.000120705819222588
+   "previous": 5.463354037267081,
+   "delta": 0.000016436270523711
   },
   "byPlatform": [
    {
     "platform": "Facebook",
     "kpi": {
-     "value": 6.5,
+     "value": 6.50016200891049,
      "status": "green",
      "unit": "percent",
      "direction": "higher_better"
@@ -225,7 +252,7 @@
    {
     "platform": "Instagram",
     "kpi": {
-     "value": 4.059959486833221,
+     "value": 4.060139545352239,
      "status": "yellow",
      "unit": "percent",
      "direction": "higher_better"
@@ -246,58 +273,58 @@
   {
    "year": 2026,
    "month": 1,
-   "paid": 30941,
-   "organic": 25316,
-   "organicShare": 45.000622144799756
+   "paid": 35968,
+   "organic": 29429,
+   "organicShare": 45.00053519274584
   },
   {
    "year": 2026,
    "month": 2,
-   "paid": 32662,
-   "organic": 26721,
-   "organicShare": 44.99772662209723
+   "paid": 37969,
+   "organic": 31062,
+   "organicShare": 44.99717518216453
   },
   {
    "year": 2026,
    "month": 3,
-   "paid": 34379,
-   "organic": 28129,
-   "organicShare": 45.000639918090485
+   "paid": 39964,
+   "organic": 32699,
+   "organicShare": 45.00089454055021
   },
   {
    "year": 2026,
    "month": 4,
-   "paid": 36099,
-   "organic": 29534,
-   "organicShare": 44.998704919781204
+   "paid": 41963,
+   "organic": 34332,
+   "organicShare": 44.999016973589356
   },
   {
    "year": 2026,
    "month": 5,
-   "paid": 37817,
-   "organic": 30942,
-   "organicShare": 45.00065445977981
+   "paid": 43961,
+   "organic": 35969,
+   "organicShare": 45.000625547353934
   },
   {
    "year": 2026,
    "month": 6,
-   "paid": 34379,
-   "organic": 28129,
-   "organicShare": 45.000639918090485
+   "paid": 39964,
+   "organic": 32699,
+   "organicShare": 45.00089454055021
   },
   {
    "year": 2026,
    "month": 7,
-   "paid": 39537,
-   "organic": 32347,
-   "organicShare": 44.99888709587669
+   "paid": 45960,
+   "organic": 37602,
+   "organicShare": 44.99892295541036
   },
   {
    "year": 2026,
    "month": 8,
-   "paid": 37123,
-   "organic": 30373,
-   "organicShare": 44.999703686144365
+   "paid": 43150,
+   "organic": 35304,
+   "organicShare": 44.999617610319426
   }
  ],
  "bounceRate": {
@@ -411,5 +438,75 @@
     "status": "green"
    }
   ]
- }
+ },
+ "byBrand": [
+  {
+   "brandId": 1,
+   "brand": "Brand A",
+   "needsReview": false,
+   "followers": 174600,
+   "impressions": 9382000,
+   "clicks": 514360,
+   "engagement": 514428,
+   "ctr": {
+    "value": 5.4824131315284585,
+    "status": "green",
+    "unit": "percent",
+    "direction": "higher_better"
+   },
+   "engagementRate": {
+    "value": 5.48313792368365,
+    "status": "green",
+    "unit": "percent",
+    "direction": "higher_better"
+   },
+   "visitors": 110000,
+   "bounceRate": {
+    "value": 34.195454545454545,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "lower_better"
+   },
+   "avgSession": {
+    "value": 2.1785046728971964,
+    "status": "yellow",
+    "unit": "minutes",
+    "direction": "higher_better"
+   }
+  },
+  {
+   "brandId": 2,
+   "brand": "Brand B",
+   "needsReview": false,
+   "followers": 54000,
+   "impressions": 1563500,
+   "clicks": 86405,
+   "engagement": 83567,
+   "ctr": {
+    "value": 5.526383114806524,
+    "status": "green",
+    "unit": "percent",
+    "direction": "higher_better"
+   },
+   "engagementRate": {
+    "value": 5.34486728493764,
+    "status": "green",
+    "unit": "percent",
+    "direction": "higher_better"
+   },
+   "visitors": 44000,
+   "bounceRate": {
+    "value": 34.195454545454545,
+    "status": "neutral",
+    "unit": "percent",
+    "direction": "lower_better"
+   },
+   "avgSession": {
+    "value": 2.1785046728971964,
+    "status": "yellow",
+    "unit": "minutes",
+    "direction": "higher_better"
+   }
+  }
+ ]
 }

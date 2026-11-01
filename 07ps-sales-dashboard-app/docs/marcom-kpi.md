@@ -79,7 +79,10 @@ Every response: `{ page, filters (as applied, brands resolved to {id,name}), fre
 
 ### Payload contents
 
-**spending** — `totals.{spend,revenueAttributed,companyRevenue}` (`total` + monthly `series`);
+**spending** (template 2.0, see `docs/marcom-template-2.0-changelog.md`) — `totals.spend` = Total MARCOM Spend = `campaignSpend`
+(campaigns prorated by active days, `totalSpend.ts`) + `otherSpend` (P1b lines); `totals.{unallocated,revenueAttributed,brandRevenue,companyRevenue,
+spendPctOfBrandRevenue,attributedPct}`; `byCategory`, `reconciliation{overall,rows}`, `otherLines[]`; growth rows add `attributedPct`, `brandShare`;
+`meta.revenueNeedsReview` = months uploaded with template 1.x (no brand revenue). Older keys:
 `roi` = `{ ytd, lytd, monthly[{month,current,currentStatus,lastYear,lastYearStatus}], bands{greenAbove,redBelow} }`;
 `budgetUtilization` / `brandGrowth` / `cac` / `cpc` = `{ overall, brands[] }` (budget rows carry `spend, budget, overBudget`;
 growth rows `revenueCurrent, revenueLastYear`; CAC rows are a KPI in LYD whose `status` is the %-of-invoice status, plus `pctOfInvoice`,
@@ -89,7 +92,7 @@ growth rows `revenueCurrent, revenueLastYear`; CAC rows are a KPI in LYD whose `
 `roiByCampaign{bands,campaigns[]}`; `timeline[{name,brand,status,start,end,durationDays,spend,revenue,roi,roiStatus,rate}]` and `today`
 (Africa/Tripoli); `coverageByType{totalUnits,types[5]}`; `costByType{totalCost,types[5]{cost,units,costPerUnit}}`. All five media types are always present.
 
-**digital** — `followers{platforms[{platform,value,asOf}],total,metaTotal}`; `ctr` and `engagementRate` = `{ overall, byPlatform[] }`;
+**digital** (brand / company filter since 2.0; `byBrand[]` side-by-side, `meta.brandNeedsReview` = pre-2.0 rows without a brand) — `followers{platforms[{platform,value,asOf}],total,metaTotal}`; `ctr` and `engagementRate` = `{ overall, byPlatform[] }`;
 `engagementMonthly[{year,month,paid,organic,organicShare}]`; `bounceRate{kpi,series}`; `avgSession{kpi,series[{value,status}]}`.
 
 **trade** — `compliance`, `giveawaysStock`, `printedStock` = `{ headline (latest month, with asOf/previous/delta), average, series[{value,status}] }`;

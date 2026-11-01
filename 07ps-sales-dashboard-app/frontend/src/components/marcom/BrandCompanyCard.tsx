@@ -40,7 +40,23 @@ export function BrandCompanyCard({ token, canEdit }: { token: string | null; can
     }
   }
 
-  const unassigned = data?.brands.filter((b) => b.companyKey === null).length ?? 0;
+  async function changeKind(brandId: number, group: boolean) {
+    if (!token || !data) return;
+    setSaving(brandId);
+    setSaved(null);
+    setError(null);
+    try {
+      const row = await marcomApi.setBrandKind(token, brandId, group ? 'GROUP' : 'BRAND');
+      setData({ ...data, brands: data.brands.map((b) => (b.brandId === brandId ? row : b)) });
+      setSaved(brandId);
+    } catch (err) {
+      setError(err instanceof MarcomApiError ? err.message : 'Could not save.');
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  const unassigned = data?.brands.filter((b) => b.companyKey === null && b.kind !== 'GROUP').length ?? 0;
 
   return (
     <Card>
@@ -49,6 +65,7 @@ export function BrandCompanyCard({ token, canEdit }: { token: string | null; can
           <h2 style={{ fontSize: 16, margin: 0 }}>Brand → Company</h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
             Link each MARCOM brand to its company. The report pages use this for the Company filter and the &quot;By Company&quot; views.
+            Tick &quot;Group&quot; for entries that are not a brand (e.g. BMH group events): they carry spend but no brand revenue.
             {unassigned > 0 && <strong style={{ color: 'var(--ps-color-text)' }}> {unassigned} brand{unassigned === 1 ? '' : 's'} not assigned yet.</strong>}
           </p>
         </div>
@@ -61,6 +78,7 @@ export function BrandCompanyCard({ token, canEdit }: { token: string | null; can
               <tr>
                 <th style={{ textAlign: 'start', padding: '6px 8px', fontSize: 12, color: 'var(--ps-color-muted-text)', borderBottom: '1px solid var(--ps-color-border)' }}>Brand</th>
                 <th style={{ textAlign: 'start', padding: '6px 8px', fontSize: 12, color: 'var(--ps-color-muted-text)', borderBottom: '1px solid var(--ps-color-border)' }}>Company</th>
+                <th style={{ textAlign: 'start', padding: '6px 8px', fontSize: 12, color: 'var(--ps-color-muted-text)', borderBottom: '1px solid var(--ps-color-border)' }}>Group</th>
                 <th style={{ width: 80, borderBottom: '1px solid var(--ps-color-border)' }} />
               </tr>
             </thead>
@@ -80,6 +98,10 @@ export function BrandCompanyCard({ token, canEdit }: { token: string | null; can
                       {data.companies.map((c) => <option key={c.companyKey} value={c.companyKey}>{c.company}</option>)}
                       {b.companyKey !== null && !data.companies.some((c) => c.companyKey === b.companyKey) && <option value={b.companyKey}>{b.company ?? `#${b.companyKey}`} (inactive)</option>}
                     </select>
+                  </td>
+                  <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--ps-color-border)' }}>
+                    <input type="checkbox" aria-label={`${b.brand} is a group entry, not a brand`} checked={b.kind === 'GROUP'}
+                      disabled={!canEdit || saving === b.brandId} onChange={(e) => changeKind(b.brandId, e.target.checked)} />
                   </td>
                   <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--ps-color-border)', fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
                     {saving === b.brandId ? 'Saving…' : saved === b.brandId ? '✔ Saved' : ''}

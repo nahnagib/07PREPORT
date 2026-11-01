@@ -6,16 +6,17 @@ import type { CampaignRow } from '../campaigns';
 /** The template's shipped example values (the acceptance-test data set). */
 export const spendExample = (o: Partial<SpendRow> = {}): SpendRow => ({
   year: 2026, month: 8, brandId: 1, brand: 'Brand A',
-  spend: 50000, revenue: 280000, companyCurrent: 1200000, companyLy: 1050000, budget: 55000,
+  // spend = Total MARCOM Spend (campaign + other, already merged)
+  spend: 50000, campaignSpend: 50000, otherSpend: 0, revenue: 280000, brandRevenue: 1200000, brandRevenueLy: 1050000, budget: 55000,
   newCustomers: 120, avgInvoice: 900, socialPostCost: 8000, clicks: 3500, ...o,
 });
 
 export const socialExample = (o: Partial<SocialRow> = {}): SocialRow => ({
-  year: 2026, month: 8, platform: 'Instagram', followers: 52000, impressions: 180000, clicks: 9500, paid: 4200, organic: 3100, ...o,
+  year: 2026, month: 8, brandId: 1, brand: 'Brand A', platform: 'Instagram', followers: 52000, impressions: 180000, clicks: 9500, paid: 4200, organic: 3100, ...o,
 });
 
 export const webExample = (o: Partial<WebRow> = {}): WebRow => ({
-  year: 2026, month: 8, bounce: 3400, totalVisitors: 12000, sessions: 15500, minutes: 54250, ...o,
+  year: 2026, month: 8, brandId: 1, brand: 'Brand A', bounce: 3400, totalVisitors: 12000, sessions: 15500, minutes: 54250, ...o,
 });
 
 export const tradeExample = (o: Partial<TradeRow> = {}): TradeRow => ({

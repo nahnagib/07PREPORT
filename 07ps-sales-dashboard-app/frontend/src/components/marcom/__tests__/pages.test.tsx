@@ -21,8 +21,10 @@ const page = (kind: PageKey, name = `demo.${kind}`) => render(views[kind](fixtur
 const VISUALS: Record<PageKey, { id: string; chart: boolean }[]> = {
   spending: [
     // "ROI trend -- YTD vs LYTD" moved to Media Campaign Performance (campaigns.roiTrend).
-    { id: 'spending.spendVsRevenue', chart: true }, { id: 'spending.budgetUtilization', chart: true },
-    { id: 'spending.brandGrowth', chart: true }, { id: 'spending.cac', chart: false }, { id: 'spending.cpc', chart: false },
+    // UI change request #2: spend by category sits next to the spend chart; reconciliation and other-spend lines removed.
+    { id: 'spending.spendVsRevenue', chart: true }, { id: 'spending.byCategory', chart: true },
+    { id: 'spending.budgetUtilization', chart: true }, { id: 'spending.brandGrowth', chart: true },
+    { id: 'spending.cac', chart: false }, { id: 'spending.cpc', chart: false },
   ],
   campaigns: [
     { id: 'campaigns.spendVsRevenue', chart: true }, { id: 'campaigns.roiTrend', chart: true }, { id: 'campaigns.roiByCampaign', chart: true },
@@ -59,23 +61,41 @@ describe('Page 1 — MARCOM Spending (demo data)', () => {
   const html = page('spending');
   const d = fixture<SpendingData>('demo.spending');
 
-  it('1: total spend, total revenue, target budget and spend % of revenue, without a company-revenue overlay', () => {
+  it('1: spend and revenue cards stand above the chart; the chart card holds only the chart (no overlay toggle)', () => {
     const v = visualHtml(html, 'spending.spendVsRevenue');
-    for (const id of ['kpi-spend', 'kpi-revenue', 'kpi-budget', 'kpi-spend-pct']) expect(v).toContain(`data-testid="${id}"`);
-    expect(flat(v)).toContain('Total Spend');
-    expect(flat(v)).toContain('Total Revenue');
-    expect(flat(v)).toContain('Attributed to marketing');
+    const cards = html.slice(0, html.indexOf('data-visual="spending.spendVsRevenue"'));
+    for (const id of ['kpi-spend', 'kpi-revenue', 'kpi-budget', 'kpi-spend-pct', 'attributed-pct', 'spend-pct-brand']) {
+      expect(cards).toContain(`data-testid="${id}"`);
+      expect(v).not.toContain(`data-testid="${id}"`);
+    }
+    expect(flat(cards)).toContain('Total MARCOM Spend');
+    expect(flat(cards)).toContain('Revenue Attributed to Marketing');
+    expect(flat(cards)).toMatch(/[\d.]+% of brand revenue came from marketing/);
+    expect(flat(cards)).toMatch(/of budget used/);
+    expect(flat(cards)).toContain('Spend % of Revenue');
+    expect(flat(v)).toContain('Campaign Spend');
+    expect(flat(v)).toContain('Other MARCOM Spend');
     expect(flat(v)).toContain('Budget');
     expect(flat(v)).not.toContain('Target Budget');
-    expect(flat(v)).toContain('Spend % of Revenue');
-    expect(flat(v)).toMatch(/of budget used/);
-    expect(flat(v)).toMatch(/of company revenue/);
     expect(flat(v)).toContain('% of revenue'); // right-hand axis
-    expect(flat(v)).not.toContain('Overlay company revenue');
-    expect(v).not.toContain('type="checkbox"');
-    expect(flat(v)).not.toContain('Total Company Revenue');
+    expect(flat(html)).not.toContain('Overlay brand revenue');
     expect((v.match(/<th scope="row"/g) ?? []).length).toBe(d.totals.spend.series.length); // one row per month in the table
     expect(flat(v)).toContain('LYD'); // axis unit label
+  });
+
+  it('1b: removed widgets do not render (headline KPI row, reconciliation, other-spend lines)', () => {
+    for (const id of ['kpi-total-spend', 'kpi-campaign-spend', 'kpi-other-spend', 'kpi-unallocated', 'recon-table', 'other-lines', 'other-category']) {
+      expect(html).not.toContain(`data-testid="${id}"`);
+    }
+    expect(flat(html)).not.toContain('Reconciliation');
+    expect(flat(html)).not.toContain('Other MARCOM spend lines');
+  });
+
+  it('1c: no brand revenue -> the "of brand revenue" lines are hidden, never "n/a"', () => {
+    const empty = page('spending', 'empty.spending');
+    expect(empty).not.toContain('data-testid="attributed-pct"');
+    expect(empty).not.toContain('data-testid="spend-pct-brand"');
+    expect(flat(empty)).not.toMatch(/n\/a of brand revenue/);
   });
 
   it('2: the ROI trend is no longer on this page (moved to Media Campaign Performance)', () => {
@@ -98,8 +118,9 @@ describe('Page 1 — MARCOM Spending (demo data)', () => {
     expect(v).toContain('recharts-reference-line-line');
     expect(flat(v)).toContain('100% of budget');
     for (const b of d.budgetUtilization.brands) expect(flat(v)).toContain(b.brand);
+    // Budget vs Total MARCOM Spend (campaign + other): months where a campaign alone exceeds the plan push brands over.
     const over = d.budgetUtilization.brands.filter((b) => b.overBudget);
-    expect(over.map((b) => b.brand)).toEqual(['Brand B']);
+    expect(over.map((b) => b.brand)).toContain('Brand B');
     expect(flat(v)).toContain('Over budget');
   });
 
@@ -213,6 +234,11 @@ describe('Page 3 — Digital Performance (demo data)', () => {
   const html = page('digital');
   const d = fixture<DigitalData>('demo.digital');
 
+  it('0: the "Comparison by brand" visual is gone (UI change request #2)', () => {
+    expect(html).not.toContain('data-visual="digital.byBrand"');
+    expect(flat(html)).not.toContain('Comparison by brand');
+  });
+
   it('1: followers donut: total in the centre, Meta total subtitle, all five platforms', () => {
     const v = visualHtml(html, 'digital.followers');
     expect(v).toContain('data-testid="followers-total"');
@@ -320,9 +346,9 @@ describe('Page 4 — Trade Marketing & Retail (demo data)', () => {
   });
 });
 
-/** Coverage checklist source of truth: 24 visuals across four pages. */
+/** Coverage checklist source of truth: the visuals across four pages (template 2.0 added 3 on Spending, 1 on Digital). */
 describe('coverage', () => {
   it('24 visuals', () => {
-    expect(Object.values(VISUALS).flat()).toHaveLength(23); // 5 + 6 + 6 + 6
+    expect(Object.values(VISUALS).flat()).toHaveLength(24); // 6 + 6 + 6 + 6
   });
 });

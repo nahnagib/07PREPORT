@@ -13,8 +13,8 @@ describe('Total Spend vs Total Revenue: budget and spend % of revenue', () => {
   const p = buildSpending({
     year: 2026, fromMonth: 1, toMonth: 2, brands: [A], previous: [],
     current: [
-      spendExample({ month: 1, spend: 100, revenue: 1000, budget: 200, companyCurrent: 10000 }),
-      spendExample({ month: 2, spend: 900, revenue: 1000, budget: 800, companyCurrent: 10000 }),
+      spendExample({ month: 1, spend: 100, revenue: 1000, budget: 200, brandRevenue: 10000 }),
+      spendExample({ month: 2, spend: 900, revenue: 1000, budget: 800, brandRevenue: 10000 }),
     ],
   });
   it('target budget is summed per month and over the range', () => {
@@ -30,10 +30,10 @@ describe('Total Spend vs Total Revenue: budget and spend % of revenue', () => {
       current: [spendExample({ month: 1, spend: 100, revenue: 100 }), spendExample({ month: 2, spend: 100, revenue: 900 })],
     });
     expect(q.totals.spendPctOfRevenue.value).toBe(20); // 200 / 1000, not (100% + 11.1%) / 2
-    expect(p.totals.spendPctOfCompanyRevenue.value).toBe(5);
+    expect(p.totals.spendPctOfBrandRevenue.value).toBe(5);
   });
   it('zero revenue -> n/a, never Infinity', () => {
-    const z = buildSpending({ year: 2026, fromMonth: 1, toMonth: 1, brands: [A], previous: [], current: [spendExample({ month: 1, revenue: 0, companyCurrent: 0 })] });
+    const z = buildSpending({ year: 2026, fromMonth: 1, toMonth: 1, brands: [A], previous: [], current: [spendExample({ month: 1, revenue: 0, brandRevenue: 0 })] });
     expect(z.totals.spendPctOfRevenue).toMatchObject({ value: null, status: 'na' });
     assertAllFinite(z);
   });
@@ -47,9 +47,9 @@ describe('company level for Budget utilization and Brand growth', () => {
   const p = buildSpending({
     year: 2026, fromMonth: 8, toMonth: 8, brands: [A, B, C], previous: [],
     current: [
-      spendExample({ brandId: 1, spend: 100, budget: 100, companyCurrent: 300, companyLy: 100 }),
-      spendExample({ brandId: 2, brand: 'Brand B', spend: 300, budget: 100, companyCurrent: 100, companyLy: 100 }),
-      spendExample({ brandId: 3, brand: 'Brand C', spend: 50, budget: 100, companyCurrent: 90, companyLy: 100 }),
+      spendExample({ brandId: 1, spend: 100, budget: 100, brandRevenue: 300, brandRevenueLy: 100 }),
+      spendExample({ brandId: 2, brand: 'Brand B', spend: 300, budget: 100, brandRevenue: 100, brandRevenueLy: 100 }),
+      spendExample({ brandId: 3, brand: 'Brand C', spend: 50, budget: 100, brandRevenue: 90, brandRevenueLy: 100 }),
     ],
   });
   it('company rows sum their brands first, then divide; unassigned brands go to "Unassigned" (last)', () => {

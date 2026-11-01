@@ -116,7 +116,225 @@
     }
    ]
   },
+  "campaignSpend": {
+   "total": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": null
+    },
+    {
+     "month": 2,
+     "value": null
+    },
+    {
+     "month": 3,
+     "value": null
+    },
+    {
+     "month": 4,
+     "value": null
+    },
+    {
+     "month": 5,
+     "value": null
+    },
+    {
+     "month": 6,
+     "value": null
+    },
+    {
+     "month": 7,
+     "value": null
+    },
+    {
+     "month": 8,
+     "value": null
+    },
+    {
+     "month": 9,
+     "value": null
+    },
+    {
+     "month": 10,
+     "value": null
+    },
+    {
+     "month": 11,
+     "value": null
+    },
+    {
+     "month": 12,
+     "value": null
+    }
+   ]
+  },
+  "otherSpend": {
+   "total": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": null
+    },
+    {
+     "month": 2,
+     "value": null
+    },
+    {
+     "month": 3,
+     "value": null
+    },
+    {
+     "month": 4,
+     "value": null
+    },
+    {
+     "month": 5,
+     "value": null
+    },
+    {
+     "month": 6,
+     "value": null
+    },
+    {
+     "month": 7,
+     "value": null
+    },
+    {
+     "month": 8,
+     "value": null
+    },
+    {
+     "month": 9,
+     "value": null
+    },
+    {
+     "month": 10,
+     "value": null
+    },
+    {
+     "month": 11,
+     "value": null
+    },
+    {
+     "month": 12,
+     "value": null
+    }
+   ]
+  },
+  "unallocated": {
+   "total": null,
+   "booked": null,
+   "rows": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": null
+    },
+    {
+     "month": 2,
+     "value": null
+    },
+    {
+     "month": 3,
+     "value": null
+    },
+    {
+     "month": 4,
+     "value": null
+    },
+    {
+     "month": 5,
+     "value": null
+    },
+    {
+     "month": 6,
+     "value": null
+    },
+    {
+     "month": 7,
+     "value": null
+    },
+    {
+     "month": 8,
+     "value": null
+    },
+    {
+     "month": 9,
+     "value": null
+    },
+    {
+     "month": 10,
+     "value": null
+    },
+    {
+     "month": 11,
+     "value": null
+    },
+    {
+     "month": 12,
+     "value": null
+    }
+   ]
+  },
   "revenueAttributed": {
+   "total": 0,
+   "unit": "lyd",
+   "series": [
+    {
+     "month": 1,
+     "value": null
+    },
+    {
+     "month": 2,
+     "value": null
+    },
+    {
+     "month": 3,
+     "value": null
+    },
+    {
+     "month": 4,
+     "value": null
+    },
+    {
+     "month": 5,
+     "value": null
+    },
+    {
+     "month": 6,
+     "value": null
+    },
+    {
+     "month": 7,
+     "value": null
+    },
+    {
+     "month": 8,
+     "value": null
+    },
+    {
+     "month": 9,
+     "value": null
+    },
+    {
+     "month": 10,
+     "value": null
+    },
+    {
+     "month": 11,
+     "value": null
+    },
+    {
+     "month": 12,
+     "value": null
+    }
+   ]
+  },
+  "brandRevenue": {
    "total": 0,
    "unit": "lyd",
    "series": [
@@ -334,7 +552,7 @@
     }
    ]
   },
-  "spendPctOfCompanyRevenue": {
+  "spendPctOfBrandRevenue": {
    "value": null,
    "status": "na",
    "unit": "percent",
@@ -390,12 +608,41 @@
     }
    ]
   },
+  "attributedPct": {
+   "value": null,
+   "status": "na",
+   "unit": "percent",
+   "direction": "higher_better"
+  },
   "budgetUsed": {
    "value": null,
    "status": "na",
    "unit": "percent"
   }
  },
+ "byCategory": {
+  "total": 0,
+  "categories": [
+   {
+    "category": "Campaigns",
+    "isCampaigns": true,
+    "amount": 0,
+    "lines": null,
+    "share": null
+   }
+  ]
+ },
+ "reconciliation": {
+  "overall": {
+   "campaignSpend": 0,
+   "otherSpend": 0,
+   "totalSpend": 0,
+   "booked": null,
+   "unallocated": null
+  },
+  "rows": []
+ },
+ "otherLines": [],
  "roi": {
   "ytd": {
    "value": null,
@@ -503,6 +750,8 @@
    "status": "na",
    "unit": "percent",
    "spend": 0,
+   "campaignSpend": 0,
+   "otherSpend": 0,
    "budget": 0,
    "overBudget": false
   },
@@ -516,7 +765,18 @@
    "unit": "percent",
    "direction": "higher_better",
    "revenueCurrent": 0,
-   "revenueLastYear": 0
+   "revenueLastYear": 0,
+   "attributedPct": {
+    "value": null,
+    "status": "na",
+    "unit": "percent",
+    "direction": "higher_better"
+   },
+   "brandShare": {
+    "value": null,
+    "status": "na",
+    "unit": "percent"
+   }
   },
   "brands": [],
   "companies": []

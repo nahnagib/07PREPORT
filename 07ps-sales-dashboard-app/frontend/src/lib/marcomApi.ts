@@ -81,7 +81,7 @@ export interface BatchDetail extends BatchItem {
 }
 
 /** GET /marcom/upload/brands: every MARCOM brand with its company, plus the companies it can be linked to. */
-export interface BrandCompanyRow { brandId: number; brand: string; companyKey: number | null; company: string | null }
+export interface BrandCompanyRow { brandId: number; brand: string; companyKey: number | null; company: string | null; kind?: 'BRAND' | 'GROUP' }
 export interface BrandCompanies { brands: BrandCompanyRow[]; companies: { companyKey: number; company: string }[] }
 
 export class MarcomApiError extends Error {
@@ -191,4 +191,6 @@ export const marcomApi = {
   listBrandCompanies: (token: string) => json<BrandCompanies>('/marcom/upload/brands', token),
   setBrandCompany: (token: string, brandId: number, companyKey: number | null) =>
     json<BrandCompanyRow>(`/marcom/upload/brands/${brandId}/company`, token, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ companyKey }) }),
+  setBrandKind: (token: string, brandId: number, kind: 'BRAND' | 'GROUP') =>
+    json<BrandCompanyRow>(`/marcom/upload/brands/${brandId}/kind`, token, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) }),
 };

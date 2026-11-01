@@ -8,7 +8,7 @@ import { t } from '../../../lib/marcom/text';
 import { ChartBox, MarcomChartCard, Segmented } from '../MarcomChartCard';
 import { MarcomKpiCard } from '../MarcomKpiCard';
 import { ragLabel } from '../RagBadge';
-import { legendText, AXIS_TICK, CHART_MARGIN, Grid, GRID_STROKE, TooltipCard } from './chartKit';
+import { legendText, AXIS_TICK, CHART_MARGIN, Grid, GRID_STROKE, Note, TooltipCard } from './chartKit';
 
 interface Props { data: DigitalData; refreshing?: boolean }
 
@@ -42,6 +42,7 @@ export function DigitalView({ data, refreshing }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {data.meta.brandNeedsReview ? <Note tone="info"><span data-testid="brand-review">{t('p3.needsReview', { n: data.meta.brandNeedsReview })}</span></Note> : null}
       <Grid min={440}>
         {/* 1 ---------------------------------------------------------------------------- */}
         <MarcomChartCard

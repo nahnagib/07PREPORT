@@ -19,7 +19,7 @@ const draw = (kind: PageKey, data: unknown) => render(
 );
 
 /** Visuals per page: Spending 5 (ROI trend moved to campaigns), Campaigns 6, Digital 6, Trade 6. */
-const kindVisuals = (fixtureName: string) => ({ spending: 5, campaigns: 6 } as Record<string, number>)[fixtureName.split('.')[1]] ?? 6;
+const kindVisuals = (fixtureName: string) => ({ spending: 6, campaigns: 6, digital: 6 } as Record<string, number>)[fixtureName.split('.')[1]] ?? 6;
 
 describe('no fixture ever renders NaN, Infinity or "undefined"', () => {
   const dir = path.join(__dirname, '..', '__fixtures__');
@@ -39,7 +39,7 @@ describe('one month of data', () => {
     const d = fixture<SpendingData>('oneMonth.spending');
     const html = draw('spending', d);
     expect(d.totals.spend.series).toHaveLength(1);
-    expect(visualsIn(html)).toHaveLength(5);
+    expect(visualsIn(html)).toHaveLength(6);
     expect(visualHtml(html, 'spending.spendVsRevenue')).toContain('recharts-surface');
     // The ROI card (the only YTD-vs-LYTD arrow) moved to the campaigns page; nothing here has a
     // month-over-month history to compare, so no arrow is invented.
@@ -64,7 +64,7 @@ describe('a brand with no rows / all-null KPIs', () => {
   });
   it('all-null KPIs: every card says n/a with the explanatory tooltip, and the page still renders', () => {
     const html = draw('spending', fixture('allNull.spending'));
-    expect(visualsIn(html)).toHaveLength(5);
+    expect(visualsIn(html)).toHaveLength(6);
     for (const id of ['kpi-cac', 'kpi-cpc']) {
       expect(html).toMatch(new RegExp(`data-testid="${id}"[^>]*data-status="na"`));
     }

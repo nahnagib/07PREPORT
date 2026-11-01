@@ -1,14 +1,13 @@
-import { combineSpendRows, type CampaignCost, type OtherCost } from './spendCompatibility';
 import { DateTime } from 'luxon';
 import { getAppTimezone } from '../lib/timezone';
 import { getFreshness } from '../marcom/service';
-import { BRAND_JOIN, availableYears, listBrands, latestMonth, runCurrent, where } from './db';
+import { BRAND_JOIN, BRAND_LEFT_JOIN, CATEGORY_JOIN, availableYears, listBrands, listSpendCategories, latestMonth, runCurrent, where } from './db';
 import { applyDefaults, parseBool, parseBrandIds, parseCommonRaw, parseCompanyKeys, parsePlatforms, parseStatuses } from './params';
-import { BrandRef, CompanyRef } from './common';
-import type { RoiRow } from './roi';
+import { BrandRef, CompanyRef, Num } from './common';
 import { makeEnvelope, Options } from './envelope';
 import { CAMPAIGN_STATUSES, PLATFORMS } from '../marcom/templateConfig';
 import { SpendRow, buildSpending } from './spending';
+import { CampaignSpendRow, OtherSpendRow, mergeSpendRows } from './totalSpend';
 import { CampaignRow, MediaRow, buildCampaigns } from './campaigns';
 import { SocialRow, WebRow, buildDigital } from './digital';
 import { EventRow, TradeRow, buildTrade } from './trade';
@@ -51,24 +50,54 @@ async function resolve(raw: Raw) {
 
 type Resolved = Awaited<ReturnType<typeof resolve>>;
 
-/** Spend rows of `year` and `year - 1`, months fromMonth..toMonth, for the effective brands. */
-async function spendRows(r: Resolved): Promise<SpendRow[]> {
-  const select = `t.year AS year, t.month AS month, t.brand_id AS brandId, b.name AS brand,
-    t.spend AS spend, t.revenue_attributed AS revenue, t.company_revenue_current AS companyCurrent,
-    t.company_revenue_ly AS companyLy, t.budget AS budget, t.new_customers AS newCustomers,
-    t.avg_invoice AS avgInvoice, t.social_post_cost AS socialPostCost, t.clicks AS clicks`;
-  const query = { select, joins: [BRAND_JOIN], where: [where.in('t.year', [r.year,r.year-1]), where.between('t.month',r.fromMonth,r.toMonth), r.brandFilter ? where.in('t.brand_id',r.brandFilter) : null], orderBy: 't.year, t.month, t.brand_id' };
-  try { return await runCurrent<SpendRow>('spend', query); }
-  catch (error) {
-    if ((error as {code?:string}).code !== 'ER_BAD_FIELD_ERROR' || !String((error as Error).message).includes('spend')) throw error;
-  }
-  // The revised schema retains the old company inputs for review; do not substitute brand revenue for them.
-  const [monthly,campaigns,other] = await Promise.all([
-    runCurrent<SpendRow>('spend',{...query,select:select.replace('t.spend AS spend','0 AS spend').replace('t.company_revenue_current','t.legacy_company_revenue_current').replace('t.company_revenue_ly','t.legacy_company_revenue_ly')}),
-    runCurrent<CampaignCost>('campaigns',{select:"t.brand_id AS brandId, DATE_FORMAT(t.start_date, '%Y-%m-%d') AS start, DATE_FORMAT(t.end_date, '%Y-%m-%d') AS end, t.spend AS spend",where:[where.lte('t.start_date',monthEnd(r.year,r.toMonth)),where.gte('t.end_date',monthStart(r.year-1,r.fromMonth)),r.brandFilter?where.in('t.brand_id',r.brandFilter):null]}),
-    runCurrent<OtherCost>('other',{select:'t.year AS year, t.month AS month, t.brand_id AS brandId, t.amount_lyd AS amount',where:query.where}),
+interface P1Row {
+  year: number; month: number; brandId: number; brand: string; kind: string;
+  brandRevenue: Num | null; brandRevenueLy: Num | null; revenue: Num | null; companyTotal: Num | null;
+  budget: Num | null; booked: Num | null; newCustomers: Num | null; avgInvoice: Num | null; socialPostCost: Num | null; clicks: Num | null;
+  needsReview: number;
+}
+
+/**
+ * Page 1 rows of `year` and `year - 1`, months fromMonth..toMonth, for the effective brands -- one per Year + Month +
+ * Brand that has a P1 row, campaign spend or other spend. spend = Total MARCOM Spend = campaign spend (prorated by
+ * active days, totalSpend.ts) + other spend. Also used for the ROI trend on the campaigns page.
+ */
+async function loadSpendBase(r: Resolved): Promise<{ rows: SpendRow[]; otherLines: OtherSpendRow[] }> {
+  const brandCond = r.brandFilter ? where.in('t.brand_id', r.brandFilter) : null;
+  const [p1, campaigns, other] = await Promise.all([
+    runCurrent<P1Row>('spend', {
+      select: `t.year AS year, t.month AS month, t.brand_id AS brandId, b.name AS brand, b.kind AS kind,
+               t.brand_revenue_current AS brandRevenue, t.brand_revenue_ly AS brandRevenueLy, t.revenue_attributed AS revenue,
+               t.company_revenue_total AS companyTotal, t.budget AS budget, t.finance_booked_total AS booked,
+               t.new_customers AS newCustomers, t.avg_invoice AS avgInvoice, t.social_post_cost AS socialPostCost,
+               t.clicks AS clicks, t.revenue_needs_review AS needsReview`,
+      joins: [BRAND_JOIN],
+      where: [where.in('t.year', [r.year, r.year - 1]), where.between('t.month', r.fromMonth, r.toMonth), brandCond],
+      orderBy: 't.year, t.month, t.brand_id',
+    }),
+    runCurrent<CampaignSpendRow>('campaigns', {
+      select: `t.brand_id AS brandId, DATE_FORMAT(t.start_date, '%Y-%m-%d') AS start, DATE_FORMAT(t.end_date, '%Y-%m-%d') AS end, t.spend AS spend`,
+      where: [where.lte('t.start_date', monthEnd(r.year, r.toMonth)), where.gte('t.end_date', monthStart(r.year - 1, r.fromMonth)), brandCond],
+    }),
+    runCurrent<OtherSpendRow>('other', {
+      select: `t.year AS year, t.month AS month, t.brand_id AS brandId, b.name AS brand, c.name AS category,
+               t.description AS description, t.vendor AS vendor, t.amount_lyd AS amount, t.notes AS notes`,
+      joins: [BRAND_JOIN, CATEGORY_JOIN],
+      where: [where.in('t.year', [r.year, r.year - 1]), where.between('t.month', r.fromMonth, r.toMonth), brandCond],
+      orderBy: 't.year, t.month, t.brand_id, c.sort_order, t.description',
+    }),
   ]);
-  return combineSpendRows(monthly,campaigns,other,[r.year-1,r.year],r.fromMonth,r.toMonth,r.selected);
+
+  const cells = [r.year - 1, r.year].flatMap((y) => Array.from({ length: r.toMonth - r.fromMonth + 1 }, (_, i) => ({ year: y, month: r.fromMonth + i })));
+  const otherLines = other.map((l) => ({ ...l, year: Number(l.year), month: Number(l.month), brandId: Number(l.brandId) }));
+  const p1Rows: SpendRow[] = p1.map((x) => ({
+    year: Number(x.year), month: Number(x.month), brandId: Number(x.brandId), brand: x.brand, kind: x.kind === 'GROUP' ? 'GROUP' : 'BRAND',
+    spend: 0, revenue: x.revenue, brandRevenue: x.brandRevenue, brandRevenueLy: x.brandRevenueLy, companyTotal: x.companyTotal,
+    budget: x.budget, booked: x.booked, newCustomers: x.newCustomers, avgInvoice: x.avgInvoice,
+    socialPostCost: x.socialPostCost, clicks: x.clicks, needsReview: Number(x.needsReview) === 1,
+  }));
+  const rows = mergeSpendRows(p1Rows, campaigns, otherLines, cells, r.brands, r.brandFilter ? new Set(r.brandFilter) : null);
+  return { rows, otherLines };
 }
 
 async function envelope<T extends { hasData: boolean; meta: { missing: string[] } }>(
@@ -82,11 +111,12 @@ async function envelope<T extends { hasData: boolean; meta: { missing: string[] 
 
 export async function spendingPage(raw: Raw) {
   const r = await resolve(raw);
-  const rows = await spendRows(r);
+  const [{ rows, otherLines }, categories] = await Promise.all([loadSpendBase(r), listSpendCategories()]);
   const payload = buildSpending({
-    year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected,
+    year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected, categories,
     current: rows.filter((x) => x.year === r.year),
     previous: rows.filter((x) => x.year === r.year - 1),
+    otherLines: otherLines.filter((l) => l.year === r.year),
   });
   return envelope('spending', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, brands: r.selected, companies: r.selectedCompanies }, r, payload);
 }
@@ -105,8 +135,8 @@ export async function campaignsPage(raw: Raw) {
     where: [where.lte('t.start_date', end), where.gte('t.end_date', start), r.brandFilter ? where.in('t.brand_id', r.brandFilter) : null, statuses ? where.in('t.status', statuses) : null],
     orderBy: 't.start_date, t.name',
   });
-  // ROI trend -- YTD vs LYTD (moved here from the Spending page): monthly spend rows, same period and brands.
-  const roiRows = await spendRows(r);
+  // ROI trend -- YTD vs LYTD (moved here from the Spending page): Total MARCOM Spend per month, same period and brands.
+  const roiRows = (await loadSpendBase(r)).rows;
   const media = campaigns.length
     ? await runCurrent<MediaRow>('media', {
         select: 't.campaign_name AS campaignName, t.media_type AS mediaType, t.city AS city, t.units AS units, t.cost AS cost',
@@ -124,23 +154,32 @@ export async function digitalPage(raw: Raw) {
   const r = await resolve(raw);
   const platforms = parsePlatforms(raw);
   const selected = platforms ? PLATFORMS.filter((p) => platforms.includes(p)) : [...PLATFORMS];
+  // A brand/company filter keeps only that brand's rows -- pre-2.0 rows without a brand (needs review) drop out too.
+  const brandCond = r.brandFilter ? where.in('t.brand_id', r.brandFilter) : null;
   const [social, web] = await Promise.all([
     // months 1..toMonth: months before fromMonth only feed the follower snapshot.
     runCurrent<SocialRow>('social', {
-      select: `t.year AS year, t.month AS month, t.platform AS platform, t.followers AS followers, t.impressions AS impressions,
-               t.clicks AS clicks, t.engagement_paid AS paid, t.engagement_organic AS organic`,
-      where: [where.eq('t.year', r.year), where.lte('t.month', r.toMonth), platforms ? where.in('t.platform', platforms) : null],
+      select: `t.year AS year, t.month AS month, t.brand_id AS brandId, b.name AS brand, t.platform AS platform, t.account_name AS accountName,
+               t.followers AS followers, t.impressions AS impressions, t.clicks AS clicks, t.engagement_paid AS paid, t.engagement_organic AS organic`,
+      joins: [BRAND_LEFT_JOIN],
+      where: [where.eq('t.year', r.year), where.lte('t.month', r.toMonth), platforms ? where.in('t.platform', platforms) : null, brandCond],
       orderBy: 't.month, t.platform',
     }),
     runCurrent<WebRow>('web', {
-      select: `t.year AS year, t.month AS month, t.bounce_visitors AS bounce, t.total_visitors AS totalVisitors,
+      select: `t.year AS year, t.month AS month, t.brand_id AS brandId, b.name AS brand, t.bounce_visitors AS bounce, t.total_visitors AS totalVisitors,
                t.sessions AS sessions, t.total_minutes AS minutes`,
-      where: [where.eq('t.year', r.year), where.between('t.month', r.fromMonth, r.toMonth)],
+      joins: [BRAND_LEFT_JOIN],
+      where: [where.eq('t.year', r.year), where.between('t.month', r.fromMonth, r.toMonth), brandCond],
       orderBy: 't.month',
     }),
   ]);
-  const payload = buildDigital({ year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, social, web, platforms: selected });
-  return envelope('digital', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, platforms: selected }, r, payload, { platforms: PLATFORMS });
+  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  const payload = buildDigital({
+    year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, platforms: selected, brands: r.selected,
+    social: social.map((x) => ({ ...x, brandId: num(x.brandId) })),
+    web: web.map((x) => ({ ...x, brandId: num(x.brandId) })),
+  });
+  return envelope('digital', { year: r.year, fromMonth: r.fromMonth, toMonth: r.toMonth, platforms: selected, brands: r.selected, companies: r.selectedCompanies }, r, payload, { platforms: PLATFORMS });
 }
 
 export async function tradePage(raw: Raw) {

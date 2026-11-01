@@ -8,7 +8,7 @@
 Container `marcom-test-mysql` on 127.0.0.1:33307, root/testroot, database `marcom_test`
 (lower_case_table_names=1 to match the Windows MySQL the repo's SQL was written against).
 
-Schema: migrations 0001-0017 + 0022 + 0023. Migration 0018 currently fails on a fresh database
+Schema: migrations 0001-0017 + 0022 onward (non-MARCOM ones that need the full warehouse are skipped). Migration 0018 currently fails on a fresh database
 (pre-existing, unrelated) and 0009's `CREATE TABLE IF NOT EXISTS app_user` is a no-op when the old
 0006 table exists, so the missing auth columns are added here -- for the test DB only.
 """
@@ -37,6 +37,12 @@ APP_USER_PATCH = """ALTER TABLE app_user
  ADD COLUMN password_reset_expires_at TIMESTAMP NULL,
  ADD COLUMN sessions_revoked_at TIMESTAMP NULL,
  ADD COLUMN role_id INT NULL, ADD FOREIGN KEY (role_id) REFERENCES roles(role_id)"""
+
+
+# 0018's admin_company (MARCOM brand -> company, migration 0057, joins it); 0018 itself needs the full warehouse.
+ADMIN_COMPANY = """CREATE TABLE IF NOT EXISTS admin_company (
+ company_id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL, etl_company_key BIGINT NULL,
+ display_order INT NOT NULL DEFAULT 0, is_active BOOLEAN NOT NULL DEFAULT TRUE)"""
 
 
 def sh(*a, check=True):
@@ -77,11 +83,20 @@ def up():
         name = os.path.basename(path)
         if name >= "0018" and name < "0022":
             continue  # see module docstring
-        if name.startswith("0022"):
+        if name == "0022_marcom_contribution.sql":  # two 0022_* files exist: patch once
             with conn.cursor() as cur:
                 cur.execute(APP_USER_PATCH)
-        run_sql(conn, path)
-        print("applied", name)
+                cur.execute(ADMIN_COMPANY)
+        try:
+            run_sql(conn, path)
+            print("applied", name)
+        except pymysql.MySQLError as e:
+            # Later non-MARCOM migrations assume the full warehouse (Dim_* tables, 0018-0021); the MARCOM tests do not
+            # need them. Every MARCOM migration must apply, though.
+            if "marcom" in name:
+                raise
+            print("skipped", name, "-", e.args[1] if len(e.args) > 1 else e)
+            conn = connect(DB)
     print("ready: 127.0.0.1:%d / %s" % (PORT, DB))
 
 

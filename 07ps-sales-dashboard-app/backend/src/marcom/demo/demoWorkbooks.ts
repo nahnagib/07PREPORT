@@ -1,7 +1,6 @@
-import { R } from '../../marcomKpi/rat';
 import path from 'node:path';
 import ExcelJS from 'exceljs';
-import { MONTHS, SHEET_P1, SHEET_P2, SHEET_P3, SHEET_P4 } from '../templateConfig';
+import { MONTHS, SHEET_P1, SHEET_P1B, SHEET_P2, SHEET_P3, SHEET_P4, TABLES } from '../templateConfig';
 import type { DemoDataset } from './demoData';
 
 const TEMPLATE = path.join(__dirname, '..', '..', '..', 'assets', 'marcom', 'MARCOM_Contribution_Data_Template.xlsx');
@@ -17,6 +16,10 @@ export interface DemoChunk {
 }
 
 type Cell = string | number | null;
+
+/** First data row below a table's green example row. */
+const firstRow = (id: string) => TABLES.find((t) => t.id === id)!.headerRow + 2;
+const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
 function put(ws: ExcelJS.Worksheet, row: number, values: Cell[]): void {
   values.forEach((v, i) => { ws.getRow(row).getCell(i + 1).value = v; });
@@ -44,17 +47,24 @@ export async function buildDemoWorkbooks(data: DemoDataset): Promise<DemoChunk[]
 
     const p1 = wb.getWorksheet(SHEET_P1)!;
     inMonths(data.spend).forEach((r, k) => {
-      put(p1, 7 + k, [r.year, MONTHS[r.month - 1], r.brand, R(r.spend).toNumber(), r.revenue, r.companyCurrent, r.companyLy, r.budget, r.newCustomers, r.avgInvoice, r.socialPostCost, r.clicks]);
+      put(p1, firstRow('spend') + k, [r.year, MONTHS[r.month - 1], r.brand, num(r.brandRevenue), num(r.brandRevenueLy), num(r.revenue), num(r.companyTotal),
+        num(r.budget), num(r.booked), num(r.newCustomers), num(r.avgInvoice), num(r.socialPostCost), num(r.clicks)]);
+      count++;
+    });
+    const p1b = wb.getWorksheet(SHEET_P1B)!;
+    inMonths(data.other).forEach((r, k) => {
+      put(p1b, firstRow('other') + k, [r.year, MONTHS[r.month - 1], r.brand, r.category, r.description, r.vendor, num(r.amount), r.notes]);
       count++;
     });
 
     const p3 = wb.getWorksheet(SHEET_P3)!;
     inMonths(data.social).forEach((r, k) => {
-      put(p3, 7 + k, [r.year, MONTHS[r.month - 1], r.platform, r.followers, r.impressions, r.clicks, r.paid, r.organic]);
+      put(p3, firstRow('social') + k, [r.year, MONTHS[r.month - 1], r.brand ?? null, r.platform, r.accountName ?? null,
+        num(r.followers), num(r.impressions), num(r.clicks), num(r.paid), num(r.organic)]);
       count++;
     });
     inMonths(data.web).forEach((r, k) => {
-      put(p3, 41 + k, [r.year, MONTHS[r.month - 1], r.bounce, r.totalVisitors, r.sessions, r.minutes]);
+      put(p3, firstRow('web') + k, [r.year, MONTHS[r.month - 1], r.brand ?? null, num(r.bounce), num(r.totalVisitors), num(r.sessions), num(r.minutes)]);
       count++;
     });
 
@@ -72,8 +82,8 @@ export async function buildDemoWorkbooks(data: DemoDataset): Promise<DemoChunk[]
 
     if (c.withStatic) {
       const p2 = wb.getWorksheet(SHEET_P2)!;
-      data.campaigns.forEach((k, n) => { put(p2, 7 + n, [k.name, k.brand, k.start, k.end, k.status, k.spend, k.revenue]); count++; });
-      data.media.forEach((k, n) => { put(p2, 31 + n, [k.campaignName, k.mediaType, k.city ?? '', k.units, k.cost]); count++; });
+      data.campaigns.forEach((k, n) => { put(p2, 7 + n, [k.name, k.brand, k.start, k.end, k.status, num(k.spend), num(k.revenue)]); count++; });
+      data.media.forEach((k, n) => { put(p2, 31 + n, [k.campaignName, k.mediaType, k.city ?? '', num(k.units), num(k.cost)]); count++; });
       data.events.forEach((e, n) => { put(p4, 35 + n, [e.name, e.type, e.brand, e.planned, e.completion, e.status]); count++; });
     }
 

@@ -180,11 +180,11 @@ describe('filter bar (same structure as the other report pages)', () => {
   it('page 2: From Date, To Date, Company, Brand, Campaign status', () => {
     expect(flat(bar('campaigns'))).toMatch(/From Date.*To Date.*Company.*Brand.*Campaign status/);
   });
-  it('page 3: From Date, To Date, Platform (no Company / Brand: digital has no brand dimension)', () => {
+  it('page 3: From Date, To Date, Company, Brand, Platform (social / web rows are per brand since template 2.0)', () => {
     const html = bar('digital');
-    expect(flat(html)).toMatch(/From Date.*To Date.*Platform/);
-    expect(html).not.toContain('data-testid="filter-brand"');
-    expect(html).not.toContain('data-testid="filter-company"');
+    expect(flat(html)).toMatch(/From Date.*To Date.*Company.*Brand.*Platform/);
+    expect(html).toContain('data-testid="filter-brand"');
+    expect(html).toContain('data-testid="filter-company"');
   });
   it('From / To are calendars with the day locked: From = the 1st, To = the month\'s last day', () => {
     const html = bar('spending');
@@ -226,7 +226,7 @@ describe('lastYearData missing (ROI trend, now on Media Campaign Performance)', 
     expect((ok.match(/class="recharts-layer recharts-line"/g) ?? []).length).toBe(2);
   });
   it('the spending page still renders all its visuals without last-year data', () => {
-    expect(visualsIn(render(<SpendingView data={noLy} />))).toHaveLength(5);
+    expect(visualsIn(render(<SpendingView data={noLy} />))).toHaveLength(6);
   });
 });
 

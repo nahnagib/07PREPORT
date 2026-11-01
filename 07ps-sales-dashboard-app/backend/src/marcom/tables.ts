@@ -6,7 +6,8 @@ import type { TableId } from './parser';
  * for comparison and storage. Money is compared/stored at 2 dp and percentages at 4 dp (matching
  * the DECIMAL scales in migration 0022), so 50000 equals 50000.00 and a re-upload is idempotent.
  */
-export type FieldType = 'int' | 'money' | 'dec2' | 'pct' | 'text' | 'date' | 'brand';
+/** `brand` / `category` are stored as ids (marcom_brand / marcom_spend_category) and read back by name. */
+export type FieldType = 'int' | 'money' | 'dec2' | 'pct' | 'text' | 'date' | 'brand' | 'category';
 
 export interface FieldDef { field: string; col: string; type: FieldType }
 
@@ -24,10 +25,19 @@ export const ADAPTERS: Adapter[] = [
     id: 'spend', table: 'marcom_spend_monthly', keyFields: ['year', 'month', 'brand'],
     fields: [
       f('year', 'year', 'int'), f('month', 'month', 'int'), f('brand', 'brand_id', 'brand'),
-      f('spend', 'spend', 'money'), f('revenueAttributed', 'revenue_attributed', 'money'),
-      f('companyRevenueCurrent', 'company_revenue_current', 'money'), f('companyRevenueLy', 'company_revenue_ly', 'money'),
-      f('budget', 'budget', 'money'), f('newCustomers', 'new_customers', 'int'), f('avgInvoice', 'avg_invoice', 'money'),
+      f('brandRevenueCurrent', 'brand_revenue_current', 'money'), f('brandRevenueLy', 'brand_revenue_ly', 'money'),
+      f('revenueAttributed', 'revenue_attributed', 'money'), f('companyRevenueTotal', 'company_revenue_total', 'money'),
+      f('budget', 'budget', 'money'), f('financeBookedTotal', 'finance_booked_total', 'money'),
+      f('newCustomers', 'new_customers', 'int'), f('avgInvoice', 'avg_invoice', 'money'),
       f('socialPostCost', 'social_post_cost', 'money'), f('clicks', 'clicks', 'int'),
+    ],
+  },
+  {
+    id: 'other', table: 'marcom_other_spend', keyFields: ['year', 'month', 'brand', 'category', 'description'],
+    fields: [
+      f('year', 'year', 'int'), f('month', 'month', 'int'), f('brand', 'brand_id', 'brand'),
+      f('category', 'category_id', 'category'), f('description', 'description', 'text'), f('vendor', 'vendor', 'text'),
+      f('amount', 'amount_lyd', 'money'), f('notes', 'notes', 'text'),
     ],
   },
   {
@@ -46,17 +56,18 @@ export const ADAPTERS: Adapter[] = [
     ],
   },
   {
-    id: 'social', table: 'marcom_social_monthly', keyFields: ['year', 'month', 'platform'],
+    id: 'social', table: 'marcom_social_monthly', keyFields: ['year', 'month', 'brand', 'platform', 'accountName'],
     fields: [
-      f('year', 'year', 'int'), f('month', 'month', 'int'), f('platform', 'platform', 'text'),
+      f('year', 'year', 'int'), f('month', 'month', 'int'), f('brand', 'brand_id', 'brand'),
+      f('platform', 'platform', 'text'), f('accountName', 'account_name', 'text'),
       f('followers', 'followers', 'int'), f('impressions', 'impressions', 'int'), f('clicks', 'clicks', 'int'),
       f('engagementPaid', 'engagement_paid', 'int'), f('engagementOrganic', 'engagement_organic', 'int'),
     ],
   },
   {
-    id: 'web', table: 'marcom_web_monthly', keyFields: ['year', 'month'],
+    id: 'web', table: 'marcom_web_monthly', keyFields: ['year', 'month', 'brand'],
     fields: [
-      f('year', 'year', 'int'), f('month', 'month', 'int'), f('bounceVisitors', 'bounce_visitors', 'int'),
+      f('year', 'year', 'int'), f('month', 'month', 'int'), f('brand', 'brand_id', 'brand'), f('bounceVisitors', 'bounce_visitors', 'int'),
       f('totalVisitors', 'total_visitors', 'int'), f('sessions', 'sessions', 'int'), f('totalMinutes', 'total_minutes', 'dec2'),
     ],
   },
@@ -92,16 +103,26 @@ export function normalize(type: FieldType, v: unknown): string | null {
   }
 }
 
+/**
+ * Joins that turn brand_id / category_id back into names. An INNER join on purpose: social/web rows from template 1.x
+ * have no brand (migration 0061, needs_review = 1) and stay out of the upload diff -- a 2.0 upload never matches them.
+ */
+export function lookupJoins(a: Adapter): string {
+  return (a.fields.some((x) => x.type === 'brand') ? 'JOIN marcom_brand b ON b.brand_id = t.brand_id ' : '') +
+    (a.fields.some((x) => x.type === 'category') ? 'JOIN marcom_spend_category c ON c.category_id = t.category_id ' : '');
+}
+
+/** Column of the select list for one field (brand/category by name). */
+export function selectCol(x: FieldDef): string {
+  if (x.type === 'brand') return 'b.name AS `brand`';
+  if (x.type === 'category') return `c.name AS \`${x.field}\``;
+  if (x.type === 'date') return `DATE_FORMAT(t.${x.col}, '%Y-%m-%d') AS \`${x.field}\``;
+  return `t.${x.col} AS \`${x.field}\``;
+}
+
 /** SELECT of the live (is_current = 1) rows, aliased to the parser's field names. */
 export function selectCurrentSql(a: Adapter): string {
-  const hasBrand = a.fields.some((x) => x.type === 'brand');
-  const cols = a.fields.map((x) => {
-    if (x.type === 'brand') return 'b.name AS `brand`';
-    if (x.type === 'date') return `DATE_FORMAT(t.${x.col}, '%Y-%m-%d') AS \`${x.field}\``;
-    return `t.${x.col} AS \`${x.field}\``;
-  });
-  return `SELECT t.id AS __id, ${cols.join(', ')} FROM ${a.table} t ` +
-    `${hasBrand ? 'JOIN marcom_brand b ON b.brand_id = t.brand_id ' : ''}WHERE t.is_current = 1`;
+  return `SELECT t.id AS __id, ${a.fields.map(selectCol).join(', ')} FROM ${a.table} t ${lookupJoins(a)}WHERE t.is_current = 1`;
 }
 
 export function keyOf(a: Adapter, data: Record<string, unknown>): string {

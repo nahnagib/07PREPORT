@@ -17,7 +17,7 @@ export async function dbAvailable(): Promise<boolean> {
 }
 
 export const DATA_TABLES = [
-  'marcom_spend_monthly', 'marcom_campaign', 'marcom_campaign_media', 'marcom_social_monthly',
+  'marcom_spend_monthly', 'marcom_other_spend', 'marcom_campaign', 'marcom_campaign_media', 'marcom_social_monthly',
   'marcom_web_monthly', 'marcom_trade_monthly', 'marcom_event',
 ] as const;
 

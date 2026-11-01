@@ -2,6 +2,7 @@ import type { SpendRow } from '../../marcomKpi/spending';
 import type { CampaignRow, MediaRow } from '../../marcomKpi/campaigns';
 import type { SocialRow, WebRow } from '../../marcomKpi/digital';
 import type { EventRow, TradeRow } from '../../marcomKpi/trade';
+import { prorateCampaigns, ymKey, type OtherSpendRow } from '../../marcomKpi/totalSpend';
 
 /**
  * DEV-ONLY dummy dataset for visual testing of the four MARCOM pages. Deterministic (no randomness)
@@ -17,6 +18,8 @@ export const DEMO_BRANDS = ['Brand A', 'Brand B', 'Brand C', 'Brand D'] as const
 
 export interface DemoDataset {
   spend: SpendRow[];
+  /** Non-campaign spend lines (template 2.0, P1b). */
+  other: OtherSpendRow[];
   social: SocialRow[];
   web: WebRow[];
   trade: TradeRow[];
@@ -77,10 +80,12 @@ function spendRow(year: number, month: number, brandIdx: number, cfg: BrandCfg, 
   const company = round(cfg.companyBase * MONTH_FACTOR[mi % 8] * (year === 2026 ? 1 : 0.9));
   return {
     year, month, brandId: brandIdx + 1, brand,
-    spend, revenue: round(spend * roi), budget: round(spend * cfg.budgetFactor),
+    // spend = the brand's planned MARCOM total, entered as the finance-booked total (Unallocated = booked - campaign - other).
+    spend, booked: spend + (brand === 'Brand C' ? 2000 : 0), revenue: round(spend * roi), budget: round(spend * cfg.budgetFactor),
     newCustomers: round(spend / cfg.cacLyd), avgInvoice: cfg.invoice,
     socialPostCost: round(clicks * cfg.cpc), clicks,
-    companyCurrent: company, companyLy: round(company * cfg.companyLyRatio),
+    // Brand-level revenue; the company total is 2.5x the brand (brand share 40%).
+    brandRevenue: company, brandRevenueLy: round(company * cfg.companyLyRatio), companyTotal: round(company * 2.5),
   };
 }
 
@@ -93,6 +98,33 @@ function buildSpend(): SpendRow[] {
     for (const m of range(1, 8)) rows.push(spendRow(2026, m, bi, cfg, m - 1, 1, 0));
   });
   return rows.sort((a, b) => a.year - b.year || a.month - b.month || a.brandId - b.brandId);
+}
+
+/**
+ * Other (non-campaign) spend = the brand's planned monthly spend minus its prorated campaign spend (never below 0), so
+ * Total MARCOM Spend (campaign + other) stays at the planned figure and every RAG case above still holds. 2026 is split
+ * 60/40 into uniforms and printouts, 2025 is one giveaways line.
+ */
+function buildOther(spend: SpendRow[]): OtherSpendRow[] {
+  const campaignBy = prorateCampaigns(
+    CAMPAIGNS.map((c) => ({ brandId: c.brandId, start: c.start, end: c.end, spend: c.spend })),
+    spend.map((r) => ({ year: r.year, month: r.month })).filter((c, i, a) => a.findIndex((x) => x.year === c.year && x.month === c.month) === i),
+  );
+  const out: OtherSpendRow[] = [];
+  for (const r of spend) {
+    const rest = Math.max(0, Number(r.spend) - (campaignBy.get(ymKey(r.year, r.month, r.brandId))?.toNumber() ?? 0));
+    if (rest <= 0) continue;
+    const line = (category: string, description: string, amount: number): OtherSpendRow => ({
+      year: r.year, month: r.month, brandId: r.brandId, brand: r.brand, category, description, vendor: null, amount, notes: null,
+    });
+    if (r.year === 2026) {
+      const uniforms = round(rest * 0.6);
+      out.push(line('Uniforms', 'Showroom staff uniforms', uniforms), line('Printing & Printouts', 'Catalogues and flyers', round(rest) - uniforms));
+    } else {
+      out.push(line('Gifts & Giveaways', 'Customer giveaways', round(rest)));
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- P3: digital
@@ -115,7 +147,12 @@ function buildSocial(): SocialRow[] {
       const clicks = round(impressions * c.ctr);
       const engagement = round(impressions * c.er);
       const paid = round(engagement * 0.55);
-      rows.push({ year: 2026, month: m, platform, followers: c.followers + c.growth * m, impressions, clicks, paid, organic: engagement - paid });
+      rows.push({ year: 2026, month: m, brandId: 1, brand: 'Brand A', platform, followers: c.followers + c.growth * m, impressions, clicks, paid, organic: engagement - paid });
+      // Brand B runs its own Facebook / Instagram pages at half the reach.
+      if (platform === 'Facebook' || platform === 'Instagram') {
+        const half = (v: number) => round(v / 2);
+        rows.push({ year: 2026, month: m, brandId: 2, brand: 'Brand B', platform, followers: half(c.followers + c.growth * m), impressions: half(impressions), clicks: half(clicks), paid: half(paid), organic: half(engagement - paid) });
+      }
     }
   }
   return rows;
@@ -126,14 +163,15 @@ const BOUNCE = [0.28, 0.30, 0.31, 0.33, 0.35, 0.36, 0.38, 0.40];
 const SESSION_MIN = [3.5, 3.0, 2.6, 2.0, 1.5, 1.0, 0.8, 3.2];
 
 function buildWeb(): WebRow[] {
-  return range(1, 8).map((m) => {
-    const totalVisitors = 12_000 + (m - 1) * 500;
-    const sessions = 15_000 + (m - 1) * 300;
+  // One website per brand: Brand A full traffic, Brand B 40% of it.
+  return range(1, 8).flatMap((m) => [[1, 'Brand A', 1], [2, 'Brand B', 0.4]].map(([brandId, brand, k]) => {
+    const totalVisitors = round((12_000 + (m - 1) * 500) * Number(k));
+    const sessions = round((15_000 + (m - 1) * 300) * Number(k));
     return {
-      year: 2026, month: m, totalVisitors, bounce: round(totalVisitors * BOUNCE[m - 1]),
+      year: 2026, month: m, brandId: Number(brandId), brand: String(brand), totalVisitors, bounce: round(totalVisitors * BOUNCE[m - 1]),
       sessions, minutes: round(sessions * SESSION_MIN[m - 1] * 100) / 100,
     };
-  });
+  }));
 }
 
 // ---------------------------------------------------------------- P4: trade
@@ -211,5 +249,6 @@ const EVENTS: EventRow[] = [
 ];
 
 export function buildDemoDataset(): DemoDataset {
-  return { spend: buildSpend(), social: buildSocial(), web: buildWeb(), trade: buildTrade(), campaigns: CAMPAIGNS, media: MEDIA, events: EVENTS };
+  const spend = buildSpend();
+  return { spend, other: buildOther(spend), social: buildSocial(), web: buildWeb(), trade: buildTrade(), campaigns: CAMPAIGNS, media: MEDIA, events: EVENTS };
 }

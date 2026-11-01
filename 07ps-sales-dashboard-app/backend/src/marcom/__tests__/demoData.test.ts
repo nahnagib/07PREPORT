@@ -104,13 +104,14 @@ describe('demo workbooks', () => {
   it('parse with zero errors through the real parser, and carry every row', async () => {
     const chunks = await buildDemoWorkbooks(data);
     expect(chunks.map((c) => c.filename.startsWith(DEMO_LABEL))).toEqual([true, true, true, true]);
-    const totals = { spend: 0, campaigns: 0, media: 0, social: 0, web: 0, trade: 0, events: 0 };
+    const totals = { spend: 0, other: 0, campaigns: 0, media: 0, social: 0, web: 0, trade: 0, events: 0 };
     for (const c of chunks) {
       const r = await parseMarcomWorkbook(c.buffer, c.filename);
       expect(r.issues.filter((i) => i.severity === 'error'), c.label).toEqual([]);
       for (const k of Object.keys(totals) as (keyof typeof totals)[]) totals[k] += r.tables[k].rows.length;
     }
-    expect(totals).toEqual({ spend: data.spend.length, campaigns: 8, media: data.media.length, social: 40, web: 8, trade: 8, events: 20 });
+    // social: 5 platforms of Brand A + Facebook/Instagram of Brand B, 8 months; web: 2 brand sites x 8 months.
+    expect(totals).toEqual({ spend: data.spend.length, other: data.other.length, campaigns: 8, media: data.media.length, social: 56, web: 16, trade: 8, events: 20 });
     expect(data.spend).toHaveLength(80); // 4 brands x (12 months of 2025 + 8 months of 2026)
   });
 });

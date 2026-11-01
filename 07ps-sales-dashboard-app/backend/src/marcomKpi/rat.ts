@@ -33,10 +33,11 @@ export class Rat {
   static readonly ZERO = Rat.of(0n);
   static readonly ONE = Rat.of(1n);
 
-  /** Parses a decimal string / integer / safe JS number exactly. null/undefined/'' -> 0. */
+  /** Parses a decimal string / integer / safe JS number exactly (a Rat passes through). null/undefined/'' -> 0. */
   static parse(v: unknown): Rat {
     if (v instanceof Rat) return v;
     if (v === null || v === undefined || v === '') return Rat.ZERO;
+    if (v instanceof Rat) return v;
     if (typeof v === 'bigint') return Rat.of(v);
     let s = typeof v === 'number' ? (Number.isFinite(v) ? String(v) : '') : String(v).trim();
     if (!s) throw new TypeError(`Rat.parse: not a finite number: ${String(v)}`);

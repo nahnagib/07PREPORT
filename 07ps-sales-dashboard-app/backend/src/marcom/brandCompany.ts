@@ -6,7 +6,9 @@ import { auditMarcom, MarcomError } from './service';
  * an admin assigns each brand to a company here so the pages can filter and group by Company.
  * company_key = Dim_Company.CompanyKey (= admin_company.etl_company_key), same convention as 0019.
  */
-export interface BrandCompanyRow { brandId: number; brand: string; companyKey: number | null; company: string | null }
+/** kind 'GROUP' = group-level entry, not a brand (BMH = group events; migration 0061): spend only, no brand revenue. */
+export type BrandKind = 'BRAND' | 'GROUP';
+export interface BrandCompanyRow { brandId: number; brand: string; companyKey: number | null; company: string | null; kind: BrandKind }
 export interface CompanyOption { companyKey: number; company: string }
 
 const COMPANY_NAMES_SQL =
@@ -15,7 +17,7 @@ const COMPANY_NAMES_SQL =
 export async function listBrandCompanies(): Promise<{ brands: BrandCompanyRow[]; companies: CompanyOption[] }> {
   const [[brands], [companies]] = await Promise.all([
     pool.query(
-      `SELECT b.brand_id AS brandId, b.name AS brand, b.company_key AS companyKey, c.name AS company
+      `SELECT b.brand_id AS brandId, b.name AS brand, b.company_key AS companyKey, c.name AS company, b.kind AS kind
          FROM marcom_brand b LEFT JOIN (${COMPANY_NAMES_SQL}) c ON c.etl_company_key = b.company_key
         ORDER BY b.name`,
     ),
@@ -26,15 +28,15 @@ export async function listBrandCompanies(): Promise<{ brands: BrandCompanyRow[];
   ]);
   const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
   return {
-    brands: (brands as Record<string, unknown>[]).map((r) => ({ brandId: Number(r.brandId), brand: String(r.brand), companyKey: num(r.companyKey), company: (r.company as string | null) ?? null })),
+    brands: (brands as Record<string, unknown>[]).map((r) => ({ brandId: Number(r.brandId), brand: String(r.brand), companyKey: num(r.companyKey), company: (r.company as string | null) ?? null, kind: r.kind === 'GROUP' ? 'GROUP' as const : 'BRAND' as const })),
     companies: (companies as Record<string, unknown>[]).map((r) => ({ companyKey: Number(r.companyKey), company: String(r.company) })),
   };
 }
 
 /** Sets (or clears, with null) a brand's company. The key must be an active admin_company ETL key. */
 export async function setBrandCompany(brandId: number, companyKey: number | null, userId: number): Promise<BrandCompanyRow> {
-  const [found] = await pool.query('SELECT brand_id, name, company_key FROM marcom_brand WHERE brand_id = ?', [brandId]);
-  const brand = (found as { brand_id: number; name: string; company_key: number | null }[])[0];
+  const [found] = await pool.query('SELECT brand_id, name, company_key, kind FROM marcom_brand WHERE brand_id = ?', [brandId]);
+  const brand = (found as { brand_id: number; name: string; company_key: number | null; kind: BrandKind }[])[0];
   if (!brand) throw new MarcomError(404, 'BRAND_NOT_FOUND', 'Brand not found.');
   let company: string | null = null;
   if (companyKey !== null) {
@@ -45,5 +47,16 @@ export async function setBrandCompany(brandId: number, companyKey: number | null
   }
   await pool.query('UPDATE marcom_brand SET company_key = ? WHERE brand_id = ?', [companyKey, brandId]);
   await auditMarcom(userId, 'marcom_brand', String(brandId), 'UPDATE', { brand: brand.name, companyKeyBefore: brand.company_key, companyKey, company });
-  return { brandId, brand: brand.name, companyKey, company };
+  return { brandId, brand: brand.name, companyKey, company, kind: brand.kind };
+}
+
+/** Marks a brand as a real brand or as a group-level entry (BMH). Group P1 rows need no brand revenue. */
+export async function setBrandKind(brandId: number, kind: BrandKind, userId: number): Promise<BrandCompanyRow> {
+  const [found] = await pool.query('SELECT brand_id, name, kind FROM marcom_brand WHERE brand_id = ?', [brandId]);
+  const brand = (found as { brand_id: number; name: string; kind: BrandKind }[])[0];
+  if (!brand) throw new MarcomError(404, 'BRAND_NOT_FOUND', 'Brand not found.');
+  await pool.query('UPDATE marcom_brand SET kind = ? WHERE brand_id = ?', [kind, brandId]);
+  await auditMarcom(userId, 'marcom_brand', String(brandId), 'UPDATE', { brand: brand.name, kindBefore: brand.kind, kind });
+  const row = (await listBrandCompanies()).brands.find((b) => b.brandId === brandId)!;
+  return row;
 }
