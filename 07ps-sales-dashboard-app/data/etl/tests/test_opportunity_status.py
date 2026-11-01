@@ -17,7 +17,7 @@ def row(**kw) -> pd.Series:
 
 
 @pytest.mark.parametrize("won_status, active, expected", [
-    ("won", True, "Won"), ("lost", False, "Lost"), ("pending", True, "New"), ("pending", False, "Archived"),
+    ("won", True, "Won"), ("lost", False, "Lost"), ("pending", True, "Pending"), ("pending", False, "Archived"),
 ])
 def test_odoo_won_status_wins(won_status, active, expected):
     assert opportunity_status(row(WonStatus=won_status, IsActive=active), WON_STAGES) == expected
@@ -26,8 +26,8 @@ def test_odoo_won_status_wins(won_status, active, expected):
 def test_active_card_in_custom_lost_column_is_open():
     # dragged into the "Lost" column but never marked Lost: Odoo still counts it as open
     r = row(StageID=LOST_COLUMN, Stage="Lost", WonStatus="pending", Probability=10.0)
-    assert opportunity_status(r, WON_STAGES) == "New"
-    assert opportunity_status(r.drop("WonStatus"), WON_STAGES) == "New"
+    assert opportunity_status(r, WON_STAGES) == "Pending"
+    assert opportunity_status(r.drop("WonStatus"), WON_STAGES) == "Pending"
 
 
 def test_lost_button_keeps_stage_but_is_lost():
@@ -36,7 +36,7 @@ def test_lost_button_keeps_stage_but_is_lost():
 
 
 def test_won_stage_with_probability_below_100_follows_odoo():
-    assert opportunity_status(row(StageID=WON_COLUMN, Stage="Won", WonStatus="pending", Probability=80.0), WON_STAGES) == "New"
+    assert opportunity_status(row(StageID=WON_COLUMN, Stage="Won", WonStatus="pending", Probability=80.0), WON_STAGES) == "Pending"
 
 
 @pytest.mark.parametrize("kw, expected", [
@@ -44,8 +44,8 @@ def test_won_stage_with_probability_below_100_follows_odoo():
     ({"IsActive": False, "Probability": 0.0}, "Lost"),                    # archived AND probability 0
     ({"IsActive": False, "Probability": 100.0}, "Archived"),              # archived AND probability > 0
     ({"IsActive": False, "Probability": 30.0, "StageID": WON_COLUMN}, "Archived"),
-    ({}, "New"),                                                          # any other active record
-    ({"Probability": 100.0}, "New"),                                      # probability alone is not Won
+    ({}, "Pending"),                                                          # any other active record
+    ({"Probability": 100.0}, "Pending"),                                      # probability alone is not Won
 ])
 def test_fallback_without_won_status(kw, expected):
     assert opportunity_status(row(**kw), WON_STAGES) == expected
@@ -53,7 +53,7 @@ def test_fallback_without_won_status(kw, expected):
 
 def test_stage_names_are_never_read():
     for name in ("Won", "Lost", "won deal", "LOST"):
-        assert opportunity_status(row(Stage=name), WON_STAGES) == "New"
+        assert opportunity_status(row(Stage=name), WON_STAGES) == "Pending"
 
 
 def test_archived_is_neither_won_lost_nor_open():

@@ -8,7 +8,7 @@ import pandas as pd
 from config.settings import Settings
 from sales_pipeline.crm.active_flags import coerce_nullable_bool
 from sales_pipeline.crm.crm_aging import aging_bucket
-from sales_pipeline.crm.crm_status_classifier import WON, LOST, NEW, opportunity_status
+from sales_pipeline.crm.crm_status_classifier import WON, LOST, PENDING, opportunity_status
 from sales_pipeline.odoo.sales_report_repository import odoo_utc_datetime_to_local, safe_datetime_to_local
 
 
@@ -116,7 +116,7 @@ class CrmCleaner:
         out["OpportunityStatus"] = [opportunity_status(row, won_stage_ids) for _, row in out.iterrows()]
         out["IsWon"] = out["OpportunityStatus"].eq(WON)
         out["IsLost"] = out["OpportunityStatus"].eq(LOST)
-        out["IsOpen"] = out["OpportunityStatus"].eq(NEW)
+        out["IsOpen"] = out["OpportunityStatus"].eq(PENDING)
 
         now = pd.Timestamp.now(tz=self.settings.timezone).tz_localize(None)
         base_start = out["OpenDate"].combine_first(out["CreatedDate"])
