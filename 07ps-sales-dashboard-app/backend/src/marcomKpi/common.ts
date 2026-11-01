@@ -29,7 +29,7 @@ export interface BrandRef {
   /** Dim_Company.CompanyKey (= admin_company.etl_company_key) the brand belongs to; null = not assigned (migration 0057). */
   companyKey?: number | null;
   company?: string | null;
-  /** 'GROUP' = group-level entry, not a brand (BMH = group events; migration 0061). Default 'BRAND'. */
+  /** 'GROUP' = group-level entry, not a brand (BMH = group events; migration 0062). Default 'BRAND'. */
   kind?: 'BRAND' | 'GROUP';
 }
 

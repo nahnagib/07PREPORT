@@ -11,7 +11,7 @@ import type { OtherSpendRow } from './totalSpend';
  *  - spend = Total MARCOM Spend = campaignSpend (prorated by active days) + otherSpend;
  *  - the P1 inputs (null when the brand has spend in that month but no P1 row yet).
  * Revenue inputs are brand-level and monthly. `needsReview` = row from template 1.x whose revenue was asked as a
- * company total (migration 0061): it has no brand revenue and is left out of the brand-revenue KPIs.
+ * company total (migration 0062): it has no brand revenue and is left out of the brand-revenue KPIs.
  */
 export interface SpendRow {
   year: number; month: number; brandId: number; brand: string;

@@ -1,6 +1,6 @@
 # MARCOM template 2.0 — changelog (Marketing review, 2026-10-29)
 
-Branch `feature/marcom-change-request`. Migration `0061_marcom_brand_split_other_spend.sql` (reverse in `data/warehouse/down/`).
+Branch `feature/marcom-change-request`. Migration `0062_marcom_brand_split_other_spend.sql` (reverse in `data/warehouse/down/`).
 Template version **2.0** — files made with 1.x are refused by the importer (header check); download the new template.
 
 ## Decisions (confirmed with the requester)
@@ -79,7 +79,7 @@ The file was exported from Apple Numbers, uses template 1.x and was never import
 8. P3 website: one row (Aug 2026) with 18 visitors, 1 session, 7,000 minutes (avg session 7,000 min) — implausible.
 9. P2: "Tiles Of libya" (Majaal) has no spend / revenue; "خليك محمي.. خليك إكستريم" OOH cost 487,000 > campaign spend 465,480; spend and revenue of most campaigns stored as text.
 
-## Review query (run after 0061 on any database that had 1.x data)
+## Review query (run after 0062 on any database that had 1.x data)
 
 ```sql
 -- Months uploaded with template 1.x: their revenue was asked as a COMPANY total -> re-enter as brand revenue.
@@ -95,7 +95,7 @@ UNION ALL SELECT 'web', year, month, NULL, total_visitors FROM marcom_web_monthl
 
 ## Deploy notes
 
-- Apply `0061` (idempotent; tested down → up → up on a copy with 1.x rows). It also inserts `BMH` as a GROUP entry.
+- Apply `0062` (idempotent; tested down → up → up on a copy with 1.x rows). It also inserts `BMH` as a GROUP entry.
 - Removing a 1.x batch that has later batches keeping some of its rows unchanged now stops with `LATER_FILE_OLD_TEMPLATE` (the old file cannot be re-read by the 2.0 parser): remove the later batches first.
 - Template source: `backend/scripts/build_marcom_template.py` rebuilds `backend/assets/marcom/MARCOM_Contribution_Data_Template.xlsx` in place; column positions must match `backend/src/marcom/templateConfig.ts`.
 - Test DB script (`backend/scripts/marcomTestDb.py`) now applies every migration from 0022 on (skipping non-MARCOM ones that need the full warehouse), so the DB-backed suites run again.

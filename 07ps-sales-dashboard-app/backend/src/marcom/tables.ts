@@ -105,7 +105,7 @@ export function normalize(type: FieldType, v: unknown): string | null {
 
 /**
  * Joins that turn brand_id / category_id back into names. An INNER join on purpose: social/web rows from template 1.x
- * have no brand (migration 0061, needs_review = 1) and stay out of the upload diff -- a 2.0 upload never matches them.
+ * have no brand (migration 0062, needs_review = 1) and stay out of the upload diff -- a 2.0 upload never matches them.
  */
 export function lookupJoins(a: Adapter): string {
   return (a.fields.some((x) => x.type === 'brand') ? 'JOIN marcom_brand b ON b.brand_id = t.brand_id ' : '') +

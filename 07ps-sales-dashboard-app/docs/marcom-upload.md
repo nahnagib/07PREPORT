@@ -156,8 +156,8 @@ only the new files: `0022_marcom_contribution.sql`, then `0023_marcom_upload_sta
 idempotent; reverse: `data/warehouse/down/0043_marcom_batch_removed_down.sql`, which turns REMOVED batches into ROLLED_BACK).
 Dev-only down script (destroys MARCOM data): `data/warehouse/down/0022_0023_marcom_down.sql`.
 
-**Template 2.0** needs `0061_marcom_brand_split_other_spend.sql` (brand on P3 tables, P1b other spend, brand-level P1 revenue,
-`marcom_brand.kind`; idempotent; reverse `down/0061_…_down.sql`, only before any 2.0 upload). Details: `docs/marcom-template-2.0-changelog.md`;
+**Template 2.0** needs `0062_marcom_brand_split_other_spend.sql` (brand on P3 tables, P1b other spend, brand-level P1 revenue,
+`marcom_brand.kind`; idempotent; reverse `down/0062_…_down.sql`, only before any 2.0 upload). Details: `docs/marcom-template-2.0-changelog.md`;
 guide for the Marketing Manager: `docs/marcom-how-to-fill-template.md`. `GET /marcom/upload/template?year=YYYY` returns the template with
 Brand / Category lists from the DB and P3 pre-filled (`?blank=1` = the shipped file).
 

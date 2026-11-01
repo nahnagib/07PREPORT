@@ -1,4 +1,4 @@
--- 0061: MARCOM change request from the Marketing review (2026-10-29), template 2.0.
+-- 0062: MARCOM change request from the Marketing review (2026-10-29), template 2.0.
 --
 --  1. Digital Performance per brand: marcom_social_monthly / marcom_web_monthly get brand_id (FK marcom_brand) and the
 --     social table an optional account_name (a brand with two pages on one platform). New natural keys:
@@ -22,7 +22,7 @@
 --  4. marcom_brand.kind: 'GROUP' marks group-level activity that is not a brand (BMH = group events). Group rows carry
 --     spend but no brand revenue. BMH is created as GROUP here so the first 2.0 upload treats it correctly.
 --
--- Idempotent (prepared statements, no DELIMITER, for apply_migrations.py). Reverse: down/0061_marcom_brand_split_other_spend_down.sql.
+-- Idempotent (prepared statements, no DELIMITER, for apply_migrations.py). Reverse: down/0062_marcom_brand_split_other_spend_down.sql.
 
 SET NAMES utf8mb4;
 

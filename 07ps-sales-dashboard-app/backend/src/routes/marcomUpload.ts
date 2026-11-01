@@ -220,7 +220,7 @@ marcomUploadRouter.put('/brands/:id/company', requirePermission('admin_marcom_up
   }
 });
 
-// Brand vs group entry (migration 0061): BMH = group events, spend only.
+// Brand vs group entry (migration 0062): BMH = group events, spend only.
 marcomUploadRouter.put('/brands/:id/kind', requirePermission('admin_marcom_upload', 'create'), async (req, res, next) => {
   try {
     const id = intParam(req.params.id);

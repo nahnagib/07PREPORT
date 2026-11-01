@@ -6,7 +6,7 @@ import { auditMarcom, MarcomError } from './service';
  * an admin assigns each brand to a company here so the pages can filter and group by Company.
  * company_key = Dim_Company.CompanyKey (= admin_company.etl_company_key), same convention as 0019.
  */
-/** kind 'GROUP' = group-level entry, not a brand (BMH = group events; migration 0061): spend only, no brand revenue. */
+/** kind 'GROUP' = group-level entry, not a brand (BMH = group events; migration 0062): spend only, no brand revenue. */
 export type BrandKind = 'BRAND' | 'GROUP';
 export interface BrandCompanyRow { brandId: number; brand: string; companyKey: number | null; company: string | null; kind: BrandKind }
 export interface CompanyOption { companyKey: number; company: string }

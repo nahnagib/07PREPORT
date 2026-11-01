@@ -1,4 +1,4 @@
--- Reverse of 0061_marcom_brand_split_other_spend.sql. Only safe BEFORE any template 2.0 upload:
+-- Reverse of 0062_marcom_brand_split_other_spend.sql. Only safe BEFORE any template 2.0 upload:
 --  - branded social/web rows would collide on the old (year, month[, platform]) unique keys -> remove those batches first;
 --  - marcom_other_spend and the new revenue columns are dropped (their data is lost);
 --  - the old NOT NULL spend / company revenue columns are restored from finance_booked_total / legacy_* (rows where those

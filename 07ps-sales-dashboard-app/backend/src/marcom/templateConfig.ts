@@ -24,7 +24,7 @@ export const CITIES = [
   'Tripoli', 'Benghazi', 'Misrata', 'Zawiya', 'Zliten', 'Khoms', 'Sirte', 'Bayda', 'Tobruk', 'Derna', 'Ajdabiya', 'Marj', 'Brega', 'Sabha', 'Gharyan', 'Zuwara', 'Sabratha', 'Surman', 'Tarhuna', 'Bani Walid', 'Yafran', 'Nalut', 'Ghadames', 'Jalu', 'Waddan', 'Hun', 'Ubari', 'Murzuq', 'Ghat', 'Kufra',
 ] as const;
 /**
- * Starting categories of non-campaign MARCOM spend. The live list is the marcom_spend_category table (migration 0061,
+ * Starting categories of non-campaign MARCOM spend. The live list is the marcom_spend_category table (migration 0062,
  * editable there); this copy seeds the template's Lists!I column and is the fallback when no DB list is passed.
  */
 export const DEFAULT_SPEND_CATEGORIES = [

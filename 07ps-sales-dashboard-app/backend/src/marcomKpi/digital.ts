@@ -5,7 +5,7 @@ import { AppliedPeriod, BrandRef, Num, groupBy, monthRange, total } from './comm
 import { PLATFORMS } from '../marcom/templateConfig';
 
 /**
- * Social / web rows are per brand since template 2.0 (migration 0061). brandId null = a row uploaded before that
+ * Social / web rows are per brand since template 2.0 (migration 0062). brandId null = a row uploaded before that
  * (needs review): it is never assigned to a brand, only counted under "All".
  */
 export interface SocialRow {

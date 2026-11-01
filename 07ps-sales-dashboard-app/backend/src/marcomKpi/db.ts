@@ -49,7 +49,7 @@ export interface CurrentQuery {
 }
 
 export const BRAND_JOIN = 'JOIN marcom_brand b ON b.brand_id = t.brand_id';
-/** Social / web rows from template 1.x have no brand (migration 0061): keep them, with a NULL brand name. */
+/** Social / web rows from template 1.x have no brand (migration 0062): keep them, with a NULL brand name. */
 export const BRAND_LEFT_JOIN = 'LEFT JOIN marcom_brand b ON b.brand_id = t.brand_id';
 export const CATEGORY_JOIN = 'JOIN marcom_spend_category c ON c.category_id = t.category_id';
 

@@ -34,7 +34,7 @@ describe('template Lists sheet vs templateConfig enums', async () => {
   it('Event_Type', () => expect(column('Event_Type')).toEqual([...EVENT_TYPES]));
   it('Event_Status', () => expect(column('Event_Status')).toEqual([...EVENT_STATUSES]));
   it('City', () => expect(column('City')).toEqual([...CITIES]));
-  it('Spend_Category (P1b) seeds the same list as migration 0061', () => expect(column('Spend_Category')).toEqual([...DEFAULT_SPEND_CATEGORIES]));
+  it('Spend_Category (P1b) seeds the same list as migration 0062', () => expect(column('Spend_Category')).toEqual([...DEFAULT_SPEND_CATEGORIES]));
   it('Brand list is the business list (data-driven: the download replaces it with the DB brands)', () => {
     expect(column('Brand')).toEqual(['Xtreme', 'Majaal', 'Germa', 'BMH']);
   });
