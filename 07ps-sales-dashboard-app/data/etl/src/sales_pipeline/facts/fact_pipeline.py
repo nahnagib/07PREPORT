@@ -22,7 +22,7 @@ class PipelineFactBuilder:
         "Probability", "ProbabilityBucket", "StageID", "Stage", "Salesperson", "SalespersonID",
         "SalespersonKey", "SalesTeam", "SalesTeamID", "SalesTeamKey", "SalesSegment",
         "SegmentKey", "Company", "CompanyKey", "Customer", "CustomerID", "Source", "Medium",
-        "Campaign", "Tags", "LostReason", "LostReasonID", "IsActive",
+        "Campaign", "Tags", "LostReason", "LostReasonID", "IsActive", "WonStatus", "OpportunityStatus",
         "IsWon", "IsLost", "IsOpen", "IsInactive",
         "DaysInPipeline", "DaysSinceUpdate", "DaysUntilExpectedClose", "AgingBucket",
         "ActivityState", "NextActivityDate", "HasNextStep", "HasRecentActivity", "OpportunityCount",

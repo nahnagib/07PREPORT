@@ -8,7 +8,7 @@ import pandas as pd
 from config.settings import Settings
 from sales_pipeline.crm.active_flags import coerce_nullable_bool
 from sales_pipeline.crm.crm_aging import aging_bucket
-from sales_pipeline.crm.crm_status_classifier import classify_status
+from sales_pipeline.crm.crm_status_classifier import WON, LOST, NEW, opportunity_status
 from sales_pipeline.odoo.sales_report_repository import odoo_utc_datetime_to_local, safe_datetime_to_local
 
 
@@ -113,10 +113,10 @@ class CrmCleaner:
         out["PipelineRecordID"] = "LEAD-" + out["LeadID"].astype("string")
         out.loc[is_opportunity, "PipelineRecordID"] = "OPP-" + out.loc[is_opportunity, "OpportunityID"].astype("string")
 
-        status = out.apply(lambda row: classify_status(row, won_stage_ids), axis=1)
-        out["IsWon"] = [item[0] for item in status]
-        out["IsLost"] = [item[1] for item in status]
-        out["IsOpen"] = [item[2] for item in status]
+        out["OpportunityStatus"] = [opportunity_status(row, won_stage_ids) for _, row in out.iterrows()]
+        out["IsWon"] = out["OpportunityStatus"].eq(WON)
+        out["IsLost"] = out["OpportunityStatus"].eq(LOST)
+        out["IsOpen"] = out["OpportunityStatus"].eq(NEW)
 
         now = pd.Timestamp.now(tz=self.settings.timezone).tz_localize(None)
         base_start = out["OpenDate"].combine_first(out["CreatedDate"])
@@ -174,6 +174,7 @@ class CrmCleaner:
         etl_rows["IsSystemGeneratedLead"] = True
         etl_rows["LeadCreationSource"] = "ETL"
         etl_rows["GeneratedLeadReason"] = "Missing Odoo lead history for opportunity"
+        etl_rows["OpportunityStatus"] = pd.NA
         etl_rows["IsWon"] = False
         etl_rows["IsLost"] = False
         etl_rows["IsOpen"] = False
