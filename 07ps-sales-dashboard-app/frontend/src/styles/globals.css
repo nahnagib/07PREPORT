@@ -696,3 +696,15 @@ textarea.ps-kaizen-input { min-height: 84px; resize: vertical; }
   .ps-fu-filters > .ps-kaizen-field { flex: 1 1 140px; }
   .ps-fu-dialog { padding: 14px 16px 24px; }
 }
+
+/* App header (2026-11-02): the logo/title group shrinks (title ellipsizes first) and the action cluster keeps its
+   size, so nothing is drawn on top of anything. Below 640px the optional pieces (bell, separators, the second
+   business-unit logo) give way and the title gets smaller. */
+.ps-app-header-title { min-width: min(8rem, 100%); font-size: 20px; font-weight: 700; margin-inline-start: 12px; }
+@media (max-width: 639px) {
+  .ps-app-header { padding: 0 8px !important; gap: 8px !important; }
+  .ps-app-header > div { gap: 8px !important; }
+  .ps-app-header-optional { display: none !important; }
+  .ps-app-header-logo { height: 24px !important; min-width: 32px !important; }
+  .ps-app-header-title { min-width: 0; font-size: 15px; margin-inline-start: 2px; }
+}

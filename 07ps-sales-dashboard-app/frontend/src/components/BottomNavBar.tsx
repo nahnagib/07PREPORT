@@ -42,10 +42,13 @@ export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
       aria-label="Primary navigation"
       style={{
         position: 'fixed',
-        left: 0,
-        right: 0,
+        // Starts beside the department sidebar (its in-page width, set by SidebarProvider; 0 where there is none),
+        // so it never covers the sidebar's collapse toggle and follows it when it collapses.
+        insetInlineStart: 'var(--ps-sidebar-width, 0px)',
+        insetInlineEnd: 0,
         bottom: 0,
         zIndex: 40,
+        transition: 'inset-inline-start 200ms ease',
         display: 'flex',
         padding: '10px var(--ps-space-2, 8px)',
         background: 'var(--ps-color-translucent-bg)',

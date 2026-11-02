@@ -1,4 +1,5 @@
 import { DepartmentSidebar } from '../../components/DepartmentSidebar';
+import { SidebarProvider } from '../../components/SidebarProvider';
 
 /**
  * Shared shell for every department route (Promotion, Product, Place, ...). A route group
@@ -10,12 +11,17 @@ import { DepartmentSidebar } from '../../components/DepartmentSidebar';
  * Each page still renders its own AppHeader (as the Tachometer page already did) rather than this
  * layout hoisting a shared one -- avoids a double header on pages that need page-specific header
  * controls (date/refresh) and keeps the working Tachometer page's header wiring untouched.
+ *
+ * SidebarProvider holds the one collapse/expand state (desktop rail, small-screen overlay) that the sidebar, the
+ * AppHeader toggle next to the logo and Ctrl+B all share.
  */
 export default function DepartmentsLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <DepartmentSidebar />
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>{children}</div>
-    </div>
+    <SidebarProvider>
+      <div style={{ display: 'flex', minHeight: '100vh' }}>
+        <DepartmentSidebar />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>{children}</div>
+      </div>
+    </SidebarProvider>
   );
 }

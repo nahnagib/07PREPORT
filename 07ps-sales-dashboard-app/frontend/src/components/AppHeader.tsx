@@ -8,6 +8,8 @@ import { useBusinessUnit } from './BusinessUnitProvider';
 import { useTheme } from './ThemeProvider';
 import { BASE_PATH } from '../lib/basePath';
 import { APP_TITLE, usePageTitle } from '../lib/pageTitle';
+import { useSidebar } from './SidebarProvider';
+import { SidebarToggleButton } from './DepartmentSidebar';
 
 /**
  * Logo asset note: the source BMH files ("BenMussa Black.png" / "BenMussa White.png") are named
@@ -95,6 +97,7 @@ export function AppHeader({
   const router = useRouter();
 
   const title = usePageTitle(subTitle);
+  const sidebar = useSidebar();
 
   React.useEffect(() => {
     document.title = `${title.text} | ${APP_TITLE}`;
@@ -110,7 +113,7 @@ export function AppHeader({
 
   return (
     <header
-      className="flex items-center justify-between border-b"
+      className="ps-app-header flex items-center justify-between border-b"
       style={{
         height: 64,
         padding: '0 var(--ps-space-3, 16px)',
@@ -123,18 +126,39 @@ export function AppHeader({
       }}
     >
       {/* The logo/title group gives way (title ellipsizes) so it never slides under the controls. */}
-      <div className="flex items-center gap-3" style={{ minWidth: 0, flex: '0 1 auto' }}>
+      <div className="flex items-center gap-3" style={{ minWidth: 0, flex: '1 1 auto' }}>
+        {/* Reopens / closes the department sidebar from the top bar (pages without the sidebar show none). */}
+        {sidebar && (
+          <SidebarToggleButton
+            state={sidebar}
+            testId="header-sidebar-toggle"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              border: '1px solid var(--ps-color-border)',
+              borderRadius: 6,
+              width: 30,
+              height: 30,
+              background: 'transparent',
+              color: 'var(--ps-color-text)',
+              cursor: 'pointer',
+            }}
+          />
+        )}
         <Image
           src={theme === 'dark' ? bmhMark.dark : bmhMark.light}
           alt="Ben Moussa Holding"
           width={160}
           height={32}
+          className="ps-app-header-logo"
           style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 1, minWidth: 40 }}
           priority
         />
         {secondary && (
           <>
-            <span aria-hidden style={{ color: 'var(--ps-color-border)' }}>
+            <span aria-hidden className="ps-app-header-optional" style={{ color: 'var(--ps-color-border)' }}>
               |
             </span>
             {/* Same fixed height as the BMH mark above, not a smaller one -- both logos in this
@@ -144,6 +168,7 @@ export function AppHeader({
               alt={secondary.alt}
               width={96}
               height={32}
+              className="ps-app-header-optional"
               style={{ objectFit: 'contain', height: 32, width: 'auto', flexShrink: 1, minWidth: 40 }}
             />
           </>
@@ -151,7 +176,7 @@ export function AppHeader({
         <PageTitleHeading title={title} />
       </div>
 
-      <div className="flex items-center gap-3" style={{ flex: '1 0 auto', justifyContent: 'flex-end' }}>
+      <div className="ps-app-header-cluster flex items-center gap-3" style={{ flex: '0 0 auto', justifyContent: 'flex-end' }}>
         {/* Inline date selector - drives MTD/YTD for every KPI on the page (see SidebarFilters'
             equivalent, more-explained control; this is the same value, just reachable from the
             header too). Hidden when a FilterBar below already owns this control (Tachometer
@@ -207,6 +232,7 @@ export function AppHeader({
         <button
           aria-label={notificationCount > 0 ? `Notifications (${notificationCount} unread)` : 'Notifications'}
           title="Notifications"
+          className="ps-app-header-optional"
           style={{
             position: 'relative',
             display: 'flex',
@@ -242,7 +268,7 @@ export function AppHeader({
           )}
         </button>
 
-        <span aria-hidden style={{ color: 'var(--ps-color-border)' }}>
+        <span aria-hidden className="ps-app-header-optional" style={{ color: 'var(--ps-color-border)' }}>
           |
         </span>
 
@@ -307,7 +333,7 @@ function PageTitleHeading({ title }: { title: ReturnType<typeof usePageTitle> })
   const muted: React.CSSProperties = { ...ellipsis, fontWeight: 500, color: 'var(--ps-color-muted-text)' };
   const sep: React.CSSProperties = { flexShrink: 0, color: 'var(--ps-color-muted-text)', fontWeight: 400, padding: '0 6px' };
   return (
-    <h1 title={title.text} aria-label={title.text} style={{ display: 'flex', alignItems: 'baseline', minWidth: 'min(8rem, 100%)', fontSize: 20, fontWeight: 700, marginInlineStart: 12, whiteSpace: 'nowrap' }}>
+    <h1 title={title.text} aria-label={title.text} className="ps-app-header-title" style={{ display: 'flex', alignItems: 'baseline', whiteSpace: 'nowrap' }}>
       {title.context && (
         <>
           <span dir="auto" data-testid="title-context" style={{ ...muted, flex: '0 1000 auto' }}>{title.context}</span>
