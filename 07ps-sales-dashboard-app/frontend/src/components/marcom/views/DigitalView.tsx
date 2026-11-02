@@ -1,4 +1,5 @@
 'use client';
+import { chartTooltipProps } from '@07ps/ui';
 import React, { useState } from 'react';
 import { Bar, CartesianGrid, Cell, ComposedChart, Legend, Line, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts';
 import type { DigitalData, Kpi } from '../../../lib/marcom/types';
@@ -60,7 +61,7 @@ export function DigitalView({ data, refreshing }: Props) {
                     <Pie isAnimationActive={false} data={pieData} dataKey="value" nameKey="name" innerRadius={62} outerRadius={104} paddingAngle={2} stroke="var(--ps-color-surface)">
                       {pieData.map((p, i) => <Cell key={p.name} fill={CATEGORICAL_5[i % CATEGORICAL_5.length]} />)}
                     </Pie>
-                    <Tooltip content={({ active, payload }) => active && payload?.length ? <TooltipCard title={String(payload[0].name)} lines={[{ label: t('generic.value'), value: fmtInt(payload[0].value as number) }]} /> : null} />
+                    <Tooltip {...chartTooltipProps} content={({ active, payload }) => active && payload?.length ? <TooltipCard title={String(payload[0].name)} lines={[{ label: t('generic.value'), value: fmtInt(payload[0].value as number) }]} /> : null} />
                   </PieChart>
                 )}
               </ChartBox>
@@ -99,7 +100,7 @@ export function DigitalView({ data, refreshing }: Props) {
               <XAxis dataKey="label" tick={AXIS_TICK} />
               <YAxis yAxisId="count" tick={AXIS_TICK} tickFormatter={fmtCompact} label={{ value: t('p3.paid') + ' / ' + t('p3.organic'), angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
               <YAxis yAxisId="share" orientation="right" tick={AXIS_TICK} tickFormatter={(v) => `${v}%`} domain={[0, 100]} label={{ value: t('p3.organicShare') + ' %', angle: 90, position: 'insideRight', fill: SERIES.text, fontSize: 11 }} />
-              <Tooltip content={({ active, payload, label }) => active && payload?.length ? (
+              <Tooltip {...chartTooltipProps} content={({ active, payload, label }) => active && payload?.length ? (
                 <TooltipCard title={label} lines={payload.map((p) => ({ label: String(p.name), value: p.dataKey === 'share' ? fmtPct(p.value as number) : fmtInt(p.value as number), color: String(p.color) }))} />
               ) : null} />
               <Legend formatter={legendText} />

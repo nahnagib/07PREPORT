@@ -1,3 +1,4 @@
+import { tooltipBoxStyle } from '@07ps/ui';
 import React from 'react';
 import type { Kpi, Unit } from '../../../lib/marcom/types';
 
@@ -8,7 +9,7 @@ export const CHART_MARGIN = { top: 12, right: 16, bottom: 8, left: 8 } as const;
 
 export function TooltipCard({ title, lines }: { title?: React.ReactNode; lines: { label: string; value: string; color?: string }[] }) {
   return (
-    <div style={{ background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', border: '1px solid var(--ps-color-border)', borderRadius: 8, boxShadow: 'var(--ps-card-shadow)', padding: '8px 10px', fontSize: 12, maxWidth: 320 }}>
+    <div style={{ ...tooltipBoxStyle, borderRadius: 8, padding: '8px 10px', maxWidth: 320 }}>
       {title && <div style={{ fontWeight: 700, marginBottom: 4, overflowWrap: 'anywhere' }}>{title}</div>}
       {lines.map((l, i) => (
         <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

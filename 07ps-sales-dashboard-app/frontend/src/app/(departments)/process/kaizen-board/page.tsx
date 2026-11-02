@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Download } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ChartPanel, DonutChart, ErrorState, GroupedBarChart, formatDate } from '@07ps/ui';
+import { ChartPanel, DonutChart, ErrorState, GroupedBarChart, formatDate, chartTooltipProps, tooltipBoxStyle } from '@07ps/ui';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { KaizenShell, useKaizenListHref } from '../../../../components/kaizen/KaizenShell';
 import { KaizenFilterBar } from '../../../../components/kaizen/KaizenFilterBar';
@@ -32,13 +32,7 @@ export default function KaizenBoardPage() {
   );
 }
 
-const TOOLTIP_STYLE: React.CSSProperties = {
-  borderRadius: 10,
-  border: '1px solid var(--ps-color-border)',
-  fontSize: 12,
-  background: 'var(--ps-color-surface)',
-  color: 'var(--ps-color-text)',
-};
+const TOOLTIP_STYLE: React.CSSProperties = tooltipBoxStyle;
 
 function KaizenBoardBody() {
   const { token } = useAuth();
@@ -200,7 +194,7 @@ function KaizenBoardBody() {
                         <YAxis allowDecimals={false} width={32} tick={{ fontSize: 12, fill: 'var(--ps-color-muted-text)' }} />
                       </>
                     )}
-                    <Tooltip
+                    <Tooltip {...chartTooltipProps}
                       cursor={{ fill: 'var(--ps-color-muted-bg)' }}
                       // Own content: theme text colours (the default tints the text with the bar colour,
                       // unreadable on the dark card) and "1 card" / "3 cards" instead of "Cards : 1 cards".

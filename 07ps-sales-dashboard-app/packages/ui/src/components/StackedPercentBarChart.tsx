@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LabelList } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { chartTooltipProps } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 
 export interface StackedPercentSegment {
@@ -142,15 +143,8 @@ export function StackedPercentBarChart({
                 />
               </>
             )}
-            <Tooltip
+            <Tooltip {...chartTooltipProps}
               formatter={(value: number, name: string) => [`${value.toFixed(1)}%`, name]}
-              contentStyle={{
-                borderRadius: 10,
-                border: '1px solid var(--ps-color-border)',
-                fontSize: 12,
-                background: 'var(--ps-color-surface)',
-                color: 'var(--ps-color-text)',
-              }}
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             {segments.map((s) => (

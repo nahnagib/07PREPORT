@@ -27,6 +27,7 @@ import {
   type PerformanceTablePdfColumn,
   type SemanticStatus,
   useCanExport,
+  tooltipBoxStyle,
 } from '@07ps/ui';
 import {
   toProductFacts,
@@ -267,8 +268,7 @@ export default function StockVelocityPage() {
       return (
         <div
           style={{
-            borderRadius: 10, border: '1px solid var(--ps-color-border)', fontSize: 12,
-            background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', padding: '10px 12px', minWidth: 190,
+            ...tooltipBoxStyle, padding: '10px 12px', minWidth: 190,
           }}
         >
           <div style={{ fontWeight: 700, marginBottom: 6 }}>{point.label}</div>

@@ -13,6 +13,7 @@ import {
   LabelList,
 } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { chartTooltipProps } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 import { DISPLAY_LOCALE } from '../locale';
 
@@ -201,19 +202,12 @@ export function ComboChart({
                 width={52}
               />
             )}
-            <Tooltip
+            <Tooltip {...chartTooltipProps}
               labelFormatter={tooltipLabelFormatter ? (label: unknown) => tooltipLabelFormatter(String(label)) : undefined}
               formatter={(value: number, name: string, item: any) => {
                 const dataKey = item?.dataKey as string;
                 const isRightAxis = item?.payload && lines.some((l) => l.key === dataKey && (l.yAxisId ?? 'right') === 'right');
                 return [tooltipFormatterFor(dataKey, !!isRightAxis)(value, item?.payload), name];
-              }}
-              contentStyle={{
-                borderRadius: 10,
-                border: '1px solid var(--ps-color-border)',
-                fontSize: 12,
-                background: 'var(--ps-color-surface)',
-                color: 'var(--ps-color-text)',
               }}
             />
             <Legend onClick={handleLegendClick} wrapperStyle={{ fontSize: 12, cursor: 'pointer' }} />

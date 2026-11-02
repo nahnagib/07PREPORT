@@ -49,6 +49,7 @@ import {
   type DataGridColumn,
   type GroupedBarChartPoint,
   type SelectOption,
+  tooltipBoxStyle,
 } from '@07ps/ui';
 
 const RECEIVABLES_GRAIN_LABELS: Record<ReceivablesGrain, string> = { day: 'Day', week: 'Week', month: 'Month' };
@@ -977,7 +978,7 @@ function NoData() {
 
 function TooltipBox({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ borderRadius: 10, border: '1px solid var(--ps-color-border)', fontSize: 12, background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', padding: '10px 12px', minWidth: 200 }}>
+    <div style={{ ...tooltipBoxStyle, padding: '10px 12px', minWidth: 200 }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }} dir="auto">
         {title}
       </div>

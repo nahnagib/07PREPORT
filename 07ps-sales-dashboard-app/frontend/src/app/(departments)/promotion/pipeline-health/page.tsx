@@ -360,11 +360,13 @@ interface FunnelTableRow extends Record<string, unknown> {
   stage: string;
   count: number;
   value: number;
+  reachedPct: string;
 }
 const funnelTableColumns: Column<FunnelTableRow>[] = [
   { key: 'stage', header: 'Stage' },
   { key: 'count', header: 'Count', align: 'right' },
   { key: 'value', header: 'Value', align: 'right', render: (r) => formatCurrency(r.value) },
+  { key: 'reachedPct', header: '% of opportunities created that reached it', align: 'right' },
 ];
 
 interface BenchmarkTableRow extends Record<string, unknown> {
@@ -539,12 +541,18 @@ export default function PipelineHealthPage() {
   // Leads deliberately excluded from this visual (per the B2B/YTD "Full Pipeline" spec, the
   // pipeline starts at Opportunities) -- Stage Benchmark's own "Lead -> Opportunity" row still
   // covers that transition separately, unaffected by this.
+  // Funnel % (2026-11-02, same base as Stage Benchmark, option A): the share of ALL opportunities created in the period
+  // (Pending + Won + Lost) that reached each step -- so no step can pass 100%. The bars keep their own counts (the
+  // Opportunities bar = open only), which is why the Opportunities row shows no %. Before, each bar was divided by the
+  // open-only Opportunities bar while Quotations also counted won/lost deals (e.g. 183%).
+  const cohort = data?.benchmarkCohort;
+  const reachedShare = (n: number | undefined) => (cohort && cohort.opportunities > 0 && n != null ? n / cohort.opportunities : null);
   const funnelStages = data
     ? [
-        { id: 'opportunities', label: 'Opportunities', value: data.funnel.opportunities, secondaryValue: data.funnelValues.opportunities, color: FUNNEL_COLORS[0] },
-        { id: 'quotations', label: 'Quotations', value: data.funnel.quotations, secondaryValue: data.funnelValues.quotations, color: FUNNEL_COLORS[1] },
-        { id: 'salesOrders', label: 'Sales Orders', value: data.funnel.salesOrders, secondaryValue: data.funnelValues.salesOrders, color: FUNNEL_COLORS[2] },
-        { id: 'deliveries', label: 'Deliveries', value: data.funnel.deliveries, secondaryValue: data.funnelValues.deliveries, color: FUNNEL_COLORS[3] },
+        { id: 'opportunities', label: 'Opportunities', value: data.funnel.opportunities, secondaryValue: data.funnelValues.opportunities, pct: null, color: FUNNEL_COLORS[0] },
+        { id: 'quotations', label: 'Quotations', value: data.funnel.quotations, secondaryValue: data.funnelValues.quotations, pct: reachedShare(cohort?.quotations), color: FUNNEL_COLORS[1] },
+        { id: 'salesOrders', label: 'Sales Orders', value: data.funnel.salesOrders, secondaryValue: data.funnelValues.salesOrders, pct: reachedShare(cohort?.salesOrders), color: FUNNEL_COLORS[2] },
+        { id: 'deliveries', label: 'Deliveries', value: data.funnel.deliveries, secondaryValue: data.funnelValues.deliveries, pct: reachedShare(cohort?.deliveries), color: FUNNEL_COLORS[3] },
       ]
     : [];
 
@@ -586,7 +594,7 @@ export default function PipelineHealthPage() {
     .filter((o) => matchesFilter(o, detailsFilter, data?.funnelOpportunityIds))
     .map(toTableRow);
 
-  const funnelTableRows: FunnelTableRow[] = funnelStages.map((s) => ({ id: s.id, stage: s.label, count: s.value, value: s.secondaryValue ?? 0 }));
+  const funnelTableRows: FunnelTableRow[] = funnelStages.map((s) => ({ id: s.id, stage: s.label, count: s.value, value: s.secondaryValue ?? 0, reachedPct: s.pct == null ? '—' : formatPct(s.pct) }));
   const benchmarkTableRows: BenchmarkTableRow[] = (data?.stageBenchmark ?? []).map((row) => ({
     id: row.transition,
     transition: row.transition,
@@ -739,13 +747,20 @@ export default function PipelineHealthPage() {
                   ) : overview.error ? (
                     <ErrorState message={overview.error} onRetry={overview.retry} />
                   ) : (
-                    <FunnelChart
-                      title="Full Pipeline"
-                      showTitle={false}
-                      stages={funnelStages}
-                      secondaryValueFormatter={(v) => formatCurrency(v)}
-                      onStageClick={handleFunnelStageClick}
-                    />
+                    <>
+                      <FunnelChart
+                        title="Full Pipeline"
+                        showTitle={false}
+                        stages={funnelStages}
+                        secondaryValueFormatter={(v) => formatCurrency(v)}
+                        onStageClick={handleFunnelStageClick}
+                      />
+                      {cohort && (
+                        <div data-testid="funnel-pct-base" style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 6 }}>
+                          % = share of the {cohort.opportunities.toLocaleString(DISPLAY_LOCALE)} opportunities created this year (Pending, Won and Lost) that reached each step.
+                        </div>
+                      )}
+                    </>
                   )}
                 </ChartPanel>
 

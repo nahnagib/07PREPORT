@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import type { SemanticStatus } from './KpiTile';
 import { exportSvgAsImage } from '../chartExport';
+import { chartTooltipProps } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 import { DISPLAY_LOCALE } from '../locale';
 
@@ -145,9 +146,8 @@ export function BreakdownChart({
               axisLine={false}
               tickLine={false}
             />
-            <Tooltip
+            <Tooltip {...chartTooltipProps}
               formatter={(value: number, name: string) => [valueFormatter(value), name]}
-              contentStyle={{ borderRadius: 10, border: '1px solid var(--ps-color-border)', fontSize: 12 }}
             />
             <Legend onClick={handleLegendClick} wrapperStyle={{ fontSize: 12, cursor: 'pointer' }} />
             <Bar

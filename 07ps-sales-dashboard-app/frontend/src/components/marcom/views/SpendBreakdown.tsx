@@ -1,4 +1,5 @@
 'use client';
+import { chartTooltipProps } from '@07ps/ui';
 import React from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Tooltip, XAxis, YAxis } from 'recharts';
 import type { SpendingData } from '../../../lib/marcom/types';
@@ -24,7 +25,7 @@ export function CategoryCard({ data, refreshing }: { data: SpendingData; refresh
             <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" horizontal={false} />
             <XAxis type="number" tick={AXIS_TICK} tickFormatter={fmtCompact} />
             <YAxis type="category" dataKey="category" width={150} tick={AXIS_TICK} tickFormatter={(v: string) => truncate(v, 22)} />
-            <Tooltip content={({ active, payload }) => {
+            <Tooltip {...chartTooltipProps} content={({ active, payload }) => {
               const c = active && payload?.length ? (payload[0].payload as (typeof rows)[number]) : null;
               return c ? <TooltipCard title={c.category} lines={[{ label: t('p1.amount'), value: fmtLyd(c.amount) }, { label: t('p1.share'), value: fmtPct(c.share) }]} /> : null;
             }} />

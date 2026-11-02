@@ -158,8 +158,10 @@ export function HintPopover({ label, icon, testId, children }: { label: string; 
             width: 'max-content', maxWidth: `min(${POPOVER_MAX}px, calc(100vw - ${2 * MARGIN}px))`,
             padding: '10px 12px', borderRadius: 10, fontSize: 12.5, lineHeight: 1.45, textAlign: 'start',
             maxHeight: 'calc(100vh - 16px)', overflowY: 'auto', whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 400,
-            background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)',
-            border: '1px solid var(--ps-color-border)', boxShadow: 'var(--ps-card-shadow, 0 8px 24px rgba(0,0,0,0.25))',
+            // Same tooltip theme as the charts (chartTooltip.ts / --ps-tooltip-* tokens).
+            background: 'var(--ps-tooltip-bg)', color: 'var(--ps-tooltip-fg)',
+            border: '1px solid var(--ps-tooltip-border)', boxShadow: 'var(--ps-tooltip-shadow)',
+            ['--ps-color-muted-text' as string]: 'var(--ps-tooltip-muted)',
           }}
         >
           {children}

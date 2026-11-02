@@ -1,7 +1,7 @@
 'use client';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { EmptyState, ErrorState, LoadingSkeleton, Select, type SelectOption } from '@07ps/ui';
+import { EmptyState, ErrorState, LoadingSkeleton, Select, type SelectOption, tooltipBoxStyle } from '@07ps/ui';
 import type { CreditCustomer, CreditPolicyZone, DebtAging } from '../../lib/api';
 import { formatCompactMoney, formatDate, formatMoney, formatNumber } from '../../lib/format';
 import { InfoHint } from './InfoHint';
@@ -297,8 +297,7 @@ function DotTooltip({ c, anchor, zones, money, foreign }: { c: CreditCustomer; a
       role="tooltip"
       style={{
         position: 'fixed', zIndex: 1000, left: pos?.left ?? 0, top: pos?.top ?? 0, visibility: pos ? 'visible' : 'hidden', pointerEvents: 'none',
-        width: 'min(330px, calc(100vw - 16px))', boxSizing: 'border-box', background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)',
-        border: '1px solid var(--ps-color-border)', borderRadius: 12, boxShadow: '0 12px 32px rgba(0,0,0,.22)', padding: '12px 14px', fontSize: 12.5,
+        width: 'min(330px, calc(100vw - 16px))', boxSizing: 'border-box', ...tooltipBoxStyle, borderRadius: 12, padding: '12px 14px', fontSize: 12.5,
       }}
     >
       <div dir="auto" style={{ fontSize: 14.5, fontWeight: 700, overflowWrap: 'anywhere' }}>

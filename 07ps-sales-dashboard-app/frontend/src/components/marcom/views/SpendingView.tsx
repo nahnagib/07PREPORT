@@ -1,4 +1,5 @@
 'use client';
+import { chartTooltipProps } from '@07ps/ui';
 import React, { useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
 import type { SpendingData, Status } from '../../../lib/marcom/types';
@@ -131,7 +132,7 @@ export function SpendingView({ data, refreshing }: Props) {
                   <XAxis dataKey="label" tick={AXIS_TICK} />
                   <YAxis yAxisId="lyd" tick={AXIS_TICK} tickFormatter={fmtCompact} label={{ value: t('unit.lyd'), angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
                   <YAxis yAxisId="pct" orientation="right" tick={AXIS_TICK} tickFormatter={(v) => `${Math.round(Number(v))}%`} label={{ value: t('p1.pctAxis'), angle: 90, position: 'insideRight', fill: SERIES.text, fontSize: 11 }} />
-                  <Tooltip content={({ active, payload, label }) => active && payload?.length ? (
+                  <Tooltip {...chartTooltipProps} content={({ active, payload, label }) => active && payload?.length ? (
                     <TooltipCard title={label} lines={payload.map((p) => ({ label: String(p.name), value: p.dataKey === 'pct' ? fmtPct(p.value as number) : fmtLyd(p.value as number), color: String(p.color) }))} />
                   ) : null} />
                   <Legend formatter={legendText} />
@@ -170,7 +171,7 @@ export function SpendingView({ data, refreshing }: Props) {
                 <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" domain={[0, budgetMax]} tick={AXIS_TICK} tickFormatter={(v) => `${Math.round(Number(v))}%`} />
                 <YAxis type="category" dataKey="key" width={120} tick={(p: { x?: number; y?: number; payload?: { value: string } }) => <SideTick {...p} rows={budgetRows} />} />
-                <Tooltip content={({ active, payload }) => {
+                <Tooltip {...chartTooltipProps} content={({ active, payload }) => {
                   const b = active && payload?.length ? (payload[0].payload as (typeof budgetRows)[number]) : null;
                   return b ? <TooltipCard title={b.sub ? `${b.label} · ${b.sub}` : b.label} lines={[{ label: '%', value: fmtPct(b.value) }, { label: '', value: t('p1.budgetTip', { spent: fmtLyd(b.spend), budget: fmtLyd(b.budget) }) }, ...(b.overBudget ? [{ label: '', value: t('generic.overBudget') }] : [])]} /> : null;
                 }} />
@@ -207,7 +208,7 @@ export function SpendingView({ data, refreshing }: Props) {
                 <XAxis dataKey="key" interval={0} height={growthBy === 'brand' ? 40 : 24} tick={(p: { x?: number; y?: number; payload?: { value: string } }) => <NameTick {...p} rows={growthRows} />} />
                 {/* headroom below/above the bars so the signed labels never collide with the axis text */}
                 <YAxis tick={AXIS_TICK} domain={[(min: number) => Math.min(0, Math.floor(min * 1.5)), (max: number) => Math.max(0, Math.ceil(max * 1.2))]} tickFormatter={(v) => `${Math.round(Number(v))}%`} label={{ value: '%', angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
-                <Tooltip content={({ active, payload }) => {
+                <Tooltip {...chartTooltipProps} content={({ active, payload }) => {
                   const b = active && payload?.length ? (payload[0].payload as (typeof growthRows)[number]) : null;
                   return b ? <TooltipCard title={b.sub ? `${b.label} · ${b.sub}` : b.label} lines={[{ label: '%', value: fmtSignedPct(b.value) }, { label: '', value: t('p1.growthTip', { cur: fmtLyd(b.revenueCurrent), ly: fmtLyd(b.revenueLastYear) }) }]} /> : null;
                 }} />

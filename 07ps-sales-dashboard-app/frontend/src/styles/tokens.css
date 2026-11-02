@@ -48,6 +48,15 @@
   --ps-chart-target: #15803d;
 
   /* Light theme surface/text */
+  color-scheme: light;
+  /* Tooltips and hover cards (charts, info popovers): one theme for the whole app, read through
+     packages/ui/src/chartTooltip.ts (TOOLTIP_TOKENS there mirrors these values; a test checks both
+     and the AA contrast). */
+  --ps-tooltip-bg: #ffffff;
+  --ps-tooltip-fg: #1a1a1a;
+  --ps-tooltip-muted: #595959;
+  --ps-tooltip-border: #d4d4d4;
+  --ps-tooltip-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
   --ps-color-page-bg: #f5f6f8;
   --ps-color-gold: #b8860b;
   --ps-color-translucent-bg: rgba(255, 255, 255, 0.86);
@@ -140,6 +149,14 @@
 }
 
 [data-theme='dark'] {
+  /* Native controls (select option lists, scrollbars, date pickers) follow the dark theme too. */
+  color-scheme: dark;
+  /* Tooltips: light text on a raised navy box, a step lighter than the cards so it stands out. */
+  --ps-tooltip-bg: #222b40;
+  --ps-tooltip-fg: #f2f2f2;
+  --ps-tooltip-muted: #c2c8d4;
+  --ps-tooltip-border: #3b4661;
+  --ps-tooltip-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
   /* Tachometer rebuild (dark-theme pass): explicit deep navy page canvas per the new mockup
      ("#0B111E or #111827"), kept distinct from --ps-card-bg (below) which stays a step lighter --
      "slightly lighter cards for depth" -- rather than the previous pass where page and card shared

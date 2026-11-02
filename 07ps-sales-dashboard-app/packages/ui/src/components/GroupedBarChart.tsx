@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LabelList } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { chartTooltipProps } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 import { DISPLAY_LOCALE } from '../locale';
 
@@ -196,17 +197,10 @@ export function GroupedBarChart({
               width={yAxisWidth ?? 64}
               interval={0}
             />
-            <Tooltip
+            <Tooltip {...chartTooltipProps}
               formatter={(value: number, name: string, item: any) => {
                 const dataKey = item?.dataKey as string;
                 return [tooltipFormatterFor(dataKey)(value), name];
-              }}
-              contentStyle={{
-                borderRadius: 10,
-                border: '1px solid var(--ps-color-border)',
-                fontSize: 12,
-                background: 'var(--ps-color-surface)',
-                color: 'var(--ps-color-text)',
               }}
               content={
                 tooltipContent

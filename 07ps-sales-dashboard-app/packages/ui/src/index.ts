@@ -5,6 +5,7 @@ export * from './theme';
 export * from './pdfExport';
 export * from './performanceTablePdfExport';
 export * from './chartExport';
+export * from './chartTooltip';
 export * from './tableExport';
 export * from './exportPermission';
 export * from './pdfPagination';
