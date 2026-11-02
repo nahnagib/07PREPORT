@@ -696,3 +696,22 @@ textarea.ps-kaizen-input { min-height: 84px; resize: vertical; }
   .ps-fu-filters > .ps-kaizen-field { flex: 1 1 140px; }
   .ps-fu-dialog { padding: 14px 16px 24px; }
 }
+
+/* Chart tooltips (2026-11-02 dark-mode fix): every chart spreads chartTooltipProps (packages/ui
+   chartTooltip.ts); this is the safety net for any Recharts tooltip that doesn't, so its text can
+   never fall back to the series colour or #000 on a dark box. */
+.recharts-default-tooltip {
+  background-color: var(--ps-tooltip-bg) !important;
+  border-color: var(--ps-tooltip-border) !important;
+  color: var(--ps-tooltip-fg) !important;
+}
+.recharts-default-tooltip .recharts-tooltip-label,
+.recharts-default-tooltip .recharts-tooltip-item {
+  color: var(--ps-tooltip-fg) !important;
+}
+
+/* Native <select> option lists: theme colours in both themes (with color-scheme in tokens.css). */
+option, optgroup {
+  background-color: var(--ps-color-surface);
+  color: var(--ps-color-text);
+}

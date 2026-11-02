@@ -14,7 +14,7 @@ import {
   type TooltipProps,
 } from 'recharts';
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, FileDown, FileSpreadsheet, Image as ImageIcon, TrendingDown, TrendingUp, X } from 'lucide-react';
-import { ErrorState, LoadingSkeleton, exportRowsAsCsv, exportRowsAsPdf, exportRowsAsXlsx, exportSvgAsImage, useCanExport } from '@07ps/ui';
+import { ErrorState, LoadingSkeleton, exportRowsAsCsv, exportRowsAsPdf, exportRowsAsXlsx, exportSvgAsImage, useCanExport, chartTooltipProps, tooltipBoxStyle } from '@07ps/ui';
 import type { MissingTrendGranularity, MissingTrendPeriod, TachometerFilters } from '../../lib/api';
 import { useCriticalNumberMissingTrend } from '../../lib/hooks';
 import { formatCompactCurrency, formatCurrency, formatVariance } from '../../lib/format';
@@ -405,7 +405,7 @@ export function MissingTrendModal({
                     />
                   </YAxis>
                   <ReferenceLine y={0} stroke="var(--ps-color-muted-text)" strokeDasharray="4 4" />
-                  <Tooltip content={<GapTooltip granularity={granularity} />} />
+                  <Tooltip {...chartTooltipProps} content={<GapTooltip granularity={granularity} />} />
                   <Line
                     type="monotone"
                     dataKey="complete"
@@ -529,13 +529,9 @@ function GapTooltip({
   return (
     <div
       style={{
-        background: 'var(--ps-color-surface)',
-        border: '1px solid var(--ps-color-border)',
-        borderRadius: 10,
+        ...tooltipBoxStyle,
         padding: '8px 12px',
-        fontSize: 12,
         minWidth: 240,
-        boxShadow: 'var(--ps-card-shadow)',
       }}
     >
       <div style={{ fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 6 }}>

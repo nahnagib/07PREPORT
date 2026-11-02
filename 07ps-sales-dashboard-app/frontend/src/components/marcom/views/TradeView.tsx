@@ -1,4 +1,5 @@
 'use client';
+import { chartTooltipProps } from '@07ps/ui';
 import React, { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, Tooltip, XAxis, YAxis } from 'recharts';
@@ -88,7 +89,7 @@ export function TradeView({ data, refreshing, filters, setFilters }: Props) {
               <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
               <XAxis dataKey="label" tick={AXIS_TICK} />
               <YAxis allowDecimals={false} tick={AXIS_TICK} label={{ value: '#', angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
-              <Tooltip content={({ active, payload, label }) => active && payload?.length ? (
+              <Tooltip {...chartTooltipProps} content={({ active, payload, label }) => active && payload?.length ? (
                 <TooltipCard title={label} lines={payload.filter((p) => Number(p.value) > 0).map((p) => ({ label: String(p.name), value: String(p.value), color: String(p.color) }))} />
               ) : null} />
               <Legend formatter={legendText} />

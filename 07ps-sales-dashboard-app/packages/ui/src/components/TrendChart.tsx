@@ -11,6 +11,7 @@ import {
   Brush,
 } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { chartTooltipProps } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 import { DISPLAY_LOCALE } from '../locale';
 
@@ -150,14 +151,9 @@ export function TrendChart({
               tickFormatter={valueFormatter}
               width={48}
             />
-            <Tooltip
+            <Tooltip {...chartTooltipProps}
               formatter={(value: number, name: string) => [tooltipFormatter(value), name]}
               labelFormatter={(label: string) => `Month: ${label}`}
-              contentStyle={{
-                borderRadius: 10,
-                border: '1px solid var(--ps-color-border)',
-                fontSize: 12,
-              }}
             />
             <Legend onClick={handleLegendClick} wrapperStyle={{ fontSize: 12, cursor: 'pointer' }} />
             <Line

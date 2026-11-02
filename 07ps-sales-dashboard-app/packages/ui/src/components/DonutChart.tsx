@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { chartTooltipProps } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 import { DISPLAY_LOCALE } from '../locale';
 
@@ -200,20 +201,13 @@ export function DonutChart({
                   );
                 })}
               </Pie>
-              <Tooltip
+              <Tooltip {...chartTooltipProps}
                 formatter={(value: number, name: string, entry: any) => {
                   const count = entry?.payload?.count;
                   const pct = `${((value / total) * 100).toFixed(2)}%`;
                   const countText = typeof count === 'number' ? ` (${count.toLocaleString(DISPLAY_LOCALE)} invoice${count === 1 ? '' : 's'})` : '';
                   const note = entry?.payload?.tooltipNote;
                   return [`${valueFormatter(value)} -- ${pct}${countText}${note ? ` · ${note}` : ''}`, name];
-                }}
-                contentStyle={{
-                  borderRadius: 10,
-                  border: '1px solid var(--ps-color-border)',
-                  fontSize: 12,
-                  background: 'var(--ps-color-surface)',
-                  color: 'var(--ps-color-text)',
                 }}
               />
             </PieChart>

@@ -227,7 +227,7 @@ export const VISUAL_HELP = {
   'promotion.pipelineHealth.fullPipeline': {
     help: {
       definition: 'B2B opportunities created this year and how many reached Quotation, Sales Order and Delivery. Each stage counts distinct opportunities, so it is a subset of the stage before. Stage Benchmark compares each step with its target.',
-      notes: 'The Opportunities bar shows open (Pending) opportunities only; Won and Lost deals are in Opportunity by Status. Stage Benchmark is calculated on every opportunity created in the period (Pending + Won + Lost), so its ratios differ from the bars.',
+      notes: 'The Opportunities bar shows open (Pending) opportunities only; Won and Lost deals are in Opportunity by Status. The % next to Quotations, Sales Orders and Deliveries is the share of ALL opportunities created in the period (Pending + Won + Lost) that reached that step -- the same base as Stage Benchmark -- so it never passes 100%. The bars count every opportunity with a quotation, order or delivery in the period, so they are not that % of the Opportunities bar.',
     },
     interactions: ['Click a stage to see its records (quotations, orders, deliveries)', 'Open the Opportunity chain to follow each opportunity through every stage'],
   },

@@ -1,4 +1,5 @@
 'use client';
+import { chartTooltipProps } from '@07ps/ui';
 import React from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, Tooltip, XAxis, YAxis } from 'recharts';
 import type { RoiBlock, Status } from '../../../lib/marcom/types';
@@ -40,7 +41,7 @@ export function RoiTrendCard({ roi, noLastYear, refreshing }: { roi: RoiBlock; n
               <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
               <XAxis dataKey="label" tick={AXIS_TICK} />
               <YAxis tick={AXIS_TICK} tickFormatter={(v) => fmtRatio(v as number)} label={{ value: '1 : X', angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
-              <Tooltip content={({ active, payload, label }) => active && payload?.length ? (
+              <Tooltip {...chartTooltipProps} content={({ active, payload, label }) => active && payload?.length ? (
                 <TooltipCard title={label} lines={payload.map((p) => ({ label: String(p.name), value: fmtRatio(p.value as number), color: String(p.color) }))} />
               ) : null} />
               <Legend formatter={legendText} />

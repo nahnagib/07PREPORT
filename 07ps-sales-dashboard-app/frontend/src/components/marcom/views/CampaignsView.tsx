@@ -1,4 +1,5 @@
 'use client';
+import { chartTooltipProps } from '@07ps/ui';
 import React, { useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, Legend, ReferenceLine, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import type { CampaignsData } from '../../../lib/marcom/types';
@@ -55,7 +56,7 @@ export function CampaignsView({ data, refreshing }: Props) {
               <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
               <XAxis dataKey="name" interval={0} angle={-25} textAnchor="end" height={70} tick={AXIS_TICK} tickFormatter={(v) => truncate(String(v), 14)} />
               <YAxis tick={AXIS_TICK} tickFormatter={fmtCompact} label={{ value: t('unit.lyd'), angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
-              <Tooltip content={({ active, payload }) => {
+              <Tooltip {...chartTooltipProps} content={({ active, payload }) => {
                 const c = active && payload?.length ? (payload[0].payload as (typeof data.spendVsRevenue)[number]) : null;
                 return c ? <TooltipCard title={c.name} lines={[{ label: t('gantt.brand'), value: c.brand }, { label: t('gantt.spend'), value: fmtLyd(c.spend), color: SERIES.primary }, { label: t('gantt.revenue'), value: fmtLyd(c.revenue), color: SERIES.secondary }]} /> : null;
               }} />
@@ -92,7 +93,7 @@ export function CampaignsView({ data, refreshing }: Props) {
               <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
               <XAxis dataKey="name" interval={0} angle={-25} textAnchor="end" height={70} tick={AXIS_TICK} tickFormatter={(v) => truncate(String(v), 14)} />
               <YAxis tick={AXIS_TICK} tickFormatter={(v) => fmtRatio(v as number)} label={{ value: '1 : X', angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
-              <Tooltip content={({ active, payload }) => {
+              <Tooltip {...chartTooltipProps} content={({ active, payload }) => {
                 const c = active && payload?.length ? (payload[0].payload as { name: string; brand: string; value: number; status: 'green' | 'yellow' | 'red' }) : null;
                 return c ? <TooltipCard title={c.name} lines={[{ label: t('gantt.brand'), value: c.brand }, { label: 'ROI', value: fmtRatio(c.value), color: RAG_COLOR[c.status] }, { label: t('generic.status'), value: ragLabel(c.status) }]} /> : null;
               }} />
@@ -134,7 +135,7 @@ export function CampaignsView({ data, refreshing }: Props) {
               <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
               <XAxis dataKey="name" tick={AXIS_TICK} interval={0} />
               <YAxis tick={AXIS_TICK} tickFormatter={fmtCompact} label={{ value: t('unit.lyd'), angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
-              <Tooltip content={({ active, payload }) => {
+              <Tooltip {...chartTooltipProps} content={({ active, payload }) => {
                 const c = active && payload?.length ? (payload[0].payload as { name: string; cost: number; units: number; cpu: number | null }) : null;
                 return c ? <TooltipCard title={c.name} lines={[{ label: t('unit.lyd'), value: fmtLyd(c.cost) }, { label: t('p2.costUnits'), value: fmtInt(c.units) }, { label: t('p2.costPerUnit'), value: fmtLyd(c.cpu) }]} /> : null;
               }} />
@@ -149,7 +150,7 @@ export function CampaignsView({ data, refreshing }: Props) {
               <XAxis type="number" dataKey="units" name={t('p2.costUnits')} tick={AXIS_TICK} label={{ value: t('p2.costUnits'), position: 'insideBottom', offset: -2, fill: SERIES.text, fontSize: 11 }} />
               <YAxis type="number" dataKey="cost" name={t('unit.lyd')} tick={AXIS_TICK} tickFormatter={fmtCompact} label={{ value: t('unit.lyd'), angle: -90, position: 'insideLeft', fill: SERIES.text, fontSize: 11 }} />
               <ZAxis type="number" dataKey="cpu" range={[120, 900]} name={t('p2.costPerUnit')} />
-              <Tooltip content={({ active, payload }) => {
+              <Tooltip {...chartTooltipProps} content={({ active, payload }) => {
                 const c = active && payload?.length ? (payload[0].payload as { name: string; cost: number; units: number; cpu: number }) : null;
                 return c ? <TooltipCard title={c.name} lines={[{ label: t('p2.costUnits'), value: fmtInt(c.units) }, { label: t('unit.lyd'), value: fmtLyd(c.cost) }, { label: t('p2.costPerUnit'), value: fmtLyd(c.cpu) }]} /> : null;
               }} />

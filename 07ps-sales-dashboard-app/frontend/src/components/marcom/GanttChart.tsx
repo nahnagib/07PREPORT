@@ -1,4 +1,5 @@
 'use client';
+import { tooltipBoxStyle } from '@07ps/ui';
 import React, { useState } from 'react';
 import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { buildTicks, GanttRange, layoutBar, markerPos, pixelsPerDay, rangeDays, tickGranularity } from '../../lib/marcom/gantt';
@@ -169,7 +170,7 @@ export function GanttChart({ rows, range, today, legend, ariaLabel, labelWidth =
               role="tooltip" data-testid="gantt-tooltip"
               style={{
                 position: 'absolute', zIndex: 6, top: HEADER_H + (tipIndex + 1) * rowHeight + 4, insetInlineStart: `calc(${labelWidth}px + (100% - ${labelWidth}px) * ${(tipGeo.left > 60 ? tipGeo.left - 14 : tipGeo.left) / 100})`,
-                maxWidth: 300, background: 'var(--ps-color-surface)', color: 'var(--ps-color-text)', border: '1px solid var(--ps-color-border)', borderRadius: 8, boxShadow: 'var(--ps-card-shadow)', padding: '8px 10px', fontSize: 12, pointerEvents: 'none',
+                maxWidth: 300, ...tooltipBoxStyle, borderRadius: 8, padding: '8px 10px', pointerEvents: 'none',
               }}
             >
               <div style={{ fontWeight: 700, marginBottom: 4 }}>{tipRow.label}</div>

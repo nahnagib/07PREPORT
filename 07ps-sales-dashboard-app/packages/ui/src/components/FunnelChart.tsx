@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ResponsiveContainer, FunnelChart as RechartsFunnelChart, Funnel, Cell, LabelList, Tooltip } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { chartTooltipProps } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 import { DISPLAY_LOCALE } from '../locale';
 
@@ -12,6 +13,10 @@ export interface FunnelStage {
    * count) -- shown in the tooltip/legend next to the primary value when `secondaryValueFormatter`
    * is also provided. Omit for a chart with no secondary figure (behaves exactly as before). */
   secondaryValue?: number;
+  /** The share shown in brackets (0..1), when the caller has its own base for it -- e.g. Pipeline Health's share of all
+   * opportunities created in the period that reached this step. null shows no percentage for this stage. Omitted: the
+   * stage's value as a share of the first stage's (the default). */
+  pct?: number | null;
   /** Fill color for this stage -- callers assign from existing design-system tokens (e.g.
    * var(--ps-color-accent), var(--ps-color-gold)), same "borrow a few brand/semantic hues for a
    * category dimension with no dedicated token" convention as Invoices Engine's
@@ -76,7 +81,8 @@ function stageValueLabel(
   valueFormatter: (v: number) => string,
   secondaryValueFormatter?: (v: number) => string,
 ): string {
-  const pct = first > 0 ? ` (${((stage.value / first) * 100).toFixed(1)}%)` : '';
+  const share = stage.pct !== undefined ? stage.pct : first > 0 ? stage.value / first : null;
+  const pct = share != null ? ` (${(share * 100).toFixed(1)}%)` : '';
   const secondary =
     secondaryValueFormatter && stage.secondaryValue != null ? ` · ${secondaryValueFormatter(stage.secondaryValue)}` : '';
   return `${valueFormatter(stage.value)}${pct}${secondary}`;
@@ -156,20 +162,13 @@ export function FunnelChart({
               longest stage name ("Sales Order → Delivery"-length labels) without re-triggering the
               collapse. left stays 0 since no room is needed on that side. */}
           <RechartsFunnelChart margin={{ top: 0, right: 40, bottom: 0, left: 0 }}>
-            <Tooltip
+            <Tooltip {...chartTooltipProps}
               // The shape is driven by the synthetic `displayWidth`, not the real value -- pull the
               // real value back off the hovered stage's own payload so the tooltip always shows the
               // actual count/percentage/value, matching the legend below exactly (see stageValueLabel).
               formatter={(_value: number, name: string, entry: any) => {
                 const stage: FunnelStage | undefined = entry?.payload;
                 return [stage ? stageValueLabel(stage, first, valueFormatter, secondaryValueFormatter) : '', name];
-              }}
-              contentStyle={{
-                borderRadius: 10,
-                border: '1px solid var(--ps-color-border)',
-                fontSize: 12,
-                background: 'var(--ps-color-surface)',
-                color: 'var(--ps-color-text)',
               }}
             />
             <Funnel

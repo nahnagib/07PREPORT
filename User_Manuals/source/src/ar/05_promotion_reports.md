@@ -146,7 +146,7 @@
 
 ![Pipeline Health](shots/pipeline_health.png){annot="1:80,380;2:250,144;3:775,230;4:1020,169"}
 
-1. **Full Pipeline** (خط الفرص الكامل): قمع يمثّل **Opportunities → Quotations → Sales Orders → Deliveries** (الفرص ← عروض الأسعار ← أوامر البيع ← التسليمات)، مع عدد كل مرحلة ونسبتها وقيمتها أسفله. انقر مرحلةً (أو **Drill-down**) لعرض سجلاتها.
+1. **Full Pipeline** (خط الفرص الكامل): قمع يمثّل **Opportunities → Quotations → Sales Orders → Deliveries** (الفرص ← عروض الأسعار ← أوامر البيع ← التسليمات)، مع عدد كل مرحلة ونسبتها وقيمتها أسفله. النسبة هي حصة **كل** الفرص التي أُنشئت في الفترة (**Pending** و**Won** و**Lost**) التي وصلت إلى تلك المرحلة، وهي الأساس نفسه الذي يستخدمه **Stage Benchmark**، لذلك لا تتجاوز 100%. ويعدّ عمود **Opportunities** الفرص المفتوحة فقط، لذلك لا تظهر له نسبة. انقر مرحلةً (أو **Drill-down**) لعرض سجلاتها.
 2. **Opportunity chain** (سلسلة الفرصة): لتتبّع كل فرصة حتى التسليم.
 3. **Total Pipeline Value** (القيمة الإجمالية لخط الفرص) و**Stage Benchmark** (مقارنة المراحل): تعرض **Total Pipeline Value** الإيراد المتوقع لكل الفرص المفتوحة (**Pending**) مع عددها أسفلها، وتساوي مجموع **Opportunity by Stage** وجزء **Pending** في **Opportunity by Status**. ويعرض **Stage Benchmark** نسبة التحويل الفعلية في كل خطوة (مثل **Opportunity → Quotation**) مقارنةً بالنسبة المستهدفة، مع شارة الحالة. تُحسب على **كل** الفرص التي أُنشئت في الفترة (**Pending** و**Won** و**Lost**): كم منها وصل إلى عرض سعر، ثم أمر بيع، ثم تسليم (يُحتسب التسليم بمجرد بدئه). أما عمود **Opportunities** في القمع فيعرض الفرص المفتوحة فقط، لذلك لا تساوي نسب المقارنة قسمة الأعمدة على بعضها.
 4. **Expected Closure Opportunity**: **Expected Opportunity Count** (أعمدة) و**Expected Opportunity Value** (خط) حسب الشهر المتوقع لإغلاق الصفقات. انقر شهرًا لعرض فرصه.

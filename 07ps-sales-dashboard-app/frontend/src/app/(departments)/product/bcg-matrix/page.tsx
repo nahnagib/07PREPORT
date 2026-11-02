@@ -1,5 +1,5 @@
 'use client';
-import { VisualInfoIcons } from '@07ps/ui';
+import { VisualInfoIcons, tooltipBoxStyle } from '@07ps/ui';
 import { vh } from '../../../../lib/visualHelp';
 import React, { useMemo, useState } from 'react';
 import { AppHeader } from '../../../../components/AppHeader';
@@ -435,11 +435,7 @@ export default function BcgMatrixPage() {
   const rowTooltipContent = (r: BcgFact, label: string) => (
     <div
       style={{
-        borderRadius: 10,
-        border: '1px solid var(--ps-color-border)',
-        fontSize: 12,
-        background: 'var(--ps-color-surface)',
-        color: 'var(--ps-color-text)',
+        ...tooltipBoxStyle,
         padding: '10px 12px',
         minWidth: 180,
       }}

@@ -1,6 +1,7 @@
 import React, { useMemo, useRef } from 'react';
 import { ResponsiveContainer, ScatterChart, Scatter, Cell, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ReferenceLine } from 'recharts';
 import { exportSvgAsImage } from '../chartExport';
+import { chartTooltipProps, tooltipBoxStyle } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 import { DISPLAY_LOCALE } from '../locale';
 
@@ -300,7 +301,7 @@ export function BubbleScatterChart({
             <ZAxis type="number" dataKey="z" range={zRange} domain={zDomain} />
             {xReferenceLine !== undefined && <ReferenceLine x={xReferenceLine} stroke="var(--ps-color-muted-text)" strokeDasharray="4 4" />}
             {yReferenceLine !== undefined && <ReferenceLine y={yReferenceLine} stroke="var(--ps-color-muted-text)" strokeDasharray="4 4" />}
-            <Tooltip
+            <Tooltip {...chartTooltipProps}
               cursor={{ strokeDasharray: '3 3' }}
               content={({ active, payload }) => {
                 if (!active || !payload?.length) return null;
@@ -308,14 +309,7 @@ export function BubbleScatterChart({
                 if (tooltipContent) return <>{tooltipContent(p)}</>;
                 return (
                   <div
-                    style={{
-                      borderRadius: 10,
-                      border: '1px solid var(--ps-color-border)',
-                      fontSize: 12,
-                      background: 'var(--ps-color-surface)',
-                      color: 'var(--ps-color-text)',
-                      padding: '8px 10px',
-                    }}
+                    style={{ ...tooltipBoxStyle, padding: '8px 10px' }}
                   >
                     <div dir="auto" style={{ fontWeight: 700, marginBottom: 4 }}>{p.label}</div>
                     <div>{xLabel ?? 'X'}: {xFormatter(p.x)}</div>
