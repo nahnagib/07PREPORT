@@ -253,7 +253,8 @@ export const VISUAL_HELP = {
   },
   'promotion.pipelineHealth.byStatus': {
     help: {
-      definition: 'Opportunities created this year by Odoo status: Won, Lost or Pending (still open). Status = the outcome, set by the Won / Lost buttons in Odoo, whatever the stage.',
+      definition: 'Opportunities created this year by Odoo status: Won, Lost or Pending (still open). Status = the outcome, set by the Won / Lost buttons in Odoo, whatever the stage. The centre shows the Won/Lost ratio and the win rate; the total is the last legend row.',
+      formula: 'Won/Lost ratio = won ÷ lost opportunities. Win rate = won ÷ (won + lost). Pending deals are not included in either.',
       notes: 'Records archived in Odoo without being marked Lost are left out.',
     },
     interactions: ['Hover a slice for its expected revenue', 'Click a status to see those opportunities'],

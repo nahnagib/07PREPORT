@@ -45,6 +45,11 @@ export interface DonutChartProps {
   centerLabel?: string;
   /** Small caption under centerLabel, e.g. "Working Days". Ignored if centerLabel is unset. */
   centerSubLabel?: string;
+  /** Optional third, smaller line in the centre (e.g. "Win rate 64.0%"). Ignored if centerLabel is unset. */
+  centerCaption?: string | null;
+  /** Optional last legend row, e.g. { label: 'Total', value: '726 opportunities' } -- for a donut whose centre shows
+   * something other than the total. */
+  legendTotal?: { label: string; value: string };
   /** Renders each segment's share of the whole directly on the ring (outside small slices, with a
    * leader line, per Recharts' own label positioning) in addition to the existing legend
    * percentages. Opt-in -- defaults to false so every existing caller's ring stays exactly as
@@ -62,27 +67,57 @@ function defaultFormatter(v: number): string {
   return v.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
-/** Recharts `<Pie label>` renderer: each segment's share of the whole, placed just outside the
- * ring at that slice's midpoint angle -- same polar-coordinate approach Recharts' own docs use for
- * outside pie labels. Kept as a plain function (not a component) since Recharts calls it directly
- * with its own props shape rather than mounting it as JSX. */
-function renderPercentLabel(props: any): React.ReactElement {
+/* Outside % labels (2026-11-02 fix: labels touched the ring and the leader line ran through the text). The leader
+ * line runs from just outside the ring to LINE_END; the text starts LABEL_GAP further out, anchored away from the ring:
+ * left/right of it on the sides, above/below it near the top and bottom. A surface-coloured halo keeps it readable
+ * over anything it overlaps, in both themes. */
+const RADIAN = Math.PI / 180;
+const LINE_START = 2;
+const LINE_END = 10;
+const LABEL_GAP = 14;
+
+function polar(cx: number, cy: number, r: number, midAngle: number): [number, number] {
+  return [cx + r * Math.cos(-midAngle * RADIAN), cy + r * Math.sin(-midAngle * RADIAN)];
+}
+
+/** Recharts `<Pie label>` renderer: each segment's share of the whole, just outside the ring at that slice's midpoint. */
+export function renderPercentLabel(props: any): React.ReactElement {
   const { cx, cy, midAngle, outerRadius, percent } = props;
-  const RADIAN = Math.PI / 180;
-  const radius = outerRadius + 16;
-  const x = cx + radius * Math.cos(-midAngle * RADIAN);
-  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  const cos = Math.cos(-midAngle * RADIAN);
+  const sin = Math.sin(-midAngle * RADIAN);
+  const [x, y] = polar(cx, cy, outerRadius + LABEL_GAP, midAngle);
+  const nearVertical = Math.abs(cos) < 0.35;
+  const textAnchor = nearVertical ? 'middle' : cos > 0 ? 'start' : 'end';
+  // Near the top the text sits above its point, near the bottom below it, otherwise centred on it.
+  const dominantBaseline = nearVertical ? (sin < 0 ? 'auto' : 'hanging') : 'central';
   return (
     <text
       x={x}
       y={y}
-      textAnchor={x > cx ? 'start' : 'end'}
-      dominantBaseline="central"
-      style={{ fontSize: 11, fontWeight: 700, fill: 'var(--ps-color-text)' }}
+      textAnchor={textAnchor}
+      dominantBaseline={dominantBaseline}
+      data-testid="donut-pct-label"
+      style={{
+        fontSize: 11,
+        fontWeight: 700,
+        fill: 'var(--ps-color-text)',
+        stroke: 'var(--ps-color-surface)',
+        strokeWidth: 3,
+        paintOrder: 'stroke',
+        strokeLinejoin: 'round',
+      }}
     >
       {`${(percent * 100).toFixed(1)}%`}
     </text>
   );
+}
+
+/** Leader line from the ring to just short of the label, so it never crosses the text. */
+export function renderPercentLabelLine(props: any): React.ReactElement {
+  const { cx, cy, midAngle, outerRadius } = props;
+  const [x1, y1] = polar(cx, cy, outerRadius + LINE_START, midAngle);
+  const [x2, y2] = polar(cx, cy, outerRadius + LINE_END, midAngle);
+  return <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--ps-color-muted-text)" strokeWidth={1} />;
 }
 
 /**
@@ -102,6 +137,8 @@ export function DonutChart({
   selectedId = null,
   centerLabel,
   centerSubLabel,
+  centerCaption,
+  legendTotal,
   showPercentLabels = false,
   showExportButton = true,
 }: DonutChartProps) {
@@ -170,6 +207,11 @@ export function DonutChart({
               {centerSubLabel && (
                 <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{centerSubLabel}</span>
               )}
+              {centerCaption && (
+                <span data-testid="donut-center-caption" style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--ps-color-muted-text)', marginTop: 3 }}>
+                  {centerCaption}
+                </span>
+              )}
             </div>
           )}
           <ResponsiveContainer width="100%" height={height}>
@@ -179,12 +221,12 @@ export function DonutChart({
                 dataKey="value"
                 nameKey="label"
                 innerRadius="60%"
-                outerRadius={showPercentLabels ? '76%' : '88%'}
+                outerRadius={showPercentLabels ? '72%' : '88%'}
                 paddingAngle={2}
                 isAnimationActive={false}
                 onClick={onSegmentClick ? (d: any) => onSegmentClick(d?.id ?? d?.payload?.id) : undefined}
                 label={showPercentLabels ? renderPercentLabel : undefined}
-                labelLine={showPercentLabels ? { stroke: 'var(--ps-color-muted-text)' } : false}
+                labelLine={showPercentLabels ? renderPercentLabelLine : false}
               >
                 {segments.map((s) => {
                   const isSelected = selectedId === s.id;
@@ -263,6 +305,16 @@ export function DonutChart({
                 </li>
               );
             })}
+            {legendTotal && (
+              <li
+                data-testid="donut-legend-total"
+                style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: onSegmentClick ? '5px 4px 0' : '4px 0 0', borderTop: '1px solid var(--ps-color-border)', marginTop: 2 }}
+              >
+                <span aria-hidden style={{ width: 9, flexShrink: 0 }} />
+                <span style={{ color: 'var(--ps-color-text)', fontWeight: 700, flex: 1 }}>{legendTotal.label}</span>
+                <span style={{ color: 'var(--ps-color-text)', fontWeight: 700, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{legendTotal.value}</span>
+              </li>
+            )}
           </ul>
         </div>
       </div>

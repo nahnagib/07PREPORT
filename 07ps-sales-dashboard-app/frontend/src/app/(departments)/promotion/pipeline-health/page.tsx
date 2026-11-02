@@ -50,6 +50,7 @@ import type {
 } from '../../../../lib/api';
 import { formatCurrency, formatTimestamp, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
 import { vh } from '../../../../lib/visualHelp';
+import { winLossCentre } from '../../../../lib/winLoss';
 
 // Fixed: --ps-color-watch previously reused here shares the exact same hex as --ps-color-gold
 // (#b8860b), so Quotations and Deliveries rendered as indistinguishable brownish-gold trapezoids/
@@ -571,6 +572,9 @@ export default function PipelineHealthPage() {
 
   const statusSlices = data?.opportunitiesByStatus.slices ?? [];
   const statusTotal = statusSlices.reduce((sum, s) => sum + s.count, 0);
+  // Centre of the donut: Won/Lost ratio and win rate from the same (filtered, role-scoped) slices; Pending excluded.
+  const statusCount = (status: OpportunityStatus) => statusSlices.find((s) => s.status === status)?.count ?? 0;
+  const winLoss = winLossCentre(statusCount('Won'), statusCount('Lost'));
   const statusSegments = statusSlices
     .filter((s) => s.count > 0)
     .map((s) => ({
@@ -909,8 +913,10 @@ export default function PipelineHealthPage() {
                     segments={statusSegments}
                     valueFormatter={(v) => `${v.toLocaleString(DISPLAY_LOCALE)} opportunit${v === 1 ? 'y' : 'ies'}`}
                     legendTitle="Status"
-                    centerLabel={statusTotal.toLocaleString(DISPLAY_LOCALE)}
-                    centerSubLabel="Opportunities"
+                    centerLabel={winLoss.main}
+                    centerSubLabel={winLoss.label}
+                    centerCaption={winLoss.caption}
+                    legendTotal={{ label: 'Total', value: `${statusTotal.toLocaleString(DISPLAY_LOCALE)} opportunit${statusTotal === 1 ? 'y' : 'ies'}` }}
                     onSegmentClick={(id) => openDetails({ type: 'status', value: id })}
                     showPercentLabels
                   />
