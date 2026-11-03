@@ -27,7 +27,6 @@ REQUIRED_INPUT_FILES: tuple[str, ...] = (
     "sales_targets.xlsx",
     "SalesTeam.xlsx",
     "OffDays.xlsx",
-    "PRODUCTS.xlsx",
 )
 # Loaded on every run, but the pipeline can create an empty template if it is absent (which needs a
 # writable input folder) -- so a problem here is reported as a warning, not a blocker, in preflight.

@@ -72,7 +72,7 @@ def _maps() -> KeyMaps:
         company_keys={-1, 1, 3}, company_name_keys={}, partner_customer={100: 100, 101: 100, 102: 102},
         user_salesperson={10: 49, 12: 60}, team_map={9: ("MJ-EST-BB", False), 27: ("SALESPERSON", True)},
         salesperson_team={49: "TK-BEN-BC-03", 60: "MJ-EST-BB", -1: "-1"}, salesperson_channel={49: 3, 60: 2, -1: -1},
-        team_segment={"MJ-EST-BB": 1, "TK-BEN-BC-03": 2, "-1": -1}, product_keys=set(), product_master={}, master_keys=set(),
+        team_segment={"MJ-EST-BB": 1, "TK-BEN-BC-03": 2, "-1": -1}, product_keys=set(),
     )
 
 
@@ -306,7 +306,8 @@ SYNC = [{"source": "odoo", "last_successful_sync": _dt.datetime.now(_dt.timezone
 @pytest.fixture
 def npsjob(platform_engine, platform_config, tmp_path, monkeypatch):
     for m in ("0029_core_dimensions.sql", "0030_core_team_map.sql", "0031_sales_mart.sql", "0032_core_odoo_labels.sql", "0046_process_nps.sql",
-              "0049_process_nps_reach.sql", "0050_process_nps_reach_state.sql", "0051_process_nps_reach_live.sql", "0053_process_nps_picking.sql"):
+              "0049_process_nps_reach.sql", "0050_process_nps_reach_state.sql", "0051_process_nps_reach_live.sql", "0053_process_nps_picking.sql",
+              "0064_product_odoo_source_of_truth.sql"):
         apply_migration_sqlite(platform_engine, m)
     with platform_engine.begin() as conn:
         conn.execute(text("INSERT INTO dim_sales_order (SalesOrderKey, order_number, CompanyKey, CustomerKey) VALUES (4000, 'S001', 1, 100)"))

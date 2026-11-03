@@ -25,8 +25,6 @@ CHANGED_BY_STAMP = {
     "dim_customer": ("CustomerKey", "customers"),
     "map_partner_customer": ("partner_id", "partners"),
     "dim_product": ("ProductKey", "products"),
-    "dim_product_master": ("ProductMasterKey", "product_masters"),
-    "map_product_master": ("ProductKey", "mapped_products"),  # key (ProductKey = Odoo product id, CompanyKey)
     "map_odoo_user_salesperson": ("odoo_user_id", "odoo_users"),
     "map_odoo_team_sales_team": ("odoo_team_id", "odoo_teams"),
     "dim_salesperson": ("SalespersonKey", "salespeople"),

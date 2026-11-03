@@ -7,7 +7,9 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterState } from '../../../../components/FilterProvider';
-import { ProductDataStatusBar, ProductRefreshFooter } from '../../../../components/ProductDataStatus';
+import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
+import { RefreshFooter } from '../../../../components/RefreshFooter';
+import { formatTimestamp } from '../../../../lib/format';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
 import {
@@ -73,8 +75,8 @@ function groupSum(rows: MaterialsAnalogyFact[], keyFn: (r: MaterialsAnalogyFact)
 
 /** Rolls anything past the top 8 entries into a rollup bucket, same readability rule used for
  * every other categorical breakdown chart in this module. Labeled "Other (+N)" rather than a bare
- * "Other" -- the real Category/Family data already contains a genuine "Other" value (an actual
- * PRODUCTS.xlsx bucket), which collided with a bare synthetic "Other" here and produced a
+ * "Other" -- the real Category/Family data can contain a genuine "Other" value (an actual
+ * product bucket), which collided with a bare synthetic "Other" here and produced a
  * duplicate React key (two segments both keyed "Other") the first time this rendered. */
 function topNWithOther(entries: [string, number][], n = 8): [string, number][] {
   if (entries.length <= n + 1) return entries;
@@ -437,7 +439,12 @@ export default function PimContributionPage() {
           }
         />
 
-        <ProductDataStatusBar refresh={refresh.data} data={overview.data} />
+        <ValidationStatusBar
+          isStale={refresh.data?.isStale}
+          isInverted={refresh.data?.isInverted}
+          refreshCheck={refresh.data?.refreshCheck}
+          lastRefreshTime={refresh.data ? formatTimestamp(refresh.data.lastRefreshTime) : undefined}
+        />
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
           {overview.loading && !overview.data ? (
@@ -532,7 +539,11 @@ export default function PimContributionPage() {
           )}
         </main>
 
-        <ProductRefreshFooter refresh={refresh.data} />
+        <RefreshFooter
+          lastUpdate={formatTimestamp(refresh.data?.lastUpdate ?? null)}
+          lastOrderCreated={formatTimestamp(refresh.data?.lastOrderCreated ?? null)}
+          lastRefreshTime={formatTimestamp(refresh.data?.lastRefreshTime ?? null)}
+        />
         <BottomNavBar active="PIM Contribution" />
       </div>
     </PermissionGuard>

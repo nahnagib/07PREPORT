@@ -24,7 +24,6 @@ from sales_pipeline.etl_run_log import (
     utc_now,
 )
 from sales_pipeline.pipeline import PowerBISalesPipeline
-from sales_pipeline.product_name_mapper import ProductMappingError
 from sales_pipeline.runtime import PipelineRunContext
 
 TRIPOLI = "Africa/Tripoli"
@@ -274,15 +273,6 @@ def test_run_failing_at_validate_config_and_inputs_is_recorded_as_failed(tmp_pat
     assert len(rows) == 1 and rows[0][0] == "failed"
     assert "Input validation failed" in rows[0][1] and rows[0][2] is None
     assert _last_success(engine) is None
-
-
-def test_zero_product_mappings_fail_the_run_unless_explicitly_allowed(tmp_path):
-    (tmp_path / "input").mkdir()
-    pd.DataFrame({"OdooProductName": [None], "ProductName": [None]}).to_excel(tmp_path / "input" / "PRODUCTS.xlsx", index=False)
-    with pytest.raises(ProductMappingError, match="0 mappings"):
-        _ = PowerBISalesPipeline(_settings(tmp_path)).mapper
-    allowed = PowerBISalesPipeline(_settings(tmp_path, allow_empty_product_mapping=True))
-    assert allowed.mapper.mapping_count() == 0
 
 
 # --- backfill of legacy pipeline_run_log rows ---------------------------------------------------

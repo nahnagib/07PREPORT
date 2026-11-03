@@ -17,6 +17,12 @@ PRODUCT_COST_FIELDS = [
     "company_id",
     "standard_price",
     "active",
+    # the product layer (sales_pipeline.odoo_products): category, brand, sub brand, family, size -- straight from Odoo
+    "categ_id",
+    "manufacturer_id",
+    "sub_brand_id",
+    "product_family_id",
+    "size_dimensions_id",
 ]
 
 

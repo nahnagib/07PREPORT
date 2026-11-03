@@ -19,7 +19,7 @@ from sqlite_schema import apply_migration_sqlite
 AS_OF = dt.date(2026, 10, 1)
 DIMS = ["dim_company", "dim_currency", "dim_payment_term", "dim_customer", "map_partner_customer", "dim_customer_company",
         "dim_channel", "dim_segment", "dim_sales_team", "dim_salesperson", "map_odoo_user_salesperson", "dim_date", "dim_offday",
-        "dim_product", "dim_product_master", "map_product_master", "map_odoo_team_sales_team"]
+        "dim_product", "map_odoo_team_sales_team"]
 
 
 @pytest.fixture
@@ -27,6 +27,7 @@ def core(platform_engine, platform_config, tmp_path):
     apply_migration_sqlite(platform_engine, "0029_core_dimensions.sql")
     apply_migration_sqlite(platform_engine, "0030_core_team_map.sql")
     apply_migration_sqlite(platform_engine, "0032_core_odoo_labels.sql")
+    apply_migration_sqlite(platform_engine, "0064_product_odoo_source_of_truth.sql")
     load_definitions()
     inputs = write_inputs(tmp_path / "inputs")
     config = replace(platform_config, input_dir=inputs)
@@ -93,11 +94,12 @@ def test_core_dims_builds_conformed_dimensions(core):
     teams_map = _vals(engine, "SELECT odoo_team_id, SalesTeamKey, follows_salesperson FROM map_odoo_team_sales_team ORDER BY 1")
     assert teams_map == [[9, "MJ-EST-BB", 0], [27, "-1", 1]]  # EXPORT follows the salesperson; Website not listed
 
-    pm = _vals(engine, "SELECT ProductKey, CompanyKey, ProductMasterKey, match_status FROM map_product_master ORDER BY 1, 2")
-    cem_key = _df(engine, "SELECT ProductMasterKey FROM dim_product_master WHERE Company = 'Tika'").iloc[0, 0]
-    assert cem_key.startswith("CEM|")  # blank key in the sheet -> generated, always suffixed
-    assert pm == [[500, 1, "Majaal | GR-1 | 1", "MatchedByCompanyAndName"], [500, 3, "-1", "Unmatched"],
-                  [501, 3, cem_key, "MatchedByCompanyAndName"], [502, 1, "-1", "Unmatched"], [502, 3, "-1", "Unmatched"]]
+    # products: Odoo ids and Odoo values only; no PRODUCTS.xlsx, no name matching ('Unassigned' where Odoo is empty)
+    products = _vals(engine, "SELECT ProductKey, product_name, default_code, CompanyKey, category, brand, family, size "
+                             "FROM dim_product WHERE ProductKey > 0 ORDER BY 1")
+    assert products == [[500, "Grout Crema", "GR-1", -1, "All / Grout", "Weber", "Unassigned", "5kg"],
+                        [501, "Cem Air", None, 3, "All / Cement", "Unassigned", "Unassigned", "Unassigned"],
+                        [502, "Mystery Item", None, -1, "All", "Unassigned", "Unassigned", "Unassigned"]]
 
     dates = _df(engine, "SELECT MIN(Date) AS lo, MAX(Date) AS hi FROM dim_date WHERE DateKey > 0")
     assert (str(dates.lo[0]), str(dates.hi[0])) == ("2018-01-01", "2027-12-31")
@@ -106,7 +108,7 @@ def test_core_dims_builds_conformed_dimensions(core):
 
     dq = _df(engine, "SELECT check_type, status FROM etl_dq_result")
     orphans = dq[dq["check_type"] == "orphan"]
-    assert len(orphans) >= 20 and set(orphans["status"]) == {"pass"}  # every orphan check passed
+    assert len(orphans) >= 17 and set(orphans["status"]) == {"pass"}  # every orphan check passed (no product master / map since 0064)
     assert dq[dq["check_type"] != "orphan"].values.tolist() == [["custom_sql", "warn"]]  # the Active-without-team warning
     fallback = _df(engine, "SELECT unknown_key_fallbacks, fallback_detail FROM etl_task_log WHERE task_name = 'build_customer_dims'")
     assert fallback.iloc[0, 0] == 1 and '"13"' in fallback.iloc[0, 1]

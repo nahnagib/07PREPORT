@@ -58,8 +58,7 @@ services:
     # `environment` wins over data/etl/.env, so a stale host path or DB host left in that file (a
     # C:/... INPUT_DIR, DB_HOST=localhost) cannot break the run. The manual input workbooks come from a
     # host folder (ETL_INPUT_HOST_DIR) mounted READ-ONLY at the fixed container path /etl/input: the ETL
-    # never writes PRODUCTS.xlsx (or any input) -- the IsActive write-back is off here and cannot work on
-    # a read-only mount. The ETL Control Center still VALIDATES an uploaded file (and rejects a bad one
+    # never writes an input file. The ETL Control Center still VALIDATES an uploaded file (and rejects a bad one
     # with the reason), then answers that the folder is read-only: files are replaced on the host.
     environment:
       TZ: ${APP_TIMEZONE:-Africa/Tripoli}
@@ -69,7 +68,6 @@ services:
       ETL_INPUT_DIR: /etl/input
       ETL_INPUT_BACKUP_DIR: /etl/input_backups
       ETL_OUTPUT_DIR: /etl/output
-      PRODUCTS_WRITE_BACK_ISACTIVE: 'false' # never write IsActive back into PRODUCTS.xlsx
     extra_hosts: *host-gateway
     volumes:
       - ${ETL_INPUT_HOST_DIR:-../Input}:/etl/input:ro

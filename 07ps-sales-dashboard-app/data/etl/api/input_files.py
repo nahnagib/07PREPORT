@@ -97,21 +97,6 @@ def _parse_offdays(path: Path) -> dict[str, int]:
     return {"rows": len(lt.OffDaysFactBuilder().build(path, lt.PipelineSettings().offdays_country))}
 
 
-def _parse_products(path: Path) -> dict[str, int]:
-    from sales_pipeline.product_name_mapper import ProductNameMapper
-
-    lt = _loaders()
-    rows = len(lt.ProductMasterLoader(_quiet_logger(), export_conflicts=False, base_dir=path.parent).load(path))
-    mappings = ProductNameMapper(path).mapping_count()
-    allow_empty = os.getenv("ETL_ALLOW_EMPTY_PRODUCT_MAPPING", "").strip().lower() in {"1", "true", "yes", "on"}
-    if mappings == 0 and not allow_empty:
-        # Same guard the pipeline applies at run time (pipeline.py's mapper property): 0 mappings fails the run.
-        raise UploadRejected(
-            "PRODUCTS.xlsx yields 0 OdooProductName -> ProductName mappings; the next ETL run would fail on it."
-        )
-    return {"rows": rows, "product_name_mappings": mappings}
-
-
 def _parse_targets(path: Path) -> dict[str, int]:
     return {"rows": len(_loaders().TargetsLoader(_quiet_logger()).load(path))}
 
@@ -172,28 +157,6 @@ def _slots() -> dict[str, SlotSpec]:
                 ),
             ),
             dry_parse=_parse_offdays,
-            must_have_rows=("rows",),
-        ),
-        SlotSpec(
-            name="PRODUCTS.xlsx",
-            feeds="Dim_Product and the Odoo product-name mapping used by every sales fact",
-            sheets=(
-                SheetSpec(
-                    label="first sheet",
-                    required=tuple(lt.ProductMasterLoader.EXPECTED),
-                    # ProductMasterLoader.load's own rename map (it does not strip headers).
-                    rename={
-                        "Odoo Nmae": "OdooProductName",
-                        "Odoo Name": "OdooProductName",
-                        "OdooProduct Name": "OdooProductName",
-                        "Subbrand": "SubBrand",
-                        "Sub Brand": "SubBrand",
-                        "ProductLevet": "ProductLevel",
-                        "Product Level": "ProductLevel",
-                    },
-                ),
-            ),
-            dry_parse=_parse_products,
             must_have_rows=("rows",),
         ),
         SlotSpec(
@@ -420,7 +383,7 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
         finally:
             gc.collect()
 
-    # Production mounts the input folder read-only (the ETL must never write PRODUCTS.xlsx): the file has
+    # Production mounts the input folder read-only (the ETL never writes an input file): the file has
     # been validated above, so a bad file is still rejected with its reason. A good one is reported as
     # checked -- not an error -- and nothing is written.
     if not os.access(inputs, os.W_OK):
@@ -443,7 +406,7 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
     target = inputs / name
     with _replace_lock:
         # Re-checked under the lock, right before touching the folder: a run reads these files in
-        # its first step and PRODUCTS.xlsx is written back at the end, so never swap mid-run.
+        # its first step, so never swap mid-run.
         if is_run_active():
             raise UploadRejected("An ETL run is in progress. Upload again once it has finished.", status=409)
         previous = _file_meta(target)

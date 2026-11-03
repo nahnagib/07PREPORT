@@ -168,6 +168,32 @@ adminEtlControlRouter.get('/shadow-compare', async (_req, res, next) => {
 });
 
 /**
+ * Products missing in Odoo (2026-11-03, Odoo is the only source of product attributes): the summary of
+ * OUTPUT/product_odoo_gaps.csv that the last full refresh wrote -- sold products with no Brand, Family, Size or SKU
+ * in Odoo, per company and per missing field. Read from the conform_sales task log of that run.
+ */
+adminEtlControlRouter.get('/product-gaps', async (_req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT DATE_FORMAT(finished_at_utc, '%Y-%m-%dT%H:%i:%sZ') AS finishedAtUtc,
+              JSON_EXTRACT(details, '$.product_odoo_gaps') AS gaps
+       FROM etl_task_log
+       WHERE task_name = 'conform_sales' AND status = 'success' AND JSON_EXTRACT(details, '$.product_odoo_gaps') IS NOT NULL
+       ORDER BY finished_at_utc DESC LIMIT 1`,
+    );
+    const row = (rows as { finishedAtUtc: string; gaps: unknown }[])[0];
+    if (!row) {
+      res.json({ report: null });
+      return;
+    }
+    const gaps = typeof row.gaps === 'string' ? JSON.parse(row.gaps) : row.gaps;
+    res.json({ report: { ...(gaps as object), finishedAtUtc: row.finishedAtUtc } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Are the ETL's manual input workbooks reachable and valid from the ETL service's own point of
  * view? Shown in the ETL panel before Run; `available: false` means the check itself couldn't run
  * (ETL API unreachable), which is reported but does not by itself block anything.

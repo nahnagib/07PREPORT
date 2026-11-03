@@ -3,8 +3,9 @@
 Only the parts the tests need are translated: CREATE TABLE IF NOT EXISTS blocks (column comments, secondary
 indexes and table options dropped; UNIQUE KEY kept as UNIQUE), the INSERT IGNORE seed rows (skipped when their table
 is not in the test database, e.g. the RBAC tables), and the idempotent ``ALTER TABLE ... ADD COLUMN`` of a prepared
-statement (applied when the table exists and lacks the column). Everything else in the file (views, renames, data
-migration) is MySQL-only and skipped. Because the real migration text is parsed, a column the code writes but the
+statement (applied when the table exists and lacks the column). A table the migration drops and re-creates
+(``DROP TABLE IF EXISTS t;`` before its ``CREATE TABLE IF NOT EXISTS t``) is dropped first, so its new shape replaces the
+old one. Everything else in the file (views, renames, data migration) is MySQL-only and skipped. Because the real migration text is parsed, a column the code writes but the
 migration lacks fails the test.
 """
 
@@ -22,6 +23,7 @@ _COMMENT = re.compile(r"\s+COMMENT\s+'(?:[^']|'')*'")
 _CREATE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\)\s*ENGINE[^;]*;", re.S)
 _SEED = re.compile(r"INSERT IGNORE INTO (?:[^';]|'(?:[^']|'')*')*;", re.S)
 _SEED_TABLE = re.compile(r"INSERT OR IGNORE INTO (\w+)")
+_DROP = re.compile(r"^DROP TABLE IF EXISTS (\w+);", re.M)
 # 'ALTER TABLE t ADD COLUMN c TYPE ... [COMMENT ''...''] [AFTER x]' inside a SET @s = (SELECT IF(...)) prepared statement
 _ADD_COLUMN = re.compile(r"'ALTER TABLE (\w+) ADD COLUMN (\w+) ((?:[^']|'')+)'")
 
@@ -33,7 +35,10 @@ def _strip_comments(sql: str) -> str:
 def sqlite_statements(migration: str) -> list[str]:
     sql = _strip_comments((MIGRATIONS / migration).read_text(encoding="utf-8"))
     out = []
+    dropped = set(_DROP.findall(sql))
     for name, body in _CREATE.findall(sql):
+        if name in dropped:
+            out.append(f"DROP TABLE IF EXISTS {name}")
         cols = []
         for part in re.split(r",\s*\n", body):
             part = _COMMENT.sub("", part.strip()).rstrip(",")
@@ -66,6 +71,10 @@ def apply_migration_sqlite(engine: Engine, migration: str) -> None:
     with engine.begin() as conn:
         tables = set(inspect(conn).get_table_names())
         for stmt in sqlite_statements(migration):
+            if stmt.startswith("DROP TABLE"):
+                conn.execute(text(stmt))
+                tables.discard(stmt.split()[4])
+                continue
             target = _SEED_TABLE.match(stmt)
             if target and target.group(1) not in tables:
                 continue  # a seed for a table the test database does not have (e.g. RBAC pages/permissions)

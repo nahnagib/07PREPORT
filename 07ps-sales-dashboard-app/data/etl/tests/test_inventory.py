@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from sales_pipeline import odoo_products
 from sales_pipeline.inventory import (
     FACT_INVENTORY_COLUMNS,
     InventoryModelBuilder,
@@ -89,23 +90,11 @@ def _inventory_inputs() -> dict[str, pd.DataFrame]:
             {"id": 20, "display_name": "Inventory Only Product", "default_code": "SKU-20", "standard_price": pd.NA, "company_id": "NewCo"},
         ]
     )
-    dim_product = pd.DataFrame(
-        [
-            {
-                "ProductKey": "P10",
-                "Company": "Majaal",
-                "ProductName": "Official Product",
-                "ProductNameClean": "OFFICIAL PRODUCT",
-                "OdooProductName": "Official Odoo",
-                "OdooProductNameClean": "OFFICIAL ODOO",
-                "SKU": "SKU-10",
-                "IsActive": 1,
-                "ProductMappingStatus": "OfficialProductMaster",
-                "ProductSource": "Input Master",
-                "ProductMatchKey": "MAJAAL|OFFICIAL ODOO",
-            }
-        ]
-    )
+    # Dim_Product = the Odoo catalog by id (product 20 is in it too: every product.product is)
+    dim_product = odoo_products.dim_product(odoo_products.catalog(pd.DataFrame([
+        {"id": 10, "name": "Official Product", "display_name": "Official Odoo", "default_code": "SKU-10", "active": True},
+        {"id": 20, "name": "Inventory Only Product", "display_name": "Inventory Only Product", "default_code": False, "active": True},
+    ])))
     dim_company = pd.DataFrame([{"CompanyKey": 1, "Company": "Majaal"}])
     return {
         "stock_quants": stock_quants,
@@ -134,7 +123,9 @@ def test_inventory_builder_filters_internal_locations_and_calculates_values() ->
     assert len(fact) == 3
     assert (fact["AvailableQty"] == fact["OnHandQty"] - fact["ReservedQty"]).all()
     official = fact[fact["OdooProductID"].eq(10) & fact["OnHandQty"].eq(10)].iloc[0]
-    assert official["ProductKey"] == "P10"
+    assert official["ProductKey"] == "10"                     # the Odoo product id, never a name key
+    assert official["ProductName"] == "Official Product"      # product.product.name as stored
+    assert official["ProductCompanyKey"] == "Majaal|10"
     assert official["ProductCost"] == 4.0
     assert official["InventoryValue"] == 123.45
     reserved_only = fact[fact["ReservedQty"].eq(3)].iloc[0]
@@ -143,7 +134,7 @@ def test_inventory_builder_filters_internal_locations_and_calculates_values() ->
     assert "Stock_Category" not in fact.columns
 
 
-def test_inventory_builder_adds_sparse_unmapped_placeholder_and_company_with_qa() -> None:
+def test_inventory_builder_keys_every_quant_by_its_odoo_product_and_adds_missing_companies() -> None:
     inputs = _inventory_inputs()
 
     result = InventoryModelBuilder().build(
@@ -155,32 +146,25 @@ def test_inventory_builder_adds_sparse_unmapped_placeholder_and_company_with_qa(
         snapshot_date="2026-06-22",
     )
 
-    added = result.dim_product[result.dim_product["ProductSource"].eq("Unmapped Odoo")].iloc[0]
-    assert added["OdooProductName"] == "Inventory Only Product"
-    assert added["ProductName"] == "Inventory Only Product"
-    assert added["ProductMappingReason"] == "No official PRODUCTS.xlsx match for inventory Odoo product name"
-    assert bool(added["IsMappedProduct"]) is False
-    assert pd.isna(added["Brand"])
-    assert pd.isna(added["SKU"])
+    assert len(result.dim_product) == len(inputs["dim_product"])  # no placeholder products: every quant has its Odoo product
+    other = result.fact_inventory[result.fact_inventory["OdooProductID"].eq(20)].iloc[0]
+    assert other["ProductKey"] == "20" and other["ProductName"] == "Inventory Only Product" and pd.isna(other["SKU"])
     assert "NewCo" in set(result.dim_company["Company"])
     assert result.fact_inventory["ProductKey"].notna().all()
     assert result.qa_data_quality.columns.tolist() == QA_INVENTORY_COLUMNS
     checks = result.qa_data_quality.set_index("CheckName")
-    assert checks.loc["Placeholder unmapped rows added to Dim_Product from inventory", "MetricValue"] == 1
+    assert "Placeholder unmapped rows added to Dim_Product from inventory" not in checks.index
     assert checks.loc["Rows with missing product cost", "MetricValue"] == 1
-    assert result.qa_unmapped_products["Reason"].tolist() == ["No official PRODUCTS.xlsx match for inventory Odoo product name"]
-    assert result.qa_unmapped_products["Source"].tolist() == ["Odoo Inventory"]
-    assert result.qa_unmapped_products["ProductKey"].notna().all()
 
 
 def test_inventory_builder_calculates_ads_doh_and_velocity_class() -> None:
     inputs = _inventory_inputs()
     sales = pd.DataFrame(
         [
-            {"ProductMatchKey": "MAJAAL|OFFICIAL ODOO", "order_date_date": "2025-10-01", "quantity": 500},  # outside 90 days
-            {"ProductMatchKey": "MAJAAL|OFFICIAL ODOO", "order_date_date": "2026-01-01", "quantity": 20},
-            {"ProductMatchKey": "MAJAAL|OFFICIAL ODOO", "order_date_date": "2026-01-10", "quantity": 10},
-            {"ProductMatchKey": "NEWCO|INVENTORY ONLY PRODUCT", "order_date_date": "2026-01-10", "quantity": 0},
+            {"company_final": "Majaal", "ProductKey": "10", "order_date_date": "2025-10-01", "quantity": 500},  # outside 90 days
+            {"company_final": "Majaal", "ProductKey": "10", "order_date_date": "2026-01-01", "quantity": 20},
+            {"company_final": "Majaal", "ProductKey": "10", "order_date_date": "2026-01-10", "quantity": 10},
+            {"company_final": "NewCo", "ProductKey": "20", "order_date_date": "2026-01-10", "quantity": 0},
         ]
     )
     summary = InventoryModelBuilder.build_product_sales_summary(sales, lookback_days=90, as_of="2026-01-10")

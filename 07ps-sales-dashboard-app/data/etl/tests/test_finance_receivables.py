@@ -121,7 +121,8 @@ class FinanceFakeOdoo(FakeOdooSource):
 def fin(platform_engine, platform_config, tmp_path, monkeypatch):
     for m in ("0029_core_dimensions.sql", "0030_core_team_map.sql", "0031_sales_mart.sql", "0032_core_odoo_labels.sql",
               "0033_finance_receivables.sql", "0034_finance_receivable_scope.sql",
-              "0040_finance_collections.sql", "0042_finance_collection_split.sql", "0045_collection_invoice_dates.sql"):
+              "0040_finance_collections.sql", "0042_finance_collection_split.sql", "0045_collection_invoice_dates.sql",
+              "0064_product_odoo_source_of_truth.sql"):
         apply_migration_sqlite(platform_engine, m)
     load_definitions()
     for var in ("ODOO_DEBT_LOGIN", "ODOO_DEBT_API_KEY", "ODOO_DEBT_KEY_EXPIRES"):

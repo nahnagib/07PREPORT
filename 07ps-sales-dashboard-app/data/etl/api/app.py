@@ -120,26 +120,8 @@ def etl_preflight():
         body["output"] = {"dir": str(output_dir), "writable": writable, "detail": detail}
     except InputConfigError as exc:
         body["output"] = {"dir": None, "writable": False, "detail": str(exc)}
-    body["productMappings"] = _product_mapping_status(body)
-    body["ok"] = bool(body["ok"] and body["output"]["writable"] and body["productMappings"]["ok"])
+    body["ok"] = bool(body["ok"] and body["output"]["writable"])
     return jsonify(body), 200
-
-
-def _product_mapping_status(report: dict) -> dict:
-    """How many Odoo->clean product names PRODUCTS.xlsx yields -- 0 means the run would fail its mapper guard."""
-    import os
-
-    products = next((f for f in report.get("files", []) if f.get("name") == "PRODUCTS.xlsx"), None)
-    if not products or products.get("status") != "ok":
-        return {"ok": False, "count": None, "detail": "PRODUCTS.xlsx is not readable (see files)"}
-    try:
-        from sales_pipeline.product_name_mapper import ProductNameMapper
-
-        count = ProductNameMapper(products["path"]).mapping_count()
-    except Exception as exc:  # noqa: BLE001 - reported in the body, never raised
-        return {"ok": False, "count": None, "detail": str(exc)}
-    allow_empty = os.getenv("ETL_ALLOW_EMPTY_PRODUCT_MAPPING", "").strip().lower() in {"1", "true", "yes", "on"}
-    return {"ok": count > 0 or allow_empty, "count": count, "detail": "" if count else "0 mappings loaded"}
 
 
 @app.route("/etl/input-files", methods=["GET"])

@@ -15,8 +15,6 @@ MAPS = KeyMaps(
     company_keys={1, 3, UNKNOWN},
     company_name_keys={"MAJAAL": 1, "TIKA": 3, "ATHENA": 4},
     product_keys={500},
-    product_master={(500, 1): "M-GR"},
-    master_keys={"M-GR"},
 )
 
 
@@ -52,7 +50,7 @@ def test_customer_salesperson_company_product_fallbacks_are_reported():
     assert MAPS.salespeople([10, 11, 77, False]) == ([49, 49, UNKNOWN, UNKNOWN], [77])
     assert MAPS.companies([3, "1", 2]) == ([3, 1, UNKNOWN], [2])
     assert MAPS.products([500, 501.0]) == ([500, UNKNOWN], [501])
-    assert MAPS.product_masters([500, 500], [1, 3]) == ["M-GR", UNKNOWN_TEXT]
+    assert not hasattr(MAPS, "product_masters")  # products are Odoo ids only (PRODUCTS.xlsx retired)
 
 
 def test_company_name_lookup_normalizes_known_odoo_names():

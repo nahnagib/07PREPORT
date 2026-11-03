@@ -309,8 +309,10 @@ class SyncResult:
 
 # non-stored fields that a rule below keeps current; any other non-stored field is reported (summary.non_stored_fields)
 COVERED_NON_STORED = {
-    # template rule (name / display_name / uom_id / company_id are the template's); standard_price moves the product write_date
-    "product.product": {"display_name", "name", "standard_price", "uom_id", "company_id"},
+    # template rule (name / display_name / uom_id / company_id and the product attributes -- categ_id, manufacturer_id,
+    # sub_brand_id, product_family_id, size_dimensions_id -- are the template's); standard_price moves the product write_date
+    "product.product": {"display_name", "name", "standard_price", "uom_id", "company_id", "categ_id", "manufacturer_id",
+                        "sub_brand_id", "product_family_id", "size_dimensions_id"},
     "stock.picking": {"picking_type_code"},                           # the operation type's code: fixed per type
     "stock.quant": {"value", "inventory_value"},                      # product cost rule
     "crm.lead": {"activity_date_deadline", "activity_summary", "activity_state", "activity_type_id", "activity_user_id"},

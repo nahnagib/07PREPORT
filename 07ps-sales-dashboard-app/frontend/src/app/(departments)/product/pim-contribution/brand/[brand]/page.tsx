@@ -7,7 +7,9 @@ import { AppHeader } from '../../../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../../../components/BottomNavBar';
 import { PermissionGuard } from '../../../../../../components/AuthGuard';
 import { useFilterState } from '../../../../../../components/FilterProvider';
-import { ProductDataStatusBar, ProductRefreshFooter } from '../../../../../../components/ProductDataStatus';
+import { ValidationStatusBar } from '../../../../../../components/ValidationStatusBar';
+import { RefreshFooter } from '../../../../../../components/RefreshFooter';
+import { formatTimestamp } from '../../../../../../lib/format';
 import { useAuth } from '../../../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../../../lib/hooks';
 import {
@@ -91,7 +93,7 @@ function toExecutiveSummaryRows(selected: FoundBrandStats, productCount: number)
       variancePct: null,
       varianceLyPct: null,
       status: 'neutral',
-      takeaway: `${fmtNum(selected.skuCount)} SKUs in PRODUCTS.xlsx, ${selected.skuSold} sold in the period, ${productCount} shown in the current view.`,
+      takeaway: `${fmtNum(selected.skuCount)} SKUs in Odoo, ${selected.skuSold} sold in the period, ${productCount} shown in the current view.`,
     },
   ];
 }
@@ -202,7 +204,12 @@ export default function BrandDrillDownPage() {
           showDateInput={false}
         />
 
-        <ProductDataStatusBar refresh={refresh.data} data={brandPerf.data} />
+        <ValidationStatusBar
+          isStale={refresh.data?.isStale}
+          isInverted={refresh.data?.isInverted}
+          refreshCheck={refresh.data?.refreshCheck}
+          lastRefreshTime={refresh.data ? formatTimestamp(refresh.data.lastRefreshTime) : undefined}
+        />
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
           {brandPerf.loading && !brandPerf.data ? (
@@ -245,7 +252,11 @@ export default function BrandDrillDownPage() {
           )}
         </main>
 
-        <ProductRefreshFooter refresh={refresh.data} />
+        <RefreshFooter
+          lastUpdate={formatTimestamp(refresh.data?.lastUpdate ?? null)}
+          lastOrderCreated={formatTimestamp(refresh.data?.lastOrderCreated ?? null)}
+          lastRefreshTime={formatTimestamp(refresh.data?.lastRefreshTime ?? null)}
+        />
         <BottomNavBar active="PIM Contribution" />
       </div>
     </PermissionGuard>

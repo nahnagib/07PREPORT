@@ -11,7 +11,7 @@ from sales_pipeline.product_matching import normalize_match_company
 
 
 def company_display_name(odoo_name: str) -> str:
-    """'TIKA' -> 'Tika', 'Majaal' -> 'Majaal' (the names the pages and PRODUCTS.xlsx use); others unchanged."""
+    """'TIKA' -> 'Tika', 'Majaal' -> 'Majaal' (the names the pages use); others unchanged."""
     return normalize_match_company(odoo_name) or odoo_name
 
 

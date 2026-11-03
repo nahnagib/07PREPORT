@@ -13,14 +13,13 @@ def _index(**over):
                              "team_id": [90, 91, 90, 92], "company_id": [1, 1, 3, 3], "opportunity_id": [None, 55, None, None]}),
         lines=pd.DataFrame({"line_id": [11, 12, 21, 31, 41], "order_id": [1, 1, 2, 3, 4], "product_id": [500, 501, 500, 600, 601]}),
         partner_customer=pd.DataFrame({"partner_id": [100, 101, 200, 300], "CustomerKey": [100, 100, 200, 300]}),
-        product_master=pd.DataFrame({"product_id": [500, 501, 600, 601], "ProductMasterKey": [5, 5, 6, 7]}),
         user_salesperson=pd.DataFrame({"odoo_user_id": [7, 8, 9], "SalespersonKey": [70, 80, 90]}),
         team_map=pd.DataFrame({"odoo_team_id": [90, 91, 92], "SalesTeamKey": ["T-A", "T-B", "T-C"]}),
         fact_lines=pd.DataFrame({"OdooOrderID": [1, 1, 2, 3, 4], "CustomerKey": [100, 100, 200, 300, 300],
                                  "SalespersonKey": [70, 70, 80, 70, 90], "SalesTeamKey": ["T-A", "T-A", "T-B", "T-A", "T-C"],
                                  "ChannelKey": [1, 1, 2, 1, 2], "SegmentKey": [1, 1, 1, 2, 2], "CompanyKey": [1, 1, 1, 3, 3],
-                                 "OdooProductID": [500, 501, 500, 600, 601], "ProductMasterKey": [5, 5, 5, 6, 7],
-                                 "ProductMatchKey": ["M5", "M5", "M5", "M6", "M7"], "DateKey": [20261001, 20261001, 20261002, 20260915, 20261003]}),
+                                 "OdooProductID": [500, 501, 500, 600, 601], "ProductKey": [500, 501, 500, 600, 601],
+                                 "DateKey": [20261001, 20261001, 20261002, 20260915, 20261003]}),
         pickings=pd.DataFrame({"picking_id": [801, 802, 803], "sale_order_id": [1, 2, 4]}),
         moves=pd.DataFrame({"move_id": [9001, 9002], "picking_id": [802, 803]}),
     )
@@ -38,7 +37,7 @@ def test_a_changed_line_affects_its_order_customer_days_and_stock():
     a = compute_affected(SourceChanges(lines={21}), DimChanges(), _index())
     assert a.orders == {2}
     assert a.customers == {200}
-    assert a.product_days == {(1, "M5", 20261002)}
+    assert a.product_days == {(1, 500, 20261002)}
     assert a.salesperson_months == {(80, 202610)}
     assert a.pickings == {802}
     assert a.leads == {55}  # the order's opportunity: its quotation journey is recomputed
@@ -77,11 +76,13 @@ def test_a_team_change_affects_old_team_rows_and_mapped_odoo_team_orders():
     assert a.orders == {2, 4}
 
 
-def test_a_product_master_change_affects_lines_of_all_its_products():
-    a = compute_affected(SourceChanges(), DimChanges(product_masters={5}), _index())
+def test_a_changed_odoo_product_affects_every_line_of_that_product():
+    """A product renamed or re-attributed in Odoo (dim_product changed) -- products are Odoo ids, never sheet rows."""
+    a = compute_affected(SourceChanges(), DimChanges(products={500}), _index())
     assert a.orders == {1, 2}
-    assert a.product_days == {(1, "M5", 20261001), (1, "M5", 20261002)}
+    assert a.product_days == {(1, 500, 20261001), (1, 501, 20261001), (1, 500, 20261002)}
     assert a.companies == {1}
+    assert not hasattr(DimChanges(), "product_masters")
 
 
 def test_quants_and_costs_affect_inventory_without_touching_orders():

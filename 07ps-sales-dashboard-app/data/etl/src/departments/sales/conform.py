@@ -10,7 +10,7 @@ unchanged. This module replaces only the KEYS, resolving every one from Odoo ids
   leads, opportunities    OdooLeadID / OpportunityID -> crm.lead (partner, company); SalespersonID, SalesTeamID
   targets                 SalesTeam.xlsx / sales_targets.xlsx key columns (frozen codes)
   product daily, BCG,     rebuilt by the legacy product builders FROM THE CONFORMED sales lines, so they carry the same
-  product dashboard       keys by construction
+  product dashboard       keys by construction; products are Odoo product ids end to end (sales_pipeline.odoo_products)
 
 No Odoo team on the document (or its OdooTeams row says SALESPERSON): sales lines and orders take the salesperson's
 effective team; documents, deliveries, leads and opportunities take '-1' Unknown -- what the legacy pipeline did for
@@ -39,7 +39,7 @@ TEAM_FALLBACK_TO_SALESPERSON = {"fact_sales_lines": True, "fact_sales_orders": T
                                 "fact_sales_deliveries": False, "fact_sales_leads": False, "fact_sales_opportunities": False}
 DATE_KEY_COLUMNS = ("DateKey", "OrderDateKey", "ScheduledDateKey", "DoneDateKey", "LeadCreatedDateKey",
                     "OpportunityCreatedDateKey", "ExpectedCloseDateKey", "FirstQuotationDateKey", "SnapshotDateKey")
-BCG_KEY_COLUMNS = ("CompanyKey", "ProductMasterKey", "ProductKey")
+BCG_KEY_COLUMNS = ("CompanyKey", "ProductKey")
 PRODUCT_COST_KEY_COLUMNS = ("ProductKey", "CompanyKey")
 INVENTORY_KEY_COLUMNS = ("SnapshotDateKey", "CompanyKey", "ProductKey", "LocationID")
 BCG_PERIODS = ("YTD", "LYTD")
@@ -55,6 +55,8 @@ class Conformed:
     fallbacks: dict[str, list[Any]] = field(default_factory=dict)
     parity: dict[str, dict[str, int]] = field(default_factory=dict)
     notes: dict[str, Any] = field(default_factory=dict)
+    # QA_ProductOdooGaps of the product builders: sold products with no Brand / Family / Size / SKU in Odoo
+    product_gaps: pd.DataFrame | None = None
 
     def fell(self, key: str, ids) -> None:
         ids = list(ids)
@@ -187,7 +189,7 @@ def _weighted_average(values: pd.Series, weights: pd.Series):
 def _product_fallback_labels(df: pd.DataFrame, product_ids: list[Any]) -> list[str]:
     if not product_ids or "OdooProductID" not in df.columns:
         return product_ids
-    label_cols = ["ProductName", "OdooProductName", "ProductNameRaw", "OdooProductNameClean", "ProductNameClean"]
+    label_cols = ["ProductName", "OdooProductName"]
     present = [c for c in label_cols if c in df.columns]
     work = df[["OdooProductID", *present]].copy()
     work["_pid"] = pd.to_numeric(work["OdooProductID"], errors="coerce")
@@ -236,11 +238,8 @@ def _bcg_movement(ytd_class, lytd_class):
 
 
 def collapse_duplicate_bcg_keys(df: pd.DataFrame) -> pd.DataFrame:
-    """After conformance, multiple uncatalogued products can share the mart's unknown key bucket.
-
-    The BCG builder is unique by legacy product identity, but the warehouse primary key is the conformed
-    (CompanyKey, ProductMasterKey, ProductKey). Collapse any duplicate conformed keys before the loader validates.
-    """
+    """Lines without an Odoo product share the unknown product (-1); the warehouse primary key is (CompanyKey,
+    ProductKey). Collapse any duplicate conformed keys before the loader validates."""
     if df.empty or not set(BCG_KEY_COLUMNS).issubset(df.columns) or not df.duplicated(list(BCG_KEY_COLUMNS)).any():
         return df
 
@@ -248,7 +247,7 @@ def collapse_duplicate_bcg_keys(df: pd.DataFrame) -> pd.DataFrame:
     for _, group in df.groupby(list(BCG_KEY_COLUMNS), dropna=False, sort=False):
         row = group.iloc[0].to_dict()
         if len(group) > 1:
-            for col in ("Company", "ProductName", "ProductNameClean"):
+            for col in ("Company", "ProductName"):
                 if col in group.columns:
                     row[col] = _first_nonblank(group[col])
             for period in BCG_PERIODS:
@@ -312,8 +311,7 @@ def collapse_duplicate_product_cost_keys(df: pd.DataFrame) -> pd.DataFrame:
         row = group.iloc[0].to_dict()
         if len(group) > 1:
             for col in [
-                "Company", "ProductMasterKey", "ProductNameRaw", "ProductName", "ProductNameClean",
-                "OdooProductName", "OdooProductNameClean", "SKU",
+                "Company", "ProductName", "OdooProductName", "SKU",
             ]:
                 if col in group.columns:
                     row[col] = _first_nonblank(group[col])
@@ -355,9 +353,8 @@ def collapse_duplicate_inventory_keys(df: pd.DataFrame) -> pd.DataFrame:
         row = group.iloc[0].to_dict()
         if len(group) > 1:
             for col in [
-                "SnapshotDate", "Company", "ProductMasterKey", "ProductName", "ProductNameClean",
-                "OdooProductName", "OdooProductNameClean", "SKU", "LocationName", "WarehouseName",
-                "InventoryStatus", "ProductMatchKey", "StockClass",
+                "SnapshotDate", "Company", "ProductName", "OdooProductName", "SKU", "LocationName", "WarehouseName",
+                "InventoryStatus", "ProductCompanyKey", "StockClass",
             ]:
                 if col in group.columns:
                     row[col] = _first_nonblank(group[col])
@@ -434,11 +431,9 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
     _, users, teams, companies = _order_ids(lines, orders, "OdooOrderID")
     lines = apply_org_keys(lines, maps, out, "fact_sales_lines", partner_ids=list(_col(lines, "OdooPartnerID")), user_ids=users,
                            team_ids=teams, company_ids=companies)
-    legacy_product_key = lines["ProductKey"].copy()
     product_keys, fell = maps.products(_col(lines, "OdooProductID"))
     out.fell("fact_sales_lines.ProductKey (Odoo product id)", fell)
     lines["ProductKey"] = product_keys
-    lines["ProductMasterKey"] = maps.product_masters(product_keys, lines["CompanyKey"])
     lines["SalesOrderKey"] = [(_int_or_none(v) if _int_or_none(v) is not None else UNKNOWN) for v in _col(lines, "OdooOrderID")]
     lines = _date_keys(lines.drop(columns=["InvoiceKey"], errors="ignore"))
     lines["SalesLineGroupKey"], lines["Discount"] = line_group_keys(lines, build.sales_raw)
@@ -493,37 +488,29 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
     out.parity["fact_sales_targets"] = legacy_key_parity(legacy, t)
     out.tables["fact_sales_targets"] = _date_keys(t)
 
-    # product pages, BCG: rebuilt by the legacy builders from the conformed lines (legacy product columns restored) -----
+    # product pages, BCG: rebuilt by the product builders from the conformed lines ------------------------------------------
+    # ProductKey is the Odoo product id on both sides; the builders key a product per company by Company + that id.
     hybrid = lines.copy()
-    hybrid["ProductKey"] = legacy_product_key.to_numpy()
+    hybrid["ProductKey"] = hybrid["ProductKey"].astype("int64").astype(str)
     product = product_rebuild(hybrid)
-    # legacy product keys of products with no PRODUCTS.xlsx row ("RAW_FROM_ODOO|<hash>", "ODOO|<id>") -> Odoo product id
-    legacy_to_odoo = {}
-    for k, pid in zip(hybrid["ProductKey"].to_numpy(), lines["ProductKey"].to_numpy()):
-        if isinstance(k, str) and k not in maps.master_keys and k not in legacy_to_odoo and pid != UNKNOWN:
-            legacy_to_odoo[k] = int(pid)
+    out.product_gaps = product.get("QA_ProductOdooGaps")
     for name, table in (("Fact_ProductSalesDaily", "fact_sales_product_daily"), ("Dim_ProductDashboard", "dim_sales_product_dashboard"),
                         ("Dim_ProductDashboardGroup", "dim_sales_product_group"), ("ProductDashboard_Meta", "etl_sales_product_dashboard_meta"),
                         ("Fact_BCGMatrix", "fact_sales_bcg_matrix")):
         df = product[name].copy()
-        if "Company" in df.columns:  # the product builders work per company display name
+        if "Company" in df.columns and name != "Dim_ProductDashboardGroup":  # the product builders work per company display name
             df["CompanyKey"] = df["Company"].map(maps.company_by_name)
         elif "CompanyKey" in df.columns:
             df["CompanyKey"] = df["CompanyKey"].map(lambda v: UNKNOWN if pd.isna(v) else {2: 3}.get(int(v), int(v)))
         if "ProductKey" in df.columns:
-            legacy_keys = df["ProductKey"]
-            df = df.rename(columns={"ProductKey": "ProductMasterKey"})
-            df["ProductMasterKey"] = legacy_keys.map(lambda v: v if isinstance(v, str) and v in maps.master_keys else UNKNOWN_TEXT).to_numpy()
-            if name == "Fact_BCGMatrix":  # an uncatalogued product is identified by its Odoo id
-                unresolved = [k for k in legacy_keys if not (isinstance(k, str) and k in maps.master_keys) and k not in legacy_to_odoo]
-                out.fell("fact_sales_bcg_matrix.ProductKey (uncatalogued product without an Odoo id)", unresolved)
-                df["ProductKey"] = legacy_keys.map(lambda v: UNKNOWN if isinstance(v, str) and v in maps.master_keys else legacy_to_odoo.get(v, UNKNOWN)).to_numpy()
+            df["ProductKey"] = pd.to_numeric(df["ProductKey"], errors="coerce").fillna(UNKNOWN).astype("int64")
+            if name == "Fact_BCGMatrix":
                 df = collapse_duplicate_bcg_keys(df)
         for c in ("SalesTeamKey",):
             if c in df.columns:
                 df[c] = df[c].map(_team_key)
         if name == "Fact_ProductSalesDaily":
-            grain = ["DateKey", "CompanyKey", "ProductMatchKey", "SalespersonKey", "SalesTeamKey", "ChannelKey", "SegmentKey", "IsIntercompany", "UoM"]
+            grain = ["DateKey", "CompanyKey", "ProductKey", "SalespersonKey", "SalesTeamKey", "ChannelKey", "SegmentKey", "IsIntercompany", "UoM"]
             df["row_key"] = [hashlib.sha1("|".join(map(str, r)).encode("utf-8")).hexdigest() for r in df[grain].itertuples(index=False)]
         out.tables[table] = _date_keys(df)
 
@@ -533,11 +520,10 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
     pk, fell = maps.products(_col(inv, "OdooProductID"))
     out.fell("fact_sales_inventory_snapshot.ProductKey (Odoo product id)", _product_fallback_labels(inv, fell))
     inv["ProductKey"] = pk
-    inv["ProductMasterKey"] = maps.product_masters(pk, inv["CompanyKey"])
     inv = collapse_duplicate_inventory_keys(inv)
     out.tables["fact_sales_inventory_snapshot"] = _date_keys(inv.drop(columns=["_legacy_product_key"]))
 
-    cost = s["Dim_ProductCost"].rename(columns={"ProductKey": "ProductMasterKey"}).copy()
+    cost = s["Dim_ProductCost"].drop(columns=["ProductKey"], errors="ignore").copy()
     pk, fell = maps.products(_col(cost, "OdooProductID"))
     out.fell("dim_sales_product_cost.ProductKey (Odoo product id)", _product_fallback_labels(cost, fell))
     cost["ProductKey"] = pk
@@ -550,7 +536,6 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
         )
     )
     out.fell("dim_sales_product_cost.CompanyKey (cost company)", unknown_cost_companies)
-    cost["ProductMasterKey"] = maps.product_masters(pk, cost["CompanyKey"])
     cost = collapse_duplicate_product_cost_keys(cost)
     out.tables["dim_sales_product_cost"] = cost
 

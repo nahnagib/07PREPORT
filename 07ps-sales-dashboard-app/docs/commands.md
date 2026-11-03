@@ -78,13 +78,10 @@ just the `Fact_OffDays` table (~21 rows) from `Input/OffDays.xlsx`, without runn
 or touching any other table. It exists specifically because a full run is a heavyweight (~55-60
 minute) way to refresh a small, infrequently-changing reference sheet.
 
-**No equivalent exists for Products.** `data/etl/scripts/refresh_product_outputs.py` looks similar
-but only patches the **Excel workbook** (`Exports/SalesModel_OneOutput.xlsx`'s `Dim_Product`/
-`Dim_ProductCost`/`Fact_BCGMatrix` sheets) — it never writes to MySQL. To get an updated
-`Input/PRODUCTS.xlsx` into the database, a full run (§1, `--mode full`) is required. This also
-matters for **incremental** runs (§3) — `Dim_Product` is upserted-by-key incrementally but rows
-*removed* from `PRODUCTS.xlsx` are never deleted except by a full run, and `Fact_OffDays` is
-skipped entirely in incremental mode (see §3).
+**Products have no input file.** Since 2026-11-03 every product attribute (name, SKU, category, brand,
+family, size, active) comes from Odoo (`product.product`, by id); PRODUCTS.xlsx is retired. To change a
+product on the dashboard, change it in Odoo: the next run picks it up (the 30-minute mirror re-reads a
+product whose template changed). `Fact_OffDays` is skipped entirely in incremental mode (see §3).
 
 ## 3. Full-refresh vs incremental
 
@@ -95,7 +92,7 @@ database_exporter.py`'s `export()` vs `export_incremental()`):
 |---|---|---|
 | Every table | Unconditionally rewritten (`DROP`+recreate or `TRUNCATE`+reload, per `DB_RELOAD_MODE`) | Upserted by key where a key exists (`STRICT_INCREMENTAL_KEY_TABLES`), or skipped |
 | `Fact_OffDays` | Always rewritten from `Input/OffDays.xlsx` | **Skipped entirely** if the table already exists — stale in an incremental-only environment |
-| `Dim_Product` | Full rewrite, stale rows removed | Upsert-by-`ProductKey` — new/changed rows land, but rows removed from `PRODUCTS.xlsx` are **not** deleted |
+| `Dim_Product` | Full rewrite from the Odoo catalog | Upsert-by-`ProductKey` (Odoo product id) |
 | Odoo extraction | Full extract | Only records changed since the last successful run (cursor stored in MySQL) + a 7-day overlap |
 | Typical duration | ~55-60 min | ~15-40 min |
 
@@ -132,7 +129,7 @@ if it doesn't exist) — read by `Settings.from_env()` in `data/etl/config/setti
 | `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY` | always | Odoo connection; validation fails without these |
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | `--output sql`/`both`, or any incremental run | same MySQL instance the web app uses |
 | `DB_RELOAD_MODE` | full-mode SQL writes | `drop_recreate` (default) or `truncate` |
-| `ETL_INPUT_DIR` (legacy `INPUT_DIR`) | always | directory containing `PRODUCTS.xlsx`/`OffDays.xlsx`/`SalesTeam.xlsx`/`sales_targets.xlsx`, **as seen by the process running the pipeline**. Default `data/etl/input`; relative values resolve against `data/etl/`. Under docker-compose it is set to `/etl/input` for you and the host folder is `ETL_INPUT_HOST_DIR` in the project `.env` (mounted read-only). A `C:/...` value on Linux fails fast with the fix. Note: `data/etl/Input/` (same folder on Windows' case-insensitive disk) is an old legacy copy — point `ETL_INPUT_HOST_DIR` at the folder with the current files |
+| `ETL_INPUT_DIR` (legacy `INPUT_DIR`) | always | directory containing `OffDays.xlsx`/`SalesTeam.xlsx`/`sales_targets.xlsx`/`BlockedCustomers.xlsx`, **as seen by the process running the pipeline**. Default `data/etl/input`; relative values resolve against `data/etl/`. Under docker-compose it is set to `/etl/input` for you and the host folder is `ETL_INPUT_HOST_DIR` in the project `.env` (mounted read-only). A `C:/...` value on Linux fails fast with the fix. Note: `data/etl/Input/` (same folder on Windows' case-insensitive disk) is an old legacy copy — point `ETL_INPUT_HOST_DIR` at the folder with the current files |
 | `ETL_OUTPUT_DIR` (legacy `OUTPUT_DIR`) | `--output excel`/`both` | defaults to `data/etl/Exports`; must be writable (`/etl/output` in Docker, host folder `ETL_OUTPUT_HOST_DIR`) |
 | `TIMEZONE` | always | defaults `Africa/Tripoli` |
 

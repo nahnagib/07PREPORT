@@ -3,22 +3,25 @@
  * served per page by routes/productDashboard.ts.
  *
  * Source tables, all rebuilt by every ETL run (data/etl/src/sales_pipeline/product_dashboard.py):
- *   v_sales_product_daily  Company + product (ProductMatchKey) + day + filter keys + UoM. Built from the
+ * Products are Odoo's (2026-11-03): one product = one Odoo product.product id in one company
+ * (ProductCompanyKey 'Majaal|2163'); name, SKU, category, brand, sub brand, family, size and active are Odoo's values as
+ * stored, 'Unassigned' where Odoo has none. Nothing is matched or grouped on a product name.
+ *
+ *   v_sales_product_daily  Company + product (ProductCompanyKey) + day + filter keys + UoM. Built from the
  *                           same v_sales_lines rows the Sales pages read, so the grand total of all
- *                           products + Unmapped equals the Sales pages' SUM(Value) for the same period.
- *   v_sales_product_dashboard    one row per Company + product (every PRODUCTS.xlsx row, zero sales included,
- *                           plus Unmapped products seen in sales or stock) with today's stock, days of
- *                           inventory, stock band, lifecycle segment and BCG class.
- *   dim_sales_product_group  the BMH view: one row per ProductGroupKey (sheet ProductName, normalized)
+ *                           products equals the Sales pages' SUM(Value) for the same period.
+ *   v_sales_product_dashboard    one row per Company + product (every product sold or in stock in that company,
+ *                           plus its active never-sold Odoo products) with today's stock, days of inventory,
+ *                           stock band, lifecycle segment and BCG class.
+ *   dim_sales_product_group  the BMH view: one row per Odoo product template (ProductGroupKey 'T|<product_tmpl_id>')
  *                           across companies, with stock / days of inventory / stock band / lifecycle /
  *                           BCG recomputed by the ETL from the COMBINED lines and stock.
  *   etl_sales_product_dashboard_meta   as-of date and the thresholds the ETL used (config/product_dashboard.json).
  *
  * Company view (query.company = 'Majaal' | 'Tika'): that company's products and sales only.
- * BMH view (no company): products grouped by ProductGroupKey, so a product both companies sell
- * (Majaal "Cemair" + Tika "Cem Air") is one row whose value/volume are the exact sum of the two company
- * rows. Period metrics are recomputed from the combined sums (velocity = combined volume / days,
- * margin = combined (value - cost) / combined value) -- never averaged. Unmapped products are not grouped.
+ * BMH view (no company): products grouped by their Odoo template, so a template both companies sell is one row
+ * whose value/volume are the exact sum of the company rows. Period metrics are recomputed from the combined sums
+ * (velocity = combined volume / days, margin = combined (value - cost) / combined value) -- never averaged.
  *
  * Metric definitions (docs/product_data_runbook.md):
  *   Value    = SUM(untaxed line amount) in LYD, confirmed orders, order date in Africa/Tripoli.
@@ -44,8 +47,11 @@ export interface UomQty {
 }
 
 export interface ProductDashboardRow {
-  productMatchKey: string;
+  /** Company|Odoo product id (company view) or the template group key (BMH view): the row's identity. */
+  productCompanyKey: string;
+  /** Odoo product.product id; null for sales lines without a product. */
   productKey: string | null;
+  productTemplateId: number | null;
   company: string;
   productName: string;
   odooProductName: string | null;
@@ -56,7 +62,6 @@ export interface ProductDashboardRow {
   size: string | null;
   sku: string | null;
   isActive: number | null;
-  isMapped: boolean;
   /** Companies in this row: one in the company view; one or more in the BMH view. */
   companies: string[];
   /** Per-company split of the period sales (BMH view: one entry per company that has the product). */
@@ -98,7 +103,7 @@ export interface ProductDashboardRow {
 
 export interface ProductCompanyPart {
   company: string;
-  productMatchKey: string;
+  productCompanyKey: string;
   value: number;
   lines: number;
   volumeByUom: UomQty[];
@@ -114,7 +119,6 @@ export interface ProductDashboardOverview {
   lookbackDays: number;
   thresholds: Record<string, unknown>;
   products: ProductDashboardRow[];
-  unmapped: { value: number; lines: number; volumeByUom: UomQty[]; products: number };
   totals: { value: number; lines: number; volumeByUom: UomQty[] };
   intercompanyValue: number;
 }
@@ -219,9 +223,9 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
   const volumePrior = priorByUom.length <= 1 ? (priorByUom[0]?.qty ?? 0) : null;
   const costed = a && a.uncosted === 0 && lines > 0;
   return {
-    productMatchKey: key,
-    // the PRODUCTS.xlsx code (ProductMasterKey in the conformed model; '-1' = no catalogue row -> null, as before)
-    productKey: p.ProductMasterKey === '-1' ? null : str(p.ProductMasterKey ?? p.ProductKey),
+    productCompanyKey: key,
+    productKey: p.ProductKey === null || p.ProductKey === undefined || String(p.ProductKey) === '-1' ? null : String(p.ProductKey),
+    productTemplateId: numOrNull(p.ProductTemplateID),
     company: String(p.Company ?? ''),
     productName: String(p.ProductName ?? p.OdooProductName ?? key),
     odooProductName: str(p.OdooProductName),
@@ -232,7 +236,6 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     size: str(p.Size),
     sku: str(p.SKU),
     isActive: numOrNull(p.IsActive),
-    isMapped: Boolean(num(p.IsMapped)),
     companies,
     parts,
     value,
@@ -299,7 +302,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   const companyClause = requestedView === 'BMH' ? '' : ' AND d.Company = ?';
 
   const salesSql = `
-    SELECT d.ProductMatchKey AS k, COALESCE(d.UoM, '') AS uom,
+    SELECT d.ProductCompanyKey AS k, COALESCE(d.UoM, '') AS uom,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS value,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qty,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Lines ELSE 0 END)      AS lineCount,
@@ -310,7 +313,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? AND d.IsIntercompany = 1 THEN d.Value ELSE 0 END) AS icValue
     FROM v_sales_product_daily d
     WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?)) AND ${scope.clause}${companyClause}
-    GROUP BY d.ProductMatchKey, COALESCE(d.UoM, '')`;
+    GROUP BY d.ProductCompanyKey, COALESCE(d.UoM, '')`;
   const cur = [period.from, period.to];
   const prior = [period.priorFrom, period.priorTo];
   const salesParams: Array<string | number> = [...cur, ...cur, ...cur, ...cur, ...cur, ...prior, ...prior, ...cur, ...cur, ...prior, ...scope.params];
@@ -343,7 +346,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
 
   const partOf = (p: any, a: Agg | undefined): ProductCompanyPart => ({
     company: String(p.Company ?? ''),
-    productMatchKey: String(p.ProductMatchKey),
+    productCompanyKey: String(p.ProductCompanyKey),
     value: a?.value ?? 0,
     lines: a?.lines ?? 0,
     volumeByUom: a ? uomList(a.qty) : [],
@@ -353,7 +356,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   const companyRows = (productRows as any[]).filter((p) => view === 'BMH' || String(p.Company ?? '') === view);
   if (groupRows === null) {
     for (const p of companyRows) {
-      const key = String(p.ProductMatchKey);
+      const key = String(p.ProductCompanyKey);
       const a = byProduct.get(key);
       if (scoped && !(a && a.lines > 0)) continue;
       products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)]));
@@ -362,7 +365,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     // BMH view: sum each group's member products (exact, per UoM), then recompute the ratios.
     const members = new Map<string, any[]>();
     for (const p of companyRows) {
-      const g = String(p.ProductGroupKey ?? p.ProductMatchKey);
+      const g = String(p.ProductGroupKey ?? p.ProductCompanyKey);
       const list = members.get(g) ?? [];
       list.push(p);
       members.set(g, list);
@@ -374,7 +377,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
       const parts: ProductCompanyPart[] = [];
       let found = false;
       for (const m of list) {
-        const a = byProduct.get(String(m.ProductMatchKey));
+        const a = byProduct.get(String(m.ProductCompanyKey));
         if (a) {
           addInto(agg, a);
           found = true;
@@ -389,26 +392,15 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   }
 
   // Totals straight from the sales rows (not from the product list), so a key missing from
-  // v_sales_product_dashboard can never drop out of the reconciliation; such a key counts as Unmapped.
-  const unmappedQty = new Map<string, number>();
+  // v_sales_product_dashboard can never drop out of the reconciliation.
   const totalQty = new Map<string, number>();
-  let unmappedValue = 0;
-  let unmappedLines = 0;
-  let unmappedProducts = 0;
   let totalValue = 0;
   let totalLines = 0;
-  const mappedKeys = new Set((productRows as any[]).filter((p) => Boolean(num(p.IsMapped))).map((p) => String(p.ProductMatchKey)));
-  for (const [key, a] of byProduct) {
+  for (const a of byProduct.values()) {
     if (a.lines <= 0) continue;
     totalValue += a.value;
     totalLines += a.lines;
     for (const [uom, qty] of a.qty) totalQty.set(uom, (totalQty.get(uom) ?? 0) + qty);
-    if (!mappedKeys.has(key)) {
-      unmappedValue += a.value;
-      unmappedLines += a.lines;
-      unmappedProducts += 1;
-      for (const [uom, qty] of a.qty) unmappedQty.set(uom, (unmappedQty.get(uom) ?? 0) + qty);
-    }
   }
 
   const meta = (metaRows as any[])[0] ?? {};
@@ -427,7 +419,6 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     lookbackDays: num(meta.LookbackDays) || 90,
     thresholds,
     products,
-    unmapped: { value: unmappedValue, lines: unmappedLines, volumeByUom: uomList(unmappedQty), products: unmappedProducts },
     totals: { value: totalValue, lines: totalLines, volumeByUom: uomList(totalQty) },
     intercompanyValue,
   };

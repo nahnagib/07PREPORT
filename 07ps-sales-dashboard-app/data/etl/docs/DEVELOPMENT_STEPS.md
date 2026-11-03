@@ -19,14 +19,13 @@ The pipeline loads:
 - `sales_targets.xlsx`
 - `SalesTeam.xlsx`
 - `OffDays.xlsx`
-- `PRODUCTS.xlsx`
 - `BlockedCustomers.xlsx`
 
 If `BlockedCustomers.xlsx` is missing, an empty template is created.
 
 ## Step 5: Apply Cleaning Rules
 
-The existing business logic is preserved: order/customer/product cleanup, discount detection, numeric cleanup, invoice filtering, first purchase date, sales org enrichment, company normalization, invoice classification, and product mapping.
+The existing business logic is preserved: order/customer cleanup, discount flag (by Odoo product id; product names are never cleaned), numeric cleanup, invoice filtering, first purchase date, sales org enrichment, company normalization, invoice classification, and product mapping.
 
 ## Step 6: Build Dimensions
 

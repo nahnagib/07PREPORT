@@ -46,7 +46,8 @@ ODOO: dict[str, list[dict[str, Any]]] = {
     ],
     "product.product": [
         {"id": 500, "product_tmpl_id": [500, "t"], "name": "Grout Crema", "display_name": "[GR-1] Grout Crema", "default_code": "GR-1",
-         "company_id": False, "categ_id": [5, "All / Grout"], "uom_id": [1, "Units"], "detailed_type": "product", "active": True, "write_date": WD},
+         "company_id": False, "categ_id": [5, "All / Grout"], "uom_id": [1, "Units"], "detailed_type": "product", "active": True,
+         "manufacturer_id": [31, "Weber"], "sub_brand_id": False, "product_family_id": False, "size_dimensions_id": [41, "5kg"], "write_date": WD},
         {"id": 501, "product_tmpl_id": [501, "t"], "name": "Cem Air", "display_name": "Cem Air", "default_code": False,
          "company_id": [3, "TIKA"], "categ_id": [6, "All / Cement"], "uom_id": [1, "Units"], "detailed_type": "product", "active": True, "write_date": WD},
         {"id": 502, "product_tmpl_id": [502, "t"], "name": "Mystery Item", "display_name": "Mystery Item", "default_code": False,
@@ -182,14 +183,6 @@ ODOO_TEAMS = pd.DataFrame([
 ])
 CHANNEL = pd.DataFrame({"ChannelKey": [2, 3, 4], "DistributionChannel": ["Projects", "Retail", "Wholesales"]})
 SEGMENT = pd.DataFrame({"SegmentKey": [1, 2, 3, 4], "Segment": ["B2B", "B2C", "Backoffice", "Inter Company"]})
-PRODUCTS = pd.DataFrame([
-    {"ProductKey": "GR", "Company": "Majaal", "Category": "Tile Adhesives", "Brand": "Weber", "SubBrand": None, "Family": "Grout",
-     "ProductName": "Grout Crema", "OdooProductName": "[GR-1] Grout Crema", "ProductLevel": "SKU", "SKU": "GR-1", "Size": "5kg", "IsActive": 1,
-     "ProductMasterKey": "Majaal | GR-1 | 1"},
-    {"ProductKey": "CEM", "Company": "Tika", "Category": "Cement", "Brand": "CemAir", "SubBrand": None, "Family": "Cement",
-     "ProductName": None, "OdooProductName": "Cem Air", "ProductLevel": "SKU", "SKU": None, "Size": None, "IsActive": 1,
-     "ProductMasterKey": None},
-])
 OFFDAYS = pd.DataFrame([
     {"Date": "18/1/2026", "OffDayType": "Unexpected", "HolidayName": None, "Reason": "storm", "Country": "Libya", "Company": "Majaal",
      "Branch": "MJ-EST-BB", "IsActive": 1, "Source": "HR", "Notes": None, "CompanyKey": 1},
@@ -215,7 +208,6 @@ def write_inputs(folder: Path, *, salesperson: pd.DataFrame | None = None, users
         ODOO_TEAMS.to_excel(w, sheet_name="OdooTeams", index=False)
         CHANNEL.to_excel(w, sheet_name="channel", index=False)
         SEGMENT.to_excel(w, sheet_name="segment", index=False)
-    PRODUCTS.to_excel(folder / "PRODUCTS.xlsx", sheet_name="Products", index=False)
     OFFDAYS.to_excel(folder / "OffDays.xlsx", sheet_name="Sheet1", index=False)
     BLOCKED.to_excel(folder / "BlockedCustomers.xlsx", sheet_name="BlockedCustomers", index=False)
     return folder

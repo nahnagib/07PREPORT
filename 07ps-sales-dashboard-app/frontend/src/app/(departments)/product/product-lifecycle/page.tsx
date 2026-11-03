@@ -6,7 +6,9 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterState } from '../../../../components/FilterProvider';
-import { ProductDataStatusBar, ProductRefreshFooter } from '../../../../components/ProductDataStatus';
+import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
+import { RefreshFooter } from '../../../../components/RefreshFooter';
+import { formatTimestamp } from '../../../../lib/format';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
 import {
@@ -112,7 +114,7 @@ function toExecutiveSummaryRows(
       variancePct: null,
       varianceLyPct: null,
       status: 'alert',
-      takeaway: `${discCount} SKUs are discontinued (inactive in PRODUCTS.xlsx or no sale in 365 days; never-sold products are counted separately); they sold ${fmtLYD(discValueAtRiskLytd)} in the same period last year.`,
+      takeaway: `${discCount} SKUs are discontinued (archived in Odoo or no sale in 365 days; never-sold products are counted separately); they sold ${fmtLYD(discValueAtRiskLytd)} in the same period last year.`,
     },
     {
       id: 'freshness',
@@ -334,7 +336,12 @@ export default function ProductLifecyclePage() {
           }
         />
 
-        <ProductDataStatusBar refresh={refresh.data} data={overview.data} />
+        <ValidationStatusBar
+          isStale={refresh.data?.isStale}
+          isInverted={refresh.data?.isInverted}
+          refreshCheck={refresh.data?.refreshCheck}
+          lastRefreshTime={refresh.data ? formatTimestamp(refresh.data.lastRefreshTime) : undefined}
+        />
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
           {overview.loading && !overview.data ? (
@@ -446,7 +453,11 @@ export default function ProductLifecyclePage() {
           )}
         </main>
 
-        <ProductRefreshFooter refresh={refresh.data} />
+        <RefreshFooter
+          lastUpdate={formatTimestamp(refresh.data?.lastUpdate ?? null)}
+          lastOrderCreated={formatTimestamp(refresh.data?.lastOrderCreated ?? null)}
+          lastRefreshTime={formatTimestamp(refresh.data?.lastRefreshTime ?? null)}
+        />
         <BottomNavBar active="Product Lifecycle" />
       </div>
     </PermissionGuard>

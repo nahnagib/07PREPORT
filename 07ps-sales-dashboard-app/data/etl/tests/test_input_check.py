@@ -27,17 +27,12 @@ from config.input_check import (  # noqa: E402
 )
 from config.settings import Settings  # noqa: E402
 from sales_pipeline.pipeline import PowerBISalesPipeline  # noqa: E402
-from sales_pipeline.product_name_mapper import ProductMappingError, ProductNameMapper  # noqa: E402
 
 
 def _write_workbooks(folder: Path, names=REQUIRED_INPUT_FILES) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     for name in names:
-        if name == "PRODUCTS.xlsx":
-            df = pd.DataFrame({"OdooProductName": ["Odoo A", "Odoo B"], "ProductName": ["Clean A", "Clean B"]})
-        else:
-            df = pd.DataFrame({"x": [1]})
-        df.to_excel(folder / name, index=False)
+        pd.DataFrame({"x": [1]}).to_excel(folder / name, index=False)
     pd.DataFrame({"x": [1]}).to_excel(folder / "BlockedCustomers.xlsx", index=False)
 
 
@@ -63,17 +58,17 @@ def test_one_missing_file_is_named_and_explained(tmp_path):
     text = format_report(report)
     assert "[MISSING    ] OffDays.xlsx" in text
     assert str(tmp_path.resolve()) in text and "exists=True" in text
-    assert "[OK         ] PRODUCTS.xlsx" in text
+    assert "[OK         ] SalesTeam.xlsx" in text
     assert "Hint:" in text
 
 
 def test_wrong_case_file_name_gets_a_near_match_hint(tmp_path):
-    _write_workbooks(tmp_path, names=[n for n in REQUIRED_INPUT_FILES if n != "PRODUCTS.xlsx"])
-    pd.DataFrame({"x": [1]}).to_excel(tmp_path / "Products.xlsx", index=False)
+    _write_workbooks(tmp_path, names=[n for n in REQUIRED_INPUT_FILES if n != "OffDays.xlsx"])
+    pd.DataFrame({"x": [1]}).to_excel(tmp_path / "offdays.xlsx", index=False)
     report = inspect_input_dir(tmp_path)
-    products = next(f for f in report.files if f.name == "PRODUCTS.xlsx")
-    assert products.status == "missing" and products.near_matches == ["Products.xlsx"]
-    assert "exact file name 'PRODUCTS.xlsx'" in products.detail
+    offdays = next(f for f in report.files if f.name == "OffDays.xlsx")
+    assert offdays.status == "missing" and offdays.near_matches == ["offdays.xlsx"]
+    assert "exact file name 'OffDays.xlsx'" in offdays.detail
     assert "different name or letter case" in report.hint
 
 
@@ -152,20 +147,19 @@ def test_pipeline_constructor_no_longer_touches_input_files(tmp_path):
     PowerBISalesPipeline(_settings(tmp_path / "does-not-exist", tmp_path / "out"))  # must not raise
 
 
-def test_pipeline_validation_fails_with_full_report_and_never_builds_the_mapper(tmp_path, caplog):
+def test_pipeline_validation_fails_with_full_report(tmp_path, caplog):
     pipeline = PowerBISalesPipeline(_settings(tmp_path / "in", tmp_path / "out"))
     with caplog.at_level(logging.INFO), pytest.raises(InputValidationError) as exc:
         pipeline._validate_inputs()
-    assert "PRODUCTS.xlsx" in str(exc.value) and str((tmp_path / "in").resolve()) in str(exc.value)
-    assert pipeline._mapper is None
-    assert "ProductNameMapper ready" not in caplog.text
+    assert "SalesTeam.xlsx" in str(exc.value) and str((tmp_path / "in").resolve()) in str(exc.value)
 
 
-def test_pipeline_validation_passes_and_mapper_loads_real_mappings(tmp_path):
+def test_products_xlsx_is_not_an_input_any_more(tmp_path):
+    """Products come from Odoo (2026-11-03): the input folder is complete without PRODUCTS.xlsx."""
+    assert "PRODUCTS.xlsx" not in REQUIRED_INPUT_FILES
     _write_workbooks(tmp_path / "in")
-    pipeline = PowerBISalesPipeline(_settings(tmp_path / "in", tmp_path / "out"))
-    pipeline._validate_inputs()
-    assert pipeline.mapper.mapping_count() == 2
+    assert not (tmp_path / "in" / "PRODUCTS.xlsx").exists()
+    PowerBISalesPipeline(_settings(tmp_path / "in", tmp_path / "out"))._validate_inputs()  # must not raise
 
 
 def test_missing_blocked_customers_on_a_readonly_folder_explains_itself(tmp_path, monkeypatch):
@@ -179,36 +173,3 @@ def test_missing_blocked_customers_on_a_readonly_folder_explains_itself(tmp_path
     monkeypatch.setattr("sales_pipeline.pipeline.BlockedCustomersLoader.export_template", _boom)
     with pytest.raises(RuntimeError, match="read-only"):
         pipeline._validate_inputs()
-
-
-# --- ProductNameMapper -------------------------------------------------------------------------
-
-
-def test_mapper_missing_file_raises(tmp_path):
-    with pytest.raises(ProductMappingError, match="not found"):
-        ProductNameMapper(tmp_path / "PRODUCTS.xlsx")
-
-
-def test_mapper_unreadable_file_raises(tmp_path):
-    (tmp_path / "PRODUCTS.xlsx").write_bytes(b"garbage")
-    with pytest.raises(ProductMappingError, match="could not be read"):
-        ProductNameMapper(tmp_path / "PRODUCTS.xlsx")
-
-
-def test_mapper_without_mapping_columns_raises(tmp_path):
-    pd.DataFrame({"a": [1]}).to_excel(tmp_path / "PRODUCTS.xlsx", index=False)
-    with pytest.raises(ProductMappingError, match="OdooProductName"):
-        ProductNameMapper(tmp_path / "PRODUCTS.xlsx")
-
-
-def test_mapper_zero_rows_from_a_valid_file_only_warns(tmp_path, caplog):
-    pd.DataFrame({"OdooProductName": [], "ProductName": []}).to_excel(tmp_path / "PRODUCTS.xlsx", index=False)
-    with caplog.at_level(logging.WARNING):
-        mapper = ProductNameMapper(tmp_path / "PRODUCTS.xlsx")
-    assert mapper.mapping_count() == 0 and "0 Odoo->clean name mappings" in caplog.text
-
-
-def test_mapper_maps_names(tmp_path):
-    _write_workbooks(tmp_path)
-    mapper = ProductNameMapper(tmp_path / "PRODUCTS.xlsx")
-    assert mapper.apply_to_series(pd.Series(["Odoo A", "unmapped"])).tolist() == ["Clean A", "unmapped"]

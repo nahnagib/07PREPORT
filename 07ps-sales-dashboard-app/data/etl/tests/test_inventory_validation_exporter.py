@@ -25,12 +25,12 @@ def _fact_inventory() -> pd.DataFrame:
 def _dim_product() -> pd.DataFrame:
     return pd.DataFrame(
         [
-            {"ProductKey": "P1", "ProductMappingStatus": "OfficialProductMaster"},
-            {"ProductKey": "P2", "ProductMappingStatus": "OfficialProductMaster"},
-            {"ProductKey": "P3", "ProductMappingStatus": "OfficialProductMaster"},
-            {"ProductKey": "P4", "ProductMappingStatus": "OfficialProductMaster"},
-            {"ProductKey": "P5", "ProductMappingStatus": "OfficialProductMaster"},
-            {"ProductKey": "P6", "ProductMappingStatus": "RawFromOdoo"},
+            {"ProductKey": "P1"},
+            {"ProductKey": "P2"},
+            {"ProductKey": "P3"},
+            {"ProductKey": "P4"},
+            {"ProductKey": "P5"},
+            {"ProductKey": "P6"},
         ]
     )
 
@@ -42,7 +42,6 @@ def test_build_validation_frame_flags_each_condition():
     by_key = frame.set_index("ProductKey")
 
     assert bool(by_key.loc["P1", "Flag_RM_Warehouse"])
-    assert not bool(by_key.loc["P1", "Flag_Not_Official_Master"])
 
     assert bool(by_key.loc["P2", "Flag_Vessel_InTransit"])
 
@@ -52,9 +51,8 @@ def test_build_validation_frame_flags_each_condition():
     assert bool(by_key.loc["P5", "Flag_Missing_Cost"])
 
     assert bool(by_key.loc["P_MISSING", "Flag_No_DimProduct_Match"])
-    assert bool(by_key.loc["P_MISSING", "Flag_Not_Official_Master"])
-
-    assert bool(by_key.loc["P6", "Flag_Not_Official_Master"])
+    assert "Flag_Not_Official_Master" not in frame.columns  # products are Odoo's: there is no sheet master any more
+    assert not bool(by_key.loc["P6", "Needs_Review"])
 
     # A row with no matching flags should not need review.
     clean_row = by_key.loc["P1"]
@@ -62,7 +60,7 @@ def test_build_validation_frame_flags_each_condition():
     clean_fact = pd.DataFrame(
         [{"ProductKey": "CLEAN", "WarehouseName": "Majaal", "OnHandQty": 5, "ProductCost": 9.0, "InventoryValue": 45.0}]
     )
-    clean_dim = pd.DataFrame([{"ProductKey": "CLEAN", "ProductMappingStatus": "OfficialProductMaster"}])
+    clean_dim = pd.DataFrame([{"ProductKey": "CLEAN"}])
     clean_frame = InventoryValidationExporter.build_validation_frame(clean_fact, clean_dim)
     assert not bool(clean_frame.loc[0, "Needs_Review"])
 
@@ -85,13 +83,3 @@ def test_export_writes_two_sheets(tmp_path: Path):
     assert len(data_sheet) == len(_fact_inventory())
     for flag in [*FLAG_COLUMNS, "Needs_Review"]:
         assert flag in data_sheet.columns
-
-
-def test_export_unmapped_products_only_includes_no_match_rows(tmp_path: Path):
-    out_path = tmp_path / "Unmapped_Products.xlsx"
-    InventoryValidationExporter().export_unmapped_products(_fact_inventory(), _dim_product(), out_path)
-
-    assert out_path.exists()
-    unmapped = pd.read_excel(out_path, sheet_name="Unmapped_Products")
-    assert unmapped["ProductKey"].tolist() == ["P_MISSING"]
-    assert bool(unmapped.loc[0, "Flag_No_DimProduct_Match"])

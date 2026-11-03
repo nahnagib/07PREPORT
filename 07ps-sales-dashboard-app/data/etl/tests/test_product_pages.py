@@ -1,95 +1,69 @@
-"""Product pages: master import contract, matching rules, and the pre-aggregated product tables."""
+"""Product pages: Odoo products by id (sales_pipeline.odoo_products) and the pre-aggregated product tables."""
 
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from sales_pipeline import odoo_products
 from sales_pipeline.inventory import InventoryModelBuilder
-from sales_pipeline.legacy_transform import Logger, ProductMasterLoader, ProductMasterValidationError
 from sales_pipeline.product_dashboard import IntercompanyFlagger, ProductDashboardBuilder, ProductDashboardConfig
-from sales_pipeline.product_matching import match_key, normalize_match_name
 
-COLUMNS = ["ProductKey", "Company", "Category", "Brand", "SubBrand", "Family", "ProductName",
-           "OdooProductName", "ProductLevel", "SKU", "Size", "IsActive"]
 CONFIG = Path(__file__).resolve().parents[1] / "config" / "product_dashboard.json"
 
 
-def _write(tmp_path: Path, rows: list[dict], columns: list[str] = COLUMNS, sheet: str = "Products") -> Path:
-    path = tmp_path / "PRODUCTS.xlsx"
-    with pd.ExcelWriter(path) as writer:
-        pd.DataFrame([{"x": 1}]).to_excel(writer, sheet_name="Notes", index=False)
-        pd.DataFrame(rows, columns=columns).to_excel(writer, sheet_name=sheet, index=False)
-    return path
+# ---------------------------------------------------------------- Odoo catalog + sales lines
+def _raw(*rows: dict) -> pd.DataFrame:
+    """product.product rows as ProductCostRepository returns them (m2o flattened to name + _id)."""
+    out = []
+    for r in rows:
+        out.append({
+            "id": r["id"], "product_tmpl_id": f"tmpl {r.get('tmpl', r['id'])}", "product_tmpl_id_id": r.get("tmpl", r["id"]),
+            "name": r["name"], "display_name": r.get("display", r["name"]), "default_code": r.get("code", False),
+            "company_id": r.get("company", False), "company_id_id": r.get("company_id", False), "active": r.get("active", True),
+            "categ_id": r.get("categ", "All"), "categ_id_id": r.get("categ_id", 1),
+            "manufacturer_id": r.get("brand", False), "sub_brand_id": False, "product_family_id": r.get("family", False),
+            "size_dimensions_id": r.get("size", False), "standard_price": 1.0, "cost_company": "Majaal",
+        })
+    return pd.DataFrame(out)
 
 
-def _row(company: str, odoo: str, **extra) -> dict:
-    base = {c: None for c in COLUMNS}
-    base.update({"ProductKey": "K|1", "Company": company, "Category": "Cat", "ProductName": odoo.title(),
-                 "OdooProductName": odoo, "SKU": "S", "IsActive": 1})
-    base.update(extra)
-    return base
+def test_catalog_keeps_odoo_values_byte_for_byte_and_marks_empty_attributes_unassigned() -> None:
+    raw = _raw(
+        {"id": 7, "name": "  CemAir  ٱلْعَرَبِيَّة", "display": "[GRV-1]   CemAir", "code": "GRV-1", "brand": "APE", "categ": "All / Tiles / 60x60"},
+        {"id": 8, "name": "Plain", "brand": False, "family": ""},
+    )
+    cat = odoo_products.catalog(raw).set_index("OdooProductID")
+    assert cat.loc[7, "ProductName"] == "  CemAir  ٱلْعَرَبِيَّة"      # no trimming, case or diacritic changes
+    assert cat.loc[7, "OdooProductName"] == "[GRV-1]   CemAir"           # display name as Odoo gives it
+    assert cat.loc[7, "SKU"] == "GRV-1"                                    # internal reference in its own column
+    assert cat.loc[7, "Category"] == "All / Tiles / 60x60"                 # full path
+    assert cat.loc[7, "Brand"] == "APE"
+    assert cat.loc[8, "Brand"] == cat.loc[8, "Family"] == cat.loc[8, "Size"] == "Unassigned"
+    assert pd.isna(cat.loc[8, "SKU"])
 
 
-def _loader() -> ProductMasterLoader:
-    return ProductMasterLoader(Logger(enabled=False), export_conflicts=False, base_dir=Path("."))
+def test_attach_is_by_odoo_id_never_by_name_and_never_changes_the_row_count() -> None:
+    cat = odoo_products.catalog(_raw({"id": 1, "name": "Same name"}, {"id": 2, "name": "Same name", "brand": "B"}))
+    sales = pd.DataFrame([
+        {"OdooProductID": 2, "product_name": "Same name"},
+        {"OdooProductID": 1, "product_name": "Same name"},
+        {"OdooProductID": 1068, "product_name": "Discount - تخفيض"},   # not in the catalog
+        {"OdooProductID": None, "product_name": "no product"},
+    ])
+    out = odoo_products.attach(sales, cat, discount_product_ids=[1068])
+    assert len(out) == 4
+    assert out["ProductKey"].tolist() == ["2", "1", "1068", "-1"]
+    assert out["Brand"].tolist() == ["B", "Unassigned", "Unassigned", "Unassigned"]
+    assert out["ProductName"].tolist()[2] == "Discount - تخفيض"            # discount lines keep their name ...
+    assert out["is_discount"].tolist() == [False, False, True, False]     # ... and are only flagged
 
 
-# ---------------------------------------------------------------- normalization
-def test_normalize_match_name_rules() -> None:
-    assert normalize_match_name("  [GRVS-010] GROUT  CREMA\t- C02 ") == "GROUT CREMA - C02"
-    assert normalize_match_name("Cem Air") == "CEM AIR"
-    assert normalize_match_name("Cem Air") != normalize_match_name("Cemair")
-    assert normalize_match_name(None) == ""
-    assert match_key("TIKA", "Cem Air") == match_key("Tika", " cem  air ")
-    assert match_key("Majaal", "Cemair") != match_key("Tika", "Cemair")
+def test_shipped_config_lists_the_discount_products() -> None:
+    cfg = ProductDashboardConfig.load(CONFIG)
+    assert odoo_products.discount_ids(cfg.section("discounts")) == {1068, 2881, 4691, 6009}
 
 
-# ---------------------------------------------------------------- import contract
-def test_import_reads_products_sheet_and_summarises(tmp_path: Path) -> None:
-    path = _write(tmp_path, [_row("Majaal", "Cemair"), _row("Tika", "Cem Air", Category=None, ProductName=None, SKU=None)])
-    df = _loader().load(path)
-    summary = ProductMasterLoader.summary(df)
-    assert summary["rows"] == 2
-    assert summary["rows_per_company"] == {"Majaal": 1, "Tika": 1}
-    assert summary["blank_category"] == 1 and summary["blank_product_name"] == 1 and summary["blank_sku"] == 1
-    assert df["ProductKey"].is_unique  # shared sheet key K|1 gets a deterministic per-product suffix
-    assert set(df["ProductMatchKey"]) == {"MAJAAL|CEMAIR", "TIKA|CEM AIR"}
-    assert df.loc[df["Company"].eq("Tika"), "ProductName"].iloc[0] == "Cem Air"  # blank name -> Odoo name, not dropped
-
-
-def test_import_rejects_duplicate_company_and_normalized_name(tmp_path: Path) -> None:
-    path = _write(tmp_path, [_row("Majaal", "GROUT CREMA - C02"), _row("Majaal", "[GRVS-010] GROUT CREMA - C02"),
-                             _row("Tika", "GROUT CREMA - C02")])
-    with pytest.raises(ProductMasterValidationError) as exc:
-        _loader().load(path)
-    assert "duplicate Company + OdooProductName MAJAAL|GROUT CREMA - C02" in str(exc.value)
-    assert "row 2" in str(exc.value) and "row 3" in str(exc.value)
-    assert "row 4" not in str(exc.value)  # same name in the other company is fine
-
-
-def test_import_rejects_missing_required_column(tmp_path: Path) -> None:
-    columns = [c for c in COLUMNS if c != "SKU"]
-    path = _write(tmp_path, [{c: v for c, v in _row("Majaal", "A").items() if c != "SKU"}], columns=columns)
-    with pytest.raises(ProductMasterValidationError, match="missing required column"):
-        _loader().load(path)
-
-
-def test_import_rejects_unknown_company_and_blank_name(tmp_path: Path) -> None:
-    path = _write(tmp_path, [_row("NewCo", "A"), _row("Tika", "")])
-    with pytest.raises(ProductMasterValidationError) as exc:
-        _loader().load(path)
-    assert "not Majaal or Tika" in str(exc.value) and "OdooProductName is blank" in str(exc.value)
-
-
-def test_product_keys_are_deterministic_across_reimports(tmp_path: Path) -> None:
-    rows = [_row("Majaal", "A"), _row("Majaal", "B")]
-    first = _loader().load(_write(tmp_path, rows)).set_index("ProductMatchKey")["ProductKey"]
-    second = _loader().load(_write(tmp_path, list(reversed(rows)) + [_row("Tika", "C")])).set_index("ProductMatchKey")["ProductKey"]
-    assert first.to_dict() == second.loc[first.index].to_dict()
-
-
-# ---------------------------------------------------------------- intercompany flag
 def test_intercompany_flag_is_information_only() -> None:
     flagger = IntercompanyFlagger({9641}, {"اصول المجموعة"})
     sales = pd.DataFrame([
@@ -105,102 +79,106 @@ def test_intercompany_flag_is_information_only() -> None:
 
 # ---------------------------------------------------------------- product tables
 def _dim(*rows: dict) -> pd.DataFrame:
-    base = []
-    for r in rows:
-        base.append({"ProductSource": "Input Master", "ProductKey": r["key"], "SheetProductKey": r["key"],
-                     "ProductMatchKey": match_key(r["company"], r.get("odoo", r["name"])), "Company": r["company"],
-                     "ProductName": r["name"], "OdooProductName": r.get("odoo", r["name"]), "Category": r.get("category", "Cat"),
-                     "Brand": None, "SubBrand": None, "Family": None, "Size": None, "SKU": None, "ProductLevel": "SKU",
-                     "IsActive": r.get("active", 1)})
-    return pd.DataFrame(base)
+    return odoo_products.dim_product(odoo_products.catalog(_raw(*rows)))
 
 
-def _line(company: str, name: str, date: str, qty: float, value: float, mapped: bool = True, uom: str = "UNIT") -> dict:
-    return {"company_final": company, "CompanyKey": 1 if company == "Majaal" else 2, "ProductMatchKey": match_key(company, name),
-            "ProductKey": "k", "OdooProductName": name, "order_date_date": date, "DateKey": int(date.replace("-", "")),
-            "SalespersonKey": 1, "SegmentKey": 1, "ChannelKey": 1, "SalesTeamKey": "T", "IsIntercompany": False,
-            "IsMappedProduct": mapped, "uom": uom, "untaxed_total": value, "quantity": qty}
+def _line(company: str, pid: int, date: str, qty: float, value: float, uom: str = "UNIT", name: str | None = None) -> dict:
+    return {"company_final": company, "CompanyKey": 1 if company == "Majaal" else 2, "ProductKey": str(pid), "OdooProductID": pid,
+            "ProductName": name or f"P{pid}", "OdooProductName": name or f"P{pid}", "order_date_date": date,
+            "DateKey": int(date.replace("-", "")), "SalespersonKey": 1, "SegmentKey": 1, "ChannelKey": 1, "SalesTeamKey": "T",
+            "IsIntercompany": False, "uom": uom, "untaxed_total": value, "quantity": qty}
 
 
-def _build(lines: list[dict], dim: pd.DataFrame, inventory: pd.DataFrame | None = None, costs=None, as_of="2026-09-29"):
+def _inv(company: str, pid: int, qty: float, value: float, stock_class: str = "FinishedGoods", location: str = "WH") -> dict:
+    return {"ProductCompanyKey": f"{company}|{pid}", "ProductKey": str(pid), "Company": company, "OdooProductName": f"P{pid}",
+            "ProductName": f"P{pid}", "LocationName": location, "OnHandQty": qty, "InventoryValue": value, "StockClass": stock_class}
+
+
+def _build(lines: list[dict], dim: pd.DataFrame, inventory: pd.DataFrame | None = None, costs=None, as_of="2026-09-29", config=None):
     sales = pd.DataFrame(lines)
     cost = pd.Series(costs if costs is not None else [1.0] * len(sales), index=sales.index)
-    inv = inventory if inventory is not None else pd.DataFrame(columns=["ProductMatchKey", "Company", "OdooProductName", "OnHandQty", "InventoryValue", "StockClass", "LocationName", "ProductName"])
-    return ProductDashboardBuilder(ProductDashboardConfig.load(CONFIG), as_of).build(sales, dim, inv, line_costs=cost)
+    inv = inventory if inventory is not None else pd.DataFrame(columns=["ProductCompanyKey", "ProductKey", "Company", "OdooProductName", "OnHandQty",
+                                                                       "InventoryValue", "StockClass", "LocationName", "ProductName"])
+    return ProductDashboardBuilder(config or ProductDashboardConfig.load(CONFIG), as_of).build(sales, dim, inv, line_costs=cost)
 
 
-def test_daily_table_preserves_totals_and_keeps_unmapped() -> None:
-    dim = _dim({"key": "A", "company": "Majaal", "name": "A"})
-    lines = [_line("Majaal", "A", "2026-09-01", 2, 20), _line("Majaal", "A", "2026-09-01", 3, 30),
-             _line("Tika", "Mystery", "2026-09-02", 1, 5, mapped=False)]
+def test_daily_table_preserves_totals_including_products_outside_the_catalog() -> None:
+    dim = _dim({"id": 1, "name": "A"})
+    lines = [_line("Majaal", 1, "2026-09-01", 2, 20), _line("Majaal", 1, "2026-09-01", 3, 30), _line("Tika", 99, "2026-09-02", 1, 5)]
     out = _build(lines, dim)
     daily = out["Fact_ProductSalesDaily"]
     assert daily["Value"].sum() == 55 and daily["Qty"].sum() == 6 and daily["Lines"].sum() == 3
-    assert out["ProductDashboard_Meta"]["UnmappedValue"].iloc[0] == 5
-    unmapped = out["QA_ProductUnmapped"]
-    assert unmapped.loc[unmapped["Source"].eq("Sales"), "OdooProductName"].tolist() == ["Mystery"]
+    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    assert p.loc["Tika|99", "ValueYTD"] == 5 and p.loc["Tika|99", "Brand"] == "Unassigned"  # in the totals, never dropped
 
 
-def test_zero_sales_product_is_listed_with_zeros() -> None:
-    dim = _dim({"key": "A", "company": "Majaal", "name": "A"}, {"key": "B", "company": "Majaal", "name": "B"})
-    products = _build([_line("Majaal", "A", "2026-09-01", 1, 10)], dim)["Dim_ProductDashboard"].set_index("ProductMatchKey")
-    assert "MAJAAL|B" in products.index
-    assert products.loc["MAJAAL|B", "ValueYTD"] == 0 and products.loc["MAJAAL|B", "QtyYTD"] == 0
+def test_zero_sales_active_odoo_product_of_the_company_is_listed_with_zeros() -> None:
+    dim = _dim({"id": 1, "name": "A", "company": "Majaal"}, {"id": 2, "name": "B", "company": "Majaal"},
+               {"id": 3, "name": "Archived", "company": "Majaal", "active": False})
+    products = _build([_line("Majaal", 1, "2026-09-01", 1, 10)], dim)["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    assert "Majaal|2" in products.index
+    assert products.loc["Majaal|2", "ValueYTD"] == 0 and products.loc["Majaal|2", "QtyYTD"] == 0
+    assert products.loc["Majaal|2", "LifecycleSegment"] == "Never sold"
+    assert "Majaal|3" not in products.index  # archived and never sold: not listed
 
 
 def test_stock_rules_finished_goods_negative_and_no_movement() -> None:
-    dim = _dim({"key": "A", "company": "Tika", "name": "A"}, {"key": "B", "company": "Tika", "name": "B"})
+    dim = _dim({"id": 1, "name": "A"}, {"id": 2, "name": "B"})
     inv = pd.DataFrame([
-        {"ProductMatchKey": "TIKA|A", "Company": "Tika", "OdooProductName": "A", "ProductName": "A", "LocationName": "WH", "OnHandQty": 100, "InventoryValue": 1000, "StockClass": "FinishedGoods"},
-        {"ProductMatchKey": "TIKA|A", "Company": "Tika", "OdooProductName": "A", "ProductName": "A", "LocationName": "RM", "OnHandQty": 900, "InventoryValue": 9000, "StockClass": "RawMaterials"},
-        {"ProductMatchKey": "TIKA|A", "Company": "Tika", "OdooProductName": "A", "ProductName": "A", "LocationName": "VS", "OnHandQty": 50, "InventoryValue": 500, "StockClass": "InTransit"},
-        {"ProductMatchKey": "TIKA|A", "Company": "Tika", "OdooProductName": "A", "ProductName": "A", "LocationName": "SH", "OnHandQty": -20, "InventoryValue": -200, "StockClass": "FinishedGoods"},
-        {"ProductMatchKey": "TIKA|B", "Company": "Tika", "OdooProductName": "B", "ProductName": "B", "LocationName": "WH", "OnHandQty": 10, "InventoryValue": 10, "StockClass": "FinishedGoods"},
+        _inv("Tika", 1, 100, 1000), _inv("Tika", 1, 900, 9000, "RawMaterials", "RM"), _inv("Tika", 1, 50, 500, "InTransit", "VS"),
+        _inv("Tika", 1, -20, -200, location="SH"), _inv("Tika", 2, 10, 10),
     ])
-    # A sells 90 in the last 90 days -> 1/day -> DOH 100 (> Tika overstock 60)
-    out = _build([_line("Tika", "A", "2026-09-01", 90, 900)], dim, inventory=inv)
-    p = out["Dim_ProductDashboard"].set_index("ProductMatchKey")
-    assert p.loc["TIKA|A", "StockQty"] == 100          # raw materials excluded, negative counted as 0
-    assert p.loc["TIKA|A", "InTransitQty"] == 50       # shown separately, not on hand
-    assert p.loc["TIKA|A", "DaysOfInventory"] == 100
-    assert p.loc["TIKA|A", "StockBand"] == "Overstock"
-    assert p.loc["TIKA|B", "StockBand"] == "NoMovement"  # stock, no sales in 90 days -> never stock-out risk
+    # 1 sells 90 in the last 90 days -> 1/day -> DOH 100 (> Tika overstock 60)
+    out = _build([_line("Tika", 1, "2026-09-01", 90, 900)], dim, inventory=inv)
+    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    assert p.loc["Tika|1", "StockQty"] == 100          # raw materials excluded, negative counted as 0
+    assert p.loc["Tika|1", "InTransitQty"] == 50       # shown separately, not on hand
+    assert p.loc["Tika|1", "DaysOfInventory"] == 100
+    assert p.loc["Tika|1", "StockBand"] == "Overstock"
+    assert p.loc["Tika|2", "StockBand"] == "NoMovement"  # stock, no sales in 90 days -> never stock-out risk
     dq = out["QA_ProductDataQuality"]
-    assert dq.loc[dq["Check"].eq("NegativeStock"), "ProductMatchKey"].tolist() == ["TIKA|A"]
+    assert dq.loc[dq["Check"].eq("NegativeStock"), "ProductCompanyKey"].tolist() == ["Tika|1"]
 
 
 def test_lifecycle_rule() -> None:
-    dim = _dim(
-        {"key": "N", "company": "Majaal", "name": "New"},
-        {"key": "G", "company": "Majaal", "name": "Grow"},
-        {"key": "D", "company": "Majaal", "name": "Decl"},
-        {"key": "M", "company": "Majaal", "name": "Mat"},
-        {"key": "X", "company": "Majaal", "name": "Inactive", "active": 0},
-        {"key": "O", "company": "Majaal", "name": "Old"},
-        {"key": "Z", "company": "Majaal", "name": "Never"},
-        {"key": "Y", "company": "Majaal", "name": "NeverInactive", "active": 0},
-    )
+    dim = _dim(*({"id": i, "name": n, "company": "Majaal", "active": a} for i, n, a in [
+        (1, "New", True), (2, "Grow", True), (3, "Decl", True), (4, "Mat", True), (5, "Inactive", False), (6, "Old", True),
+        (7, "Never", True)]))
     lines = [
-        _line("Majaal", "New", "2026-08-01", 10, 10),
-        _line("Majaal", "Grow", "2025-01-01", 1, 1), _line("Majaal", "Grow", "2026-06-01", 10, 10), _line("Majaal", "Grow", "2026-09-01", 13, 13),
-        _line("Majaal", "Decl", "2025-01-01", 1, 1), _line("Majaal", "Decl", "2026-06-01", 10, 10), _line("Majaal", "Decl", "2026-09-01", 7, 7),
-        _line("Majaal", "Mat", "2025-01-01", 1, 1), _line("Majaal", "Mat", "2026-06-01", 10, 10), _line("Majaal", "Mat", "2026-09-01", 11, 11),
-        _line("Majaal", "Inactive", "2026-09-01", 5, 5),
-        _line("Majaal", "Old", "2025-06-01", 5, 5),
+        _line("Majaal", 1, "2026-08-01", 10, 10),
+        _line("Majaal", 2, "2025-01-01", 1, 1), _line("Majaal", 2, "2026-06-01", 10, 10), _line("Majaal", 2, "2026-09-01", 13, 13),
+        _line("Majaal", 3, "2025-01-01", 1, 1), _line("Majaal", 3, "2026-06-01", 10, 10), _line("Majaal", 3, "2026-09-01", 7, 7),
+        _line("Majaal", 4, "2025-01-01", 1, 1), _line("Majaal", 4, "2026-06-01", 10, 10), _line("Majaal", 4, "2026-09-01", 11, 11),
+        _line("Majaal", 5, "2026-09-01", 5, 5),
+        _line("Majaal", 6, "2025-06-01", 5, 5),
     ]
     p = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductKey")
-    assert p.loc[["N", "G", "D", "M", "X", "O", "Z", "Y"], "LifecycleSegment"].tolist() == [
-        "New", "Growing", "Declining", "Mature", "Discontinued", "Discontinued", "Never sold", "Never sold"]
+    assert p.loc[["1", "2", "3", "4", "5", "6", "7"], "LifecycleSegment"].tolist() == [
+        "New", "Growing", "Declining", "Mature", "Discontinued", "Discontinued", "Never sold"]
 
 
 def test_bcg_zero_cost_is_unclassified_and_logged() -> None:
-    dim = _dim({"key": "A", "company": "Tika", "name": "A"}, {"key": "B", "company": "Tika", "name": "B"})
-    lines = [_line("Tika", "A", "2026-03-01", 30000, 300000), _line("Tika", "B", "2026-03-01", 10, 100)]
-    out = _build(lines, dim, costs=[5.0, 0.0])
+    dim = _dim({"id": 1, "name": "A"}, {"id": 2, "name": "B"})
+    out = _build([_line("Tika", 1, "2026-03-01", 30000, 300000), _line("Tika", 2, "2026-03-01", 10, 100)], dim, costs=[5.0, 0.0])
     p = out["Dim_ProductDashboard"].set_index("ProductKey")
-    assert p.loc["A", "BcgClassYTD"] == "Stars"          # HV (>= 25,000 for Tika) and GP 50% >= 35%
-    assert p.loc["B", "BcgClassYTD"] == "Unclassified (no cost)"
-    assert out["QA_ProductDataQuality"].query("Check == 'NoCost'")["ProductMatchKey"].tolist() == ["TIKA|B"]
+    assert p.loc["1", "BcgClassYTD"] == "Stars"          # HV (>= 25,000 for Tika) and GP 50% >= 35%
+    assert p.loc["2", "BcgClassYTD"] == "Unclassified (no cost)"
+    assert out["QA_ProductDataQuality"].query("Check == 'NoCost'")["ProductCompanyKey"].tolist() == ["Tika|2"]
+
+
+def test_bcg_exclusion_is_by_odoo_category_id_and_the_shipped_list_is_empty(caplog) -> None:
+    shipped = ProductDashboardConfig.load(CONFIG)
+    assert shipped.section("bcg")["excluded_category_ids"] == []
+    dim = _dim({"id": 1, "name": "Bags", "categ_id": 77, "categ": "All / Paper Bags"}, {"id": 2, "name": "Tile", "categ_id": 5})
+    lines = [_line("Majaal", 1, "2026-03-01", 1, 1), _line("Majaal", 2, "2026-03-01", 1, 1)]
+    with caplog.at_level("INFO"):
+        none_excluded = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductKey")
+    assert not none_excluded["BcgExcludedCategory"].any()
+    assert "no Odoo category is excluded" in caplog.text
+    raw = dict(shipped.raw)
+    raw["bcg"] = {**raw["bcg"], "excluded_category_ids": [77]}
+    p = _build(lines, dim, config=ProductDashboardConfig(raw))["Dim_ProductDashboard"].set_index("ProductKey")
+    assert p.loc["1", "BcgExcludedCategory"] and not p.loc["2", "BcgExcludedCategory"]
 
 
 def test_location_classification_from_config() -> None:
@@ -209,43 +187,46 @@ def test_location_classification_from_config() -> None:
     assert classes.tolist() == ["FinishedGoods", "RawMaterials", "InTransit", "FinishedGoods"]
 
 
-# ---------------------------------------------------------------- BMH view: same product in both companies
+def test_odoo_gap_report_lists_sold_products_missing_brand_family_size_or_sku_largest_first() -> None:
+    dim = _dim({"id": 1, "name": "Complete", "brand": "APE", "family": "PORCELAIN", "size": "60x60", "code": "A-1"},
+               {"id": 2, "name": "No brand", "family": "F", "size": "S", "code": "B-1"},
+               {"id": 3, "name": "Nothing"}, {"id": 4, "name": "Never sold"})
+    lines = [_line("Majaal", 1, "2026-09-01", 1, 50), _line("Majaal", 2, "2026-09-01", 1, 10), _line("Majaal", 3, "2026-09-01", 1, 30),
+             _line("Majaal", 3, "2024-01-01", 1, 5)]
+    gaps = _build(lines, dim)["QA_ProductOdooGaps"]
+    assert gaps["OdooProductID"].tolist() == [3, 2]       # largest sales first; complete and unsold products are not listed
+    assert gaps.iloc[0]["Missing"] == "Brand, Family, Size, SKU" and gaps.iloc[1]["Missing"] == "Brand"
+    assert gaps.iloc[0]["SalesValue"] == 35 and gaps.iloc[0]["SalesValueLast12M"] == 30
+    assert gaps.iloc[0]["ProductName"] == "Nothing" and gaps.iloc[0]["Company"] == "Majaal"
+
+
+# ---------------------------------------------------------------- BMH view: one Odoo template sold by both companies
 def _shared_case():
-    # Majaal "Cemair" and Tika "Cem Air" are one product (ProductName "Cemair" in both sheet rows).
-    dim = _dim(
-        {"key": "M", "company": "Majaal", "name": "Cemair"},
-        {"key": "T", "company": "Tika", "name": "Cemair", "odoo": "Cem Air"},
-        {"key": "O", "company": "Majaal", "name": "Other"},
-    )
+    # products 1 (Majaal) and 2 (Tika) are variants of template 100; product 3 is template 300; 99 has no catalog row.
+    dim = _dim({"id": 1, "name": "Cemair", "tmpl": 100}, {"id": 2, "name": "Cem Air", "tmpl": 100}, {"id": 3, "name": "Other", "tmpl": 300})
     lines = [
-        _line("Majaal", "Cemair", "2026-03-01", 100, 300),
-        _line("Tika", "Cem Air", "2026-09-01", 90, 700),
-        _line("Majaal", "Other", "2026-09-01", 1, 5),
-        _line("Tika", "Mystery", "2026-09-02", 1, 5, mapped=False),
+        _line("Majaal", 1, "2026-03-01", 100, 300),
+        _line("Tika", 2, "2026-09-01", 90, 700),
+        _line("Majaal", 3, "2026-09-01", 1, 5),
+        _line("Tika", 99, "2026-09-02", 1, 5),
     ]
-    inv = pd.DataFrame([
-        {"ProductMatchKey": "MAJAAL|CEMAIR", "Company": "Majaal", "OdooProductName": "Cemair", "ProductName": "Cemair", "LocationName": "WH", "OnHandQty": 60, "InventoryValue": 60, "StockClass": "FinishedGoods"},
-        {"ProductMatchKey": "TIKA|CEM AIR", "Company": "Tika", "OdooProductName": "Cem Air", "ProductName": "Cemair", "LocationName": "WH", "OnHandQty": 120, "InventoryValue": 240, "StockClass": "FinishedGoods"},
-    ])
-    # standard cost per unit: Majaal Cemair 1, Tika Cem Air 2, Other 1, Mystery 1
+    inv = pd.DataFrame([_inv("Majaal", 1, 60, 60), _inv("Tika", 2, 120, 240)])
+    # standard cost per unit: product 1 -> 1, product 2 -> 2, 3 -> 1, 99 -> 1
     return _build(lines, dim, inventory=inv, costs=[1.0, 2.0, 1.0, 1.0])
 
 
-def test_shared_product_bmh_total_equals_sum_of_companies() -> None:
+def test_bmh_view_groups_by_odoo_template_never_by_name() -> None:
     out = _shared_case()
-    p = out["Dim_ProductDashboard"].set_index("ProductMatchKey")
+    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
     g = out["Dim_ProductDashboardGroup"].set_index("ProductGroupKey")
-    # matching stays per company
-    assert p.loc["MAJAAL|CEMAIR", "ValueYTD"] == 300 and p.loc["TIKA|CEM AIR", "ValueYTD"] == 700
-    assert p.loc["MAJAAL|CEMAIR", "ProductGroupKey"] == p.loc["TIKA|CEM AIR", "ProductGroupKey"] == "G|CEMAIR"
-    row = g.loc["G|CEMAIR"]
+    assert p.loc["Majaal|1", "ValueYTD"] == 300 and p.loc["Tika|2", "ValueYTD"] == 700
+    assert p.loc["Majaal|1", "ProductGroupKey"] == p.loc["Tika|2", "ProductGroupKey"] == "T|100"  # different names, one template
+    row = g.loc["T|100"]
     assert row["Companies"] == "Majaal + Tika" and row["CompanyCount"] == 2
-    assert row["ValueYTD"] == p.loc["MAJAAL|CEMAIR", "ValueYTD"] + p.loc["TIKA|CEM AIR", "ValueYTD"] == 1000
-    assert row["QtyYTD"] == p.loc["MAJAAL|CEMAIR", "QtyYTD"] + p.loc["TIKA|CEM AIR", "QtyYTD"] == 190
+    assert row["ValueYTD"] == 1000 and row["QtyYTD"] == 190
     assert row["StockQty"] == 180 and row["StockValue"] == 300
-    # a single-company product is its own group, unchanged; Unmapped is never grouped
-    assert g.loc["G|OTHER", "ValueYTD"] == 5 and g.loc["G|OTHER", "Companies"] == "Majaal"
-    assert "TIKA|MYSTERY" in g.index and g.loc["TIKA|MYSTERY", "IsMapped"] == False  # noqa: E712
+    assert g.loc["T|300", "ValueYTD"] == 5 and g.loc["T|300", "Companies"] == "Majaal"
+    assert "Tika|99" in g.index  # a product with no template stays on its own
 
 
 def test_grouping_does_not_change_grand_totals() -> None:
@@ -256,39 +237,23 @@ def test_grouping_does_not_change_grand_totals() -> None:
     assert g["ValueYTD"].sum() == pytest.approx(out["Fact_ProductSalesDaily"]["Value"].sum()) == 1010
 
 
-def test_shared_product_non_additive_metrics_are_recomputed_not_averaged() -> None:
+def test_shared_template_non_additive_metrics_are_recomputed_not_averaged() -> None:
     out = _shared_case()
-    p = out["Dim_ProductDashboard"].set_index("ProductMatchKey")
-    row = out["Dim_ProductDashboardGroup"].set_index("ProductGroupKey").loc["G|CEMAIR"]
+    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    row = out["Dim_ProductDashboardGroup"].set_index("ProductGroupKey").loc["T|100"]
     # Days of inventory = combined stock / combined daily sales: 180 / (90 sold in the last 90 days / 90) = 180
     assert row["AvgDailySales"] == pytest.approx(1.0)
     assert row["DaysOfInventory"] == pytest.approx(180.0)
-    assert pd.isna(p.loc["MAJAAL|CEMAIR", "DaysOfInventory"]) and p.loc["TIKA|CEM AIR", "DaysOfInventory"] == pytest.approx(120.0)
+    assert pd.isna(p.loc["Majaal|1", "DaysOfInventory"]) and p.loc["Tika|2", "DaysOfInventory"] == pytest.approx(120.0)
     # Margin = combined (value - cost) / combined value = (1000 - 100 - 180) / 1000 = 72 % (the average would be 70.48 %)
     assert row["GrossProfitPctYTD"] == pytest.approx(72.0)
-    assert p.loc["MAJAAL|CEMAIR", "GrossProfitPctYTD"] == pytest.approx(200 / 3)
-    assert p.loc["TIKA|CEM AIR", "GrossProfitPctYTD"] == pytest.approx(520 / 7)
+    assert p.loc["Majaal|1", "GrossProfitPctYTD"] == pytest.approx(200 / 3)
+    assert p.loc["Tika|2", "GrossProfitPctYTD"] == pytest.approx(520 / 7)
     # BCG on combined figures with the lead company's (Tika, larger YTD value) thresholds: 190 < 25,000 -> LV; 72 % -> HP
     assert row["ThresholdCompany"] == "Tika"
     assert row["BcgClassYTD"] == "Strategic"
-    # Lifecycle on combined lines: 90 sold in the last 90 days, none in the previous 90 -> Growing
     assert row["LifecycleSegment"] == "Growing"
-    # Tika's overstock threshold (60 days) applies to the combined DOH of 180
     assert row["StockBand"] == "Overstock"
-
-
-def test_import_warns_on_shared_name_attribute_conflicts_and_near_duplicates(tmp_path: Path) -> None:
-    path = _write(tmp_path, [
-        _row("Majaal", "Cemair", ProductName="Cemair", Category="SURFACES"),
-        _row("Tika", "Cem Air", ProductName="Cemair", Category="Adhesives"),
-        _row("Majaal", "Cross Spacer 5mm", ProductName="Cross Spacer 5mm (500PCS/BAG)"),
-        _row("Tika", "Cross Spacer 5 mm", ProductName="Cross Spacer 5 mm (500PCS/BAG)"),
-    ])
-    df = _loader().load(path)  # warnings never reject the file
-    warnings = ProductMasterLoader.summary(df)["warnings"]
-    assert any("'Cemair' has different Category" in w and "row 2 Majaal" in w and "row 3 Tika" in w for w in warnings)
-    assert any("Probably the same product" in w and "Cross Spacer 5mm" in w and "Cross Spacer 5 mm" in w for w in warnings)
-    assert len(warnings) == 2
 
 
 def test_product_ratio_columns_are_stored_as_decimal_not_float() -> None:
