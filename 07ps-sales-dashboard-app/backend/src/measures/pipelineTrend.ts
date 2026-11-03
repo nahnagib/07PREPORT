@@ -27,6 +27,7 @@
  */
 
 import type { Pool } from 'mysql2/promise';
+import { fetchPipelineStageOrder } from './pipelineStages';
 import {
   buildCrmWhereClause,
   buildWhereClause,
@@ -278,6 +279,8 @@ export interface AgingDetailRow {
   value: number;
   /** CRM stage (opportunity) or Odoo order state (quotation). */
   status: string | null;
+  /** Opportunities: place of the stage in the pipeline order (config/pipelineStages.ts), for sorting; null for quotations. */
+  stagePosition: number | null;
 }
 
 export async function fetchAgingDetails(
@@ -295,7 +298,7 @@ export async function fetchAgingDetails(
     SELECT fo.OpportunityID AS id, fo.OpportunityName AS name, fo.Customer AS customer,
            COALESCE(sap.admin_name_override, fo.Salesperson) AS salesperson,
            DATE_FORMAT(fo.OpportunityCreatedDate, '%Y-%m-%d') AS docDate, DATEDIFF(?, fo.OpportunityCreatedDate) AS ageDays,
-           fo.ExpectedRevenue AS value, fo.Stage AS status
+           fo.ExpectedRevenue AS value, fo.Stage AS status, fo.StageID AS stageId
     FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE ${scope.where} AND ${agingBucketCondition(bucket, 'fo.OpportunityCreatedDate')}
@@ -311,7 +314,10 @@ export async function fetchAgingDetails(
     WHERE ${scope.where} AND ${agingBucketCondition(bucket, 'fs.QuotationDate')}
     ORDER BY ageDays DESC, fs.OrderNumber
   `;
-  const [rows] = await pool.query(sql, [anchorStr, ...scope.params, anchorStr]);
+  const [[rows], stageOrder] = await Promise.all([
+    pool.query(sql, [anchorStr, ...scope.params, anchorStr]),
+    isOpp ? fetchPipelineStageOrder(pool) : Promise.resolve(null),
+  ]);
   return (rows as any[]).map((r) => ({
     id: String(r.id ?? ''),
     name: String(r.name ?? ''),
@@ -321,6 +327,7 @@ export async function fetchAgingDetails(
     ageDays: Number(r.ageDays ?? 0),
     value: Number(r.value ?? 0),
     status: r.status ?? null,
+    stagePosition: stageOrder ? stageOrder.of(r.stageId != null ? Number(r.stageId) : null, r.status ?? null).position : null,
   }));
 }
 

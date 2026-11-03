@@ -74,6 +74,8 @@ import {
 } from './filters';
 import { computeOpportunityDataQuality, type DataQualityOverview } from './dataQuality';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
+import type { PipelineStage, PipelineStageOrder } from '../config/pipelineStages';
+import { fetchPipelineStageOrder } from './pipelineStages';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -435,20 +437,30 @@ export async function fetchFunnelOpportunityIds(pool: Pool, anchor: Date, filter
 // ---------------------------------------------------------------------------
 // Stage Benchmark -- actual conversion % per transition vs the spec's fixed targets, classified
 // with the same classifyVsTarget/variancePct every other page's pass/fail treatment already uses.
+// BY VALUE (LYD), 2026-11-03: each step = value of the next stage ÷ value of the previous one, on the option-A cohort.
 // ---------------------------------------------------------------------------
 
 export interface StageBenchmarkRow {
   transition: string;
-  /** Cohort counts behind actualPct (see computeStageBenchmark): opportunities that reached the "from" / "to" step. */
+  /** Cohort values (LYD) behind actualPct (see computeStageBenchmark): the "from" / "to" step's value. */
+  fromValue: number;
+  toValue: number;
+  /** Cohort counts: opportunities that reached the "from" / "to" step (the count-based view, kept for reference). */
   fromCount: number;
   toCount: number;
+  /** toValue ÷ fromValue. */
   actualPct: number | null;
+  /** toCount ÷ fromCount -- the pre-2026-11-03 definition, which the targets were set for. Not shown on the page. */
+  countPct: number | null;
   targetPct: number;
   status: TargetStatus;
   variancePct: number | null;
 }
 
-const STAGE_TARGETS: { transition: string; target: number; from: keyof BenchmarkCohort; to: keyof BenchmarkCohort }[] = [
+type BenchmarkStep = keyof BenchmarkCohort['values'];
+
+/** The targets were set for the count-based definition (2026-11-03: kept for now, pending new value-based targets). */
+const STAGE_TARGETS: { transition: string; target: number; from: BenchmarkStep; to: BenchmarkStep }[] = [
   { transition: 'Opportunity → Quotation', target: 0.8, from: 'opportunities', to: 'quotations' },
   { transition: 'Quotation → Sales Order', target: 0.15, from: 'quotations', to: 'salesOrders' },
   { transition: 'Sales Order → Delivery', target: 0.98, from: 'salesOrders', to: 'deliveries' },
@@ -458,32 +470,74 @@ const STAGE_TARGETS: { transition: string; target: number; from: keyof Benchmark
  * in the period whatever its status (Pending + Won + Lost; Archived left out), and how many of THOSE SAME opportunities
  * reached each later step. The Full Pipeline Opportunities bar shows open (Pending) only, but won deals are the ones that
  * reached orders, so dividing documents of every deal by open deals would read above 100%. Each step is a subset of the
- * one before, so no ratio can exceed 100%. */
+ * one before, so no count ratio can exceed 100%.
+ *
+ * `values` (LYD, 2026-11-03) are the same steps by value:
+ *   opportunities = Σ expected revenue of the cohort opportunities;
+ *   quotations    = Σ value of their non-cancelled quotations (every revision, like the funnel's Quotations value);
+ *   salesOrders   = Σ value of those quotations that became sales orders;
+ *   deliveries    = Σ value of those sales orders whose delivery has started (each order once, however many pickings).
+ * Sales orders are a subset of the quotations and delivered orders a subset of the sales orders, so those two steps stay
+ * at or under 100%; quotations can be worth more than the opportunity's expected revenue, so the first step can pass 100%.
+ * Amounts are the warehouse's: OrderValue is converted to the company currency (LYD) by the ETL like Odoo's sale.report,
+ * and expected revenue is in the company currency; every in-scope company keeps its books in LYD. */
 export interface BenchmarkCohort {
   opportunities: number;
   quotations: number;
   salesOrders: number;
   deliveries: number;
+  values: { opportunities: number; quotations: number; salesOrders: number; deliveries: number };
 }
 
-async function fetchBenchmarkOpportunityIds(pool: Pool, anchor: Date, filters: Filters): Promise<string[]> {
+export interface BenchmarkCohortOpportunity {
+  opportunityId: string;
+  expectedRevenue: number;
+}
+
+async function fetchBenchmarkOpportunities(pool: Pool, anchor: Date, filters: Filters): Promise<BenchmarkCohortOpportunity[]> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
-    SELECT fo.OpportunityID AS opportunityId FROM v_sales_opportunities fo
+    SELECT fo.OpportunityID AS opportunityId, fo.ExpectedRevenue AS expectedRevenue FROM v_sales_opportunities fo
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${b2bClause('fo')} AND ${clause} AND ${notArchivedClause('fo')}
   `;
-  return fetchIdRows(pool, sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  return (rows as any[]).map((r) => ({ opportunityId: String(r.opportunityId), expectedRevenue: Number(r.expectedRevenue ?? 0) }));
 }
 
-export function computeBenchmarkCohort(cohortIds: string[], stageRecords: FunnelStageRecords): BenchmarkCohort {
-  const cohort = new Set(cohortIds);
-  const reached = (rows: { opportunityId: string | null }[], within: Set<string>) =>
-    new Set(rows.map((r) => r.opportunityId).filter((id): id is string => id != null && within.has(id)));
-  const quoted = reached(stageRecords.quotations, cohort);
-  const ordered = reached(stageRecords.salesOrders, quoted);
-  const delivered = reached(stageRecords.deliveries.filter((d) => isDelivered(d.deliveryStatus)), ordered);
-  return { opportunities: cohort.size, quotations: quoted.size, salesOrders: ordered.size, deliveries: delivered.size };
+export function computeBenchmarkCohort(cohortRows: BenchmarkCohortOpportunity[], stageRecords: FunnelStageRecords): BenchmarkCohort {
+  const cohort = new Set(cohortRows.map((r) => r.opportunityId));
+  const within = <T extends { opportunityId: string | null }>(rows: T[], ids: Set<string>) =>
+    rows.filter((r) => r.opportunityId != null && ids.has(r.opportunityId));
+  const idsOf = (rows: { opportunityId: string | null }[]) => new Set(rows.map((r) => r.opportunityId as string));
+
+  const quotationRows = within(stageRecords.quotations, cohort);
+  const quoted = idsOf(quotationRows);
+  const orderRows = within(stageRecords.salesOrders, quoted);
+  const ordered = idsOf(orderRows);
+  const deliveredRows = within(stageRecords.deliveries.filter((d) => isDelivered(d.deliveryStatus)), ordered);
+  const delivered = idsOf(deliveredRows);
+
+  // Delivered value: each cohort sales order with a started delivery, once, at its order value.
+  const deliveredOrderNumbers = new Set(deliveredRows.map((d) => d.orderNumber).filter((n): n is string => !!n));
+  const orderValue = new Map<string, number>();
+  for (const o of orderRows) if (o.orderNumber) orderValue.set(o.orderNumber, o.value);
+  let deliveredValue = 0;
+  for (const n of deliveredOrderNumbers) deliveredValue += orderValue.get(n) ?? 0;
+
+  const sum = (rows: { value: number }[]) => rows.reduce((s, r) => s + r.value, 0);
+  return {
+    opportunities: cohort.size,
+    quotations: quoted.size,
+    salesOrders: ordered.size,
+    deliveries: delivered.size,
+    values: {
+      opportunities: cohortRows.reduce((s, r) => s + r.expectedRevenue, 0),
+      quotations: sum(quotationRows),
+      salesOrders: sum(orderRows),
+      deliveries: deliveredValue,
+    },
+  };
 }
 
 /** A delivery counts as reached once it has started (Started / Partially / Fully Delivered), not "Not Delivered". */
@@ -495,12 +549,17 @@ export function computeStageBenchmark(cohort: BenchmarkCohort): StageBenchmarkRo
   return STAGE_TARGETS.map(({ transition, target, from, to }) => {
     const fromCount = cohort[from];
     const toCount = cohort[to];
-    const actualPct = fromCount > 0 ? toCount / fromCount : null;
+    const fromValue = cohort.values[from];
+    const toValue = cohort.values[to];
+    const actualPct = fromValue > 0 ? toValue / fromValue : null;
     return {
       transition,
+      fromValue,
+      toValue,
       fromCount,
       toCount,
       actualPct,
+      countPct: fromCount > 0 ? toCount / fromCount : null,
       targetPct: target,
       status: classifyVsTarget(actualPct, target),
       variancePct: variancePct(actualPct, target),
@@ -576,11 +635,17 @@ export async function fetchExpectedClosureByMonth(pool: Pool, anchor: Date, filt
 }
 
 // ---------------------------------------------------------------------------
-// Opportunity by Stage -- value distribution across current CRM stages.
+// Opportunity by Stage -- value distribution across current CRM stages, in pipeline order (config/pipelineStages.ts),
+// not by value, so every page lists the stages the same way.
 // ---------------------------------------------------------------------------
 
 export interface StageValueSlice {
+  stageId: number | null;
   stage: string;
+  /** Place in the pipeline order (config/pipelineStages.ts). */
+  position: number;
+  /** Theme colour token (frontend --ps-stage-<colorKey>); the same stage has the same colour on every chart. */
+  colorKey: string;
   value: number;
   count: number;
 }
@@ -588,18 +653,25 @@ export interface StageValueSlice {
 /** Only opportunities CREATED in the current year (DATE(OpportunityCreatedDate) from Jan 1 through
  * the anchor), OPEN only (status Pending): a deal marked Lost keeps its old stage in Odoo, so without the status it would
  * still count there. Won and Lost are shown by status in Opportunity by Status. */
-export async function fetchOpportunityByStage(pool: Pool, anchor: Date, filters: Filters): Promise<StageValueSlice[]> {
+export async function fetchOpportunityByStage(pool: Pool, anchor: Date, filters: Filters, stageOrder?: PipelineStageOrder): Promise<StageValueSlice[]> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
-    SELECT fo.Stage AS stage, COALESCE(SUM(fo.ExpectedRevenue), 0) AS value, COUNT(*) AS cnt
+    SELECT fo.StageID AS stageId, MAX(fo.Stage) AS stage, COALESCE(SUM(fo.ExpectedRevenue), 0) AS value, COUNT(*) AS cnt
     FROM v_sales_opportunities fo
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${openOpportunityClause('fo')}
-    GROUP BY fo.Stage
-    ORDER BY value DESC
+    GROUP BY fo.StageID
   `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
-  return (rows as any[]).map((r) => ({ stage: String(r.stage ?? 'Unspecified'), value: Number(r.value), count: Number(r.cnt) }));
+  const [[rows], order] = await Promise.all([
+    pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]),
+    stageOrder ? Promise.resolve(stageOrder) : fetchPipelineStageOrder(pool),
+  ]);
+  return (rows as any[])
+    .map((r) => {
+      const s = order.of(r.stageId != null ? Number(r.stageId) : null, r.stage ?? null);
+      return { stageId: s.stageId, stage: String(r.stage ?? s.stage), position: s.position, colorKey: s.colorKey, value: Number(r.value), count: Number(r.cnt) };
+    })
+    .sort((a, b) => a.position - b.position || a.stage.localeCompare(b.stage));
 }
 
 // ---------------------------------------------------------------------------
@@ -642,8 +714,9 @@ export async function fetchOpportunitiesByStatus(pool: Pool, anchor: Date, filte
 }
 
 // ---------------------------------------------------------------------------
-// Probabilities Distribution -- opportunity count per 10-90% ProbabilityBucket. Live buckets also
-// include '0%'/'100%' (definitively lost/won), which the spec's explicit "10-90%" range excludes.
+// Probabilities Distribution -- expected revenue (LYD) and opportunity count per 10-90% ProbabilityBucket (2026-11-03:
+// the bars show the value, the count is in the tooltip). Live buckets also include '0%'/'100%', which the spec's explicit
+// "10-90%" range excludes; open deals there are the gap between the buckets' total and the Total Pipeline Value.
 // ---------------------------------------------------------------------------
 
 const PROBABILITY_BUCKETS = ['10%', '20%', '30%', '40%', '50%', '60%', '70%', '80%', '90%'];
@@ -651,6 +724,8 @@ const PROBABILITY_BUCKETS = ['10%', '20%', '30%', '40%', '50%', '60%', '70%', '8
 export interface ProbabilityBucketSlice {
   bucket: string;
   count: number;
+  /** Σ ExpectedRevenue (LYD). */
+  value: number;
 }
 
 export async function fetchProbabilityDistribution(pool: Pool, anchor: Date, filters: Filters): Promise<ProbabilityBucketSlice[]> {
@@ -658,15 +733,15 @@ export async function fetchProbabilityDistribution(pool: Pool, anchor: Date, fil
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const placeholders = PROBABILITY_BUCKETS.map(() => '?').join(', ');
   const sql = `
-    SELECT fo.ProbabilityBucket AS bucket, COUNT(*) AS cnt
+    SELECT fo.ProbabilityBucket AS bucket, COUNT(*) AS cnt, COALESCE(SUM(fo.ExpectedRevenue), 0) AS val
     FROM v_sales_opportunities fo
     WHERE fo.ProbabilityBucket IN (${placeholders}) AND DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${openOpportunityClause('fo')}
     GROUP BY fo.ProbabilityBucket
   `;
   const [rows] = await pool.query(sql, [...PROBABILITY_BUCKETS, toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
-  const byBucket = new Map<string, number>();
-  for (const r of rows as any[]) byBucket.set(String(r.bucket), Number(r.cnt));
-  return PROBABILITY_BUCKETS.map((bucket) => ({ bucket, count: byBucket.get(bucket) ?? 0 }));
+  const byBucket = new Map<string, { count: number; value: number }>();
+  for (const r of rows as any[]) byBucket.set(String(r.bucket), { count: Number(r.cnt), value: Number(r.val ?? 0) });
+  return PROBABILITY_BUCKETS.map((bucket) => ({ bucket, count: byBucket.get(bucket)?.count ?? 0, value: byBucket.get(bucket)?.value ?? 0 }));
 }
 
 // ---------------------------------------------------------------------------
@@ -683,6 +758,9 @@ export interface OpportunityDetailRow {
   expectedRevenue: number;
   salesperson: string | null;
   stage: string | null;
+  stageId: number | null;
+  /** Place of the stage in the pipeline order (config/pipelineStages.ts), for sorting the Stage column. */
+  stagePosition: number;
   createdDate: string | null;
   expectedCloseDate: string | null;
   expectedCloseMonth: string | null;
@@ -701,7 +779,7 @@ export interface OpportunityDetailRow {
  * Opportunity by Stage, Probabilities Distribution, Opportunity by Status and the Full Pipeline Opportunities bar.
  * Returning every status here and filtering by `status` per drill-down path on the frontend (see pipeline-health/
  * page.tsx's matchesFilter) keeps every drill-down table's rows consistent with whichever bar/segment was clicked. */
-export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters: Filters): Promise<OpportunityDetailRow[]> {
+export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters: Filters, stageOrder?: PipelineStageOrder): Promise<OpportunityDetailRow[]> {
   const window = ytdWindow(anchor);
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
   const sql = `
@@ -713,6 +791,7 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
       fo.ExpectedRevenue AS expectedRevenue,
       COALESCE(sap.admin_name_override, fo.Salesperson) AS salesperson,
       fo.Stage AS stage,
+      fo.StageID AS stageId,
       fo.OpportunityCreatedDate AS createdDate,
       fo.ExpectedCloseDate AS expectedCloseDate,
       YEAR(fo.ExpectedCloseDate) AS closeYear,
@@ -725,7 +804,10 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${notArchivedClause('fo')}
   `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const [[rows], order] = await Promise.all([
+    pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]),
+    stageOrder ? Promise.resolve(stageOrder) : fetchPipelineStageOrder(pool),
+  ]);
   const base = odooConfiguredBaseUrl();
   return (rows as any[]).map((r) => ({
     opportunityId: String(r.opportunityId),
@@ -735,6 +817,8 @@ export async function fetchOpportunityDetails(pool: Pool, anchor: Date, filters:
     expectedRevenue: Number(r.expectedRevenue ?? 0),
     salesperson: r.salesperson ?? null,
     stage: r.stage ?? null,
+    stageId: r.stageId != null ? Number(r.stageId) : null,
+    stagePosition: order.of(r.stageId != null ? Number(r.stageId) : null, r.stage ?? null).position,
     createdDate: r.createdDate ? toDateOnlyString(r.createdDate) : null,
     expectedCloseDate: r.expectedCloseDate ? toDateOnlyString(r.expectedCloseDate) : null,
     expectedCloseMonth: r.closeMonth != null ? `${MONTH_LABELS[Number(r.closeMonth) - 1]} ${r.closeYear}` : null,
@@ -942,6 +1026,8 @@ export interface PipelineHealthOverview {
   openPipeline: { count: number; value: number };
   expectedClosureByMonth: ExpectedClosureMonthPoint[];
   opportunityByStage: StageValueSlice[];
+  /** Every CRM stage in pipeline order (config/pipelineStages.ts), for ordering stage filters and tables. */
+  stages: PipelineStage[];
   opportunitiesByStatus: OpportunitiesByStatus;
   probabilityDistribution: ProbabilityBucketSlice[];
   opportunities: OpportunityDetailRow[];
@@ -950,23 +1036,23 @@ export interface PipelineHealthOverview {
 }
 
 export async function computePipelineHealthOverview(pool: Pool, anchor: Date, filters: Filters, includeDataQuality = true): Promise<PipelineHealthOverview> {
-  const funnelStageRecords = await fetchFunnelStageRecords(pool, anchor, filters);
-  const [funnelCounted, benchmarkIds, funnelOpportunityIds, expectedClosureByMonth, opportunityByStage, opportunitiesByStatus, probabilityDistribution, opportunities, opportunityChains, dataQuality] = await Promise.all([
+  const [funnelStageRecords, stageOrder] = await Promise.all([fetchFunnelStageRecords(pool, anchor, filters), fetchPipelineStageOrder(pool)]);
+  const [funnelCounted, benchmarkOpportunities, funnelOpportunityIds, expectedClosureByMonth, opportunityByStage, opportunitiesByStatus, probabilityDistribution, opportunities, opportunityChains, dataQuality] = await Promise.all([
     computeFunnelCounts(pool, anchor, filters, funnelStageRecords),
-    fetchBenchmarkOpportunityIds(pool, anchor, filters),
+    fetchBenchmarkOpportunities(pool, anchor, filters),
     fetchFunnelOpportunityIds(pool, anchor, filters),
     fetchExpectedClosureByMonth(pool, anchor, filters),
-    fetchOpportunityByStage(pool, anchor, filters),
+    fetchOpportunityByStage(pool, anchor, filters, stageOrder),
     fetchOpportunitiesByStatus(pool, anchor, filters),
     fetchProbabilityDistribution(pool, anchor, filters),
-    fetchOpportunityDetails(pool, anchor, filters),
+    fetchOpportunityDetails(pool, anchor, filters, stageOrder),
     computeOpportunityChains(pool, anchor, filters, funnelStageRecords),
     includeDataQuality ? computeOpportunityDataQuality(pool, filters, anchor) : Promise.resolve(undefined),
   ]);
   const { counts: funnel, values: funnelValues } = funnelCounted;
-  const benchmarkCohort = computeBenchmarkCohort(benchmarkIds, funnelStageRecords);
+  const benchmarkCohort = computeBenchmarkCohort(benchmarkOpportunities, funnelStageRecords);
   const stageBenchmark = computeStageBenchmark(benchmarkCohort);
   const pending = opportunitiesByStatus.slices.find((sl) => sl.status === 'Pending');
   const openPipeline = { count: pending?.count ?? 0, value: pending?.expectedRevenue ?? 0 };
-  return { funnel, funnelValues, funnelOpportunityIds, funnelStageRecords, opportunityChains, stageBenchmark, benchmarkCohort, openPipeline, expectedClosureByMonth, opportunityByStage, opportunitiesByStatus, probabilityDistribution, opportunities, dataQuality };
+  return { funnel, funnelValues, funnelOpportunityIds, funnelStageRecords, opportunityChains, stageBenchmark, benchmarkCohort, openPipeline, expectedClosureByMonth, opportunityByStage, stages: stageOrder.stages, opportunitiesByStatus, probabilityDistribution, opportunities, dataQuality };
 }

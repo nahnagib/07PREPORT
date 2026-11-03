@@ -101,6 +101,7 @@
 
 import type { Pool } from 'mysql2/promise';
 import { buildCrmWhereClause, notArchivedClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
+import { fetchPipelineStageOrder } from './pipelineStages';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -362,6 +363,8 @@ export interface ActivityOpportunityRow {
   expectedRevenue: number;
   salesperson: string | null;
   stage: string | null;
+  /** Place of the stage in the pipeline order (config/pipelineStages.ts), for sorting the Stage column. */
+  stagePosition: number;
   createdDate: string | null;
   isOpen: boolean;
   isWon: boolean;
@@ -383,6 +386,7 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
     'fo.ExpectedRevenue AS expectedRevenue',
     'COALESCE(sap.admin_name_override, fo.Salesperson) AS salesperson',
     'fo.Stage AS stage',
+    'fo.StageID AS stageId',
     'fo.OpportunityCreatedDate AS createdDate',
     'fo.IsOpen AS isOpen',
     'fo.IsWon AS isWon',
@@ -393,7 +397,10 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
   const sql = `SELECT ${selectParts.join(', ')} FROM v_sales_opportunities fo
     LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = fo.SalespersonKey
     WHERE DATE(fo.OpportunityCreatedDate) BETWEEN ? AND ? AND ${clause} AND ${notArchivedClause('fo')}`;
-  const [rows] = await pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]);
+  const [[rows], stageOrder] = await Promise.all([
+    pool.query(sql, [toDateOnlyString(window.start), toDateOnlyString(window.end), ...params]),
+    fetchPipelineStageOrder(pool),
+  ]);
 
   const ytdStartStr = toDateOnlyString(window.start);
   const ytdEndStr = toDateOnlyString(window.end);
@@ -412,6 +419,7 @@ async function fetchActivityOpportunities(pool: Pool, anchor: Date, filters: Fil
       expectedRevenue: Number(r.expectedRevenue ?? 0),
       salesperson: r.salesperson ?? null,
       stage: r.stage ?? null,
+      stagePosition: stageOrder.of(r.stageId != null ? Number(r.stageId) : null, r.stage ?? null).position,
       createdDate,
       isOpen,
       isWon: status === 'won',

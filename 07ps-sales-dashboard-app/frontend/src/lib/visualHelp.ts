@@ -232,13 +232,15 @@ export const VISUAL_HELP = {
     interactions: ['Click a stage to see its records (quotations, orders, deliveries)', 'Open the Opportunity chain to follow each opportunity through every stage'],
   },
   'promotion.pipelineHealth.expectedClosure': {
-    help: { definition: 'Open opportunities (count and expected revenue, LYD) by expected closing month.' },
+    help: {
+      definition: 'Open opportunities by expected closing month: expected revenue (LYD) as bars on the left axis, count as the line on the right axis.',
+    },
     interactions: ['Click a month to see those opportunities'],
   },
   'promotion.pipelineHealth.byStage': {
     help: {
-      definition: 'Expected revenue (LYD) of open opportunities by current CRM stage. Stage = where the deal is in the process.',
-      notes: 'A deal marked Lost in Odoo keeps its stage there, but leaves this chart. Won and Lost are in Opportunity by Status.',
+      definition: 'Expected revenue (LYD) of open opportunities by current CRM stage. Stage = where the deal is in the process. Stages are listed in pipeline order (New → Design Stage → Qualified → Cross Selling → Proposition → Negotiations → Waiting For LOA → On Hold), then any other stage by its Odoo order; each stage has the same colour on every chart.',
+      notes: 'A deal marked Lost in Odoo keeps its stage there, but leaves this chart. Won and Lost are in Opportunity by Status. The stage "Lost" still holds open deals until the salesperson clicks the Lost button. The stages add up to the Total Pipeline Value.',
     },
     interactions: ['Click a segment to see those opportunities'],
   },
@@ -247,8 +249,13 @@ export const VISUAL_HELP = {
   },
   'promotion.pipelineHealth.stageBenchmark': {
     help: {
-      definition: 'Conversion at each step against its target, on every opportunity created in the period (Pending + Won + Lost): how many of the same opportunities reached Quotation, then Sales Order, then Delivery.',
-      notes: 'The Full Pipeline Opportunities bar shows open opportunities only, so the ratios here are not the bars divided by each other. A delivery counts once it has started.',
+      definition: 'Conversion by value (LYD). Each step against its target, on every B2B opportunity created in the period (Pending + Won + Lost) and the documents of those same opportunities.',
+      formula: [
+        'Opportunity → Quotation = quotation value ÷ opportunity expected revenue',
+        'Quotation → Sales Order = sales order value ÷ quotation value',
+        'Sales Order → Delivery = delivered value ÷ sales order value',
+      ],
+      notes: 'Every quotation revision counts; a delivered order counts once, at its order value, once its delivery has started. Quotations can be worth more than the expected revenue, so the first step can pass 100%. The targets were set for conversion by count.',
     },
   },
   'promotion.pipelineHealth.byStatus': {
@@ -260,10 +267,12 @@ export const VISUAL_HELP = {
     interactions: ['Hover a slice for its expected revenue', 'Click a status to see those opportunities'],
   },
   'promotion.pipelineHealth.probability': {
-    help: { definition: 'Open opportunities by win probability set in the CRM (10% to 90% buckets).' },
+    help: {
+      definition: 'Expected revenue (LYD) of open opportunities by the win probability set in the CRM (10% to 90% buckets). Hover a bar for its count.',
+      notes: 'Open deals at 0% or 100% are in no bucket; the line under the chart shows them, so the buckets plus that line = the Total Pipeline Value.',
+    },
     interactions: ['Click a bucket to see those opportunities'],
   },
-  'promotion.pipelineHealth.details': PERF_DETAILS('funnel counts, values and conversions'),
   'promotion.pipelineHealth.chain': {
     help: { definition: 'Every B2B opportunity created this year, followed through its quotations, sales orders and deliveries, linked through Odoo\'s opportunity reference.' },
     interactions: ['Click a row to see the opportunity’s quotations, orders and deliveries'],
@@ -280,7 +289,7 @@ export const VISUAL_HELP = {
   'promotion.pipelineTrend.quotationRates': {
     help: {
       definition: 'Quotations created this year and how they ended.',
-      formula: ['Win Rate = Won quotations ÷ Total quotations', 'Won/Lost Ratio = Won quotations ÷ Lost quotations'],
+      formula: ['Win Rate = Won quotations ÷ Total quotations', 'Won/Lost Ratio = Won quotations ÷ Lost quotations, shown as "X : 1"'],
     },
   },
   'promotion.pipelineTrend.aging': {
@@ -298,7 +307,6 @@ export const VISUAL_HELP = {
   'promotion.pipelineTrend.salesOrders': {
     help: { definition: 'Sales orders confirmed per month this year: count and value (LYD).' },
   },
-  'promotion.pipelineTrend.details': PERF_DETAILS('monthly opportunities, quotations and sales orders'),
   'promotion.pipelineTrend.agingDrill': {
     help: { definition: 'The open opportunities or quotations in the age bucket you clicked.' },
   },
@@ -322,7 +330,6 @@ export const VISUAL_HELP = {
   'promotion.activityMomentum.newOpportunities': {
     help: { definition: 'New opportunities created per month this year.' },
   },
-  'promotion.activityMomentum.details': PERF_DETAILS('activity counts and ratios'),
   'promotion.activityMomentum.table': {
     help: { definition: 'The opportunities of the activity status chosen in the Opportunity Status slicer, with a totals row.' },
     interactions: ['Pick a status in the Opportunity Status slicer'],
