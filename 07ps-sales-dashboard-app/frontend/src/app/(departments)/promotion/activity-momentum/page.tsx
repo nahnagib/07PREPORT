@@ -18,20 +18,19 @@ import {
   Select,
   Button,
   InsightCard,
-  PerformanceReportTable,
   LoadingSkeleton,
   ErrorState,
   exportRowsAsPdf,
   type Column,
   type DataGridColumn,
-  type PerformanceReportRow,
   useCanExport,
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useActivityMomentumOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type { ActivityOpportunityRow, LostReasonSlice, NewOpportunitiesMonthPoint, OpportunityActivityCounts, ActivityRates } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
+import { formatCurrency, formatPercent, formatTimestamp, DISPLAY_LOCALE } from '../../../../lib/format';
+import { stageFilterOptions } from '../../../../lib/pipelineStages';
 
 const CATEGORY_PALETTE = [
   'var(--ps-color-accent)',
@@ -94,107 +93,11 @@ function toCountsTableRows(counts?: OpportunityActivityCounts): MetricValueRow[]
 function toRatesTableRows(rates?: ActivityRates): MetricValueRow[] {
   if (!rates) return [];
   return [
-    { id: 'inactive', metric: 'Inactive Deals Ratio', value: rates.inactiveDealsRatio != null ? formatVariance(rates.inactiveDealsRatio) ?? '—' : '—' },
-    { id: 'lost', metric: 'Lost Deals Ratio', value: rates.lostDealsRatio != null ? formatVariance(rates.lostDealsRatio) ?? '—' : '—' },
+    { id: 'inactive', metric: 'Inactive Deals Ratio', value: rates.inactiveDealsRatio != null ? formatPercent(rates.inactiveDealsRatio) ?? '—' : '—' },
+    { id: 'lost', metric: 'Lost Deals Ratio', value: rates.lostDealsRatio != null ? formatPercent(rates.lostDealsRatio) ?? '—' : '—' },
   ];
 }
 
-// ---------------------------------------------------------------------------
-// "Executive Summary" -- a C-level scannable rollup (6 rows, plain-English takeaways). Reuses the
-// same 'ratio > 0.5 => alert' threshold already established for the Inactive/Lost Deals Ratio
-// InsightCards above (see their `status={... > 0.5 ? 'alert' : 'neutral'}`), so this table never
-// disagrees with what those cards already show for the same ratios.
-//
-// Formulas: see TILE_DEFINITIONS / RATE_DEFINITIONS above (and activityMomentum.ts). #W/O Activity,
-// #W/O Next Step and Inactive Deals Ratio render "—" only if checkActivityColumnsAvailable() finds
-// the quotation-staleness columns missing from Fact_Opportunity.
-// ---------------------------------------------------------------------------
-
-const RATIO_ALERT_THRESHOLD = 0.5;
-
-function ratioTakeaway(label: string, ratio: number | null): string {
-  if (ratio == null) return `${label} has no data available yet.`;
-  const pct = formatVariance(ratio) ?? '—';
-  return ratio > RATIO_ALERT_THRESHOLD
-    ? `${label} is ${pct}, above the ${Math.round(RATIO_ALERT_THRESHOLD * 100)}% risk threshold.`
-    : `${label} is ${pct}.`;
-}
-
-function toExecutiveSummaryRows(
-  counts?: OpportunityActivityCounts,
-  rates?: ActivityRates,
-  newOppByMonth?: NewOpportunitiesMonthPoint[],
-): PerformanceReportRow[] {
-  if (!counts || !rates) return [];
-  const series = newOppByMonth ?? [];
-  // Current-year-only page: there is no prior-year comparison, so Variance to Last Year is "n/a".
-
-  return [
-    {
-      id: 'ytd',
-      metric: '#YTD',
-      actualLabel: formatCountOrDash(counts.totalYtd),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: `${formatCountOrDash(counts.totalYtd)} opportunities created so far this year (all statuses).`,
-    },
-    {
-      id: 'active',
-      metric: '#Active',
-      actualLabel: formatCountOrDash(counts.active),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: `${formatCountOrDash(counts.active)} open opportunities are still moving.`,
-    },
-    {
-      id: 'withoutNextStep',
-      metric: '#W/O Next Step',
-      actualLabel: formatCountOrDash(counts.withoutNextStep),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway:
-        counts.withoutNextStep != null
-          ? `${formatCountOrDash(counts.withoutNextStep)} open B2B opportunities have had no new quotation for 30+ days.`
-          : 'Next-step tracking data is not yet available.',
-    },
-    {
-      id: 'lost',
-      metric: '#Lost',
-      actualLabel: formatCountOrDash(counts.lost),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: `${formatCountOrDash(counts.lost)} opportunities lost so far this year.`,
-    },
-    {
-      id: 'inactiveRatio',
-      metric: 'Inactive Deals Ratio',
-      actualLabel: rates.inactiveDealsRatio != null ? formatVariance(rates.inactiveDealsRatio) ?? '—' : '—',
-      targetLabel: `< ${Math.round(RATIO_ALERT_THRESHOLD * 100)}%`,
-      variancePct: null,
-      varianceLyPct: null,
-      status: rates.inactiveDealsRatio != null && rates.inactiveDealsRatio > RATIO_ALERT_THRESHOLD ? 'alert' : 'neutral',
-      takeaway: ratioTakeaway('The share of open deals that are stale or missing a next step', rates.inactiveDealsRatio),
-    },
-    {
-      id: 'lostRatio',
-      metric: 'Lost Deals Ratio',
-      actualLabel: rates.lostDealsRatio != null ? formatVariance(rates.lostDealsRatio) ?? '—' : '—',
-      targetLabel: `< ${Math.round(RATIO_ALERT_THRESHOLD * 100)}%`,
-      variancePct: null,
-      varianceLyPct: null,
-      status: rates.lostDealsRatio != null && rates.lostDealsRatio > RATIO_ALERT_THRESHOLD ? 'alert' : 'neutral',
-      takeaway: ratioTakeaway('The share of this year\'s opportunities that were lost', rates.lostDealsRatio),
-    },
-  ];
-}
 
 interface ReasonTableRow extends Record<string, unknown> {
   id: string;
@@ -280,17 +183,19 @@ interface OpportunityTableRow extends Record<string, unknown> {
   expectedRevenue: number;
   salesperson: string;
   stage: string;
+  stagePosition: number;
 }
 
 // Sortable / filterable DataGrid with Export CSV and Export as PDF, like the other detail tables.
-const opportunityColumns: DataGridColumn<OpportunityTableRow>[] = [
+// The Stage column sorts and filters in pipeline order (backend config/pipelineStages.ts), not alphabetically.
+const opportunityColumns = (rows: OpportunityTableRow[]): DataGridColumn<OpportunityTableRow>[] => [
   { key: 'createdDate', header: 'Created Date' },
   { key: 'name', header: 'Opportunity Name' },
   { key: 'customer', header: 'Customer' },
   { key: 'company', header: 'Company' },
   { key: 'expectedRevenue', header: 'Expected Revenue', align: 'right', render: (r) => formatCurrency(r.expectedRevenue) },
   { key: 'salesperson', header: 'Salesperson' },
-  { key: 'stage', header: 'Stage' },
+  { key: 'stage', header: 'Stage', sortValue: (r) => r.stagePosition, filterOptions: stageFilterOptions(rows) },
 ];
 
 function toTableRow(o: ActivityOpportunityRow): OpportunityTableRow {
@@ -303,6 +208,7 @@ function toTableRow(o: ActivityOpportunityRow): OpportunityTableRow {
     expectedRevenue: o.expectedRevenue,
     salesperson: o.salesperson ?? '—',
     stage: o.stage ?? '—',
+    stagePosition: o.stagePosition,
   };
 }
 
@@ -453,7 +359,7 @@ export default function ActivityMomentumPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr', gridTemplateRows: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
                   <InsightCard {...vh("promotion.activityMomentum.inactiveRatio")}
                     label="Inactive Deals Ratio"
-                    value={data?.rates.inactiveDealsRatio != null ? formatVariance(data.rates.inactiveDealsRatio) ?? '—' : '—'}
+                    value={data?.rates.inactiveDealsRatio != null ? formatPercent(data.rates.inactiveDealsRatio) ?? '—' : '—'}
                     caption={RATE_DEFINITIONS.inactive}
                     status={data?.rates.inactiveDealsRatio != null && data.rates.inactiveDealsRatio > 0.5 ? 'alert' : 'neutral'}
                     accentBg={data?.rates.inactiveDealsRatio != null && data.rates.inactiveDealsRatio > 0.5}
@@ -461,7 +367,7 @@ export default function ActivityMomentumPage() {
                   />
                   <InsightCard {...vh("promotion.activityMomentum.lostRatio")}
                     label="Lost Deals Ratio"
-                    value={data?.rates.lostDealsRatio != null ? formatVariance(data.rates.lostDealsRatio) ?? '—' : '—'}
+                    value={data?.rates.lostDealsRatio != null ? formatPercent(data.rates.lostDealsRatio) ?? '—' : '—'}
                     caption={RATE_DEFINITIONS.lost}
                     status={data?.rates.lostDealsRatio != null && data.rates.lostDealsRatio > 0.5 ? 'alert' : 'neutral'}
                     accentBg={data?.rates.lostDealsRatio != null && data.rates.lostDealsRatio > 0.5}
@@ -534,15 +440,6 @@ export default function ActivityMomentumPage() {
                   )}
                 </ChartPanel>
               </div>
-
-              {!overview.loading && !overview.error && (
-                <PerformanceReportTable {...vh("promotion.activityMomentum.details")}
-                  title="Performance Details"
-                  rows={toExecutiveSummaryRows(data?.counts, data?.rates, data?.newOpportunitiesByMonth)}
-                  showStatus
-                  showTakeaway
-                />
-              )}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
@@ -587,7 +484,7 @@ export default function ActivityMomentumPage() {
                       <strong style={{ color: 'var(--ps-color-text)' }}>{formatCurrency(totalExpectedRevenue)}</strong>
                     </div>
                     <DataGrid<OpportunityTableRow>
-                      columns={opportunityColumns}
+                      columns={opportunityColumns(filteredOpportunities)}
                       rows={filteredOpportunities}
                       getRowId={(row) => row.opportunityId}
                       fileName={`opportunity-table${activityFilter ? `-${activityFilter}` : ''}`}

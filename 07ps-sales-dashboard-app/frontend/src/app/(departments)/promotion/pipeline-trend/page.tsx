@@ -14,12 +14,10 @@ import {
   DataGrid,
   type DataGridColumn,
   StackedPercentBarChart,
-  PerformanceReportTable,
   LoadingSkeleton,
   ErrorState,
   exportRowsAsPdf,
   type Column,
-  type PerformanceReportRow,
   useCanExport,
   VisualInfoIcons,
 } from '@07ps/ui';
@@ -35,8 +33,10 @@ import type {
   MonthComparisonPoint,
   QuotationRates,
 } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
+import { formatCurrency, formatPercent, formatTimestamp, DISPLAY_LOCALE } from '../../../../lib/format';
 import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
+import { formatWinLossRatio } from '../../../../lib/winLoss';
+import { stageFilterOptions } from '../../../../lib/pipelineStages';
 
 function formatMillions(value: number): string {
   const fixed = (value / 1_000_000).toFixed(1);
@@ -51,8 +51,9 @@ function formatCountOrDash(v: number | undefined): string {
   return v != null ? v.toLocaleString(DISPLAY_LOCALE) : '—';
 }
 
-function formatRatio(v: number | null | undefined): string {
-  return v != null ? v.toFixed(2) : '—';
+/** Won/Lost Ratio YTD: "19.87 : 1" (shared formatter; "All won" with no lost, "—" with neither). */
+function formatRatio(rates?: QuotationRates): string {
+  return rates ? formatWinLossRatio(rates.wonQuotations, rates.lostQuotations) : '—';
 }
 
 function toMonthChartPoints(series: MonthComparisonPoint[]) {
@@ -88,8 +89,15 @@ const AGING_CATEGORY_LABEL: Record<AgingCategory, string> = { opportunities: 'Op
 
 type AgingSelection = { category: AgingCategory; bucket: AgingBucketKey };
 
-function agingDetailColumns(category: AgingCategory): DataGridColumn<AgingDetailRow & Record<string, unknown>>[] {
+function agingDetailColumns(category: AgingCategory, rows: AgingDetailRow[]): DataGridColumn<AgingDetailRow & Record<string, unknown>>[] {
   const isOpp = category === 'opportunities';
+  // Opportunities: the Stage column sorts and filters in pipeline order (backend config/pipelineStages.ts).
+  const stageSort = isOpp
+    ? {
+        sortValue: (r: AgingDetailRow) => r.stagePosition ?? Number.MAX_SAFE_INTEGER,
+        filterOptions: stageFilterOptions(rows.map((r) => ({ stage: r.status ?? '—', stagePosition: r.stagePosition }))),
+      }
+    : {};
   return [
     { key: 'name', header: isOpp ? 'Opportunity' : 'Quotation', width: 220 },
     { key: 'customer', header: 'Customer', width: 200, rawValue: (r) => r.customer ?? '—' },
@@ -97,7 +105,7 @@ function agingDetailColumns(category: AgingCategory): DataGridColumn<AgingDetail
     { key: 'date', header: isOpp ? 'Created' : 'Quotation Date', width: 120, rawValue: (r) => r.date ?? '—' },
     { key: 'ageDays', header: 'Age (days)', align: 'right', width: 100 },
     { key: 'value', header: isOpp ? 'Expected Value' : 'Value', align: 'right', width: 140, render: (r) => formatCurrency(r.value) },
-    { key: 'status', header: isOpp ? 'Stage' : 'Status', width: 130, rawValue: (r) => r.status ?? '—' },
+    { key: 'status', header: isOpp ? 'Stage' : 'Status', width: 130, rawValue: (r) => r.status ?? '—', ...stageSort },
   ];
 }
 
@@ -134,10 +142,10 @@ function toRateTableRows(rates?: QuotationRates): RateTableRow[] {
   return [
     { id: 'total', metric: 'Total Quotations YTD', value: formatCountOrDashPdf(rates.totalQuotations) },
     { id: 'won', metric: 'Won Quotations YTD', value: formatCountOrDashPdf(rates.wonQuotations) },
-    { id: 'winRate', metric: 'Win Rate YTD', value: formatVariance(rates.winRatePct) ?? '—' },
+    { id: 'winRate', metric: 'Win Rate YTD', value: formatPercent(rates.winRatePct) ?? '—' },
     { id: 'open', metric: 'Open Quotations YTD', value: formatCountOrDashPdf(rates.openQuotations) },
     { id: 'lost', metric: 'Lost Quotations YTD', value: formatCountOrDashPdf(rates.lostQuotations) },
-    { id: 'ratio', metric: 'Won/Lost Ratio YTD', value: rates.wonLostRatio != null ? rates.wonLostRatio.toFixed(2) : '—' },
+    { id: 'ratio', metric: 'Won/Lost Ratio YTD', value: formatRatio(rates) },
   ];
 }
 
@@ -194,97 +202,6 @@ function toMonthTableRows(series: MonthComparisonPoint[]): MonthTableRow[] {
  * neither page imports from the other. */
 function rowsToPdfRows<T extends Record<string, unknown>>(columns: Column<T>[], rows: T[]): string[][] {
   return rows.map((row) => columns.map((c) => (c.render ? String(c.render(row)) : String(row[c.key] ?? ''))));
-}
-
-// ---------------------------------------------------------------------------
-// Executive Summary -- Win Rate/Won-Lost/by-month rows deliberately stay 'neutral': neither this
-// page's measures (backend/src/measures/pipelineTrend.ts) nor its API payload carry a Target for
-// Quotation Rates or the by-month panels -- there is no Fact_Targets-style target source for
-// quotation/opportunity counts the way Tachometer has one for Value/Volume/ASP. Rather than
-// fabricate one, those rows use 'neutral' directly (the same SemanticStatus classifyVsTarget(actual,
-// null) always resolves to when target is absent). The by-month rows DO have a genuine prior-year
-// series already in the API payload, so their Variance LY is real. The one row with a real,
-// documented threshold is Aging Risk -- the share of open Opportunities aged 90+ days, a standard
-// pipeline-health signal, banded at <15% (green) / <30% (yellow) / >=30% (red), tunable via the
-// constants below.
-// ---------------------------------------------------------------------------
-
-const AGING_RISK_YELLOW_PCT = 0.15;
-const AGING_RISK_RED_PCT = 0.3;
-
-function agingTotal(b: AgingBuckets): number {
-  return b.b0to30 + b.b30to60 + b.b60to90 + b.b90plus;
-}
-
-function toExecutiveSummaryRows(rates?: QuotationRates, aging?: AgingDistribution, opportunitiesByMonth?: MonthComparisonPoint[], quotationsByMonth?: MonthComparisonPoint[], salesOrdersByMonth?: MonthComparisonPoint[]): PerformanceReportRow[] {
-  const rows: PerformanceReportRow[] = [];
-  if (rates) {
-    rows.push(
-      {
-        id: 'winRate',
-        metric: 'Win Rate (YTD)',
-        actualLabel: formatVariance(rates.winRatePct) ?? '—',
-        targetLabel: '—',
-        variancePct: null,
-        varianceLyPct: null,
-        status: 'neutral',
-        takeaway: `${formatVariance(rates.winRatePct) ?? '—'} of quotations YTD have been won.`,
-      },
-      {
-        id: 'wonLostRatio',
-        metric: 'Won/Lost Ratio (YTD)',
-        actualLabel: formatRatio(rates.wonLostRatio),
-        targetLabel: '—',
-        variancePct: null,
-        varianceLyPct: null,
-        status: 'neutral',
-        takeaway: `${formatCountOrDash(rates.wonQuotations)} won vs ${formatCountOrDash(rates.lostQuotations)} lost quotations YTD.`,
-      },
-    );
-  }
-
-  const monthRows: [string, MonthComparisonPoint[] | undefined][] = [
-    ['Opportunities', opportunitiesByMonth],
-    ['Quotations', quotationsByMonth],
-    ['Sales Orders', salesOrdersByMonth],
-  ];
-  for (const [label, series] of monthRows) {
-    if (!series || series.length === 0) continue;
-    const sumCountYtd = series.reduce((s, p) => s + p.countYtd, 0);
-    rows.push({
-      id: `count-${label}`,
-      metric: `${label} Count (YTD)`,
-      actualLabel: formatPlainNumber(sumCountYtd),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      trendValues: series.map((p) => p.countYtd),
-      status: 'neutral',
-      takeaway: `${formatPlainNumber(sumCountYtd)} ${label.toLowerCase()} YTD.`,
-    });
-  }
-
-  if (aging) {
-    const total = agingTotal(aging.opportunities);
-    const riskPct = total > 0 ? aging.opportunities.b90plus / total : null;
-    const status: PerformanceReportRow['status'] =
-      riskPct == null ? 'neutral' : riskPct < AGING_RISK_YELLOW_PCT ? 'success' : riskPct < AGING_RISK_RED_PCT ? 'watch' : 'alert';
-    rows.push({
-      id: 'agingRisk',
-      metric: 'Aging Risk (Opportunities 90+ Days)',
-      actualLabel: riskPct != null ? formatVariance(riskPct) ?? '—' : '—',
-      targetLabel: `< ${Math.round(AGING_RISK_YELLOW_PCT * 100)}%`,
-      variancePct: null,
-      varianceLyPct: null,
-      status,
-      takeaway:
-        riskPct == null
-          ? 'No aging data available.'
-          : `${formatVariance(riskPct)} of open opportunities have been sitting for 90+ days.`,
-    });
-  }
-
-  return rows;
 }
 
 /** Same visual shell as Revenue Trend's ExportPdfButton -- copied per-page rather than shared, same
@@ -460,10 +377,10 @@ export default function PipelineTrendPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                     <RateTile label="Total Quotations YTD" value={formatCountOrDash(data?.quotationRates.totalQuotations)} />
                     <RateTile label="Won Quotations YTD" value={formatCountOrDash(data?.quotationRates.wonQuotations)} />
-                    <RateTile label="Win Rate YTD" value={formatVariance(data?.quotationRates.winRatePct ?? null) ?? '—'} />
+                    <RateTile label="Win Rate YTD" value={formatPercent(data?.quotationRates.winRatePct ?? null) ?? '—'} />
                     <RateTile label="Open Quotations YTD" value={formatCountOrDash(data?.quotationRates.openQuotations)} />
                     <RateTile label="Lost Quotations YTD" value={formatCountOrDash(data?.quotationRates.lostQuotations)} />
-                    <RateTile label="Won/Lost Ratio YTD" value={formatRatio(data?.quotationRates.wonLostRatio)} />
+                    <RateTile label="Won/Lost Ratio YTD" value={formatRatio(data?.quotationRates)} />
                   </div>
                 )}
               </Card>
@@ -549,21 +466,6 @@ export default function PipelineTrendPage() {
                 />
               </div>
             )}
-
-            {/* Spans both grid columns so the table is full page width instead of landing in the
-                left column under the Rates/Aging panels. minWidth 0 lets its own overflowX scroll
-                kick in on narrow screens rather than stretching the grid. */}
-            {!overview.loading && !overview.error && (
-              <div style={{ gridColumn: '1 / -1', minWidth: 0 }}>
-                <PerformanceReportTable
-                  title="Performance Details"
-                  {...vh('promotion.pipelineTrend.details')}
-                  rows={toExecutiveSummaryRows(data?.quotationRates, data?.aging, data?.opportunitiesByMonth, data?.quotationsByMonth, data?.salesOrdersByMonth)}
-                  showStatus
-                  showTakeaway
-                />
-              </div>
-            )}
           </div>
         </main>
 
@@ -623,7 +525,7 @@ function AgingDrillPanel({
             {rows.length !== expectedCount && ` (The chart counted ${expectedCount.toLocaleString(DISPLAY_LOCALE)} -- data may have refreshed since; reload the page.)`}
           </div>
           <DataGrid
-            columns={agingDetailColumns(selection.category)}
+            columns={agingDetailColumns(selection.category, rows)}
             rows={rows}
             getRowId={(row) => row.id}
             fileName={`aging-${selection.category}-${selection.bucket}`}

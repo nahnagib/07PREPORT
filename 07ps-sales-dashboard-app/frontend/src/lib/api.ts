@@ -2143,10 +2143,16 @@ export interface OpportunityChains {
 
 export interface StageBenchmarkRow {
   transition: string;
-  /** Like-for-like cohort counts behind actualPct (all statuses, backend computeBenchmarkCohort). */
+  /** Like-for-like cohort values (LYD) behind actualPct (all statuses, backend computeBenchmarkCohort). */
+  fromValue: number;
+  toValue: number;
+  /** The same cohort's counts (opportunities that reached each step). */
   fromCount: number;
   toCount: number;
+  /** By value: toValue ÷ fromValue. */
   actualPct: number | null;
+  /** By count: toCount ÷ fromCount (the definition the targets were set for; not shown). */
+  countPct: number | null;
   targetPct: number;
   status: TargetStatus;
   variancePct: number | null;
@@ -2160,8 +2166,16 @@ export interface ExpectedClosureMonthPoint {
   expectedValue: number;
 }
 
-export interface StageValueSlice {
+/** A CRM stage in pipeline order (backend config/pipelineStages.ts, matched by Odoo stage id). */
+export interface PipelineStage {
+  stageId: number | null;
   stage: string;
+  position: number;
+  /** Theme colour token: --ps-stage-<colorKey> (tokens.css). */
+  colorKey: string;
+}
+
+export interface StageValueSlice extends PipelineStage {
   value: number;
   count: number;
 }
@@ -2178,6 +2192,8 @@ export interface OpportunitiesByStatus {
 export interface ProbabilityBucketSlice {
   bucket: string;
   count: number;
+  /** Σ expected revenue (LYD). */
+  value: number;
 }
 
 export interface OpportunityDetailRow {
@@ -2188,6 +2204,9 @@ export interface OpportunityDetailRow {
   expectedRevenue: number;
   salesperson: string | null;
   stage: string | null;
+  stageId: number | null;
+  /** Place of the stage in the pipeline order, for sorting the Stage column. */
+  stagePosition: number;
   createdDate: string | null;
   expectedCloseDate: string | null;
   expectedCloseMonth: string | null;
@@ -2224,11 +2243,21 @@ export interface PipelineHealthOverview {
   opportunityChains: OpportunityChains;
   stageBenchmark: StageBenchmarkRow[];
   /** Opportunities created in the period, any status (Pending + Won + Lost), and how many of them reached each step. */
-  benchmarkCohort: { opportunities: number; quotations: number; salesOrders: number; deliveries: number };
+  benchmarkCohort: {
+    opportunities: number;
+    quotations: number;
+    salesOrders: number;
+    deliveries: number;
+    /** The same steps by value (LYD). */
+    values: { opportunities: number; quotations: number; salesOrders: number; deliveries: number };
+  };
   /** Total Pipeline Value card: open (Pending) opportunities = the Pending slice = the sum of Opportunity by Stage. */
   openPipeline: { count: number; value: number };
   expectedClosureByMonth: ExpectedClosureMonthPoint[];
+  /** In pipeline order. */
   opportunityByStage: StageValueSlice[];
+  /** Every CRM stage in pipeline order. */
+  stages: PipelineStage[];
   opportunitiesByStatus: OpportunitiesByStatus;
   probabilityDistribution: ProbabilityBucketSlice[];
   opportunities: OpportunityDetailRow[];
@@ -2307,6 +2336,8 @@ export interface AgingDetailRow {
   value: number;
   /** CRM stage (opportunity) or Odoo order state (quotation). */
   status: string | null;
+  /** Opportunities: place of the stage in the pipeline order; null for quotations. */
+  stagePosition: number | null;
 }
 
 export interface AgingDetails {
@@ -2368,6 +2399,8 @@ export interface ActivityOpportunityRow {
   expectedRevenue: number;
   salesperson: string | null;
   stage: string | null;
+  /** Place of the stage in the pipeline order, for sorting the Stage column. */
+  stagePosition: number;
   createdDate: string | null;
   isOpen: boolean;
   isWon: boolean;

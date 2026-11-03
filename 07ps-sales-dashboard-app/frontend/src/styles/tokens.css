@@ -146,6 +146,21 @@
   --ps-ccy-lyd: #2e5aac;
   --ps-ccy-usd: #b8860b;
   --ps-ccy-eur: #7e57c2;
+
+  /* CRM stage colours (2026-11-03): one per stage, the same on every chart; keys come from backend
+     config/pipelineStages.ts (matched by Odoo stage id). "other-*" = stages after the fixed pipeline order (e.g. Lost). */
+  --ps-stage-new: #2e5aac;
+  --ps-stage-design: #00838f;
+  --ps-stage-qualified: #2e7d32;
+  --ps-stage-cross-selling: #9e9d24;
+  --ps-stage-proposition: #b8860b;
+  --ps-stage-negotiations: #e65100;
+  --ps-stage-waiting-loa: #7e57c2;
+  --ps-stage-on-hold: #6d4c41;
+  --ps-stage-other-1: #546e7a;
+  --ps-stage-other-2: #c2185b;
+  --ps-stage-other-3: #3949ab;
+  --ps-stage-unspecified: #9e9e9e;
 }
 
 [data-theme='dark'] {
@@ -229,6 +244,19 @@
   --ps-credit-notdue-soft: #1d2026;
   --ps-credit-edge: #0f1115;
   --ps-credit-ink: #ffffff;
+
+  --ps-stage-new: #6f9ceb;
+  --ps-stage-design: #4dd0e1;
+  --ps-stage-qualified: #66bb6a;
+  --ps-stage-cross-selling: #c0ca33;
+  --ps-stage-proposition: #e0a815;
+  --ps-stage-negotiations: #ff8a50;
+  --ps-stage-waiting-loa: #b39ddb;
+  --ps-stage-on-hold: #bcaaa4;
+  --ps-stage-other-1: #90a4ae;
+  --ps-stage-other-2: #f06292;
+  --ps-stage-other-3: #9fa8da;
+  --ps-stage-unspecified: #8a8f98;
 
   --ps-ccy-lyd: #6f9ceb;
   --ps-ccy-usd: #d4a94a;

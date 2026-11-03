@@ -43,6 +43,12 @@ export function formatAsp(value: number | null | undefined): string {
   return `LYD ${value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 2 })}`;
 }
 
+/** A share or rate that is not a change, e.g. "74.09%" (2 decimals, no "+"). formatVariance is for increases/decreases. */
+export function formatPercent(pct: number | null | undefined): string | undefined {
+  if (pct === null || pct === undefined || !Number.isFinite(pct)) return undefined;
+  return `${(pct * 100).toFixed(2)}%`;
+}
+
 export function formatVariance(pct: number | null | undefined): string | undefined {
   if (pct === null || pct === undefined || !Number.isFinite(pct)) return undefined;
   const sign = pct >= 0 ? '+' : '';

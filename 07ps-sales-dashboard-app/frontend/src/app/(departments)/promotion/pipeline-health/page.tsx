@@ -24,13 +24,9 @@ import {
   LoadingSkeleton,
   ErrorState,
   exportRowsAsPdf,
-  exportPerformanceTablePdf,
-  PerformanceReportTable,
-  SEMANTIC_STATUS_LABEL,
   type Column,
   type DataGridColumn,
-  type PerformanceReportRow,
-  type PerformanceTablePdfColumn,
+  tooltipBoxStyle,
   useCanExport,
   VisualInfoIcons,
 } from '@07ps/ui';
@@ -45,27 +41,18 @@ import type {
   FunnelStageRecords,
   OpportunityDetailRow,
   OpportunityStatus,
-  PipelineHealthOverview,
   StageBenchmarkRow,
 } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
+import { formatCompactCurrency, formatCurrency, formatTimestamp, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
 import { vh } from '../../../../lib/visualHelp';
 import { winLossCentre } from '../../../../lib/winLoss';
+import { sortByStagePosition, stageColor, stageFilterOptions } from '../../../../lib/pipelineStages';
 
 // Fixed: --ps-color-watch previously reused here shares the exact same hex as --ps-color-gold
 // (#b8860b), so Quotations and Deliveries rendered as indistinguishable brownish-gold trapezoids/
 // legend dots. --ps-color-trend-target (a distinct purple, already used for "Target" series
 // elsewhere) replaces it with a genuinely distinct 4th hue.
 const FUNNEL_COLORS = ['var(--ps-color-accent)', 'var(--ps-color-gold)', 'var(--ps-color-success)', 'var(--ps-color-trend-target)'];
-const CATEGORY_PALETTE = [
-  'var(--ps-color-accent)',
-  'var(--ps-color-success)',
-  'var(--ps-color-gold)',
-  'var(--ps-color-watch)',
-  'var(--ps-color-alert)',
-  'var(--ps-color-last-year)',
-  'var(--ps-color-neutral-text)',
-];
 
 /** Opportunity by Status slice colours (Odoo won_status): Won = success, Lost = alert, Pending (open) = accent. */
 const STATUS_COLORS: Record<OpportunityStatus, string> = {
@@ -83,120 +70,13 @@ function formatPlainNumber(value: number): string {
   return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
 }
 
+function opportunitiesLabel(n: number): string {
+  return `${n.toLocaleString(DISPLAY_LOCALE)} opportunit${n === 1 ? 'y' : 'ies'}`;
+}
+
 function formatPct(v: number | null): string {
   return v != null ? `${(v * 100).toFixed(1)}%` : '—';
 }
-
-// ---------------------------------------------------------------------------
-// Performance Details -- the page's single, C-level scannable summary table. Reuses
-// PerformanceReportTable/SemanticBadge exactly like every other status surface on this page; the 3 Stage Benchmark rows and the Data Quality row carry a real,
-// backend-computed status (classifyVsTarget / classifyRate respectively), the rest are
-// informational (no target in this page's data model) and stay 'neutral'.
-// ---------------------------------------------------------------------------
-
-function stageBenchmarkTakeaway(row: StageBenchmarkRow): string {
-  const actual = formatPct(row.actualPct);
-  const target = formatPct(row.targetPct);
-  if (row.status === 'green') return `${row.transition} conversion is on target at ${actual}.`;
-  if (row.status === 'yellow') return `${row.transition} conversion is slightly behind target (${actual} vs ${target}).`;
-  if (row.status === 'red') return `${row.transition} conversion is well behind target (${actual} vs ${target}) and needs attention.`;
-  return `No target set for ${row.transition}.`;
-}
-
-function dataQualityTakeaway(dq: DataQualityOverview): string {
-  const pct = formatPct(dq.dirtyPct);
-  if (dq.status === 'green') return `Pipeline data is clean -- only ${pct} of records have an issue.`;
-  if (dq.status === 'yellow') return `${pct} of pipeline records have a data issue -- worth a look.`;
-  if (dq.status === 'red') return `${pct} of pipeline records have a data issue -- figures on this page may be understated.`;
-  return 'No opportunity records to validate for the current filters.';
-}
-
-function toExecutiveSummaryRows(data?: PipelineHealthOverview | null): PerformanceReportRow[] {
-  if (!data) return [];
-  // "Last" is "—" on every row: this page has no prior-period (LYTD/LMTD) figure -- every funnel
-  // count is a YTD point-in-time figure and the benchmarks are rates against fixed targets -- so
-  // Variance to Last is "—" too (agreed with the business; Last column kept for the shared layout).
-  const funnelRow = (id: string, metric: string, count: number, value: number | null, takeaway: string): PerformanceReportRow => ({
-    id,
-    metric,
-    actualLabel: formatPlainNumber(count),
-    actualFullValue: value != null ? formatCurrency(value) : undefined,
-    targetLabel: '—',
-    variancePct: null,
-    varianceLyPct: null,
-    status: 'neutral',
-    takeaway,
-  });
-  const rows: PerformanceReportRow[] = [
-    funnelRow('leads', 'Leads (YTD, B2B)', data.funnel.leads, null, `${formatPlainNumber(data.funnel.leads)} B2B leads created so far this year.`),
-    funnelRow(
-      'opportunities',
-      'Open Opportunities (YTD, B2B)',
-      data.funnel.opportunities,
-      data.funnelValues.opportunities,
-      `${formatPlainNumber(data.funnel.opportunities)} open opportunities created YTD, worth ${formatCurrency(data.funnelValues.opportunities)}.`,
-    ),
-    funnelRow(
-      'quotations',
-      'Quotations (YTD, B2B)',
-      data.funnel.quotations,
-      data.funnelValues.quotations,
-      `${formatPlainNumber(data.funnel.quotations)} quotations issued YTD, worth ${formatCurrency(data.funnelValues.quotations)}.`,
-    ),
-    funnelRow(
-      'salesOrders',
-      'Sales Orders (YTD, B2B)',
-      data.funnel.salesOrders,
-      data.funnelValues.salesOrders,
-      `${formatPlainNumber(data.funnel.salesOrders)} sales orders YTD, worth ${formatCurrency(data.funnelValues.salesOrders)}.`,
-    ),
-    funnelRow(
-      'deliveries',
-      'Deliveries (YTD, B2B)',
-      data.funnel.deliveries,
-      data.funnelValues.deliveries,
-      `${formatPlainNumber(data.funnel.deliveries)} deliveries YTD, worth ${formatCurrency(data.funnelValues.deliveries)}.`,
-    ),
-  ];
-  for (const b of data.stageBenchmark) {
-    rows.push({
-      id: `benchmark-${b.transition}`,
-      metric: b.transition,
-      actualLabel: formatPct(b.actualPct),
-      targetLabel: formatPct(b.targetPct),
-      variancePct: b.variancePct,
-      varianceLyPct: null,
-      status: toSemanticStatus(b.status),
-      takeaway: stageBenchmarkTakeaway(b),
-    });
-  }
-  if (data.dataQuality) rows.push({
-    id: 'dataQuality',
-    metric: 'Data Quality',
-    actualLabel: formatPct(data.dataQuality.dirtyPct),
-    targetLabel: `< ${formatPct(0.02)} dirty`,
-    variancePct: null,
-    varianceLyPct: null,
-    status: toSemanticStatus(data.dataQuality.status),
-    takeaway: dataQualityTakeaway(data.dataQuality),
-  });
-  return rows;
-}
-
-// Matches PerformanceReportTable's showLytdColumn layout so the PDF mirrors the on-screen table.
-function pctLabel(v: number | null): string {
-  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
-}
-const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
-  { header: 'Metric Name', getValue: (row) => row.metric },
-  { header: 'Actual', getValue: (row) => row.actualLabel },
-  { header: 'Last', getValue: (row) => row.lytdLabel ?? '—' },
-  { header: 'Target', getValue: (row) => row.targetLabel },
-  { header: 'Variance to Last', getValue: (row) => pctLabel(row.varianceLyPct) },
-  { header: 'Variance to Target', getValue: (row) => pctLabel(row.variancePct) },
-  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
-  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
-];
 
 type DetailsFilter = { type: 'month' | 'stage' | 'bucket' | 'funnelStage' | 'status'; value: string } | null;
 
@@ -214,6 +94,7 @@ interface OpportunityTableRow extends Record<string, unknown> {
   customer: string;
   company: string;
   stage: string;
+  stagePosition: number;
   probability: string;
   expectedCloseDate: string;
   expectedRevenue: number;
@@ -225,9 +106,11 @@ interface OpportunityTableRow extends Record<string, unknown> {
 
 // Row-level tables (opportunities, quotations / sales orders / deliveries) use DataGrid like the other detail tables:
 // click-to-sort headers, search + column filters, Export CSV and Export as PDF of the filtered, sorted rows.
-const opportunityColumns: DataGridColumn<OpportunityTableRow>[] = [
+// The Stage column sorts and filters in pipeline order (backend config/pipelineStages.ts), not alphabetically.
+function opportunityColumns(rows: OpportunityTableRow[]): DataGridColumn<OpportunityTableRow>[] {
+  return [
   { key: 'name', header: 'Opportunity Name', rawValue: (r) => r.name, render: (r) => <OdooLink href={r.odooUrl}>{r.name}</OdooLink> },
-  { key: 'stage', header: 'Stage' },
+  { key: 'stage', header: 'Stage', sortValue: (r) => r.stagePosition, filterOptions: stageFilterOptions(rows) },
   { key: 'probability', header: 'Probability %' },
   { key: 'expectedCloseDate', header: 'Expected Close Date' },
   { key: 'expectedRevenue', header: 'Value', align: 'right', render: (r) => formatCurrency(r.expectedRevenue) },
@@ -235,7 +118,8 @@ const opportunityColumns: DataGridColumn<OpportunityTableRow>[] = [
   { key: 'company', header: 'Company' },
   { key: 'salesperson', header: 'Salesperson' },
   { key: 'createdDate', header: 'Created Date' },
-];
+  ];
+}
 
 function toTableRow(o: OpportunityDetailRow): OpportunityTableRow {
   return {
@@ -244,6 +128,7 @@ function toTableRow(o: OpportunityDetailRow): OpportunityTableRow {
     customer: o.customer ?? '—',
     company: o.company ?? '—',
     stage: o.stage ?? '—',
+    stagePosition: o.stagePosition,
     probability: o.probabilityBucket ?? '—',
     expectedCloseDate: o.expectedCloseDate ?? '—',
     expectedRevenue: o.expectedRevenue,
@@ -373,12 +258,16 @@ const funnelTableColumns: Column<FunnelTableRow>[] = [
 interface BenchmarkTableRow extends Record<string, unknown> {
   id: string;
   transition: string;
+  fromValue: number;
+  toValue: number;
   actualPct: string;
   targetPct: string;
 }
 const benchmarkTableColumns: Column<BenchmarkTableRow>[] = [
   { key: 'transition', header: 'Transition' },
-  { key: 'actualPct', header: 'Actual %', align: 'right' },
+  { key: 'fromValue', header: 'From value (LYD)', align: 'right', render: (r) => formatCurrency(r.fromValue) },
+  { key: 'toValue', header: 'To value (LYD)', align: 'right', render: (r) => formatCurrency(r.toValue) },
+  { key: 'actualPct', header: 'Actual % (by value)', align: 'right' },
   { key: 'targetPct', header: 'Target %', align: 'right' },
 ];
 
@@ -390,18 +279,20 @@ interface ClosureTableRow extends Record<string, unknown> {
 }
 const closureTableColumns: Column<ClosureTableRow>[] = [
   { key: 'month', header: 'Month' },
-  { key: 'expectedCount', header: 'Expected Count', align: 'right' },
   { key: 'expectedValue', header: 'Expected Value', align: 'right', render: (r) => formatCurrency(r.expectedValue) },
+  { key: 'expectedCount', header: 'Expected Count', align: 'right' },
 ];
 
 interface StageValueTableRow extends Record<string, unknown> {
   id: string;
   stage: string;
   value: number;
+  count: number;
 }
 const stageValueTableColumns: Column<StageValueTableRow>[] = [
   { key: 'stage', header: 'Stage' },
   { key: 'value', header: 'Value', align: 'right', render: (r) => formatCurrency(r.value) },
+  { key: 'count', header: 'Opportunities', align: 'right' },
 ];
 
 interface StatusTableRow extends Record<string, unknown> {
@@ -421,10 +312,12 @@ const statusTableColumns: Column<StatusTableRow>[] = [
 interface ProbabilityTableRow extends Record<string, unknown> {
   id: string;
   bucket: string;
+  value: number;
   count: number;
 }
 const probabilityTableColumns: Column<ProbabilityTableRow>[] = [
   { key: 'bucket', header: 'Probability Bucket' },
+  { key: 'value', header: 'Expected Revenue', align: 'right', render: (r) => formatCurrency(r.value) },
   { key: 'count', header: 'Opportunities', align: 'right' },
 ];
 
@@ -435,12 +328,17 @@ function matchesFilter(o: OpportunityDetailRow, filter: DetailsFilter, funnelIds
   if (!filter) return true;
   if (filter.type === 'status') return o.status === filter.value;
   if (filter.type === 'month') return o.isOpen && o.expectedCloseMonth === filter.value;
-  if (filter.type === 'stage') return o.isOpen && (o.stage ?? 'Unspecified') === filter.value;
+  if (filter.type === 'stage') return o.isOpen && stageKey(o.stageId) === filter.value;
   if (filter.type === 'funnelStage') {
     const ids = funnelIds?.[filter.value as keyof FunnelOpportunityIds];
     return ids != null && ids.includes(o.opportunityId);
   }
   return o.isOpen && o.probabilityBucket === filter.value;
+}
+
+/** Opportunity by Stage segment id = the Odoo stage id ('none' for a row without a stage). */
+function stageKey(stageId: number | null): string {
+  return stageId != null ? String(stageId) : 'none';
 }
 
 function detailsFilterLabel(filter: DetailsFilter): string {
@@ -559,16 +457,19 @@ export default function PipelineHealthPage() {
 
   const closurePoints = (data?.expectedClosureByMonth ?? []).map((p) => ({
     label: p.label,
-    expectedCount: p.expectedCount,
     expectedValue: p.expectedValue,
+    expectedCount: p.expectedCount,
   }));
 
-  const stageSegments = (data?.opportunityByStage ?? []).map((s, i) => ({
-    id: s.stage,
+  // Pipeline order and one colour per stage, both from the API (backend config/pipelineStages.ts, by Odoo stage id).
+  const stageSegments = (data?.opportunityByStage ?? []).map((s) => ({
+    id: stageKey(s.stageId),
     label: s.stage,
     value: s.value,
-    color: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
+    color: stageColor(s.colorKey),
+    tooltipNote: opportunitiesLabel(s.count),
   }));
+  const stageNameByKey = new Map(stageSegments.map((s) => [s.id, s.label]));
 
   const statusSlices = data?.opportunitiesByStatus.slices ?? [];
   const statusTotal = statusSlices.reduce((sum, s) => sum + s.count, 0);
@@ -592,35 +493,32 @@ export default function PipelineHealthPage() {
     expectedRevenue: s.expectedRevenue,
   }));
 
-  const probabilityPoints = (data?.probabilityDistribution ?? []).map((p) => ({ label: p.bucket, count: p.count }));
+  const probabilityPoints = (data?.probabilityDistribution ?? []).map((p) => ({ label: p.bucket, value: p.value, count: p.count }));
+  // Open deals outside the 10-90% buckets (0% / 100% / none): the gap to the Total Pipeline Value, shown under the chart.
+  const probabilityOutside = data
+    ? {
+        count: data.openPipeline.count - probabilityPoints.reduce((s, p) => s + p.count, 0),
+        value: data.openPipeline.value - probabilityPoints.reduce((s, p) => s + p.value, 0),
+      }
+    : null;
 
-  const filteredOpportunities = (data?.opportunities ?? [])
-    .filter((o) => matchesFilter(o, detailsFilter, data?.funnelOpportunityIds))
-    .map(toTableRow);
+  const filteredOpportunities = sortByStagePosition(
+    (data?.opportunities ?? []).filter((o) => matchesFilter(o, detailsFilter, data?.funnelOpportunityIds)).map(toTableRow),
+    (r) => r.stagePosition,
+  );
 
   const funnelTableRows: FunnelTableRow[] = funnelStages.map((s) => ({ id: s.id, stage: s.label, count: s.value, value: s.secondaryValue ?? 0, reachedPct: s.pct == null ? '—' : formatPct(s.pct) }));
   const benchmarkTableRows: BenchmarkTableRow[] = (data?.stageBenchmark ?? []).map((row) => ({
     id: row.transition,
     transition: row.transition,
+    fromValue: row.fromValue,
+    toValue: row.toValue,
     actualPct: formatPct(row.actualPct),
     targetPct: formatPct(row.targetPct),
   }));
   const closureTableRows: ClosureTableRow[] = closurePoints.map((p) => ({ id: p.label, month: p.label, expectedCount: p.expectedCount, expectedValue: p.expectedValue }));
-  const stageValueTableRows: StageValueTableRow[] = stageSegments.map((s) => ({ id: s.id, stage: s.label, value: s.value }));
-  const probabilityTableRows: ProbabilityTableRow[] = probabilityPoints.map((p) => ({ id: p.label, bucket: p.label, count: p.count }));
-
-  // Filters applied / Exported by come from the shared PDF export context (PdfExportContextBridge).
-  async function handleExportPerformanceTablePdf() {
-    try {
-      await exportPerformanceTablePdf({
-        title: 'Performance Details',
-        rows: toExecutiveSummaryRows(data),
-        columns: PERFORMANCE_PDF_COLUMNS,
-      });
-    } catch (err) {
-      console.error('PDF export failed:', err);
-    }
-  }
+  const stageValueTableRows: StageValueTableRow[] = (data?.opportunityByStage ?? []).map((s) => ({ id: stageKey(s.stageId), stage: s.stage, value: s.value, count: s.count }));
+  const probabilityTableRows: ProbabilityTableRow[] = probabilityPoints.map((p) => ({ id: p.label, bucket: p.label, value: p.value, count: p.count }));
 
   async function handleDownloadChartPdf<T extends Record<string, unknown>>(key: string, title: string, columns: Column<T>[], rows: T[]) {
     setDownloadingChartPdf(key);
@@ -637,10 +535,13 @@ export default function PipelineHealthPage() {
   }
 
   // DataGrid's Export CSV / Export as PDF file name and PDF title, e.g. "opportunity-by-stage-proposal-opportunities".
+  // A stage drill-down carries the stage id; show its name.
+  const shownFilter: DetailsFilter =
+    detailsFilter?.type === 'stage' ? { type: 'stage', value: stageNameByKey.get(detailsFilter.value) ?? 'Unspecified' } : detailsFilter;
   const detailsFileName = slug(
-    [widgetNameForFilter(detailsFilter), filterValueForPdf(detailsFilter), 'opportunities'].filter(Boolean).join(' '),
+    [widgetNameForFilter(shownFilter), filterValueForPdf(shownFilter), 'opportunities'].filter(Boolean).join(' '),
   );
-  const detailsFilterParts = detailsFilter ? [`${widgetNameForFilter(detailsFilter)}: ${filterValueForPdf(detailsFilter)}`] : undefined;
+  const detailsFilterParts = shownFilter ? [`${widgetNameForFilter(shownFilter)}: ${filterValueForPdf(shownFilter)}`] : undefined;
 
   const isDeliveryStage = stageRecordKind === 'deliveries';
   const activeStageRecords = stageRecordKind ? getStageRecords(stageRecordKind, data?.funnelStageRecords) : [];
@@ -827,13 +728,13 @@ export default function PipelineHealthPage() {
                     title="Expected Closure Opportunity"
                     showTitle={false}
                     points={closurePoints}
-                    bars={[{ key: 'expectedCount', name: 'Expected Opportunity Count', color: 'var(--ps-color-accent)' }]}
-                    lines={[{ key: 'expectedValue', name: 'Expected Opportunity Value', color: 'var(--ps-color-last-year)', yAxisId: 'right' }]}
-                    leftAxisFormatter={formatPlainNumber}
-                    rightAxisFormatter={formatMillions}
+                    bars={[{ key: 'expectedValue', name: 'Expected Opportunity Value', color: 'var(--ps-color-accent)' }]}
+                    lines={[{ key: 'expectedCount', name: 'Expected Opportunity Count', color: 'var(--ps-color-last-year)', yAxisId: 'right' }]}
+                    leftAxisFormatter={formatMillions}
+                    rightAxisFormatter={formatPlainNumber}
                     tooltipFormatters={{
-                      expectedCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                       expectedValue: (v) => formatCurrency(v),
+                      expectedCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                     }}
                     onCategoryClick={(label) => openDetails({ type: 'month', value: label })}
                   />
@@ -950,29 +851,30 @@ export default function PipelineHealthPage() {
                 ) : overview.error ? (
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
-                  <GroupedBarChart
-                    title="Probabilities Distribution"
-                    showTitle={false}
-                    points={probabilityPoints}
-                    bars={[{ key: 'count', name: 'Opportunities', color: 'var(--ps-color-accent)' }]}
-                    valueFormatter={formatPlainNumber}
-                    tooltipFormatters={{ count: (v) => v.toLocaleString(DISPLAY_LOCALE) }}
-                    onCategoryClick={(label) => openDetails({ type: 'bucket', value: label })}
-                  />
+                  <>
+                    <GroupedBarChart
+                      title="Probabilities Distribution"
+                      showTitle={false}
+                      points={probabilityPoints}
+                      bars={[{ key: 'value', name: 'Expected Revenue', color: 'var(--ps-color-accent)' }]}
+                      valueFormatter={formatMillions}
+                      tooltipContent={(p) => (
+                        <div data-testid="probability-tooltip" style={{ ...tooltipBoxStyle, padding: '6px 10px', fontSize: 12 }}>
+                          {p.label} · {formatCompactCurrency(Number(p.value ?? 0))} · {opportunitiesLabel(Number(p.count ?? 0))}
+                        </div>
+                      )}
+                      onCategoryClick={(label) => openDetails({ type: 'bucket', value: label })}
+                    />
+                    {probabilityOutside && probabilityOutside.count > 0 && (
+                      <div data-testid="probability-outside" style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 6 }}>
+                        Not in a 10–90% bucket: {opportunitiesLabel(probabilityOutside.count)} at 0% or 100% probability ({formatCompactCurrency(probabilityOutside.value)}).
+                        Buckets + these = the Total Pipeline Value.
+                      </div>
+                    )}
+                  </>
                 )}
               </ChartPanel>
             </div>
-
-            {!overview.loading && !overview.error && (
-              <PerformanceReportTable
-                title="Performance Details"
-                {...vh('promotion.pipelineHealth.details')}
-                rows={toExecutiveSummaryRows(data)}
-                showStatus
-                showTakeaway
-                onExportPdf={handleExportPerformanceTablePdf}
-              />
-            )}
             </div>
           ) : view === 'chain' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
@@ -1000,7 +902,7 @@ export default function PipelineHealthPage() {
           ) : view === 'details' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
               <ChartPanel
-                title={`Opportunity Details${detailsFilter ? ` — ${detailsFilterLabel(detailsFilter)}` : ''}`}
+                title={`Opportunity Details${shownFilter ? ` — ${detailsFilterLabel(shownFilter)}` : ''}`}
                 {...vh('promotion.pipelineHealth.opportunityDetails')}
                 style={{ minHeight: 480 }}
               >
@@ -1010,7 +912,7 @@ export default function PipelineHealthPage() {
                   <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
                   <DataGrid<OpportunityTableRow>
-                    columns={opportunityColumns}
+                    columns={opportunityColumns(filteredOpportunities)}
                     rows={filteredOpportunities}
                     getRowId={(row) => row.opportunityId}
                     fileName={detailsFileName}
@@ -1260,7 +1162,9 @@ function BenchmarkRow({ row }: { row: StageBenchmarkRow }) {
       </div>
       <ProgressBar actual={row.actualPct ?? 0} targetToDate={row.targetPct} status={status} label={`${row.transition}: ${formatPct(row.actualPct)} of ${formatPct(row.targetPct)} target`} />
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2, fontSize: 11, color: 'var(--ps-color-muted-text)' }}>
-        <span>Actual: {formatPct(row.actualPct)} ({row.toCount.toLocaleString(DISPLAY_LOCALE)} of {row.fromCount.toLocaleString(DISPLAY_LOCALE)})</span>
+        <span data-testid="benchmark-actual">
+          Actual: {formatPct(row.actualPct)} ({formatCompactCurrency(row.toValue)} of {formatCompactCurrency(row.fromValue)})
+        </span>
         <span>Target: {formatPct(row.targetPct)}</span>
       </div>
     </div>
