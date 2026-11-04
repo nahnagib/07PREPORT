@@ -148,8 +148,8 @@ function CompaniesPageBody() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
       <div style={{ padding: 12, borderRadius: 8, background: 'var(--ps-color-watch-bg, var(--ps-color-surface))', border: '1px solid var(--ps-color-watch-border, var(--ps-color-border))', fontSize: 13 }}>
-        {SCOPE_NOTE} The Critical Number % column sets each company's share of the Daily Critical
-        Number when it's the only Company filter selected (Admin Panel &gt; Companies) -- see
+        {SCOPE_NOTE} The Critical Number % column sets each company&apos;s share of the Daily Critical
+        Number when it&apos;s the only Company filter selected (Admin Panel &gt; Companies) -- see
         Critical Number page.
       </div>
 
@@ -158,8 +158,8 @@ function CompaniesPageBody() {
           role="alert"
           style={{ padding: 12, borderRadius: 8, background: 'var(--ps-color-alert-bg, var(--ps-color-surface))', border: '1px solid var(--ps-color-alert)', fontSize: 13, color: 'var(--ps-color-alert)' }}
         >
-          Active companies' Critical Number % sums to {activePctTotal.toFixed(2)}%, not 100%. This is allowed, but
-          filtering by every active company won't reproduce the full base Daily Critical Number until it's corrected.
+          Active companies&apos; Critical Number % sums to {activePctTotal.toFixed(2)}%, not 100%. This is allowed, but
+          filtering by every active company won&apos;t reproduce the full base Daily Critical Number until it&apos;s corrected.
         </div>
       )}
 

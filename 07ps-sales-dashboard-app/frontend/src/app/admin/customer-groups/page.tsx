@@ -159,8 +159,8 @@ function CustomerGroupsPageBody() {
           role="alert"
           style={{ padding: 12, borderRadius: 8, background: 'var(--ps-color-alert-bg, var(--ps-color-surface))', border: '1px solid var(--ps-color-alert)', fontSize: 13, color: 'var(--ps-color-alert)' }}
         >
-          Active customer groups' Critical Number % sums to {activePctTotal.toFixed(2)}%, not 100%. This is allowed, but
-          filtering by every active customer group won't reproduce the full base Daily Critical Number until it's corrected.
+          Active customer groups&apos; Critical Number % sums to {activePctTotal.toFixed(2)}%, not 100%. This is allowed, but
+          filtering by every active customer group won&apos;t reproduce the full base Daily Critical Number until it&apos;s corrected.
         </div>
       )}
 
