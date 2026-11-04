@@ -23,11 +23,11 @@ def _raw_products() -> pd.DataFrame:
     return pd.DataFrame([
         {"id": 10, "product_tmpl_id": "T", "product_tmpl_id_id": 100, "name": "  Xtreme-SuperCol S1 ", "display_name": "[S1] Xtreme-SuperCol S1",
          "default_code": "S1", "company_id": "Majaal", "company_id_id": 1, "active": True, "categ_id": "All / Adhesives", "categ_id_id": 4,
-         "manufacturer_id": "Xtreme", "sub_brand_id": False, "product_family_id": False, "size_dimensions_id": False,
+         "vendor": "Xtreme", "sub_brand_id": False, "product_family_id": False, "size_dimensions_id": False,
          "standard_price": 5.5, "cost_company": "Majaal"},
         {"id": 11, "product_tmpl_id": "U", "product_tmpl_id_id": 101, "name": "متين GERMA-C2TE", "display_name": "متين GERMA-C2TE",
          "default_code": False, "company_id": False, "company_id_id": False, "active": False, "categ_id": "All", "categ_id_id": 1,
-         "manufacturer_id": False, "sub_brand_id": False, "product_family_id": False, "size_dimensions_id": False,
+         "vendor": None, "sub_brand_id": False, "product_family_id": False, "size_dimensions_id": False,
          "standard_price": 0.0, "cost_company": "Tika"},
     ])
 

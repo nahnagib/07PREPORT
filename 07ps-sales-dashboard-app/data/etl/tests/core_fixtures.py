@@ -47,11 +47,15 @@ ODOO: dict[str, list[dict[str, Any]]] = {
     "product.product": [
         {"id": 500, "product_tmpl_id": [500, "t"], "name": "Grout Crema", "display_name": "[GR-1] Grout Crema", "default_code": "GR-1",
          "company_id": False, "categ_id": [5, "All / Grout"], "uom_id": [1, "Units"], "detailed_type": "product", "active": True,
-         "manufacturer_id": [31, "Weber"], "sub_brand_id": False, "product_family_id": False, "size_dimensions_id": [41, "5kg"], "write_date": WD},
+         "sub_brand_id": False, "product_family_id": False, "size_dimensions_id": [41, "5kg"], "write_date": WD},
         {"id": 501, "product_tmpl_id": [501, "t"], "name": "Cem Air", "display_name": "Cem Air", "default_code": False,
          "company_id": [3, "TIKA"], "categ_id": [6, "All / Cement"], "uom_id": [1, "Units"], "detailed_type": "product", "active": True, "write_date": WD},
         {"id": 502, "product_tmpl_id": [502, "t"], "name": "Mystery Item", "display_name": "Mystery Item", "default_code": False,
          "company_id": False, "categ_id": [7, "All"], "uom_id": [1, "Units"], "detailed_type": "consu", "active": False, "write_date": WD},
+    ],
+    "product.supplierinfo": [  # vendor lines: the Brand is the template's main vendor
+        {"id": 900, "partner_id": [31, "Weber"], "product_tmpl_id": [500, "t"], "sequence": 1, "min_qty": 0.0, "company_id": False, "write_date": WD},
+        {"id": 901, "partner_id": [32, "Local trader"], "product_tmpl_id": [500, "t"], "sequence": 2, "min_qty": 0.0, "company_id": False, "write_date": WD},
     ],
     "account.payment.term": [
         {"id": 7, "name": "30 Days", "company_id": False, "active": True, "write_date": WD},

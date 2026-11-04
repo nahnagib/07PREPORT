@@ -279,22 +279,23 @@ export function filterByPageFilters<T extends { Company: string; Companies?: str
   );
 }
 
-/** Partner brand tracking list (PIM Contribution). `matched` = the Brand value as stored in Odoo (manufacturer_id),
+/** Partner brand tracking list (PIM Contribution). `matched` = the Brand value as stored in Odoo (the main vendor's name),
  * or null when no such brand exists (rendered as "not currently stocked"). */
 export interface PartnerBrand {
   requested: string;
   matched: string | null;
 }
 
+// matched = the Odoo vendor name exactly as Odoo stores it (the Brand is the product's main vendor, 2026-11-04)
 export const PARTNER_BRANDS: PartnerBrand[] = [
-  { requested: 'Ape Grupo', matched: 'APE' },
-  { requested: 'VitrA', matched: null },
-  { requested: 'Onyx', matched: 'ONIX' },
-  { requested: 'Mayor', matched: 'MAYOR' },
+  { requested: 'Ape Grupo', matched: 'APE Group' },
+  { requested: 'VitrA', matched: 'Vitra' },
+  { requested: 'Onyx', matched: 'Onix' },
+  { requested: 'Mayor', matched: 'Ceramica Mayor' },
   { requested: 'QUA', matched: 'QUA' },
   { requested: 'RAK CERAMICS', matched: null },
   { requested: 'Porcelanosa', matched: null },
-  { requested: 'FILA', matched: 'FILA' },
+  { requested: 'FILA', matched: 'FILA SOLUTIONS' },
 ];
 
 export function slugifyBrand(name: string): string {

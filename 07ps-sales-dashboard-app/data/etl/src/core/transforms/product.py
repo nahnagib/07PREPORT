@@ -10,9 +10,10 @@ from __future__ import annotations
 import pandas as pd
 
 from core.keys import UNKNOWN
-from sales_pipeline.odoo_products import UNASSIGNED
+from sales_pipeline.odoo_products import UNASSIGNED, main_vendors
 
-# dim_product column -> raw_odoo_product_product column (an m2o display name; categ_name = the full category path)
+# dim_product column -> raw_odoo_product_product column (an m2o display name; categ_name = the full category path);
+# brand = the template's main vendor (raw_odoo_product_supplierinfo, odoo_products.main_vendors)
 ATTRIBUTES = {"category": "categ_name", "brand": "brand", "sub_brand": "sub_brand", "family": "family", "size": "size"}
 
 
@@ -21,7 +22,10 @@ def _attr(raw: pd.DataFrame, col: str) -> pd.Series:
     return values.map(lambda v: UNASSIGNED if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NA or v == "" else v)
 
 
-def build_products(raw_product: pd.DataFrame) -> pd.DataFrame:
+def build_products(raw_product: pd.DataFrame, supplierinfo: pd.DataFrame | None = None) -> pd.DataFrame:
+    raw_product = raw_product.copy()
+    vendors = main_vendors(supplierinfo.to_dict("records")) if supplierinfo is not None and len(supplierinfo) else {}
+    raw_product["brand"] = raw_product["product_tmpl_id"].map(lambda t: vendors.get(int(t)) if pd.notna(t) else None)
     out = pd.DataFrame({
         "ProductKey": raw_product["id"].astype("int64"),
         "product_tmpl_id": raw_product["product_tmpl_id"],

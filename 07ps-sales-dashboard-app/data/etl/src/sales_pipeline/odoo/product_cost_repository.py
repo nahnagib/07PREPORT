@@ -6,6 +6,7 @@ import pandas as pd
 
 from sales_pipeline.odoo.base_repository import OdooRepositoryBase, flatten_many2one_columns
 from sales_pipeline.odoo.client import OdooClient
+from sales_pipeline.odoo_products import SUPPLIERINFO_FIELDS, with_main_vendor
 
 
 PRODUCT_COST_FIELDS = [
@@ -17,9 +18,9 @@ PRODUCT_COST_FIELDS = [
     "company_id",
     "standard_price",
     "active",
-    # the product layer (sales_pipeline.odoo_products): category, brand, sub brand, family, size -- straight from Odoo
+    # the product layer (sales_pipeline.odoo_products): category, sub brand, family, size -- straight from Odoo; the brand
+    # is the main vendor (product.supplierinfo, read below)
     "categ_id",
-    "manufacturer_id",
     "sub_brand_id",
     "product_family_id",
     "size_dimensions_id",
@@ -56,8 +57,22 @@ class ProductCostRepository(OdooRepositoryBase):
             rows["cost_company_id"] = company_id
             frames.append(rows)
         if not frames:
-            return pd.DataFrame(columns=fields + ["cost_company", "cost_company_id"])
-        return pd.concat(frames, ignore_index=True)
+            return pd.DataFrame(columns=fields + ["cost_company", "cost_company_id", "vendor"])
+        return with_main_vendor(pd.concat(frames, ignore_index=True), self.fetch_vendor_lines())
+
+    def fetch_vendor_lines(self) -> list[dict[str, Any]]:
+        """Every vendor line (Purchase tab) of every product, read in each company the ETL user can access (a line can
+        belong to one company), each line once: the Brand is the template's main vendor."""
+        fields, _, _ = self.available_fields("product.supplierinfo", SUPPLIERINFO_FIELDS)
+        if "partner_id" not in fields or "product_tmpl_id" not in fields:
+            return []
+        seen: dict[int, dict[str, Any]] = {}
+        for company_id, _name in self._accessible_companies() or [(None, None)]:
+            ctx = {"active_test": False} if company_id is None else {"active_test": False, "allowed_company_ids": [company_id], "force_company": company_id}
+            rows = self.search_read_all("product.supplierinfo", [], fields, order="id", context=ctx)
+            for r in (rows.to_dict("records") if isinstance(rows, pd.DataFrame) else list(rows)):
+                seen.setdefault(int(r["id"]), r)
+        return list(seen.values())
 
     def _accessible_companies(self) -> list[tuple[int, str]]:
         uid = self.client.uid or self.client.authenticate()

@@ -22,7 +22,7 @@ def _raw(*rows: dict) -> pd.DataFrame:
             "name": r["name"], "display_name": r.get("display", r["name"]), "default_code": r.get("code", False),
             "company_id": r.get("company", False), "company_id_id": r.get("company_id", False), "active": r.get("active", True),
             "categ_id": r.get("categ", "All"), "categ_id_id": r.get("categ_id", 1),
-            "manufacturer_id": r.get("brand", False), "sub_brand_id": False, "product_family_id": r.get("family", False),
+            "vendor": r.get("brand", None), "sub_brand_id": False, "product_family_id": r.get("family", False),
             "size_dimensions_id": r.get("size", False), "standard_price": 1.0, "cost_company": "Majaal",
         })
     return pd.DataFrame(out)
@@ -75,6 +75,21 @@ def test_intercompany_flag_is_information_only() -> None:
     assert out["IsIntercompany"].tolist() == [True, True, False]
     assert len(out) == len(sales)
     IntercompanyFlagger.from_config(CONFIG)  # the shipped config parses
+
+
+def test_brand_is_the_main_vendor_by_sequence_then_min_qty_then_id() -> None:
+    lines = [
+        {"id": 5, "partner_id": [70, "Saquer Gulf"], "product_tmpl_id": [100, "T"], "sequence": 2, "min_qty": 0},
+        {"id": 4, "partner_id": [71, "APE Group"], "product_tmpl_id": [100, "T"], "sequence": 1, "min_qty": 10},
+        {"id": 3, "partner_id": [72, "Cifre Ceramica"], "product_tmpl_id": [100, "T"], "sequence": 1, "min_qty": 0},
+        {"id": 9, "partner_id": [73, "Onix"], "product_tmpl_id": [200, "U"], "sequence": 1, "min_qty": 0},
+        {"id": 8, "partner_id": [74, "QUA"], "product_tmpl_id": [200, "U"], "sequence": 1, "min_qty": 0},
+        {"id": 6, "partner_id": False, "product_tmpl_id": [300, "V"], "sequence": 1, "min_qty": 0},
+    ]
+    assert odoo_products.main_vendors(lines) == {100: "Cifre Ceramica", 200: "QUA"}
+    raw = pd.DataFrame([{"id": 1, "product_tmpl_id_id": 100, "name": "A"}, {"id": 2, "product_tmpl_id_id": 300, "name": "B"}])
+    out = odoo_products.catalog(odoo_products.with_main_vendor(raw, lines)).set_index("OdooProductID")
+    assert out.loc[1, "Brand"] == "Cifre Ceramica" and out.loc[2, "Brand"] == "Unassigned"
 
 
 # ---------------------------------------------------------------- product tables

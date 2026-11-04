@@ -121,16 +121,20 @@ def test_payment_term_instalment_flag_and_max_days():
 # -- products ----------------------------------------------------------------------------------------------------------
 RAW_PRODUCTS = pd.DataFrame([
     {"id": 500, "product_tmpl_id": 500, "name": "  Grout  crema", "display_name": "[GR-1] Grout", "default_code": "GR-1", "company_id": None,
-     "categ_id": 5, "categ_name": "All / Grout", "brand": "Weber", "sub_brand": None, "family": None, "size": "5kg", "uom_name": "Units",
+     "categ_id": 5, "categ_name": "All / Grout", "sub_brand": None, "family": None, "size": "5kg", "uom_name": "Units",
      "detailed_type": "product", "active": 1},
     {"id": 501, "product_tmpl_id": 501, "name": "Cem Air", "display_name": "Cem Air", "default_code": None, "company_id": 3, "categ_id": 6,
-     "categ_name": "All / Cement", "brand": None, "sub_brand": None, "family": None, "size": None, "uom_name": "Units",
+     "categ_name": "All / Cement", "sub_brand": None, "family": None, "size": None, "uom_name": "Units",
      "detailed_type": "product", "active": 0},
 ])
 
 
 def test_products_are_odoo_ids_with_odoo_values_and_unassigned_when_empty():
-    p = prod.build_products(RAW_PRODUCTS).set_index("ProductKey")
+    vendors = pd.DataFrame([
+        {"id": 2, "partner_name": "Weber", "product_tmpl_id": 500, "sequence": 1, "min_qty": 0},
+        {"id": 1, "partner_name": "Local trader", "product_tmpl_id": 500, "sequence": 2, "min_qty": 0},
+    ])
+    p = prod.build_products(RAW_PRODUCTS, vendors).set_index("ProductKey")  # brand = the main vendor
     assert p.index.tolist() == [500, 501]
     assert p.loc[500, "product_name"] == "  Grout  crema"   # as stored in Odoo: never cleaned
     assert p.loc[500, "OdooProductName"] == "[GR-1] Grout" and p.loc[500, "default_code"] == "GR-1"

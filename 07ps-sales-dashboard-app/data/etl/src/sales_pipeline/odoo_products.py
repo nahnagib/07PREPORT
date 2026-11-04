@@ -6,7 +6,9 @@ Odoo returns it (no [code] stripping, case, whitespace or Arabic changes); the i
 
 Attributes, straight from product.product (the template's fields):
   Category  categ_id, full path as Odoo stores it ("الكل / بورسلين Tier 1- 30x90")
-  Brand     manufacturer_id        SubBrand  sub_brand_id        Family  product_family_id
+  Brand     the main vendor (Purchase tab, seller_ids -> product.supplierinfo): the lowest sequence, then the lowest
+            minimum quantity, then the oldest line -- Odoo's own order for the vendor it buys from first
+  SubBrand  sub_brand_id           Family  product_family_id
   Size      size_dimensions_id     SKU       default_code        IsActive  active
 An empty attribute is 'Unassigned' (never a fallback to anything else); SKU stays empty. Discount lines are the product
 ids listed in config/product_dashboard.json (discount_product_ids) -- flagged, never renamed.
@@ -25,13 +27,15 @@ UNKNOWN_PRODUCT_KEY = "-1"
 # column on the product table -> Odoo field
 ATTRIBUTE_FIELDS = {
     "Category": "categ_id",
-    "Brand": "manufacturer_id",
+    "Brand": "vendor",  # main vendor's name, added to the product rows by main_vendors() / with_main_vendor()
     "SubBrand": "sub_brand_id",
     "Family": "product_family_id",
     "Size": "size_dimensions_id",
 }
 # product.product fields the ETL reads for the product layer (in addition to id / cost fields)
-ODOO_PRODUCT_FIELDS = ["categ_id", "manufacturer_id", "sub_brand_id", "product_family_id", "size_dimensions_id"]
+ODOO_PRODUCT_FIELDS = ["categ_id", "sub_brand_id", "product_family_id", "size_dimensions_id"]
+# product.supplierinfo fields read for the Brand (the main vendor)
+SUPPLIERINFO_FIELDS = ["id", "partner_id", "product_tmpl_id", "sequence", "min_qty"]
 CATALOG_COLUMNS = [
     "OdooProductID", "ProductTemplateID", "ProductName", "OdooProductName", "SKU",
     *ATTRIBUTE_FIELDS, "CategoryID", "IsActive", "ProductCompanyID", "ProductCompany",
@@ -90,6 +94,40 @@ def catalog(product_raw: pd.DataFrame | None) -> pd.DataFrame:
         out[column] = col(field).map(lambda v: v if _present(v) else UNASSIGNED).astype(object)
     out = out.dropna(subset=["OdooProductID"]).reset_index(drop=True)
     return out[CATALOG_COLUMNS]
+
+
+def _m2o(value: Any) -> tuple[Any, Any]:
+    """(id, display name) of an Odoo many2one as read over XML-RPC ([id, name]) or flattened (id / name)."""
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        return value[0], value[1]
+    return value, None
+
+
+def main_vendors(supplierinfo: Iterable[dict[str, Any]]) -> dict[int, str]:
+    """product_tmpl_id -> the name of its main vendor: the vendor line with the lowest sequence, then the lowest minimum
+    quantity, then the lowest id (the order Odoo lists the Purchase tab in and buys from first)."""
+    best: dict[int, tuple] = {}
+    for row in supplierinfo:
+        tmpl, _ = _m2o(row.get("product_tmpl_id"))
+        _, partner = _m2o(row.get("partner_id"))
+        if partner is None and _present(row.get("partner_name")):
+            partner = row.get("partner_name")
+        tid = _int(tmpl)
+        if tid is pd.NA or not _present(partner):
+            continue
+        rank = (row.get("sequence") or 0, row.get("min_qty") or 0, row.get("id") or 0)
+        if tid not in best or rank < best[tid][0]:
+            best[tid] = (rank, partner)
+    return {t: name for t, (_, name) in best.items()}
+
+
+def with_main_vendor(product_raw: pd.DataFrame, supplierinfo: Iterable[dict[str, Any]]) -> pd.DataFrame:
+    """The product.product rows with a `vendor` column (the main vendor of their template; empty when none)."""
+    out = product_raw.copy()
+    vendors = main_vendors(supplierinfo)
+    tmpl = out["product_tmpl_id_id"] if "product_tmpl_id_id" in out.columns else out.get("product_tmpl_id", pd.Series(pd.NA, index=out.index))
+    out["vendor"] = tmpl.map(lambda t: vendors.get(_int(t)) if _int(t) is not pd.NA else None).astype(object)
+    return out
 
 
 def discount_ids(config_section: dict[str, Any] | None) -> set[int]:

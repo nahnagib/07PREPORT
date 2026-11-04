@@ -50,6 +50,8 @@ SET @s = (SELECT IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_
   'ALTER TABLE raw_odoo_product_product DROP COLUMN size', 'DO 0'));
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 
+DROP TABLE IF EXISTS raw_odoo_product_supplierinfo;
+
 SET @s = (SELECT IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dim_product') = 1
     AND (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dim_product' AND COLUMN_NAME = 'categ_id') = 1,
   'ALTER TABLE dim_product DROP COLUMN categ_id', 'DO 0'));

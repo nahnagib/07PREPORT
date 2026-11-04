@@ -9,7 +9,7 @@ actually landed in git history plus what's currently uncommitted.
 ### Changed (Odoo is the only source of products, 2026-11-03)
 - PRODUCTS.xlsx and every product-name rule are retired (archived as `data/etl/input_backups/PRODUCTS_retired_2026-11-03.xlsx`).
   Products are identified by the Odoo product id (+ product_tmpl_id, company); names are shown exactly as Odoo stores them.
-- Attributes from Odoo: Category = categ_id (full path), Brand = manufacturer_id, SubBrand = sub_brand_id, Family =
+- Attributes from Odoo: Category = categ_id (full path), Brand = the main vendor (Purchase tab: lowest sequence, then min. quantity), SubBrand = sub_brand_id, Family =
   product_family_id, Size = size_dimensions_id, SKU = default_code, IsActive = active; empty = `Unassigned`. ProductLevel removed.
 - Cross-company (BMH) view groups by product_tmpl_id. Discounts flagged by product id (config `discounts.discount_product_ids`).
   BCG exclusion by Odoo category id (`bcg.excluded_category_ids`, empty for now).

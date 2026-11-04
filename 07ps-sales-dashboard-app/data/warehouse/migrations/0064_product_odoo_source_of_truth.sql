@@ -2,12 +2,13 @@
 --
 -- Product identity = the Odoo product.product id (ProductKey) with its product_tmpl_id and company; nothing is matched on
 -- a product name any more. Product attributes come from Odoo as stored ('Unassigned' where Odoo has none):
---   Category = categ_id (full path)   Brand = manufacturer_id   SubBrand = sub_brand_id   Family = product_family_id
+--   Category = categ_id (full path)   Brand = main vendor (seller_ids)   SubBrand = sub_brand_id   Family = product_family_id
 --   Size = size_dimensions_id         SKU = default_code         IsActive = active
 --
 -- 1. The sheet tables are kept one release as *_deprecated (nothing reads them; drop them in the next release):
 --      raw_excel_products, dim_product_master, map_product_master, qa_productunmapped, qa_productdataquality
--- 2. raw_odoo_product_product + brand, sub_brand, family, size; dim_product + categ_id, brand, sub_brand, family, size.
+-- 2. raw_odoo_product_product + sub_brand, family, size; new raw_odoo_product_supplierinfo (vendor lines: Brand = the
+--    main vendor); dim_product + categ_id, brand, sub_brand, family, size.
 -- 3. fact_sales_lines (+ shd_): the sheet key and every cleaned-name / mapping column are dropped; + ProductTemplateID.
 -- 4. The product marts (product daily, inventory snapshot, BCG, product cost, product dashboard / group / meta, + their
 --    shd_ copies) are rebuilt by every ETL run, so they are re-created with the new keys:
@@ -53,11 +54,6 @@ PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 -- 2. Odoo product attributes ---------------------------------------------------------------------------------------------
 
 SET @s = (SELECT IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'raw_odoo_product_product') = 1
-    AND (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'raw_odoo_product_product' AND COLUMN_NAME = 'brand') = 0,
-  'ALTER TABLE raw_odoo_product_product ADD COLUMN brand VARCHAR(512) NULL COMMENT ''display name of manufacturer_id''', 'DO 0'));
-PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
-
-SET @s = (SELECT IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'raw_odoo_product_product') = 1
     AND (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'raw_odoo_product_product' AND COLUMN_NAME = 'sub_brand') = 0,
   'ALTER TABLE raw_odoo_product_product ADD COLUMN sub_brand VARCHAR(512) NULL COMMENT ''display name of sub_brand_id''', 'DO 0'));
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
@@ -71,6 +67,19 @@ SET @s = (SELECT IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_
     AND (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'raw_odoo_product_product' AND COLUMN_NAME = 'size') = 0,
   'ALTER TABLE raw_odoo_product_product ADD COLUMN size VARCHAR(512) NULL COMMENT ''display name of size_dimensions_id''', 'DO 0'));
 PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- vendor lines (Purchase tab): the Brand is the template's main vendor (lowest sequence, then minimum quantity, then id)
+CREATE TABLE IF NOT EXISTS raw_odoo_product_supplierinfo (
+    id BIGINT NOT NULL PRIMARY KEY,
+    partner_id BIGINT NULL COMMENT 'the vendor (res.partner)',
+    partner_name VARCHAR(512) NULL,
+    product_tmpl_id BIGINT NULL,
+    sequence INT NULL,
+    min_qty DECIMAL(20,6) NULL,
+    company_id BIGINT NULL,
+    _extracted_at DATETIME NOT NULL, _run_id CHAR(36) NOT NULL, _source_write_date DATETIME NULL, _deleted_at DATETIME NULL,
+    INDEX ix_raw_odoo_product_supplierinfo_tmpl (product_tmpl_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET @s = (SELECT IF((SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dim_product') = 1
     AND (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dim_product' AND COLUMN_NAME = 'categ_id') = 0,

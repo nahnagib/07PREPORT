@@ -81,9 +81,13 @@ ODOO_RAW = {
          F("default_code", "default_code"), F("company_id", "company_id", "m2o_id"), F("categ_id", "categ_id", "m2o_id"),
          F("categ_name", "categ_id", "m2o_name"), F("uom_id", "uom_id", "m2o_id"), F("uom_name", "uom_id", "m2o_name"),
          F("detailed_type", "detailed_type"), F("active", "active", "bool"),
-         # product attributes (2026-11-03, Odoo is the only source): the display names of the template's spec values
-         F("brand", "manufacturer_id", "m2o_name"), F("sub_brand", "sub_brand_id", "m2o_name"),
+         # product attributes (2026-11-03, Odoo is the only source): the display names of the template's spec values;
+         # the brand is the main vendor (raw_odoo_product_supplierinfo)
+         F("sub_brand", "sub_brand_id", "m2o_name"),
          F("family", "product_family_id", "m2o_name"), F("size", "size_dimensions_id", "m2o_name"))),
+    "raw_odoo_product_supplierinfo": RawOdooSpec("raw_odoo_product_supplierinfo", "product.supplierinfo", "raw_odoo_product_supplierinfo",
+        (F("partner_id", "partner_id", "m2o_id"), F("partner_name", "partner_id", "m2o_name"), F("product_tmpl_id", "product_tmpl_id", "m2o_id"),
+         F("sequence", "sequence", "int"), F("min_qty", "min_qty", "float"), F("company_id", "company_id", "m2o_id"))),
     "raw_odoo_account_payment_term": RawOdooSpec("raw_odoo_account_payment_term", "account.payment.term", "raw_odoo_account_payment_term",
         (F("name", "name"), F("company_id", "company_id", "m2o_id"), F("active", "active", "bool"))),
     "raw_odoo_account_payment_term_line": RawOdooSpec("raw_odoo_account_payment_term_line", "account.payment.term.line", "raw_odoo_account_payment_term_line",
@@ -278,7 +282,8 @@ def build_customer_dims(ctx: RunContext) -> TaskResult:
 
 
 def build_product_dims(ctx: RunContext) -> TaskResult:
-    products = prod.build_products(_read(ctx, "SELECT * FROM raw_odoo_product_product"))
+    vendors = _read(ctx, "SELECT id, partner_name, product_tmpl_id, sequence, min_qty FROM raw_odoo_product_supplierinfo WHERE _deleted_at IS NULL")
+    products = prod.build_products(_read(ctx, "SELECT * FROM raw_odoo_product_product"), vendors)
     with ctx.engine.begin() as conn:
         sets = [upsert_changed(conn, "dim_product", products)]
     unassigned = {c: int((products[c] == prod.UNASSIGNED).sum()) for c in prod.ATTRIBUTES}
@@ -380,7 +385,8 @@ REGISTRY.task(T("build_org_dims", build_org_dims,
 REGISTRY.task(T("build_customer_dims", build_customer_dims,
                 depends_on=("extract_raw_odoo_res_partner", "extract_raw_odoo_res_partner_company", "load_blocked_customers_file", "build_org_dims"),
                 datasets=("dim_customer", "map_partner_customer", "dim_customer_company")))
-REGISTRY.task(T("build_product_dims", build_product_dims, depends_on=("extract_raw_odoo_product_product", "build_reference_dims"),
+REGISTRY.task(T("build_product_dims", build_product_dims, depends_on=("extract_raw_odoo_product_product", "extract_raw_odoo_product_supplierinfo",
+                                                                       "build_reference_dims"),
                 datasets=("dim_product",)))
 REGISTRY.task(T("build_calendar_dims", build_calendar_dims, depends_on=("load_offdays_file", "build_org_dims"),
                 datasets=("dim_date", "dim_offday")))

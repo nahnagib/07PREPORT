@@ -16,7 +16,7 @@ renamed by a product name. An empty Category / Brand / SubBrand / Family / Size 
 | `SKU` / `default_code` | product tables / `dim_product` | `default_code` (empty stays empty) |
 | `Category` / `category` | product tables / `dim_product` | `categ_id`, full path (`complete_name`) |
 | `CategoryID` / `categ_id` | `dim_sales_product_dashboard`, `dim_sales_product_group` / `dim_product` | `categ_id` id; `bcg.excluded_category_ids` in `config/product_dashboard.json` lists the ids left out of the BCG matrix |
-| `Brand` / `brand` | product tables / `dim_product` | `manufacturer_id` ("Brand / Manufacturer") |
+| `Brand` / `brand` | product tables / `dim_product` | the main vendor (Purchase tab, `seller_ids` → `product.supplierinfo`): lowest sequence, then lowest minimum quantity, then oldest line; `raw_odoo_product_supplierinfo` |
 | `SubBrand` / `sub_brand` | product tables / `dim_product` | `sub_brand_id` |
 | `Family` / `family` | product tables / `dim_product` | `product_family_id` ("Product Family / Range") |
 | `Size` / `size` | product tables / `dim_product` | `size_dimensions_id` ("Dimensions") |
