@@ -503,7 +503,10 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
         elif "CompanyKey" in df.columns:
             df["CompanyKey"] = df["CompanyKey"].map(lambda v: UNKNOWN if pd.isna(v) else {2: 3}.get(int(v), int(v)))
         if "ProductKey" in df.columns:
-            df["ProductKey"] = pd.to_numeric(df["ProductKey"], errors="coerce").fillna(UNKNOWN).astype("int64")
+            # every key must be in dim_product (core): an Odoo product the core extract does not have yet -> -1, reported
+            keys, fell = maps.products(pd.to_numeric(df["ProductKey"], errors="coerce").tolist())
+            out.fell(f"{table}.ProductKey (Odoo product id not in dim_product)", fell)
+            df["ProductKey"] = pd.Series(keys, index=df.index, dtype="int64")
             if name == "Fact_BCGMatrix":
                 df = collapse_duplicate_bcg_keys(df)
         for c in ("SalesTeamKey",):
