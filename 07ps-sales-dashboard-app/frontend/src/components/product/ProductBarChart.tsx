@@ -24,7 +24,7 @@ const FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-s
 
 let measureCtx: CanvasRenderingContext2D | null | undefined;
 /** Rendered width of `text` at the axis font; a per-character estimate where no canvas exists (tests). */
-function textWidth(text: string, font = `12px ${FONT_FAMILY}`): number {
+export function textWidth(text: string, font = `12px ${FONT_FAMILY}`): number {
   if (measureCtx === undefined) {
     try {
       if (typeof document !== 'undefined') measureCtx = document.createElement('canvas').getContext('2d');
@@ -38,7 +38,7 @@ function textWidth(text: string, font = `12px ${FONT_FAMILY}`): number {
 }
 
 /** `text` cut at the END with an ellipsis so it fits `maxWidth` (never cut at the start). */
-function fitEnd(text: string, maxWidth: number): string {
+export function fitEnd(text: string, maxWidth: number): string {
   if (textWidth(text) <= maxWidth) return text;
   let lo = 0;
   const chars = Array.from(text);
@@ -54,14 +54,14 @@ function fitEnd(text: string, maxWidth: number): string {
 const tag = (company: string) => (company ? ` · ${company}` : '');
 
 /** Label column width for these bars: the longest "name · company", between 120 and 280px. */
-function labelColumnWidth(rows: Pick<ProductBar, 'name' | 'company'>[]): number {
+export function labelColumnWidth(rows: Pick<ProductBar, 'name' | 'company'>[]): number {
   const longest = rows.reduce((width, r) => Math.max(width, textWidth(`${r.name}${tag(r.company)}`)), 0);
   return Math.round(Math.min(LABEL_MAX, Math.max(LABEL_MIN, longest + 12)));
 }
 
 type CategoryTick = { x: number; y: number; payload: { value: string } };
 
-function NameTick({ x, y, row, width }: { x: number; y: number; row: ProductBar; width: number }) {
+export function NameTick({ x, y, row, width }: { x: number; y: number; row: ProductBar; width: number }) {
   const room = width - 12 - textWidth(tag(row.company));
   return (
     <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fontFamily={FONT_FAMILY} fill="var(--ps-color-text)" direction="ltr" data-testid="product-bar-label">

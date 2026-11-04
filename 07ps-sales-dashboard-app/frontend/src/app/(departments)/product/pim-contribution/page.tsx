@@ -43,7 +43,7 @@ import {
   type FoundBrandStats,
   type PartnerBrand,
 } from '../../../../lib/materialsAnalogy/shared';
-import { ProductName } from '../../../../components/product/ProductUi';
+import { ProductName, ltrLabel } from '../../../../components/product/ProductUi';
 
 type MaterialsAnalogyFact = ProductFact;
 
@@ -214,7 +214,7 @@ export default function PimContributionPage() {
   const categoryEntries = topNWithOther([...groupSum(filtered, (r) => normalizeHierarchyValue(r.Category), categoryVal).entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]));
   const categorySegments: DonutSegment[] = categoryEntries.map(([label, value], i) => ({
     id: label,
-    label,
+    label: ltrLabel(label),
     value,
     color: label.startsWith('Other (') ? 'var(--ps-color-neutral-text)' : CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
   }));
@@ -236,7 +236,7 @@ export default function PimContributionPage() {
   const entries = topNWithOther([...grouped.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]));
   const segments: DonutSegment[] = entries.map(([label, value], i) => ({
     id: label,
-    label,
+    label: ltrLabel(label),
     value,
     color: label.startsWith('Other (') ? 'var(--ps-color-neutral-text)' : CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
   }));
@@ -253,7 +253,7 @@ export default function PimContributionPage() {
   });
   const aspPoints = [...aspMap.entries()]
     .filter(([, o]) => o.qty > 0)
-    .map(([label, o]) => ({ label, asp: o.value / o.qty }))
+    .map(([label, o]) => ({ label: ltrLabel(label), asp: o.value / o.qty }))
     .sort((a, b) => b.asp - a.asp)
     .slice(0, 15);
 
@@ -490,10 +490,10 @@ function HierarchyBreadcrumb({
           <React.Fragment key={i}>
             <span>›</span>
             {isCurrent ? (
-              <span dir="ltr" style={{ color: 'var(--ps-color-text)', fontWeight: 600, unicodeBidi: 'isolate' }}>{val}</span>
+              <span dir="ltr" style={{ color: 'var(--ps-color-text)', fontWeight: 600 }}>{ltrLabel(val)}</span>
             ) : (
               <button type="button" onClick={() => onJump(i + 1)} style={crumbLinkStyle}>
-                <span dir="ltr" style={{ unicodeBidi: 'isolate' }}>{val}</span>
+                <span dir="ltr">{ltrLabel(val)}</span>
               </button>
             )}
           </React.Fragment>
@@ -502,7 +502,7 @@ function HierarchyBreadcrumb({
       {isLeaf && leafLabel && (
         <>
           <span>›</span>
-          <span dir="ltr" style={{ color: 'var(--ps-color-text)', fontWeight: 600, unicodeBidi: 'isolate' }}>{leafLabel}</span>
+          <span dir="ltr" style={{ color: 'var(--ps-color-text)', fontWeight: 600 }}>{ltrLabel(leafLabel)}</span>
         </>
       )}
     </div>

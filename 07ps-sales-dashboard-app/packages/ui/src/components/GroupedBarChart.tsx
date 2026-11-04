@@ -71,13 +71,33 @@ export interface GroupedBarChartProps {
  * round-trip on every render) to fit `width`, appending an ellipsis when it's cut. Long,
  * unbounded product names were overflowing past their row and overlapping the next tick before
  * this existed -- the hover tooltip (see tooltipContent) is what shows the untruncated name. */
+let tickCtx: CanvasRenderingContext2D | null | undefined;
+function tickTextWidth(text: string): number {
+  if (tickCtx === undefined) {
+    try {
+      tickCtx = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+    } catch {
+      tickCtx = null;
+    }
+    if (tickCtx) tickCtx.font = '12px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+  }
+  // No canvas (tests / SSR): a conservative per-character width, so a label is never wider than estimated.
+  return tickCtx ? tickCtx.measureText(text).width : text.length * 7.5;
+}
+
 function CategoryTick({ x, y, payload, width }: { x: number; y: number; payload: { value: string }; width: number }) {
   const text = String(payload.value);
-  const maxChars = Math.max(4, Math.floor(width / 6.2));
-  const truncated = text.length > maxChars;
-  const display = truncated ? `${text.slice(0, maxChars - 1)}…` : text;
+  // Measured, cut at the END so the label never runs past the axis' left edge (which looked like a cut start).
+  const room = width - 8;
+  let display = text;
+  const truncated = tickTextWidth(text) > room;
+  if (truncated) {
+    let n = text.length;
+    while (n > 1 && tickTextWidth(`${text.slice(0, n).trimEnd()}…`) > room) n -= 1;
+    display = `${text.slice(0, n).trimEnd()}…`;
+  }
   return (
-    <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fill="var(--ps-color-muted-text)">
+    <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fill="var(--ps-color-muted-text)" direction="ltr">
       {/* Native hover tooltip with the full name whenever it had to be cut. */}
       {truncated && <title>{text}</title>}
       {display}
