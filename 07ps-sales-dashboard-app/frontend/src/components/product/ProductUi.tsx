@@ -2,9 +2,7 @@
 /**
  * Shared building blocks of the Product pages (BCG Matrix, Stock Velocity, PIM Contribution + Brand page, Product
  * Lifecycle), 2026-11-04:
- *   - ProductName: every product name is drawn left-to-right and left-aligned. The shared tables give each cell
- *     dir="auto", which drew a name whose text starts with an Arabic word right-to-left and pushed it to the right
- *     of the cell; here the line is LTR and only the name text is isolated, so its Arabic words still read correctly.
+ *   - ltrLabel / ProductName: isolate product names within left-aligned labels and exports.
  *   - CompanyBadge: the product's company next to the class badges in every product tooltip.
  *   - ExportButtons + exportProductCsv / exportProductPdf: CSV (shared exportRowsAsCsv: UTF-8 with BOM, raw numbers)
  *     and PDF (shared exportRowsAsPdf) of exactly the rows and columns a table shows, in its sort order.
@@ -24,7 +22,15 @@ import {
 /** A left-to-right, left-aligned line (cell wrappers, tooltip titles, legends). */
 export const LTR: React.CSSProperties = { direction: 'ltr', textAlign: 'left' };
 
-/** A product name: LTR line, name text isolated so mixed Arabic/Latin names keep their own word order. */
+/** Preserve the stored text and its reading direction inside an LTR chart or table. */
+export function ltrLabel(name: string | null | undefined): string {
+  const text = name ?? '';
+  // Some stored names begin with Arabic, which reads with the Latin suffix on the left.
+  const firstLetter = text.match(/\p{Letter}/u)?.[0] ?? '';
+  const isolate = /\p{Script=Arabic}/u.test(firstLetter) ? '\u2068' : '\u2066';
+  return `${isolate}${text}\u2069`;
+}
+
 export function ProductName({ name, truncate = true, style }: { name: string; truncate?: boolean; style?: React.CSSProperties }) {
   return (
     <span
@@ -34,13 +40,12 @@ export function ProductName({ name, truncate = true, style }: { name: string; tr
       style={{
         display: 'block',
         textAlign: 'left',
-        unicodeBidi: 'isolate',
         minWidth: 0,
         ...(truncate ? { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } : {}),
         ...style,
       }}
     >
-      {name}
+      {ltrLabel(name)}
     </span>
   );
 }

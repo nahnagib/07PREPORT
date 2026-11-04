@@ -1,10 +1,10 @@
 import React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { CompanyBadge, ProductName, ProductTooltip, SortableProductTable, type SortableColumn } from '../ProductUi';
+import { CompanyBadge, ProductName, ProductTooltip, SortableProductTable, ltrLabel, type SortableColumn } from '../ProductUi';
 
 // The shared exports are checked by what they receive (exportRowsAsCsv adds the UTF-8 BOM itself).
-const { csv, pdf } = vi.hoisted(() => ({ csv: vi.fn(async () => undefined), pdf: vi.fn(async () => undefined) }));
+const { csv, pdf } = vi.hoisted(() => ({ csv: vi.fn(async (_opts: unknown) => undefined), pdf: vi.fn(async (_opts: unknown) => undefined) }));
 vi.mock('@07ps/ui', async (importOriginal) => ({
   ...await importOriginal<typeof import('@07ps/ui')>(),
   exportRowsAsCsv: csv,
@@ -27,12 +27,13 @@ const table = () => render(
   <SortableProductTable columns={columns} rows={rows} getRowId={(r) => r.id} searchText={(r) => r.name} defaultSort={{ key: 'revenue', dir: 'desc' }} fileName="t" pdfTitle="T" />,
 );
 
-it('product names are LTR, left-aligned and isolated', () => {
+it('isolates mixed-script names without changing their stored text', () => {
   render(<ProductName name="متين GERMA-C2TE" />);
   const el = screen.getByTestId('product-name');
   expect(el.getAttribute('dir')).toBe('ltr');
   expect(el.style.textAlign).toBe('left');
-  expect(el.style.unicodeBidi).toBe('isolate');
+  expect(el.textContent).toBe('\u2068متين GERMA-C2TE\u2069');
+  expect(ltrLabel('GERMA-C2TE متين')).toBe('\u2066GERMA-C2TE متين\u2069');
 });
 
 it('a product tooltip shows the company badge first', () => {
@@ -43,7 +44,7 @@ it('a product tooltip shows the company badge first', () => {
 
 it('sorts on any column and the CSV is the visible columns, rows and order, with raw numbers and Arabic intact', async () => {
   table();
-  const names = () => screen.getAllByTestId('product-name').map((e) => e.textContent);
+  const names = () => screen.getAllByTestId('product-name').map((e) => (e.textContent ?? '').replace(/[\u2066-\u2069]/g, ''));
   expect(names()).toEqual(['متين GERMA-C2TE', 'Basalt Pattern', 'Cem Air']); // revenue, highest first
   fireEvent.click(screen.getByRole('button', { name: /^Product/ }));
   expect(names()).toEqual(['متين GERMA-C2TE', 'Cem Air', 'Basalt Pattern']); // name desc (first click)

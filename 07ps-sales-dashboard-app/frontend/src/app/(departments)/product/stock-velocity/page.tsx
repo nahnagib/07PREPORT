@@ -45,8 +45,10 @@ import {
   type FrequencyBucket,
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
+import { ProductBarChart, type ProductBar } from '../../../../components/product/ProductBarChart';
 import {
   ExportButtons,
+  ltrLabel,
   Pill,
   ProductName,
   ProductTooltip,
@@ -69,7 +71,7 @@ type BandFilter = 'All' | 'Overstock' | 'Normal' | 'StockOutRisk';
 
 const dohLabel = (r: ProductFact) => (r.daysOfInventory === null ? (r.stockQty > 0 ? 'no sales' : '—') : `${r.daysOfInventory.toFixed(0)}d`);
 const BASE_EXPORT: ExportColumn<ProductFact>[] = [
-  { header: 'Product Name', value: (r) => r.ProductName },
+  { header: 'Product Name', value: (r) => ltrLabel(r.ProductName) },
   { header: 'Company', value: (r) => r.Company },
   { header: 'Odoo ID', value: (r) => r.ProductKey },
   { header: 'Category', value: (r) => r.Category },
@@ -115,12 +117,6 @@ export default function StockVelocityPage() {
   const [overstockDrill, setOverstockDrill] = useState<ClassBucket | null>(null);
   const [riskDrill, setRiskDrill] = useState<ClassBucket | null>(null);
   const [frequencyDrill, setFrequencyDrill] = useState<FrequencyBucket | null>(null);
-
-  const DRILL_PAGE_SIZE = 20;
-  const [moversLimit, setMoversLimit] = useState(DRILL_PAGE_SIZE);
-  const [overstockLimit, setOverstockLimit] = useState(DRILL_PAGE_SIZE);
-  const [riskLimit, setRiskLimit] = useState(DRILL_PAGE_SIZE);
-  const drillChartHeight = (rowCount: number) => Math.max(280, rowCount * 34 + 40);
 
   const categoryOptions: SelectOption[] = useMemo(() => {
     const pool = facts.filter((r) => company === 'All' || r.Company === company);
@@ -175,16 +171,13 @@ export default function StockVelocityPage() {
       : moversDrill === 'Slow'
         ? [...slowRows].sort((a, b) => (a.velocity as number) - (b.velocity as number))
         : [];
-  const moversDrillRows = moversDrillRowsAll.slice(0, moversLimit);
-  const moversDrillPoints: GroupedBarChartPoint[] = moversDrillRows.map((r) => ({
-    label: r.ProductName,
-    _company: r.Company,
-    velocity: r.velocity as number,
-    _unit: r.uom ?? '',
-    _value: r.value,
-    _volume: fmtVolume(r),
-    _class: bucketOf(r),
-  }));
+  const unitPerDay = (r: ProductFact, precision?: number) => {
+    const velocity = r.velocity ?? 0;
+    return `${velocity.toFixed(precision ?? (velocity >= 10 ? 0 : 2))} ${r.uom || 'units'}/day`;
+  };
+  const toBars = (rows: ProductFact[], value: (r: ProductFact) => number, label: (r: ProductFact) => string): ProductBar[] =>
+    rows.map((r) => ({ id: r.id, name: r.ProductName, company: r.Company, value: value(r), valueLabel: label(r) }));
+  const moversDrillBars = toBars(moversDrillRowsAll, (r) => r.velocity as number, unitPerDay);
 
   // ---- Overstock by class: LYD tied up at stock valuation ----
   const overstockByClass = CLASS_BUCKETS.map((cls) => {
@@ -197,16 +190,7 @@ export default function StockVelocityPage() {
   const overstockDrillRowsAll = overstockDrill
     ? [...(overstockByClass.find((c) => c.cls === overstockDrill)?.rows ?? [])].sort((a, b) => b.stockValue - a.stockValue)
     : [];
-  const overstockDrillRows = overstockDrillRowsAll.slice(0, overstockLimit);
-  const overstockDrillPoints: GroupedBarChartPoint[] = overstockDrillRows.map((r) => ({
-    label: r.ProductName,
-    _company: r.Company,
-    tiedUp: r.stockValue,
-    _value: r.value,
-    _volume: fmtVolume(r),
-    _doh: r.daysOfInventory,
-    _class: bucketOf(r),
-  }));
+  const overstockDrillBars = toBars(overstockDrillRowsAll, (r) => r.stockValue, (r) => fmtLYD(r.stockValue));
 
   // ---- Stock-out risk: above-median period value, below-threshold days of inventory; urgency =
   // value / (DOH + 1) ----
@@ -223,16 +207,8 @@ export default function StockVelocityPage() {
   const riskDrillRowsAll = riskDrill
     ? [...(riskByClass.find((c) => c.cls === riskDrill)?.rows ?? [])].sort((a, b) => urgency(b) - urgency(a))
     : [];
-  const riskDrillRows = riskDrillRowsAll.slice(0, riskLimit);
-  const riskDrillPoints: GroupedBarChartPoint[] = riskDrillRows.map((r) => ({
-    label: r.ProductName,
-    _company: r.Company,
-    valueAtRisk: r.value,
-    _value: r.value,
-    _volume: fmtVolume(r),
-    _doh: r.daysOfInventory,
-    _class: bucketOf(r),
-  }));
+  const riskDrillBars = toBars(riskDrillRowsAll, (r) => r.value, (r) => fmtLYD(r.value));
+  const factById = new Map(filtered.map((r) => [r.id, r]));
 
   // ---- Sales Frequency: distinct selling days in the period -> average gap -> Daily / Weekly / Monthly / Rarer ----
   const periodDays = overview.data?.period.days ?? 0;
@@ -264,15 +240,26 @@ export default function StockVelocityPage() {
   const riskExportRows = () => (riskDrill ? riskDrillRowsAll : [...riskCandidatesAll].sort((a, b) => urgency(b) - urgency(a)));
   const companyLabel = company === 'All' ? 'Majaal + Tika' : company;
 
-  const productDrillTooltip = (metricKey: string, metricLabel: string, metricFormatter: (point: GroupedBarChartPoint) => string) =>
-    function ProductDrillTooltip(point: GroupedBarChartPoint) {
-      const cls = point._class as ClassBucket;
+  const MOVERS_EXPORT: ExportColumn<ProductFact>[] = [
+    ...BASE_EXPORT,
+    { header: 'Velocity (per day)', align: 'right', value: (r) => r.velocity, text: (r) => unitPerDay(r, 2) },
+    { header: 'Unit', value: (r) => r.uom },
+    { header: 'Volume (period)', align: 'right', value: (r) => r.volume, text: (r) => fmtVolume(r) },
+    { header: 'Value (period, LYD)', align: 'right', value: (r) => r.value, text: (r) => fmtLYD(r.value) },
+  ];
+
+  /** Hover detail of a drilled product bar: company + class badges, the bar's metric, value, volume, days of inventory. */
+  const drillTooltip = (metricLabel: string, metric: (r: ProductFact) => string, showDoh: boolean) =>
+    function DrillTooltip(bar: ProductBar) {
+      const r = factById.get(bar.id);
+      if (!r) return null;
+      const cls = bucketOf(r);
       return (
-        <ProductTooltip name={String(point.label)} company={String(point._company ?? '')} badges={<Pill color={bucketColor(cls)} label={cls} />}>
-          <TooltipRow label={metricLabel} value={metricFormatter(point)} />
-          <TooltipRow label="Value (period)" value={fmtLYD(point._value as number)} />
-          <TooltipRow label="Volume (period)" value={String(point._volume)} />
-          {metricKey !== 'velocity' ? <TooltipRow label="Days of inventory" value={point._doh === null || point._doh === undefined ? '—' : `${Number(point._doh).toFixed(0)}d`} /> : null}
+        <ProductTooltip name={r.ProductName} company={r.Company} badges={<Pill color={bucketColor(cls)} label={cls} />}>
+          <TooltipRow label={metricLabel} value={metric(r)} />
+          <TooltipRow label="Value (period)" value={fmtLYD(r.value)} />
+          <TooltipRow label="Volume (period)" value={fmtVolume(r)} />
+          {showDoh ? <TooltipRow label="Days of inventory" value={dohLabel(r)} /> : null}
         </ProductTooltip>
       );
     };
@@ -329,7 +316,7 @@ export default function StockVelocityPage() {
           lastRefreshTime={refresh.data ? formatTimestamp(refresh.data.lastRefreshTime) : undefined}
         />
 
-        <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
+        <main style={{ flex: 1, padding: 'clamp(8px, calc(5vw - 12px), var(--ps-space-4, 24px))', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
           {overview.loading && !overview.data ? (
             <LoadingSkeleton variant="chart" />
           ) : overview.error ? (
@@ -347,22 +334,29 @@ export default function StockVelocityPage() {
 
               <ChartPanel {...vh("product.stockVelocity.movers")}
                 title="Fast vs Slow Movers"
-                style={{ minHeight: 480 }}
+                style={{ height: 'auto', padding: 'clamp(8px, calc(5vw - 12px), var(--ps-card-padding, 16px))' }}
+                wrapHeader
+                headerActions={
+                  moversDrill ? (
+                    <ExportButtons
+                      label={`${moversDrill.toLowerCase()} movers`}
+                      onCsv={() => exportProductCsv(`stock-velocity-${moversDrill.toLowerCase()}-movers`, MOVERS_EXPORT, moversDrillRowsAll)}
+                      onPdf={() => exportProductPdf({ title: `${moversDrill} Movers`, subtitle: `${companyLabel} · ${moversDrillRowsAll.length} products`, fileName: `stock-velocity-${moversDrill.toLowerCase()}-movers`, columns: MOVERS_EXPORT, rows: moversDrillRowsAll })}
+                    />
+                  ) : null
+                }
               >
                 <DrillBreadcrumb active={moversDrill} rootLabel="Fast vs Slow" onReset={() => setMoversDrill(null)} />
                 {moversDrill ? (
-                  <>
-                    <GroupedBarChart
-                      showTitle={false}
-                      points={moversDrillPoints}
-                      bars={[{ key: 'velocity', name: `${moversDrill} movers`, color: moversDrill === 'Fast' ? 'var(--ps-color-success)' : 'var(--ps-color-alert)' }]}
-                      valueFormatter={(v) => `${v.toFixed(1)}/day`}
-                      tooltipContent={productDrillTooltip('velocity', 'Velocity', (p) => `${(p.velocity as number).toFixed(2)} ${p._unit || 'units'}/day`)}
-                      height={drillChartHeight(moversDrillPoints.length)}
-                      yAxisWidth={150}
-                    />
-                    <ShowMoreFooter shown={moversDrillPoints.length} total={moversDrillRowsAll.length} onShowMore={() => setMoversLimit((l) => l + DRILL_PAGE_SIZE)} />
-                  </>
+                  <ProductBarChart
+                    key={moversDrill}
+                    rows={moversDrillBars}
+                    seriesName={`${moversDrill} movers (velocity per day)`}
+                    color={moversDrill === 'Fast' ? 'var(--ps-color-success)' : 'var(--ps-color-alert)'}
+                    axisFormatter={(v) => `${Number(v.toFixed(v >= 10 ? 0 : 2))}/day`}
+                    tooltip={drillTooltip('Velocity', (r) => unitPerDay(r, 2), false)}
+                    fileName={`stock-velocity-${moversDrill.toLowerCase()}-movers`}
+                  />
                 ) : (
                   <GroupedBarChart
                     showTitle={false}
@@ -374,7 +368,6 @@ export default function StockVelocityPage() {
                     valueFormatter={(v) => fmtLYD(v)}
                     onCategoryClick={(label) => {
                       setMoversDrill(label === 'Fast Movers' ? 'Fast' : 'Slow');
-                      setMoversLimit(DRILL_PAGE_SIZE);
                     }}
                     height={400}
                     yAxisWidth={104}
@@ -448,9 +441,10 @@ export default function StockVelocityPage() {
                 )}
               </ChartPanel>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))', gap: 'var(--ps-space-3, 16px)', alignItems: 'start' }}>
                 <ChartPanel {...vh("product.stockVelocity.overstock")}
                   title="Overstock Products"
+                  style={{ height: 'auto', padding: 'clamp(8px, calc(5vw - 12px), var(--ps-card-padding, 16px))' }}
                   wrapHeader
                   headerActions={
                     <ExportButtons
@@ -462,18 +456,15 @@ export default function StockVelocityPage() {
                 >
                   <DrillBreadcrumb active={overstockDrill} rootLabel="All Classes" onReset={() => setOverstockDrill(null)} />
                   {overstockDrill ? (
-                    <>
-                      <GroupedBarChart
-                        showTitle={false}
-                        points={overstockDrillPoints}
-                        bars={[{ key: 'tiedUp', name: 'LYD tied up', color: bucketColor(overstockDrill) }]}
-                        valueFormatter={(v) => fmtLYD(v)}
-                        tooltipContent={productDrillTooltip('tiedUp', 'LYD tied up', (p) => fmtLYD(p.tiedUp as number))}
-                        height={drillChartHeight(overstockDrillPoints.length)}
-                        yAxisWidth={150}
-                      />
-                      <ShowMoreFooter shown={overstockDrillPoints.length} total={overstockDrillRowsAll.length} onShowMore={() => setOverstockLimit((l) => l + DRILL_PAGE_SIZE)} />
-                    </>
+                    <ProductBarChart
+                      key={overstockDrill}
+                      rows={overstockDrillBars}
+                      seriesName="LYD tied up"
+                      color={bucketColor(overstockDrill)}
+                      axisFormatter={fmtLYD}
+                      tooltip={drillTooltip('LYD tied up', (r) => fmtLYD(r.stockValue), true)}
+                      fileName="stock-velocity-overstock"
+                    />
                   ) : (
                     <GroupedBarChart
                       showTitle={false}
@@ -484,7 +475,6 @@ export default function StockVelocityPage() {
                       yAxisWidth={150}
                       onCategoryClick={(label) => {
                         setOverstockDrill(label as ClassBucket);
-                        setOverstockLimit(DRILL_PAGE_SIZE);
                       }}
                     />
                   )}
@@ -492,6 +482,7 @@ export default function StockVelocityPage() {
 
                 <ChartPanel {...vh("product.stockVelocity.stockOutRisk")}
                   title="Stock-Out Risk"
+                  style={{ height: 'auto', padding: 'clamp(8px, calc(5vw - 12px), var(--ps-card-padding, 16px))' }}
                   wrapHeader
                   headerActions={
                     <ExportButtons
@@ -503,18 +494,15 @@ export default function StockVelocityPage() {
                 >
                   <DrillBreadcrumb active={riskDrill} rootLabel="All Classes" onReset={() => setRiskDrill(null)} />
                   {riskDrill ? (
-                    <>
-                      <GroupedBarChart
-                        showTitle={false}
-                        points={riskDrillPoints}
-                        bars={[{ key: 'valueAtRisk', name: 'Value sold (period)', color: 'var(--ps-color-alert)' }]}
-                        valueFormatter={(v) => fmtLYD(v)}
-                        tooltipContent={productDrillTooltip('valueAtRisk', 'Value at risk', (p) => fmtLYD(p.valueAtRisk as number))}
-                        height={drillChartHeight(riskDrillPoints.length)}
-                        yAxisWidth={150}
-                      />
-                      <ShowMoreFooter shown={riskDrillPoints.length} total={riskDrillRowsAll.length} onShowMore={() => setRiskLimit((l) => l + DRILL_PAGE_SIZE)} />
-                    </>
+                    <ProductBarChart
+                      key={riskDrill}
+                      rows={riskDrillBars}
+                      seriesName="Value sold (period)"
+                      color="var(--ps-color-alert)"
+                      axisFormatter={fmtLYD}
+                      tooltip={drillTooltip('Value at risk', (r) => fmtLYD(r.value), true)}
+                      fileName="stock-velocity-risk"
+                    />
                   ) : (
                     <GroupedBarChart
                       showTitle={false}
@@ -525,7 +513,6 @@ export default function StockVelocityPage() {
                       yAxisWidth={150}
                       onCategoryClick={(label) => {
                         setRiskDrill(label as ClassBucket);
-                        setRiskLimit(DRILL_PAGE_SIZE);
                       }}
                     />
                   )}
@@ -551,21 +538,6 @@ export default function StockVelocityPage() {
         <BottomNavBar active="Stock Velocity" />
       </div>
     </PermissionGuard>
-  );
-}
-
-/** "Show more"/"Showing X of Y" footer for a drilled-in product chart. */
-function ShowMoreFooter({ shown, total, onShowMore }: { shown: number; total: number; onShowMore: () => void }) {
-  if (shown >= total) return null;
-  return (
-    <div style={{ textAlign: 'center', marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
-      <Button variant="secondary" style={{ padding: '6px 16px', fontSize: 12 }} onClick={onShowMore}>
-        Show more
-      </Button>
-      <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>
-        Showing {shown} of {total}
-      </span>
-    </div>
   );
 }
 
