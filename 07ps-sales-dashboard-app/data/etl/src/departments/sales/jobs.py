@@ -44,7 +44,7 @@ MART_KEYS = {  # table -> primary key (migration 0031)
     "fact_sales_product_daily": ("row_key",), "fact_sales_inventory_snapshot": ("SnapshotDateKey", "CompanyKey", "ProductKey", "LocationID"),
     "fact_sales_bcg_matrix": ("CompanyKey", "ProductKey"), "dim_sales_order": ("SalesOrderKey",),
     "dim_sales_crm_stage": ("StageID",), "dim_sales_lost_reason": ("LostReasonID",), "dim_sales_product_cost": ("ProductKey", "CompanyKey"),
-    "dim_sales_product_dashboard": ("ProductCompanyKey",), "dim_sales_product_group": ("ProductGroupKey",),
+    "dim_sales_product_dashboard": ("ProductCompanyKey",),
     "etl_sales_product_dashboard_meta": ("AsOfDate",),
 }
 MART_TABLES = tuple(MART_KEYS)

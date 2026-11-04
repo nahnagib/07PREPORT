@@ -2493,6 +2493,8 @@ export interface ProductDashboardRow {
   volumeByUom: UomQty[];
   uom: string | null;
   lines: number;
+  /** Distinct order dates of the product in the period (Sales Frequency). */
+  orderDays: number;
   velocity: number | null;
   valuePrior: number;
   volumePrior: number | null;

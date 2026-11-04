@@ -11,12 +11,11 @@ Tables (all full-replaced each run):
                            (same quantity as the Sales pages). Grand total == Fact_SalesLines total.
   Dim_ProductDashboard     one row per Company + product: every product sold or in stock in that company, plus the
                            active Odoo products of that company never sold, with today's stock, days of inventory,
-                           stock band, lifecycle segment and BCG class. ProductGroupKey = its Odoo template.
-  Dim_ProductDashboardGroup  the BMH view (no company filter): one row per Odoo product template (product_tmpl_id),
-                           so a template sold in several companies appears once. Stock, days of inventory, stock band,
-                           lifecycle and BCG are recomputed from the combined lines and stock -- never averaged. A
-                           shared template uses the thresholds of its lead company (larger YTD value, else larger
-                           all-time value) -- column ThresholdCompany.
+                           stock band, lifecycle segment and BCG class. Always ONE company per row (2026-11-04: the
+                           cross-company "BMH" grouping is removed); ThresholdCompany = that company.
+Companies listed in config `product_pages.excluded_companies` (Athena) are left out of every table here, so the Product
+pages' totals exclude them. Units of measure of the "unit" type (UNIT, Unit, Units, وحدة) are one label, "Unit"
+(product_pages.unit_uom_names); every other UoM keeps its own name.
   QA_ProductOdooGaps       every product sold that has no Brand, Family, Size or SKU in Odoo, biggest sales first --
                            the list to fill in Odoo (also written to OUTPUT/product_odoo_gaps.csv on a full refresh).
   QA_ProductDataQuality    negative stock, products without cost, products sold in several UoMs.
@@ -44,6 +43,7 @@ UNCLASSIFIED_NO_COST = "Unclassified (no cost)"
 BCG_BY_CODE = {"HV/HP": "Stars", "HV/LP": "Cash Cows", "LV/HP": "Strategic", "LV/LP": "Dogs"}
 BCG_RANK = {"Dogs": 0, "Cash Cows": 1, "Strategic": 1, "Stars": 2}
 GAP_ATTRIBUTES = ("Brand", "Family", "Size", "SKU")
+UNIT_LABEL = "Unit"
 GAP_COLUMNS = ["Company", "OdooProductID", "ProductName", "Category", "Missing", "SalesValue", "SalesValueLast12M",
                "Lines", "LastSaleDate", "AsOfDate"]
 log = logging.getLogger(__name__)
@@ -112,6 +112,15 @@ class ProductDashboardBuilder:
     def __init__(self, config: ProductDashboardConfig, as_of: Any) -> None:
         self.config = config
         self.as_of = pd.Timestamp(as_of).normalize()
+        pages = config.section("product_pages")
+        self.excluded_companies = {normalize_match_company(c) for c in pages.get("excluded_companies", [])}
+        self.unit_names = {str(u).strip().casefold() for u in pages.get("unit_uom_names", [])}
+        self.unit_label = str(pages.get("unit_label", UNIT_LABEL))
+
+    def uom_label(self, uom: Any) -> str:
+        """One label for every unit-type UoM ('UNIT', 'Unit', 'وحدة' -> 'Unit'); any other UoM is kept as named."""
+        text = "" if uom is None or (not isinstance(uom, str) and pd.isna(uom)) else str(uom)
+        return self.unit_label if text.strip().casefold() in self.unit_names else text
 
     # ------------------------------------------------------------------ entry point
     def build(
@@ -122,18 +131,22 @@ class ProductDashboardBuilder:
         line_costs: pd.Series | None = None,
     ) -> dict[str, pd.DataFrame]:
         lines = self._prepare_lines(sales_lines, line_costs)
+        lines = lines[~lines["Company"].isin(self.excluded_companies)]
         daily = self._daily(lines)
         self.assert_totals_preserved(lines, daily)
         stock = self._stock(fact_inventory)
+        if not stock.empty:
+            stock = stock[~stock["Company"].isin(self.excluded_companies)]
         products = self._products(lines, dim_product, stock)
-        groups = self._groups(lines, products, stock)
         gaps = self.odoo_gaps(lines, products)
-        quality = self._data_quality(products, fact_inventory, lines)
+        inventory = fact_inventory
+        if inventory is not None and not inventory.empty and "Company" in inventory.columns:
+            inventory = inventory[~inventory["Company"].map(normalize_match_company).isin(self.excluded_companies)]
+        quality = self._data_quality(products, inventory, lines)
         meta = self._meta(lines, daily, products)
         return {
             "Fact_ProductSalesDaily": daily,
             "Dim_ProductDashboard": products,
-            "Dim_ProductDashboardGroup": groups,
             "QA_ProductOdooGaps": gaps,
             "QA_ProductDataQuality": quality,
             "ProductDashboard_Meta": meta,
@@ -160,7 +173,7 @@ class ProductDashboardBuilder:
             out[key] = pd.to_numeric(self._col(s, key), errors="coerce").astype("Int64")
         out["SalesTeamKey"] = self._col(s, "SalesTeamKey").astype("string")
         out["IsIntercompany"] = self._col(s, "IsIntercompany", False).fillna(False).astype(bool)
-        out["UoM"] = self._col(s, "uom").astype("string").fillna("")
+        out["UoM"] = self._col(s, "uom").map(self.uom_label).astype("string").fillna("")
         out["Value"] = pd.to_numeric(self._col(s, "untaxed_total"), errors="coerce").fillna(0.0)
         out["Qty"] = pd.to_numeric(self._col(s, "quantity"), errors="coerce").fillna(0.0)
         out["QtyOrdered"] = pd.to_numeric(self._col(s, "qty_ordered"), errors="coerce").fillna(0.0)
@@ -260,7 +273,6 @@ class ProductDashboardBuilder:
             base[c] = base[c].where(base[c].notna(), odoo_products.UNASSIGNED)
         base["IsActive"] = base["IsActive"].map(lambda v: pd.NA if v is None or (not isinstance(v, bool) and pd.isna(v)) else int(bool(v)))
         base = base.set_index("ProductCompanyKey")
-        base["ProductGroupKey"] = [odoo_products.template_group_key(t, k) for t, k in zip(base["ProductTemplateID"], base.index)]
         base["ThresholdCompany"] = base["Company"]
         return self._snapshot(base, lines, stock)
 
@@ -301,50 +313,6 @@ class ProductDashboardBuilder:
         for c in ["FirstSaleDate", "LastSaleDate"]:
             base[c] = pd.to_datetime(base[c], errors="coerce")
         return base
-
-    # ------------------------------------------------------------------ BMH view (grouped across companies)
-    def _groups(self, lines: pd.DataFrame, products: pd.DataFrame, stock: pd.DataFrame) -> pd.DataFrame:
-        key_of = products.set_index("ProductCompanyKey")["ProductGroupKey"].astype(str)
-        glines = lines.copy()
-        mk = glines["ProductCompanyKey"].astype(str)
-        glines["ProductCompanyKey"] = mk.map(key_of).fillna(mk)
-        self.assert_totals_preserved(lines, glines)
-        gstock = stock.copy()
-        if not gstock.empty:
-            sk = gstock["ProductCompanyKey"].astype(str)
-            gstock["ProductCompanyKey"] = sk.map(key_of).fillna(sk)
-            num = ["StockQty", "StockValue", "InTransitQty", "InTransitValue", "NegativeStockRows", "NegativeStockQty"]
-            gstock = gstock.groupby("ProductCompanyKey", as_index=False)[num].sum()
-
-        members = products.copy()
-        members["Company"] = members["Company"].astype("string")
-        # Lead company = larger YTD value, then larger all-time value, then name: its thresholds apply.
-        ytd_start = pd.Timestamp(year=self.as_of.year, month=1, day=1)
-        by_ytd = lines[lines["OrderDate"].between(ytd_start, self.as_of)].groupby("ProductCompanyKey")["Value"].sum()
-        by_all = lines.groupby("ProductCompanyKey")["Value"].sum()
-        members["_ytd"] = members["ProductCompanyKey"].astype(str).map(by_ytd).fillna(0.0)
-        members["_all"] = members["ProductCompanyKey"].astype(str).map(by_all).fillna(0.0)
-        members = members.sort_values(["ProductGroupKey", "_ytd", "_all", "Company"], ascending=[True, False, False, True])
-
-        def first_filled(v: pd.Series) -> Any:
-            v = v.dropna()
-            v = v[v.astype(str).str.strip().ne("")]
-            return v.iloc[0] if len(v) else pd.NA
-
-        agg: dict[str, Any] = {
-            "Companies": ("Company", lambda v: " + ".join(sorted(set(v.dropna())))),
-            "CompanyCount": ("Company", lambda v: int(v.dropna().nunique())),
-            "ThresholdCompany": ("Company", "first"),
-            "MemberKeys": ("ProductCompanyKey", lambda v: ",".join(sorted(v.astype(str)))),
-            "IsActive": ("IsActive", lambda v: pd.to_numeric(v, errors="coerce").max()),
-        }
-        for c in self.PRODUCT_ATTRS:
-            if c != "IsActive" and c in members.columns:
-                agg[c] = (c, first_filled)
-        base = members.groupby("ProductGroupKey", sort=True).agg(**agg)
-        base["Company"] = base["Companies"]
-        out = self._snapshot(base, glines, gstock if not gstock.empty else stock.iloc[0:0])
-        return out.rename(columns={"ProductCompanyKey": "ProductGroupKey"})
 
     def _stock_band(self, p: pd.DataFrame) -> pd.Series:
         over = self.config.per_company("days_of_inventory", "overstock_days")

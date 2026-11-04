@@ -50,6 +50,9 @@ export interface DonutChartProps {
   /** Optional last legend row, e.g. { label: 'Total', value: '726 opportunities' } -- for a donut whose centre shows
    * something other than the total. */
   legendTotal?: { label: string; value: string };
+  /** Legend label direction. 'auto' (default) follows each label's first strong character; 'ltr' draws every label
+   * left-to-right with the label text isolated (Product pages: names mixing Arabic and Latin stay in their order). */
+  labelDirection?: 'auto' | 'ltr';
   /** Renders each segment's share of the whole directly on the ring (outside small slices, with a
    * leader line, per Recharts' own label positioning) in addition to the existing legend
    * percentages. Opt-in -- defaults to false so every existing caller's ring stays exactly as
@@ -141,6 +144,7 @@ export function DonutChart({
   legendTotal,
   showPercentLabels = false,
   showExportButton = true,
+  labelDirection = 'auto',
 }: DonutChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const total = segments.reduce((sum, s) => sum + s.value, 0);
@@ -285,7 +289,7 @@ export function DonutChart({
               const rowContent = (
                 <>
                   <span aria-hidden style={{ width: 9, height: 9, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-                  <span dir="auto" title={s.label} style={{ color: 'var(--ps-color-text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                  <span dir={labelDirection} title={s.label} style={{ color: 'var(--ps-color-text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left', unicodeBidi: labelDirection === 'ltr' ? 'isolate' : undefined }}>
                     {s.label}
                   </span>
                   <span style={{ color: 'var(--ps-color-muted-text)', fontWeight: 600, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>

@@ -13,21 +13,21 @@
  *   v_sales_product_dashboard    one row per Company + product (every product sold or in stock in that company,
  *                           plus its active never-sold Odoo products) with today's stock, days of inventory,
  *                           stock band, lifecycle segment and BCG class.
- *   dim_sales_product_group  the BMH view: one row per Odoo product template (ProductGroupKey 'T|<product_tmpl_id>')
- *                           across companies, with stock / days of inventory / stock band / lifecycle /
- *                           BCG recomputed by the ETL from the COMBINED lines and stock.
  *   etl_sales_product_dashboard_meta   as-of date and the thresholds the ETL used (config/product_dashboard.json).
  *
  * Company view (query.company = 'Majaal' | 'Tika'): that company's products and sales only.
- * BMH view (no company): products grouped by their Odoo template, so a template both companies sell is one row
- * whose value/volume are the exact sum of the company rows. Period metrics are recomputed from the combined sums
- * (velocity = combined volume / days, margin = combined (value - cost) / combined value) -- never averaged.
+ * All-companies view (no company, still called 'BMH'): every company's products side by side. A product is ALWAYS one
+ * Odoo product in one company -- nothing is combined across companies (2026-11-04).
+ * Athena is not on the Product pages (EXCLUDED_COMPANIES; the ETL already leaves it out of these tables, the measure
+ * filters it again so totals never include it).
+ * Units: the ETL shows every unit-type UoM (UNIT, Unit, وحدة) as one "Unit"; other UoMs (bag, m, m², kg) keep their name.
  *
  * Metric definitions (docs/product_data_runbook.md):
  *   Value    = SUM(untaxed line amount) in LYD, confirmed orders, order date in Africa/Tripoli.
  *   Volume   = SUM(invoiced quantity) -- same quantity as the Sales pages. Never summed across units of
  *              measure: a product sold in several UoMs in the period gets volume = null and volumeByUom.
  *   Velocity = Volume / days in the period (period end capped at today).
+ *   Order days = distinct days in the period with at least one sales line of the product (Sales Frequency).
  * Stock, days of inventory, lifecycle and BCG class are "as of the last ETL run" and do not move with the
  * period; BCG is calendar YTD vs LYTD, as before.
  *
@@ -47,7 +47,7 @@ export interface UomQty {
 }
 
 export interface ProductDashboardRow {
-  /** Company|Odoo product id (company view) or the template group key (BMH view): the row's identity. */
+  /** Company|Odoo product id: the row's identity (one Odoo product in one company). */
   productCompanyKey: string;
   /** Odoo product.product id; null for sales lines without a product. */
   productKey: string | null;
@@ -62,9 +62,9 @@ export interface ProductDashboardRow {
   size: string | null;
   sku: string | null;
   isActive: number | null;
-  /** Companies in this row: one in the company view; one or more in the BMH view. */
+  /** Always exactly one company: [company]. */
   companies: string[];
-  /** Per-company split of the period sales (BMH view: one entry per company that has the product). */
+  /** The row's own period sales as one part (kept for the pages' company split). */
   parts: ProductCompanyPart[];
   // Period (filter-dependent)
   value: number;
@@ -72,6 +72,8 @@ export interface ProductDashboardRow {
   volumeByUom: UomQty[];
   uom: string | null;
   lines: number;
+  /** Distinct order dates of the product in the period (how often it sells). */
+  orderDays: number;
   velocity: number | null;
   valuePrior: number;
   volumePrior: number | null;
@@ -126,7 +128,7 @@ export interface ProductDashboardOverview {
 export interface ProductDashboardQuery {
   fromDate?: string;
   toDate?: string;
-  /** 'Majaal' / 'Tika' = company view; anything else (or absent) = BMH view. */
+  /** 'Majaal' / 'Tika' = company view; anything else (or absent) = all companies side by side ('BMH'). */
   company?: string;
   /** companyKeys only ever comes from the user's role data scope (the page sends a company name). */
   filters?: Pick<Filters, 'companyKeys' | 'segmentKeys' | 'channelKeys' | 'salesTeamKeys' | 'salespersonKeys'>;
@@ -136,6 +138,9 @@ export interface ProductDashboardQuery {
 export class ProductScopeError extends Error {}
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Companies never shown on the Product pages (Promotion / Price / Process are not affected). */
+export const EXCLUDED_COMPANIES = ['Athena'];
 
 function num(v: unknown): number {
   const n = Number(v);
@@ -202,18 +207,8 @@ function emptyAgg(): Agg {
   return { value: 0, lines: 0, cost: 0, uncosted: 0, valuePrior: 0, qty: new Map(), qtyPrior: new Map() };
 }
 
-function addInto(target: Agg, a: Agg): void {
-  target.value += a.value;
-  target.lines += a.lines;
-  target.cost += a.cost;
-  target.uncosted += a.uncosted;
-  target.valuePrior += a.valuePrior;
-  for (const [uom, q] of a.qty) target.qty.set(uom, (target.qty.get(uom) ?? 0) + q);
-  for (const [uom, q] of a.qtyPrior) target.qtyPrior.set(uom, (target.qtyPrior.get(uom) ?? 0) + q);
-}
-
-/** One page row from a snapshot row (v_sales_product_dashboard or dim_sales_product_group) and its period sums. */
-function toRow(key: string, p: any, a: Agg | undefined, days: number, companies: string[], parts: ProductCompanyPart[]): ProductDashboardRow {
+/** One page row from a v_sales_product_dashboard row and its period sums. */
+function toRow(key: string, p: any, a: Agg | undefined, days: number, companies: string[], parts: ProductCompanyPart[], orderDays = 0): ProductDashboardRow {
   const value = a?.value ?? 0;
   const lines = a?.lines ?? 0;
   const volumeByUom = a ? uomList(a.qty) : [];
@@ -243,6 +238,7 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     volumeByUom,
     uom: single ? (volumeByUom[0]?.uom || str(p.UoM)) : null,
     lines,
+    orderDays,
     velocity: volume === null ? null : volume / days,
     valuePrior: a?.valuePrior ?? 0,
     volumePrior,
@@ -272,24 +268,12 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
   };
 }
 
-async function loadGroupRows(pool: Pool): Promise<any[] | null> {
-  try {
-    const [rows] = await pool.query('SELECT * FROM dim_sales_product_group');
-    return rows as any[];
-  } catch (err: any) {
-    // Before the first ETL run of this version the table does not exist yet: serve per-company rows.
-    if (err && err.code === 'ER_NO_SUCH_TABLE') return null;
-    throw err;
-  }
-}
-
 export async function computeProductDashboard(pool: Pool, query: ProductDashboardQuery = {}): Promise<ProductDashboardOverview> {
   const period = resolvePeriod(query.fromDate, query.toDate);
   let requestedView = resolveView(query.company);
   const companyKeys = query.filters?.companyKeys ?? [];
   if (companyKeys.length > 0) {
-    // Role limited to some companies: never show another company, and never show a BMH row whose stock /
-    // BCG combine a company the user cannot see -- a single allowed company always gets its company view.
+    // Role limited to some companies: never show another company -- a single allowed company always gets its company view.
     const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM v_sales_product_daily WHERE CompanyKey IN (?)', [companyKeys]);
     const allowed = (allowedRows as any[]).map((r) => String(r.Company));
     if (requestedView !== 'BMH' && !allowed.includes(requestedView)) {
@@ -313,17 +297,28 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? AND d.IsIntercompany = 1 THEN d.Value ELSE 0 END) AS icValue
     FROM v_sales_product_daily d
     WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?)) AND ${scope.clause}${companyClause}
+      AND d.Company NOT IN (?)
     GROUP BY d.ProductCompanyKey, COALESCE(d.UoM, '')`;
   const cur = [period.from, period.to];
   const prior = [period.priorFrom, period.priorTo];
   const salesParams: Array<string | number> = [...cur, ...cur, ...cur, ...cur, ...cur, ...prior, ...prior, ...cur, ...cur, ...prior, ...scope.params];
   if (requestedView !== 'BMH') salesParams.push(requestedView);
+  salesParams.push(EXCLUDED_COMPANIES as unknown as string);
 
-  const [[salesRows], [productRows], [metaRows], groupRows] = await Promise.all([
+  const orderDaysSql = `
+    SELECT d.ProductCompanyKey AS k, COUNT(DISTINCT d.OrderDate) AS orderDays
+    FROM v_sales_product_daily d
+    WHERE d.OrderDate BETWEEN ? AND ? AND d.Lines > 0 AND ${scope.clause}${companyClause} AND d.Company NOT IN (?)
+    GROUP BY d.ProductCompanyKey`;
+  const orderDaysParams: Array<string | number | string[]> = [...cur, ...scope.params];
+  if (requestedView !== 'BMH') orderDaysParams.push(requestedView);
+  orderDaysParams.push(EXCLUDED_COMPANIES);
+
+  const [[salesRows], [orderDayRows], [productRows], [metaRows]] = await Promise.all([
     pool.query(salesSql, salesParams),
-    pool.query('SELECT * FROM v_sales_product_dashboard'),
+    pool.query(orderDaysSql, orderDaysParams),
+    pool.query('SELECT * FROM v_sales_product_dashboard WHERE Company NOT IN (?)', [EXCLUDED_COMPANIES]),
     pool.query('SELECT AsOfDate, BuiltAtUtc, LookbackDays, ConfigJson FROM etl_sales_product_dashboard_meta LIMIT 1'),
-    requestedView === 'BMH' ? loadGroupRows(pool) : Promise.resolve(null),
   ]);
   const view = requestedView;
 
@@ -352,43 +347,13 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     volumeByUom: a ? uomList(a.qty) : [],
   });
 
+  const orderDaysOf = new Map((orderDayRows as any[]).map((r) => [String(r.k), num(r.orderDays)]));
   const products: ProductDashboardRow[] = [];
-  const companyRows = (productRows as any[]).filter((p) => view === 'BMH' || String(p.Company ?? '') === view);
-  if (groupRows === null) {
-    for (const p of companyRows) {
-      const key = String(p.ProductCompanyKey);
-      const a = byProduct.get(key);
-      if (scoped && !(a && a.lines > 0)) continue;
-      products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)]));
-    }
-  } else {
-    // BMH view: sum each group's member products (exact, per UoM), then recompute the ratios.
-    const members = new Map<string, any[]>();
-    for (const p of companyRows) {
-      const g = String(p.ProductGroupKey ?? p.ProductCompanyKey);
-      const list = members.get(g) ?? [];
-      list.push(p);
-      members.set(g, list);
-    }
-    for (const gp of groupRows) {
-      const g = String(gp.ProductGroupKey);
-      const list = members.get(g) ?? [];
-      const agg = emptyAgg();
-      const parts: ProductCompanyPart[] = [];
-      let found = false;
-      for (const m of list) {
-        const a = byProduct.get(String(m.ProductCompanyKey));
-        if (a) {
-          addInto(agg, a);
-          found = true;
-        }
-        parts.push(partOf(m, a));
-      }
-      const a = found ? agg : undefined;
-      if (scoped && !(a && a.lines > 0)) continue;
-      const companies = [...new Set(list.map((m) => String(m.Company ?? '')))].sort();
-      products.push(toRow(g, gp, a, period.days, companies, parts.sort((x, y) => x.company.localeCompare(y.company))));
-    }
+  for (const p of (productRows as any[]).filter((r) => view === 'BMH' || String(r.Company ?? '') === view)) {
+    const key = String(p.ProductCompanyKey);
+    const a = byProduct.get(key);
+    if (scoped && !(a && a.lines > 0)) continue;
+    products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)], orderDaysOf.get(key) ?? 0));
   }
 
   // Totals straight from the sales rows (not from the product list), so a key missing from

@@ -10,12 +10,12 @@ renamed by a product name. An empty Category / Brand / SubBrand / Family / Size 
 | Column | Tables | Odoo source |
 |---|---|---|
 | `ProductKey` | `dim_product`, `fact_sales_lines`, `fact_sales_product_daily`, `fact_sales_inventory_snapshot`, `fact_sales_bcg_matrix`, `dim_sales_product_cost`, `dim_sales_product_dashboard` | `product.product.id` (`-1` = a line without a product) |
-| `ProductTemplateID` / `product_tmpl_id` | `fact_sales_lines`, `dim_sales_product_dashboard`, `dim_sales_product_group`, `dim_product` | `product.product.product_tmpl_id` |
+| `ProductTemplateID` / `product_tmpl_id` | `fact_sales_lines`, `dim_sales_product_dashboard`, `dim_product` | `product.product.product_tmpl_id` |
 | `ProductName` / `product_name` | every product table / `dim_product` | `product.product.name`, byte-for-byte |
 | `OdooProductName` | every product table | `product.product.display_name` (`[internal ref] name`) |
 | `SKU` / `default_code` | product tables / `dim_product` | `default_code` (empty stays empty) |
 | `Category` / `category` | product tables / `dim_product` | `categ_id`, full path (`complete_name`) |
-| `CategoryID` / `categ_id` | `dim_sales_product_dashboard`, `dim_sales_product_group` / `dim_product` | `categ_id` id; `bcg.excluded_category_ids` in `config/product_dashboard.json` lists the ids left out of the BCG matrix |
+| `CategoryID` / `categ_id` | `dim_sales_product_dashboard` / `dim_product` | `categ_id` id; `bcg.excluded_category_ids` in `config/product_dashboard.json` lists the ids left out of the BCG matrix |
 | `Brand` / `brand` | product tables / `dim_product` | the main vendor (Purchase tab, `seller_ids` → `product.supplierinfo`): lowest sequence, then lowest minimum quantity, then oldest line; `raw_odoo_product_supplierinfo` |
 | `SubBrand` / `sub_brand` | product tables / `dim_product` | `sub_brand_id` |
 | `Family` / `family` | product tables / `dim_product` | `product_family_id` ("Product Family / Range") |
@@ -23,7 +23,7 @@ renamed by a product name. An empty Category / Brand / SubBrand / Family / Size 
 | `IsActive` / `active` | product tables / `dim_product` | `active` (archived = 0) |
 | `is_discount` | `fact_sales_lines` | product id in `discounts.discount_product_ids` (1068, 2881, 4691, 6009) |
 | `ProductCompanyKey` | `fact_sales_product_daily`, `fact_sales_inventory_snapshot`, `dim_sales_product_dashboard` | `<Company>|<product id>`: the Product pages' grain |
-| `ProductGroupKey` | `dim_sales_product_dashboard`, `dim_sales_product_group` | `T|<product_tmpl_id>`: the cross-company (BMH) view groups by Odoo template |
+| `UoM` | `fact_sales_product_daily` | Odoo unit of measure name; every unit-type UoM (`UNIT`, `Unit`, `Units`, `وحدة`) is stored as one `Unit` (`product_pages.unit_uom_names` in `config/product_dashboard.json`), other UoMs (bag, m, m², kg) keep their Odoo name. The Product pages never combine products across companies and leave Athena out (`product_pages.excluded_companies`); the cross-company `dim_sales_product_group` table was dropped in 0065. |
 
 Removed (0064): `ProductMasterKey`, `SheetProductKey`, `ProductMatchKey`, `ProductNameRaw`, `ProductNameClean`,
 `OdooProductNameClean`, `product_name_raw`, `product_name_clean`, `ProductJoinKey`, `ProductLevel`, `ProductMappingStatus`,

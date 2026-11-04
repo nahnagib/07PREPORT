@@ -6,6 +6,27 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Product pages UI/UX, 2026-11-04)
+- Product pages (BCG Matrix, Stock Velocity, PIM Contribution + Brand page, Product Lifecycle): Athena is left out
+  everywhere (ETL `product_pages.excluded_companies` + the API + the company filters), so totals exclude it. Promotion,
+  Price and Process pages are unchanged.
+- One company per product, always: the cross-company ("BMH") grouping is removed (`dim_sales_product_group` and
+  `ProductGroupKey` dropped by migration 0065). No "Majaal + Tika" rows, legends or filters any more.
+- Units: every unit-type UoM (`UNIT`, `Unit`, `وحدة`) is one "Unit" and their quantities are added together; other units
+  (bag, m, m², kg, "Bag of 20kg/25kg") keep their Odoo name.
+- Product names, tooltip titles, legends and breadcrumbs are drawn left-to-right; mixed Arabic/Latin names keep their
+  word order. Every product tooltip shows the product's company as a badge.
+- Performance Details tables removed from all five pages (code included).
+- BCG Matrix: CSV + PDF export per class and for the whole matrix; Company column in Product Detail.
+- Stock Velocity: "Fast Movers" / "Slow Movers" labels no longer cut off; new Sales Frequency visual (selling days per
+  product, Daily / Weekly / Monthly / Rarer, drill to a sortable product list with CSV / PDF); CSV next to every PDF.
+- PIM Contribution: partner brands RAK CERAMICS and Porcelanosa removed, TAU added; brands match the Odoo brand (main
+  vendor) case-insensitively and a brand not yet in Odoo shows "Not currently assigned in Odoo". The Top Category and
+  Active Categories / Ranges tiles are replaced by one Categories donut (By Value / By Volume, top 8 + Other).
+- Brand page redesigned: brand header with KPI tiles, then a sortable, searchable product table (sticky header,
+  Company column, CSV + PDF).
+- Shared CSV export (`exportRowsAsCsv`: UTF-8 with BOM, raw numbers) used on every product table.
+
 ### Changed (Odoo is the only source of products, 2026-11-03)
 - PRODUCTS.xlsx and every product-name rule are retired (archived as `data/etl/input_backups/PRODUCTS_retired_2026-11-03.xlsx`).
   Products are identified by the Odoo product id (+ product_tmpl_id, company); names are shown exactly as Odoo stores them.

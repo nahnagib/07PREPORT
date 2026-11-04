@@ -15,20 +15,14 @@ import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
 import {
   ChartPanel,
   Card,
-  KpiTile,
   Select,
   Button,
   DonutChart,
   GroupedBarChart,
   LoadingSkeleton,
   ErrorState,
-  PerformanceReportTable,
-  exportPerformanceTablePdf,
-  SEMANTIC_STATUS_LABEL,
   type SelectOption,
   type DonutSegment,
-  type PerformanceReportRow,
-  type PerformanceTablePdfColumn,
 } from '@07ps/ui';
 import {
   toProductFacts,
@@ -49,6 +43,7 @@ import {
   type FoundBrandStats,
   type PartnerBrand,
 } from '../../../../lib/materialsAnalogy/shared';
+import { ProductName } from '../../../../components/product/ProductUi';
 
 type MaterialsAnalogyFact = ProductFact;
 
@@ -84,100 +79,6 @@ function topNWithOther(entries: [string, number][], n = 8): [string, number][] {
   const rest = entries.slice(n);
   const otherVal = rest.reduce((a, e) => a + e[1], 0);
   return [...top, [`Other (+${rest.length})`, otherVal]];
-}
-
-// Mirrors the on-screen PerformanceReportTable's default layout (Trend sparkline omitted -- it has
-// no text form), same shared exportPerformanceTablePdf used by the Promotion pages.
-function pctLabel(v: number | null): string {
-  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
-}
-const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
-  { header: 'Metric Name', getValue: (row) => row.metric },
-  { header: 'Actual', getValue: (row) => row.actualLabel },
-  { header: 'Target', getValue: (row) => row.targetLabel },
-  { header: 'Variance%', getValue: (row) => pctLabel(row.variancePct) },
-  { header: 'Variance LY', getValue: (row) => pctLabel(row.varianceLyPct) },
-  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
-  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
-];
-
-// ---------------------------------------------------------------------------
-// Executive Summary -- the top 4 KPI tiles have no prior-period comparison in this page's data
-// model (point-in-time hierarchy counts), so they stay 'neutral'/informational. The brand rows
-// reuse each brand's own real YTD-vs-LYTD `deltaPct` (already computed by computeBrandStats) for a
-// simple green/red read -- up, or down, vs last year -- consistent with how BCG Matrix's own class
-// deltas are read on that page.
-// ---------------------------------------------------------------------------
-
-function toExecutiveSummaryRows(
-  categoryCount: number,
-  familyCount: number,
-  skuCount: number,
-  topVal: [string, number] | undefined,
-  topVol: [string, number] | undefined,
-  brands: FoundBrandStats[],
-  unit: string,
-): PerformanceReportRow[] {
-  const rows: PerformanceReportRow[] = [
-    {
-      id: 'activeCategories',
-      metric: 'Active Categories',
-      actualLabel: String(categoryCount),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: `${categoryCount} active categories across ${familyCount} families/ranges.`,
-    },
-    {
-      id: 'topCategoryValue',
-      metric: 'Top Category (by Value)',
-      actualLabel: topVal ? topVal[0] : '—',
-      actualFullValue: topVal ? fmtLYD(topVal[1]) : undefined,
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: topVal ? `${topVal[0]} is the top category by value at ${fmtLYD(topVal[1])} in the period.` : 'No category data available.',
-    },
-    {
-      id: 'topCategoryVolume',
-      metric: 'Top Category (by Volume)',
-      actualLabel: topVol ? topVol[0] : '—',
-      actualFullValue: topVol ? `${fmtNum(topVol[1])} ${unit}` : undefined,
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: topVol ? `${topVol[0]} is the top category by volume in ${unit} at ${fmtNum(topVol[1])} ${unit} in the period.` : 'No category data available.',
-    },
-    {
-      id: 'skusInView',
-      metric: 'SKUs in View',
-      actualLabel: fmtNum(skuCount),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: `${fmtNum(skuCount)} SKUs match the current filters.`,
-    },
-  ];
-
-  const topBrands = [...brands].sort((a, b) => b.revenue - a.revenue).slice(0, 4);
-  for (const b of topBrands) {
-    rows.push({
-      id: `brand-${b.matched}`,
-      metric: b.requested,
-      actualLabel: fmtLYD(b.revenue),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: b.deltaPct === null ? null : b.deltaPct / 100,
-      status: b.deltaPct === null ? 'neutral' : b.deltaPct >= 0 ? 'success' : 'alert',
-      takeaway: `${b.requested} revenue is ${fmtLYD(b.revenue)} in the period${b.deltaPct === null ? '' : ` (${fmtPct(b.deltaPct)} vs same period last year)`}.`,
-    });
-  }
-
-  return rows;
 }
 
 /** Blank, whitespace-only, or the literal string "Null" (a real value in the master data -- Size
@@ -277,13 +178,13 @@ export default function PimContributionPage() {
   const refresh = useRefreshStatus(token, authError, retryAuth);
 
   const [company, setCompany] = useState<CompanyFilter>('All');
-  // Company view vs BMH view comes from the API: with no company, a product both companies sell is one
-  // combined row (value/volume = Majaal + Tika, ratios recomputed); with a company, only its part.
+  // Company view (one company) or all companies side by side; a product is always one Odoo product in one company.
   const overview = useProductDashboard(token, authError, retryAuth, 'pim-contribution', { fromDate: dateFromDate, toDate: dateToDate, company });
   const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const [category, setCategory] = useState<string[]>([]);
   const [bcgClass, setBcgClass] = useState<'All' | (typeof BCG_CLASSES)[number]>('All');
   const [metric, setMetric] = useState<Metric>('value');
+  const [categoryMetric, setCategoryMetric] = useState<Metric>('value');
   // Full chosen-value path through HIERARCHY_LEVELS (Company -> Category -> Brand -> SubBrand ->
   // Family -> Size -> Product) -- replaces the old single `drillCategory` string now that the
   // donut drills 6+1 levels deep instead of 2. `metric` is deliberately a separate, untouched
@@ -301,20 +202,23 @@ export default function PimContributionPage() {
   // Quantities are never added across units of measure: volume and ASP on this page are for one unit.
   const unitTotals = useMemo(() => sumByUom(filtered), [filtered]);
   const [unitChoice, setUnitChoice] = useState<string | null>(null);
-  const unit = unitChoice && unitTotals.some((u) => u.uom === unitChoice) ? unitChoice : unitTotals[0]?.uom ?? '';
+  // Every unit-type UoM arrives as one "Unit" (ETL); it is the default whenever it is sold in the view.
+  const unit = unitChoice && unitTotals.some((u) => u.uom === unitChoice) ? unitChoice : unitTotals.find((u) => u.uom === 'Unit')?.uom ?? unitTotals[0]?.uom ?? '';
   const unitOptions: SelectOption[] = unitTotals.map((u) => ({ value: u.uom, label: `${u.uom || '(no unit)'} — ${fmtNum(u.qty)}` }));
 
   const metricVal = (r: MaterialsAnalogyFact) => (metric === 'value' ? r.value : qtyIn(r, unit));
   const metricFmt = (v: number) => (metric === 'value' ? fmtLYD(v) : `${fmtNum(v)} ${unit}`);
 
-  // ---- KPIs ----
-  const activeRows = filtered.filter((r) => r.IsActive === 1);
-  const categoryCount = new Set(activeRows.map((r) => r.Category)).size;
-  const familyCount = new Set(activeRows.map((r) => r.Family)).size;
-  const byCatVal = groupSum(filtered, (r) => r.Category ?? 'Unspecified', (r) => r.value);
-  const byCatVol = groupSum(filtered, (r) => r.Category ?? 'Unspecified', (r) => qtyIn(r, unit));
-  const topVal = [...byCatVal.entries()].sort((a, b) => b[1] - a[1])[0];
-  const topVol = [...byCatVol.entries()].sort((a, b) => b[1] - a[1])[0];
+  // ---- Categories donut (replaces the Top Category tiles): the 8 largest categories + Other, by value or volume ----
+  const categoryVal = (r: MaterialsAnalogyFact) => (categoryMetric === 'value' ? r.value : qtyIn(r, unit));
+  const categoryEntries = topNWithOther([...groupSum(filtered, (r) => normalizeHierarchyValue(r.Category), categoryVal).entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]));
+  const categorySegments: DonutSegment[] = categoryEntries.map(([label, value], i) => ({
+    id: label,
+    label,
+    value,
+    color: label.startsWith('Other (') ? 'var(--ps-color-neutral-text)' : CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
+  }));
+  const categoryFmt = (v: number) => (categoryMetric === 'value' ? fmtLYD(v) : `${fmtNum(v)} ${unit}`);
 
   // ---- Donut (drill-down), full 6+1-level hierarchy ----
   // `resolved.path` is what actually gets rendered as the breadcrumb -- it can be longer than
@@ -373,20 +277,6 @@ export default function PimContributionPage() {
   // which stays untouched) -- a no-sales live row has no GP baseline to report, and its
   // total_value_YTD is already 0, so the coercion doesn't change the weighted-GP total. ----
   const { found: foundBrandStats, notFound: notFoundBrands } = useMemo(() => computeBrandStats(filtered), [filtered]);
-
-  const performanceRows = toExecutiveSummaryRows(categoryCount, familyCount, filtered.length, topVal, topVol, foundBrandStats, unit);
-  async function handleExportPerformanceTablePdf() {
-    try {
-      await exportPerformanceTablePdf({
-        title: 'Performance Details',
-        rows: performanceRows,
-        columns: PERFORMANCE_PDF_COLUMNS,
-        fileName: 'pim-contribution-performance-details',
-      });
-    } catch (err) {
-      console.error('PDF export failed:', err);
-    }
-  }
 
   return (
     <PermissionGuard pageKey="pim_contribution">
@@ -459,14 +349,36 @@ export default function PimContributionPage() {
               onSelectBrand={(b) => router.push(buildBrandHref(b.requested, { company, category, bcgClass }))}
             />
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
-            <KpiTile label="Active Categories" value={String(categoryCount)} variance={`${familyCount} active Families/Ranges`} status="neutral" />
-            <KpiTile label="Active Ranges / Families" value={String(familyCount)} variance={`${filtered.length} SKUs in view`} status="neutral" />
-            <KpiTile label="Top Category by Value" value={topVal ? topVal[0] : '—'} variance={topVal ? fmtLYD(topVal[1]) : undefined} status="success" />
-            <KpiTile label={`Top Category by Volume (${unit || 'unit'})`} value={topVol ? topVol[0] : '—'} variance={topVol ? `${fmtNum(topVol[1])} ${unit}` : undefined} status="success" />
-          </div>
+          <ChartPanel {...vh('product.pimContribution.categories')}
+            title="Categories"
+            headerActions={
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Button variant={categoryMetric === 'value' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setCategoryMetric('value')}>
+                  By Value
+                </Button>
+                <Button variant={categoryMetric === 'volume' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setCategoryMetric('volume')}>
+                  By Volume ({unit || 'unit'})
+                </Button>
+              </div>
+            }
+          >
+            <div data-testid="pim-categories-donut">
+              {categorySegments.length ? (
+                <DonutChart
+                  title="Categories"
+                  showTitle={false}
+                  segments={categorySegments}
+                  valueFormatter={categoryFmt}
+                  legendTitle={`Top ${Math.min(8, categorySegments.length)} categories · ${categoryMetric === 'value' ? 'value (LYD)' : `volume (${unit || 'unit'})`}`}
+                  labelDirection="ltr"
+                />
+              ) : (
+                <p style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>No sales in the period.</p>
+              )}
+            </div>
+          </ChartPanel>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '11fr 9fr', gap: 'var(--ps-space-3, 16px)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
             <ChartPanel {...vh("product.pimContribution.hierarchy")}
               style={{ minWidth: 0 }}
               title="Product Hierarchy Contribution"
@@ -485,7 +397,7 @@ export default function PimContributionPage() {
               {isLeaf ? (
                 leafRow ? (
                   <div style={{ padding: '8px 4px' }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 4 }}>{leafRow.ProductName}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 4 }}><ProductName name={leafRow.ProductName} truncate={false} /></div>
                     <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>SKU {leafRow.SKU ?? '—'} · {leafRow.Company}</div>
                   </div>
                 ) : (
@@ -497,6 +409,7 @@ export default function PimContributionPage() {
                   segments={segments}
                   valueFormatter={metricFmt}
                   legendTitle={`By ${currentLevel?.label}`}
+                  labelDirection="ltr"
                   onSegmentClick={(id) => !id.startsWith('Other (') && setDrillPath([...resolved.path, id])}
                 />
               )}
@@ -528,13 +441,6 @@ export default function PimContributionPage() {
             </ChartPanel>
           </div>
 
-            <PerformanceReportTable {...vh("product.pimContribution.details")}
-              title="Performance Details"
-              rows={performanceRows}
-              showStatus
-              showTakeaway
-              onExportPdf={handleExportPerformanceTablePdf}
-            />
           </>
           )}
         </main>
@@ -568,7 +474,7 @@ function HierarchyBreadcrumb({
   onJump: (depth: number) => void;
 }) {
   return (
-    <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+    <div dir="ltr" style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       {path.length === 0 ? (
         <span>All Companies</span>
       ) : (
@@ -582,10 +488,10 @@ function HierarchyBreadcrumb({
           <React.Fragment key={i}>
             <span>›</span>
             {isCurrent ? (
-              <span style={{ color: 'var(--ps-color-text)', fontWeight: 600 }}>{val}</span>
+              <span dir="ltr" style={{ color: 'var(--ps-color-text)', fontWeight: 600, unicodeBidi: 'isolate' }}>{val}</span>
             ) : (
               <button type="button" onClick={() => onJump(i + 1)} style={crumbLinkStyle}>
-                {val}
+                <span dir="ltr" style={{ unicodeBidi: 'isolate' }}>{val}</span>
               </button>
             )}
           </React.Fragment>
@@ -594,7 +500,7 @@ function HierarchyBreadcrumb({
       {isLeaf && leafLabel && (
         <>
           <span>›</span>
-          <span style={{ color: 'var(--ps-color-text)', fontWeight: 600 }}>{leafLabel}</span>
+          <span dir="ltr" style={{ color: 'var(--ps-color-text)', fontWeight: 600, unicodeBidi: 'isolate' }}>{leafLabel}</span>
         </>
       )}
     </div>
@@ -617,23 +523,11 @@ function LeafStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Section 2: named partner-brand tracking (Ape Grupo, VitrA, Onyx, Mayor, QUA, RAK CERAMICS,
- * Porcelanosa, FILA), as one consolidated Card per found brand (canonical requested name +
- * company-split badges in the header -- no "stored as" annotation, that's a data-matching detail
- * with no business surfacing a second, non-canonical name string in this UI -- Revenue YTD as the
- * large primary stat, the other 4 metrics as a compact secondary grid) instead of a header
- * followed by 5 separate KpiTiles -- sorted by Revenue YTD descending so all 8 brands' primary
- * metric is scannable at a glance.
- *
- * Clicking a card navigates to that brand's own drill-down ROUTE (`onSelectBrand`, wired to
- * `router.push` in the parent page) rather than expanding inline -- the drilled-in product list is
- * a genuinely separate view (its own full page, no KPI cards/donut/ASP content behind it), same
- * "summary page + a real drill-down/detail route" split Tachometer already established (see
- * tachometer/[metric]/page.tsx and this brand's own pim-contribution/brand/[brand]/page.tsx), not
- * an inline expand/collapse block sharing the same continuously-scrolling page as the rest of PIM
- * Contribution. Brands with no real match in the product data (see PARTNER_BRANDS' header comment
- * in shared.ts) still get a visible line instead of silently vanishing, since whoever compiled
- * this list has a real reason to expect all 8 to be tracked. */
+/** Section 2: the partner brands (PARTNER_BRANDS in lib/materialsAnalogy/shared.ts: Ape Grupo, VitrA, Onyx, Mayor,
+ * QUA, FILA, TAU). The Brand is the product's main vendor in Odoo, matched case-insensitively on the brand's Odoo
+ * names. One card per brand, sorted by revenue; a brand with no product in Odoo yet gets a "not currently assigned in
+ * Odoo" card, so it appears with figures as soon as it is filled in Odoo. Clicking a card opens the brand's own page
+ * (pim-contribution/brand/[brand]). */
 function BrandPerformanceSection({
   found,
   notFound,
@@ -652,16 +546,12 @@ function BrandPerformanceSection({
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
         {found.map((b) => (
-          <BrandCard key={b.matched} b={b} onClick={() => onSelectBrand(b)} />
+          <BrandCard key={b.requested} b={b} onClick={() => onSelectBrand(b)} />
+        ))}
+        {notFound.map((b) => (
+          <UnassignedBrandCard key={b.requested} b={b} />
         ))}
       </div>
-
-      {notFound.length > 0 && (
-        <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 20, paddingTop: 12, borderTop: '1px solid var(--ps-color-border)' }}>
-          Not currently stocked (no matching Brand found in the product data, checked case-insensitively with fuzzy spelling matching):{' '}
-          <strong style={{ color: 'var(--ps-color-text)' }}>{notFound.map((b) => b.requested).join(', ')}</strong>
-        </div>
-      )}
     </div>
   );
 }
@@ -727,6 +617,19 @@ function BrandCard({ b, onClick }: { b: FoundBrandStats; onClick: () => void }) 
           <SecondaryStat label="SKUs in catalog" value={String(b.skuCount)} />
           <SecondaryStat label="SKUs sold in period" value={String(b.skuSold)} />
         </div>
+      </div>
+    </Card>
+  );
+}
+
+/** A partner brand no product carries in Odoo yet (no product whose main vendor is one of its Odoo names). */
+function UnassignedBrandCard({ b }: { b: PartnerBrand }) {
+  return (
+    <Card data-testid="brand-unassigned" style={{ opacity: 0.8 }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 12 }}>{b.requested}</div>
+      <div style={{ borderTop: '1px solid var(--ps-color-border)', paddingTop: 12, fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
+        Not currently assigned in Odoo
+        <div style={{ fontSize: 11, marginTop: 6 }}>Shows here as soon as a product has {b.odooNames[0]} as its main vendor in Odoo.</div>
       </div>
     </Card>
   );

@@ -337,8 +337,8 @@ export const VISUAL_HELP = {
 
   // ================================================ PRODUCT =========================================================
   'product.bcgMatrix.matrix': {
-    help: { definition: 'Products by BCG class: volume against gross profit, calendar YTD.', notes: 'Paper bags and raw materials are excluded; products without a standard cost are "Unclassified (no cost)".' },
-    interactions: ['Click a class to filter the product list by it'],
+    help: { definition: 'Products by BCG class: volume against gross profit, calendar YTD. One product = one Odoo product in one company (Majaal or Tika).', notes: 'Paper bags and raw materials are excluded; products without a standard cost are "Unclassified (no cost)".' },
+    interactions: ['Hover a product for its company, class and figures', 'Export each class, or the whole matrix, to CSV or PDF'],
   },
   'product.bcgMatrix.movement': {
     help: { definition: 'How products moved between BCG classes vs the same period last year: New, Stable, Improved, Declined or Discontinued (sold last year, not this year).', },
@@ -347,7 +347,6 @@ export const VISUAL_HELP = {
     help: { definition: 'Each product with its revenue and volume YTD, volume growth vs LYTD, GP% and BCG class.', },
     interactions: GRID,
   },
-  'product.bcgMatrix.details': PERF_DETAILS('portfolio value, volume and class counts'),
   'product.stockVelocity.movers': {
     help: {
       definition: 'Products sold in the period, split at the median velocity into fast and slow movers. Bars show LYD because units differ between products.',
@@ -358,30 +357,42 @@ export const VISUAL_HELP = {
     help: { definition: 'LYD tied up in overstocked or non-moving stock (at Odoo stock valuation), by BCG class.', },
     interactions: ['Click a class to list its products, highest value first'],
   },
+  'product.stockVelocity.frequency': {
+    help: {
+      definition: 'How often each product sells: the number of different days in the period with at least one order line of the product, turned into an average gap between selling days. Products that sold in the period only.',
+      formula: ['Average gap = days in the period ÷ selling days', 'Daily: gap ≤ 2 days · Weekly: ≤ 7 days · Monthly: ≤ 31 days · Rarer: more than 31 days (e.g. one sale in a quarter)'],
+      notes: 'Revenue = the sales value (LYD) of the products in the period.',
+    },
+    interactions: ['Click a bucket to list its products', 'Sort, search and export the list to CSV or PDF'],
+  },
   'product.stockVelocity.stockOutRisk': {
     help: { definition: 'Above-median sellers whose stock may run out soon, by BCG class.', },
     interactions: ['Click a class to list its products, most urgent first'],
   },
-  'product.stockVelocity.details': PERF_DETAILS('velocity, days of inventory and stock bands'),
   'product.pimContribution.hierarchy': {
     help: { definition: 'Sales value (LYD) of the period by category, then range / family, then product.', },
     interactions: ['Click a slice to go one level down'],
   },
+  'product.pimContribution.categories': {
+    help: { definition: 'Share of each product category (Odoo category, full path) in the period: sales value (LYD) or volume in the selected unit. The 8 largest are shown; the rest are grouped as Other.' },
+    interactions: ['Switch By Value / By Volume'],
+  },
+  'product.pimContribution.brandProducts': {
+    help: { definition: 'Every product of the brand (its main vendor in Odoo) with its company, category, and the volume, revenue, GP%, ASP and last sale date of the period.' },
+    interactions: ['Sort by any column', 'Search by product name', 'Export the list as shown to CSV or PDF'],
+  },
   'product.pimContribution.asp': {
     help: { definition: 'Average selling price of the period at the level you are on, in the selected unit.', },
   },
-  'product.pimContribution.details': PERF_DETAILS('category value, volume and ASP'),
   'product.pimContribution.brands': {
     help: { definition: 'Each brand\'s sales value and volume in the period, and how much of its catalog sold.' },
     interactions: ['Click a brand to open its Brand Performance page'],
   },
-  'product.pimContribution.brandDetails': PERF_DETAILS('the brand\'s value, volume and SKUs'),
   'product.productLifecycle.pareto': {
     help: {
       definition: 'Sales value (LYD) by lifecycle segment with the cumulative share.',
     },
   },
-  'product.productLifecycle.details': PERF_DETAILS('lifecycle segments'),
 
   // ================================================ PRICE ===========================================================
   'price.receivables.trend': {

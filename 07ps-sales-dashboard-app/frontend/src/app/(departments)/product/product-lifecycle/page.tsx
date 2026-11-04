@@ -22,14 +22,8 @@ import {
   DataTable,
   LoadingSkeleton,
   ErrorState,
-  exportRowsAsPdf,
-  PerformanceReportTable,
-  exportPerformanceTablePdf,
-  SEMANTIC_STATUS_LABEL,
   type SelectOption,
   type Column,
-  type PerformanceReportRow,
-  type PerformanceTablePdfColumn,
 } from '@07ps/ui';
 import {
   toProductFacts,
@@ -45,6 +39,7 @@ import {
   type CompanyFilter,
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
+import { ExportButtons, ProductName, exportProductCsv, exportProductPdf, type ExportColumn } from '../../../../components/product/ProductUi';
 
 const SEGMENTS = LIFECYCLE_SEGMENTS;
 type SortKey = 'value' | 'firstSaleSort' | 'daysSinceLastSaleSort' | 'growthSort';
@@ -62,89 +57,20 @@ interface TableRow extends ProductFact, Record<string, unknown> {
   growthSort: number;
 }
 
-// Mirrors the on-screen PerformanceReportTable's default layout (Trend sparkline omitted -- it has
-// no text form), same shared exportPerformanceTablePdf used by the Promotion pages.
-function pctLabel(v: number | null): string {
-  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
-}
-const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
-  { header: 'Metric Name', getValue: (row) => row.metric },
-  { header: 'Actual', getValue: (row) => row.actualLabel },
-  { header: 'Target', getValue: (row) => row.targetLabel },
-  { header: 'Variance%', getValue: (row) => pctLabel(row.variancePct) },
-  { header: 'Variance LY', getValue: (row) => pctLabel(row.varianceLyPct) },
-  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
-  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
+/** Product Detail export: the table's columns, CSV raw numbers, PDF formatted text. */
+const EXPORT_COLUMNS: ExportColumn<TableRow>[] = [
+  { header: 'Product Name', value: (r) => r.ProductName },
+  { header: 'Company', value: (r) => r.Company },
+  { header: 'Odoo ID', value: (r) => r.ProductKey },
+  { header: 'Category', value: (r) => r.Category },
+  { header: 'Lifecycle', value: (r) => r.lifecycle },
+  { header: 'First Sale', value: (r) => r.firstSaleDate, text: (r) => fmtDate(r.firstSaleDate) },
+  { header: 'Days Since Last Sale', align: 'right', value: (r) => r.daysSinceLastSale, text: (r) => (r.daysSinceLastSale === null ? 'never sold' : String(r.daysSinceLastSale)) },
+  { header: 'Value (period, LYD)', align: 'right', value: (r) => r.value, text: (r) => fmtLYD(r.value) },
+  { header: 'Volume (period)', align: 'right', value: (r) => r.volume, text: (r) => fmtVolume(r) },
+  { header: 'Unit', value: (r) => r.uom },
+  { header: 'vs same period LY %', align: 'right', value: (r) => r.growth, text: (r) => fmtPct(r.growth) },
 ];
-
-// ---------------------------------------------------------------------------
-// Executive Summary -- Mature/Discontinued/Freshness KPI tiles have no prior-period comparison in
-// this page's data model (point-in-time portfolio counts), so they stay 'neutral', except
-// Discontinued which reuses the same 'alert' status its own KpiTile above already uses. The top
-// lifecycle-segment rows reuse each segment's own real Value YTD vs Value LYTD for a simple
-// green/red read.
-// ---------------------------------------------------------------------------
-
-function toExecutiveSummaryRows(
-  matureCount: number,
-  filteredCount: number,
-  discCount: number,
-  discValueAtRiskLytd: number,
-  freshPct: number,
-  newCount: number,
-  segEntries: [string, { value: number; valueLY: number; n: number }][],
-): PerformanceReportRow[] {
-  const rows: PerformanceReportRow[] = [
-    {
-      id: 'matureSkus',
-      metric: 'Mature SKUs',
-      actualLabel: String(matureCount),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: `${matureCount} SKUs (${filteredCount ? ((matureCount / filteredCount) * 100).toFixed(1) : '0'}% of the filtered portfolio) are Mature.`,
-    },
-    {
-      id: 'discontinued',
-      metric: 'Discontinued',
-      actualLabel: String(discCount),
-      actualFullValue: fmtLYD(discValueAtRiskLytd),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'alert',
-      takeaway: `${discCount} SKUs are discontinued (archived in Odoo or no sale in 365 days; never-sold products are counted separately); they sold ${fmtLYD(discValueAtRiskLytd)} in the same period last year.`,
-    },
-    {
-      id: 'freshness',
-      metric: 'Portfolio Freshness',
-      actualLabel: `${freshPct.toFixed(1)}%`,
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: null,
-      status: 'neutral',
-      takeaway: `${freshPct.toFixed(1)}% of the portfolio (${newCount} SKUs) had its first sale in the last 180 days.`,
-    },
-  ];
-
-  const topSegments = segEntries.slice(0, 3);
-  for (const [label, o] of topSegments) {
-    const varianceLy = o.valueLY > 0 ? (o.value - o.valueLY) / o.valueLY : null;
-    rows.push({
-      id: `segment-${label}`,
-      metric: `${label} Segment Value (period)`,
-      actualLabel: fmtLYD(o.value),
-      targetLabel: '—',
-      variancePct: null,
-      varianceLyPct: varianceLy,
-      status: varianceLy == null ? 'neutral' : varianceLy < 0 ? 'alert' : 'success',
-      takeaway: `${label} segment is ${fmtLYD(o.value)} in the period across ${o.n} SKUs${varianceLy != null ? ` (${fmtPct(varianceLy * 100)} vs same period last year)` : ''}.`,
-    });
-  }
-
-  return rows;
-}
 
 export default function ProductLifecyclePage() {
   const { user, token, error: authError, retryAuth, logout } = useAuth();
@@ -153,8 +79,7 @@ export default function ProductLifecyclePage() {
   const refresh = useRefreshStatus(token, authError, retryAuth);
 
   const [company, setCompany] = useState<CompanyFilter>('All');
-  // Company view vs BMH view comes from the API: with no company, a product both companies sell is one
-  // combined row (value/volume = Majaal + Tika, ratios recomputed); with a company, only its part.
+  // Company view (one company) or all companies side by side; a product is always one Odoo product in one company.
   const overview = useProductDashboard(token, authError, retryAuth, 'product-lifecycle', { fromDate: dateFromDate, toDate: dateToDate, company });
   const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const [category, setCategory] = useState<string[]>([]);
@@ -224,7 +149,7 @@ export default function ProductLifecyclePage() {
   const visibleRows = sorted.slice(0, limit);
 
   const columns: Column<TableRow>[] = [
-    { key: 'ProductName', header: 'Product Name' },
+    { key: 'ProductName', header: 'Product Name', render: (row) => <ProductName name={row.ProductName} style={{ maxWidth: 360 }} /> },
     { key: 'Company', header: 'Company' },
     { key: 'Category', header: 'Category', render: (row) => row.Category ?? '—' },
     {
@@ -249,44 +174,8 @@ export default function ProductLifecyclePage() {
     },
   ];
 
-  const handleExportPdf = () =>
-    exportRowsAsPdf({
-      title: 'Product Lifecycle — Product Detail',
-      subtitle: `${company} · sorted by ${SORT_OPTIONS.find((o) => o.value === sortKey)?.label}`,
-      columns: [
-        { header: 'Product' },
-        { header: 'Company' },
-        { header: 'Lifecycle' },
-        { header: 'First Sale' },
-        { header: 'Days Since Last Sale', align: 'right' },
-        { header: 'Value (period)', align: 'right' },
-        { header: 'vs same period LY', align: 'right' },
-      ],
-      rows: sorted.map((r) => [
-        r.ProductName,
-        r.Company,
-        r.lifecycle,
-        fmtDate(r.firstSaleDate),
-        r.daysSinceLastSale === null ? 'never sold' : String(r.daysSinceLastSale),
-        fmtLYD(r.value),
-        fmtPct(r.growth),
-      ]),
-      fileName: 'product-lifecycle-detail',
-    });
-
-  const performanceRows = toExecutiveSummaryRows(matureRows.length, filtered.length, discRows.length, sum(discRows, (r) => r.valuePrior), freshPct, newRows.length, segEntries);
-  async function handleExportPerformanceTablePdf() {
-    try {
-      await exportPerformanceTablePdf({
-        title: 'Performance Details',
-        rows: performanceRows,
-        columns: PERFORMANCE_PDF_COLUMNS,
-        fileName: 'product-lifecycle-performance-details',
-      });
-    } catch (err) {
-      console.error('PDF export failed:', err);
-    }
-  }
+  const exportTitle = 'Product Lifecycle — Product Detail';
+  const exportSubtitle = `${company === 'All' ? 'Majaal + Tika' : company} · sorted by ${SORT_OPTIONS.find((o) => o.value === sortKey)?.label}`;
 
   return (
     <PermissionGuard pageKey="product_lifecycle">
@@ -405,26 +294,11 @@ export default function ProductLifecyclePage() {
                 <Button variant="secondary" style={{ padding: '8px 12px', fontSize: 12.5 }} onClick={() => setSortDir((d) => (d === -1 ? 1 : -1))}>
                   {sortDir === -1 ? 'Desc' : 'Asc'}
                 </Button>
-                <button
-                  type="button"
-                  onClick={handleExportPdf}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: 'var(--ps-color-muted-text)',
-                    background: 'var(--ps-color-muted-bg)',
-                    border: '1px solid var(--ps-color-border)',
-                    borderRadius: 6,
-                    padding: '4px 10px',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Export as PDF
-                </button>
+                <ExportButtons
+                  label="the product list"
+                  onCsv={() => exportProductCsv('product-lifecycle-detail', EXPORT_COLUMNS, sorted)}
+                  onPdf={() => exportProductPdf({ title: exportTitle, subtitle: exportSubtitle, fileName: 'product-lifecycle-detail', columns: EXPORT_COLUMNS, rows: sorted })}
+                />
               </div>
             </div>
 
@@ -442,13 +316,6 @@ export default function ProductLifecyclePage() {
             </div>
           </Card>
 
-          <PerformanceReportTable {...vh("product.productLifecycle.details")}
-            title="Performance Details"
-            rows={performanceRows}
-            showStatus
-            showTakeaway
-            onExportPdf={handleExportPerformanceTablePdf}
-          />
           </>
           )}
         </main>

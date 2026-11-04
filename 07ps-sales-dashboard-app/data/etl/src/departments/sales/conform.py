@@ -495,10 +495,10 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
     product = product_rebuild(hybrid)
     out.product_gaps = product.get("QA_ProductOdooGaps")
     for name, table in (("Fact_ProductSalesDaily", "fact_sales_product_daily"), ("Dim_ProductDashboard", "dim_sales_product_dashboard"),
-                        ("Dim_ProductDashboardGroup", "dim_sales_product_group"), ("ProductDashboard_Meta", "etl_sales_product_dashboard_meta"),
+                        ("ProductDashboard_Meta", "etl_sales_product_dashboard_meta"),
                         ("Fact_BCGMatrix", "fact_sales_bcg_matrix")):
         df = product[name].copy()
-        if "Company" in df.columns and name != "Dim_ProductDashboardGroup":  # the product builders work per company display name
+        if "Company" in df.columns:  # the product builders work per company display name
             df["CompanyKey"] = df["Company"].map(maps.company_by_name)
         elif "CompanyKey" in df.columns:
             df["CompanyKey"] = df["CompanyKey"].map(lambda v: UNKNOWN if pd.isna(v) else {2: 3}.get(int(v), int(v)))

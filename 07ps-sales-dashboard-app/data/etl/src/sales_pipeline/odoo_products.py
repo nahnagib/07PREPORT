@@ -145,12 +145,6 @@ def product_company_keys(company: pd.Series, product_key: pd.Series) -> pd.Serie
     return (companies.map(names).astype(str) + "|" + product_key.astype(str)).astype("string")
 
 
-def template_group_key(template_id: Any, product_company: str) -> str:
-    """Cross-company (BMH) group of the Product pages: the Odoo template; a product without one stays on its own."""
-    tid = _int(template_id)
-    return f"T|{tid}" if tid is not pd.NA else str(product_company)
-
-
 def attach(sales: pd.DataFrame, products: pd.DataFrame, discount_product_ids: Iterable[int] = ()) -> pd.DataFrame:
     """Puts the Odoo product on every sales line by its Odoo product id. Never adds or drops a line. A line whose id is
     not in the catalog (or has none) keeps the product name the line itself carries from Odoo, ProductKey '-1' when it

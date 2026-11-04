@@ -8,17 +8,23 @@ import type { BcgMovement, LifecycleSegment, ProductCompanyPart, ProductDashboar
  * every threshold (BCG volume/profit, days-of-inventory bands, lifecycle rule) is applied by the ETL
  * from data/etl/config/product_dashboard.json and arrives precomputed.
  *
- * One product = one Odoo product (product.product id) in one company; `id` is that key ('Majaal|2163'), or the
- * Odoo template ('T|<product_tmpl_id>') in the BMH view. Every attribute is Odoo's value as stored, 'Unassigned'
- * where Odoo has none. Nothing is matched or grouped on a product name.
+ * One product = one Odoo product (product.product id) in ONE company; `id` is that key ('Majaal|2163'). Products are
+ * never combined across companies (2026-11-04). Every attribute is Odoo's value as stored, 'Unassigned' where Odoo
+ * has none. Nothing is matched or grouped on a product name. Athena is not on the Product pages (left out by the ETL
+ * and the API; PRODUCT_EXCLUDED_COMPANIES drops it from the page filters too). Every unit-type UoM (UNIT, Unit, وحدة)
+ * arrives as one "Unit"; other UoMs (bag, m, m², kg) keep their Odoo name.
  */
+
+/** Companies never shown on the Product pages (same list as the ETL / API). */
+export const PRODUCT_EXCLUDED_COMPANIES = ['Athena'];
+export const isProductPageCompany = (name: string | null | undefined) => !PRODUCT_EXCLUDED_COMPANIES.includes(String(name ?? ''));
 
 export type BcgClass = 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs';
 export const BCG_CLASSES: BcgClass[] = ['Stars', 'Cash Cows', 'Strategic', 'Dogs'];
 export const UNCLASSIFIED_NO_COST = 'Unclassified (no cost)';
 
 export interface ProductFact {
-  /** Company|Odoo product id (or the Odoo template in the BMH view) -- the product's identity. */
+  /** Company|Odoo product id -- the product's identity. */
   id: string;
   ProductKey: string | null;
   ProductName: string;
@@ -37,6 +43,8 @@ export interface ProductFact {
   volumeByUom: UomQty[];
   uom: string | null;
   velocity: number | null;
+  /** Distinct order dates in the period (how often the product sells). */
+  orderDays: number;
   valuePrior: number;
   avgUnitPrice: number | null;
   grossProfitPct: number | null;
@@ -64,7 +72,7 @@ export interface ProductFact {
   firstSaleDate: string | null;
   lastSaleDate: string | null;
   daysSinceLastSale: number | null;
-  /** Companies in the row (BMH view: both for a shared product) and the per-company split of `value`. */
+  /** Always [Company]; parts = the row's own period sales (one company). */
   Companies: string[];
   parts: ProductCompanyPart[];
 }
@@ -76,7 +84,7 @@ function daysBetween(fromIso: string | null, toIso: string | null): number | nul
 
 export function toProductFacts(data: ProductDashboardOverview | null | undefined): ProductFact[] {
   if (!data) return [];
-  return data.products.map((r: ProductDashboardRow) => ({
+  return data.products.filter((r) => isProductPageCompany(r.company)).map((r: ProductDashboardRow) => ({
     id: r.productCompanyKey,
     ProductKey: r.productKey,
     ProductName: r.productName,
@@ -94,6 +102,7 @@ export function toProductFacts(data: ProductDashboardOverview | null | undefined
     volumeByUom: r.volumeByUom,
     uom: r.uom,
     velocity: r.velocity,
+    orderDays: r.orderDays ?? 0,
     valuePrior: r.valuePrior,
     avgUnitPrice: r.avgUnitPrice,
     grossProfitPct: r.grossProfitPct,
@@ -265,8 +274,8 @@ export interface PimFilters {
   bcgClass: string;
 }
 
-/** The company itself is applied by the API (company view vs BMH view); `company` here only drops rows
- * of another company if a company-view response is mixed with an old BMH one. */
+/** The company itself is applied by the API (company view vs all companies); `company` here only drops rows of
+ * another company if a company-view response is mixed with an older one. */
 export function filterByPageFilters<T extends { Company: string; Companies?: string[]; Category: string | null; bcg_class_YTD: string | null }>(
   rows: T[],
   filters: PimFilters,
@@ -279,24 +288,30 @@ export function filterByPageFilters<T extends { Company: string; Companies?: str
   );
 }
 
-/** Partner brand tracking list (PIM Contribution). `matched` = the Brand value as stored in Odoo (the main vendor's name),
- * or null when no such brand exists (rendered as "not currently stocked"). */
+/** Partner brand tracking list (PIM Contribution). The Brand is the product's main vendor in Odoo; a partner brand
+ * matches every product whose Brand equals one of `odooNames` (case-insensitive). A brand with no product in Odoo
+ * yet still gets a card ("not currently assigned in Odoo"), so it shows up as soon as it is filled in Odoo. */
 export interface PartnerBrand {
   requested: string;
-  matched: string | null;
+  /** Names the brand may carry in Odoo (vendor name), compared case-insensitively. */
+  odooNames: string[];
 }
 
-// matched = the Odoo vendor name exactly as Odoo stores it (the Brand is the product's main vendor, 2026-11-04)
 export const PARTNER_BRANDS: PartnerBrand[] = [
-  { requested: 'Ape Grupo', matched: 'APE Group' },
-  { requested: 'VitrA', matched: 'Vitra' },
-  { requested: 'Onyx', matched: 'Onix' },
-  { requested: 'Mayor', matched: 'Ceramica Mayor' },
-  { requested: 'QUA', matched: 'QUA' },
-  { requested: 'RAK CERAMICS', matched: null },
-  { requested: 'Porcelanosa', matched: null },
-  { requested: 'FILA', matched: 'FILA SOLUTIONS' },
+  { requested: 'Ape Grupo', odooNames: ['APE Group', 'Ape Grupo', 'APE'] },
+  { requested: 'VitrA', odooNames: ['Vitra'] },
+  { requested: 'Onyx', odooNames: ['Onix', 'Onyx'] },
+  { requested: 'Mayor', odooNames: ['Ceramica Mayor', 'Mayor'] },
+  { requested: 'QUA', odooNames: ['QUA'] },
+  { requested: 'FILA', odooNames: ['FILA SOLUTIONS', 'FILA'] },
+  { requested: 'TAU', odooNames: ['TAU ceramica', 'TAU'] },
 ];
+
+/** True when the product's Brand is one of the partner brand's Odoo names (case-insensitive). */
+export function isBrandOf(brand: PartnerBrand, r: { Brand: string | null }): boolean {
+  const b = (r.Brand ?? '').trim().toUpperCase();
+  return b !== '' && brand.odooNames.some((n) => n.toUpperCase() === b);
+}
 
 export function slugifyBrand(name: string): string {
   return name
@@ -317,7 +332,6 @@ export interface BrandCompanySplit {
 }
 
 export interface FoundBrandStats extends PartnerBrand {
-  matched: string;
   revenue: number;
   revenuePrior: number;
   deltaPct: number | null;
@@ -331,23 +345,19 @@ export interface FoundBrandStats extends PartnerBrand {
 /** Brand stats for the selected period (value, prior-year same period, volume per UoM, revenue-weighted
  * GP%). SKU Count = catalog rows of the brand; SKUs Sold = those with sales in the period. */
 export function computeBrandStats(rows: ProductFact[]): { found: FoundBrandStats[]; notFound: PartnerBrand[] } {
-  const found = PARTNER_BRANDS.filter((b): b is PartnerBrand & { matched: string } => b.matched !== null)
-    .map((b) => {
-      const brandRows = rows.filter((r) => (r.Brand ?? '').toUpperCase() === b.matched.toUpperCase());
+  const withRows = PARTNER_BRANDS.map((b) => ({ b, brandRows: rows.filter((r) => isBrandOf(b, r)) }));
+  const found = withRows
+    .filter(({ brandRows }) => brandRows.length > 0)
+    .map(({ b, brandRows }) => {
       const revenue = sum(brandRows, (r) => r.value);
       const revenuePrior = sum(brandRows, (r) => r.valuePrior);
       const costed = brandRows.filter((r) => r.grossProfitPct !== null && r.value > 0);
       const costedValue = sum(costed, (r) => r.value);
-      // Split by company from each row's per-company parts, so a product both companies sell (one BMH row)
-      // still counts toward each company exactly.
+      // One company per product row: the split is the rows' own company.
       const companyRevenue = new Map<string, number>();
-      brandRows.forEach((r) => {
-        const parts = r.parts.length ? r.parts : [{ company: r.Company, value: r.value }];
-        parts.forEach((pt) => companyRevenue.set(pt.company, (companyRevenue.get(pt.company) ?? 0) + pt.value));
-      });
+      brandRows.forEach((r) => companyRevenue.set(r.Company, (companyRevenue.get(r.Company) ?? 0) + r.value));
       return {
         ...b,
-        matched: b.matched,
         revenue,
         revenuePrior,
         deltaPct: revenuePrior > 0 ? ((revenue - revenuePrior) / revenuePrior) * 100 : null,
@@ -361,5 +371,36 @@ export function computeBrandStats(rows: ProductFact[]): { found: FoundBrandStats
       };
     })
     .sort((a, c) => c.revenue - a.revenue);
-  return { found, notFound: PARTNER_BRANDS.filter((b) => b.matched === null) };
+  return { found, notFound: withRows.filter(({ brandRows }) => brandRows.length === 0).map(({ b }) => b) };
+}
+
+// ---- Sales Frequency (Stock Velocity): how often a product sells in the period ----
+export const FREQUENCY_BUCKETS = ['Daily', 'Weekly', 'Monthly', 'Rarer'] as const;
+export type FrequencyBucket = (typeof FREQUENCY_BUCKETS)[number];
+export const FREQUENCY_BUCKET_LABEL: Record<FrequencyBucket, string> = {
+  Daily: 'Daily (every ≤ 2 days)',
+  Weekly: 'Weekly (every 3–7 days)',
+  Monthly: 'Monthly (every 8–31 days)',
+  Rarer: 'Rarer (> 31 days apart)',
+};
+export const FREQUENCY_COLOR: Record<FrequencyBucket, string> = {
+  Daily: 'var(--ps-color-success)',
+  Weekly: 'var(--ps-color-accent)',
+  Monthly: 'var(--ps-color-gold)',
+  Rarer: 'var(--ps-color-alert)',
+};
+
+/** Average days between selling days = days in the period ÷ distinct order days; null when it did not sell. */
+export function averageSaleGap(orderDays: number, periodDays: number): number | null {
+  return orderDays > 0 && periodDays > 0 ? periodDays / orderDays : null;
+}
+
+/** Daily: gap ≤ 2 days · Weekly: ≤ 7 · Monthly: ≤ 31 · Rarer: more (null = did not sell in the period). */
+export function frequencyBucket(orderDays: number, periodDays: number): FrequencyBucket | null {
+  const gap = averageSaleGap(orderDays, periodDays);
+  if (gap === null) return null;
+  if (gap <= 2) return 'Daily';
+  if (gap <= 7) return 'Weekly';
+  if (gap <= 31) return 'Monthly';
+  return 'Rarer';
 }
