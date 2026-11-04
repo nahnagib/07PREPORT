@@ -384,6 +384,7 @@ export default function StockVelocityPage() {
 
               <ChartPanel {...vh('product.stockVelocity.frequency')}
                 title="Sales Frequency"
+                wrapHeader
                 headerActions={
                   frequencyDrill ? null : (
                     <ExportButtons
@@ -450,6 +451,7 @@ export default function StockVelocityPage() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
                 <ChartPanel {...vh("product.stockVelocity.overstock")}
                   title="Overstock Products"
+                  wrapHeader
                   headerActions={
                     <ExportButtons
                       label="overstock products"
@@ -479,6 +481,7 @@ export default function StockVelocityPage() {
                       bars={[{ key: 'tiedUp', name: 'LYD tied up', color: 'var(--ps-color-accent)' }]}
                       colorForPoint={(p) => bucketColor(p.label as ClassBucket)}
                       valueFormatter={(v) => fmtLYD(v)}
+                      yAxisWidth={150}
                       onCategoryClick={(label) => {
                         setOverstockDrill(label as ClassBucket);
                         setOverstockLimit(DRILL_PAGE_SIZE);
@@ -489,6 +492,7 @@ export default function StockVelocityPage() {
 
                 <ChartPanel {...vh("product.stockVelocity.stockOutRisk")}
                   title="Stock-Out Risk"
+                  wrapHeader
                   headerActions={
                     <ExportButtons
                       label="stock-out risk products"
@@ -518,6 +522,7 @@ export default function StockVelocityPage() {
                       bars={[{ key: 'valueAtRisk', name: 'Value sold (period)', color: 'var(--ps-color-alert)' }]}
                       colorForPoint={(p) => bucketColor(p.label as ClassBucket)}
                       valueFormatter={(v) => fmtLYD(v)}
+                      yAxisWidth={150}
                       onCategoryClick={(label) => {
                         setRiskDrill(label as ClassBucket);
                         setRiskLimit(DRILL_PAGE_SIZE);

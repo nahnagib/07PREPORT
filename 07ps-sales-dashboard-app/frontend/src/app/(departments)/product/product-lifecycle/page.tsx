@@ -151,7 +151,7 @@ export default function ProductLifecyclePage() {
   const columns: Column<TableRow>[] = [
     { key: 'ProductName', header: 'Product Name', render: (row) => <ProductName name={row.ProductName} style={{ maxWidth: 360 }} /> },
     { key: 'Company', header: 'Company' },
-    { key: 'Category', header: 'Category', render: (row) => row.Category ?? '—' },
+    { key: 'Category', header: 'Category', render: (row) => <ProductName name={row.Category ?? '—'} style={{ maxWidth: 320 }} /> },
     {
       key: 'lifecycle',
       header: 'Lifecycle',

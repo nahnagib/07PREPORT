@@ -351,6 +351,7 @@ export default function PimContributionPage() {
 
           <ChartPanel {...vh('product.pimContribution.categories')}
             title="Categories"
+            wrapHeader
             headerActions={
               <div style={{ display: 'flex', gap: 6 }}>
                 <Button variant={categoryMetric === 'value' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setCategoryMetric('value')}>
@@ -382,6 +383,7 @@ export default function PimContributionPage() {
             <ChartPanel {...vh("product.pimContribution.hierarchy")}
               style={{ minWidth: 0 }}
               title="Product Hierarchy Contribution"
+              wrapHeader
               headerActions={
                 <div style={{ display: 'flex', gap: 6 }}>
                   <Button variant={metric === 'value' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setMetric('value')}>

@@ -306,7 +306,7 @@ export default function BcgMatrixPage() {
     // reachable via this column's own per-column filter instead (DataGrid supports this on every
     // column already, same as BCG Class/Movement below), so slicing by Category isn't silently
     // lost, just relocated to where the other per-product breakdowns already live.
-    { key: 'Category', header: 'Category', render: (row) => row.Category ?? '—' },
+    { key: 'Category', header: 'Category', render: (row) => <ProductName name={row.Category ?? '—'} />, rawValue: (row) => row.Category ?? '' },
     {
       key: 'bcg_class_YTD',
       header: 'BCG Class',
@@ -478,7 +478,7 @@ export default function BcgMatrixPage() {
             ) : overview.error ? (
               <ErrorState message={overview.error} onRetry={overview.retry} />
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
+              <div data-layout="2x2 on a wide screen, one column on a phone" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(max(min(100%, 420px), calc((100% - 16px) / 2)), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
                 {classStats.map((s) => (
                   <MatrixCell key={s.key} classKey={s.key} icon={s.icon} rows={s.listRows} allSorted={s.allSorted} moreCount={s.moreCount} tooltipContent={rowTooltipContent} />
                 ))}
