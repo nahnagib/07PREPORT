@@ -275,13 +275,19 @@ class FakeNpsSource:
 
     def read_table_incremental(self, table, columns, **kw):
         self.queries.append(table)
-        return [{c: r.get(c) for c in columns} for r in self.tables[table]]
+        rows = self.tables[table]
+        unknown = [c for c in columns if rows and table in ("nps_rating_full_data", "low_rating_data") and all(c not in r for r in rows)]
+        if unknown:  # as MySQL: a column the table does not have fails the read
+            raise ms.MySqlSourceError(f"(1054, \"Unknown column '{unknown[0]}' in 'field list'\")")
+        return [{c: r.get(c) for c in columns} for r in rows]
 
     def read_query(self, sql, params=None):
         ms.check_read_only(sql)
         self.queries.append(sql)
         if "information_schema.TABLES" in sql:
             return [{"n": int(wa.SOURCE_TABLE in self.tables)}]
+        if "information_schema.COLUMNS" in sql:  # the columns the fake rows carry
+            return [{"COLUMN_NAME": c} for c in dict.fromkeys(k for r in self.tables[params["t"]] for k in r)]
         return list(self.sync)
 
 
@@ -375,6 +381,32 @@ def test_an_empty_sync_state_warns(npsjob):
     dq = _df(engine, "SELECT check_name, status, message FROM etl_dq_result").set_index("check_name")
     assert dq.loc["warn:nps_sync_state_stale", "status"] == "warn" and "sync_state is empty" in dq.loc["warn:nps_sync_state_stale", "message"]
     assert set(source["fake"].queries) >= {"nps_rating_full_data", "low_rating_data"}
+
+
+def test_optional_low_rating_columns_dropped_by_the_source_warn_and_keep_stored_values(npsjob, monkeypatch):
+    # 2026-11-06: the developer dropped recipient_email, email_notification, notification_date from low_rating_data
+    engine, run, source = npsjob
+    run()
+    warnings = []
+    monkeypatch.setattr(nps_jobs, "notify", lambda level, msg, **kw: warnings.append((level, msg)))
+    dropped = [{k: v for k, v in r.items() if k not in nps_jobs.LOW_OPTIONAL} for r in SOURCE_LOW]
+    new = dict(_src_row(6, BELOW, code="WH/OUT/3"), team_branch="B2C")
+    source["fake"] = FakeNpsSource([*SOURCE_FULL, _src_row(6, BELOW, code="WH/OUT/3")], [*dropped, new], SYNC)
+    run()
+    log = _df(engine, "SELECT status FROM etl_run_log WHERE job_name = 'process_nps'")
+    assert log.status.tolist() == ["success", "success"]
+    raw = _df(engine, "SELECT id, team_branch, recipient_email FROM raw_nps_low_rating ORDER BY id")
+    assert raw.values.tolist() == [[3, "B2B", "a@b.ly"], [5, "B2B", "a@b.ly"], [6, "B2C", None]]  # stored kept, new NULL
+    assert [lvl for lvl, msg in warnings if "nps_source_column_missing" in msg and "recipient_email" in msg] == ["WARNING"]
+    assert 6 in _df(engine, "SELECT response_id FROM fact_process_nps_response").response_id.tolist()
+
+
+def test_a_required_low_rating_column_missing_still_fails(npsjob):
+    engine, run, source = npsjob
+    source["fake"] = FakeNpsSource(SOURCE_FULL, [{k: v for k, v in r.items() if k != "team_branch"} for r in SOURCE_LOW], SYNC)
+    with pytest.raises(Exception, match="Unknown column 'team_branch'"):
+        run()
+    assert _df(engine, "SELECT COUNT(*) AS n FROM raw_nps_low_rating").n.iloc[0] == 0  # nothing written
 
 
 def test_second_run_marks_rows_that_left_the_source_and_restores_them(npsjob):

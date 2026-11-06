@@ -13,7 +13,10 @@ Load (docs/nps-etl.md):
 1. extract_nps: both source tables are read COMPLETELY every run (the developer's script reloads them as a whole, so
    updated_at is no watermark; decision D7), paged by id, through a read-only session. One transaction: raw upsert by
    id, ids that left the source get _deleted_at (cleared if they come back), sync_state copied. An empty source while
-   the warehouse holds rows fails the run instead of marking everything deleted.
+   the warehouse holds rows fails the run instead of marking everything deleted. The columns of LOW_OPTIONAL are read
+   only when the source still has them (the developer dropped all three on 2026-11-06): a missing one is left out of
+   the upsert (stored rows keep their value, new rows get NULL) and warn:nps_source_column_missing names it. Any other
+   missing column still fails the extract.
 2. load_nps: transform (departments/process/transform.py, rules in nps.py) of the raw rows that are not deleted, then
    one transaction: level dimension upsert, both facts replaced, quality checks on that transaction -- orphans, a
    duplicate response id or a level outside 1..3 FAIL (everything rolls back); stale source, key fallback rates,
@@ -66,6 +69,8 @@ COMMON = ["id", "create_date", "company_id", "company_name", "created_id", "crea
           "salesperson_name", "team_id", "team_name"]
 FULL_COLUMNS = [*COMMON, "updated_at"]
 LOW_COLUMNS = [*COMMON, "team_branch", "recipient_email", "email_notification", "notification_date", "updated_at"]
+# raw-layer only (nothing downstream reads them): read when the source has them, skipped when it does not
+LOW_OPTIONAL = ("recipient_email", "email_notification", "notification_date")
 ID_COLUMNS = ("company_id", "created_id", "partner_id", "salesperson_id", "team_id")  # FLOAT in the source
 # warnings
 STALE_DAYS = 3  # no new rating / feedback message for this many days -> the source probably stopped syncing
@@ -115,6 +120,15 @@ def raw_frame(records: list[dict[str, Any]], columns: list[str], table: str, ctx
     return df.astype(object).where(df.notna(), None)
 
 
+def source_columns(src, table: str, columns: list[str], optional: tuple[str, ...]) -> tuple[list[str], list[str]]:
+    """(columns to read, optional columns the source no longer has). A missing column outside ``optional`` is left in, so
+    the read fails naming it, as before."""
+    have = {str(r["COLUMN_NAME"]) for r in src.read_query(
+        "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t", {"t": table})}
+    missing = [c for c in columns if c in optional and c not in have]
+    return [c for c in columns if c not in missing], missing
+
+
 def mark_deleted(conn, table: str, present_ids: set[int], now: _dt.datetime) -> tuple[int, int]:
     """Stamps _deleted_at on the ids that are no longer in the source; clears it on ids that came back.
     Returns (newly deleted, restored)."""
@@ -139,7 +153,11 @@ def extract_nps(ctx: RunContext) -> TaskResult:
     settings = source_settings()
     with open_source(settings) as src:
         full = src.read_table_incremental(SOURCE_FULL, FULL_COLUMNS)
-        low = src.read_table_incremental(SOURCE_LOW, LOW_COLUMNS)
+        low_columns, low_missing = source_columns(src, SOURCE_LOW, LOW_COLUMNS, LOW_OPTIONAL)
+        if low_missing:
+            notify("WARNING", f"warn:nps_source_column_missing: {SOURCE_LOW} no longer has {', '.join(low_missing)}; "
+                   "read without them (raw only, stored rows keep their value)", job=ctx.job.name)
+        low = src.read_table_incremental(SOURCE_LOW, low_columns)
         sync = src.read_query("SELECT source, last_successful_sync FROM sync_state")
         reach = wa.ReachConfig.from_env()
         messages, reach_status = None, "disabled (NPS_REACH_ENABLED is not true)"
@@ -157,7 +175,7 @@ def extract_nps(ctx: RunContext) -> TaskResult:
                 ctx.logger.info("NPS reach %s; the ratings are not affected", reach_status)
     extracted_at = _now()
     full_df = raw_frame(full, FULL_COLUMNS, SOURCE_FULL, ctx, extracted_at)
-    low_df = raw_frame(low, LOW_COLUMNS, SOURCE_LOW, ctx, extracted_at)
+    low_df = raw_frame(low, low_columns, SOURCE_LOW, ctx, extracted_at)
     sync_df = pd.DataFrame(sync, columns=["source", "last_successful_sync"]).assign(_extracted_at=extracted_at, _run_id=ctx.run_uid)
     with ctx.engine.begin() as conn:
         held = int(conn.execute(text(f"SELECT COUNT(*) FROM {RAW_FULL} WHERE _deleted_at IS NULL")).scalar() or 0)
@@ -183,6 +201,7 @@ def extract_nps(ctx: RunContext) -> TaskResult:
     details = {"source_db": settings.db_name, "ssh": settings.ssh_enabled, "ssh_auth": settings.auth_method if settings.ssh_enabled else None,
                "rows": {SOURCE_FULL: len(full_df), SOURCE_LOW: len(low_df), "sync_state": len(sync_df)},
                "deleted_restored": {RAW_FULL: deleted_full, RAW_LOW: deleted_low},
+               "missing_optional_columns": {SOURCE_LOW: low_missing},
                "sync_state": {str(r["source"]): str(r["last_successful_sync"]) for r in sync},
                "reach": {"status": reach_status, "messages": None if messages is None else len(messages), "deleted_restored": deleted_msg}}
     ctx.logger.info("NPS extracted: %s", details)
