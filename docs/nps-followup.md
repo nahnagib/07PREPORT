@@ -107,8 +107,8 @@ A case whose old reason is not in the map stops 0067 before anything is moved (a
 
 ## 1. For the people who use it
 
-- **New detractors appear as cases after the nightly refresh at 02:00, so the next morning.** A rating that
-  arrives at 10:00 today becomes a case tomorrow morning.
+- **New detractors appear as cases within 30 minutes.** `process_nps` runs in the 30-minute refresh (and in the
+  02:00 full run), and every run creates the cases for new detractor ratings.
 - **Board:** one column per stage: New → Contacted → In progress → Resolved, or Rejected. The badge on each card is
   its status (Open, Close, Disputed).
   - The oldest case is at the top of each column.
