@@ -138,27 +138,62 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
   });
 });
 
+// the local data: 15 cases with a status (Open 13 = New 11 + In progress 2, Close 1, Disputed 1), 28 Historical
 const SUMMARY: NpsFollowupSummary = {
-  dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 14, rejected: 1, historical: 28, noCase: 0,
-  byStage: [{ key: 'resolved_48h', count: 1 }, { key: 'resolved_5d', count: 0 }, { key: 'resolved_late', count: 0 }, { key: 'pending', count: 13 }],
-  byStatus: [{ key: 'OPEN', count: 13 }, { key: 'CLOSE', count: 1 }, { key: 'DISPUTED', count: 1 }],
+  dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 15, rejected: 1, historical: 28, noCase: 0,
+  byStage: [{ key: 'resolved_48h', count: 1 }, { key: 'resolved_5d', count: 0 }, { key: 'resolved_late', count: 0 }, { key: 'pending', count: 13 },
+    { key: 'rejected', count: 1 }],
+  byStatus: [
+    { key: 'OPEN', count: 13, stages: [{ stage: 'NEW', count: 11 }, { stage: 'CONTACTED', count: 0 }, { stage: 'IN_PROGRESS', count: 2 }] },
+    { key: 'CLOSE', count: 1, stages: [{ stage: 'RESOLVED', count: 1 }] },
+    { key: 'DISPUTED', count: 1, stages: [{ stage: 'REJECTED', count: 1 }] },
+  ],
   byReason: [{ categoryKey: null, label: 'Not yet classified', labelAr: null, count: 12, subReasons: [] },
-    { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'التوصيل والخدمات اللوجستية', count: 2,
-      subReasons: [{ reasonId: 15, label: 'Late deliveries', labelAr: 'تأخر التوصيل', count: 1 }, { reasonId: 5, label: 'Not specified', labelAr: 'غير محدد', count: 1 }] }],
+    { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'التوصيل والخدمات اللوجستية', count: 3,
+      subReasons: [{ reasonId: 15, label: 'Late deliveries', labelAr: 'تأخر التوصيل', count: 2 }, { reasonId: 5, label: 'Not specified', labelAr: 'غير محدد', count: 1 }] }],
   now: '2026-10-20 12:00:00',
 };
 const fuState = (data: NpsFollowupSummary | null) => ({ data, loading: false, error: null, retry: () => undefined });
 
 describe('follow-up charts (live)', () => {
-  it('stage: the four buckets in their colours, the counts by status, Rejected / Historical counted under the chart', () => {
-    render(<FollowupCharts state={fuState(SUMMARY)} part="stage" />);
-    expect(screen.getByText('Detractors by stage')).toBeTruthy();
-    expect(screen.queryByText('Detractors by status')).toBeNull();
-    expect(screen.getByTestId('fu-stage-resolved_48h').textContent).toContain('Resolved < 48 h');
-    expect(screen.getByTestId('fu-stage-pending').textContent).toContain('13');
-    expect(screen.getByTestId('fu-by-status').textContent).toBe('By status: Open 13 · Close 1 · Disputed 1');
+  it('resolved by time: the five slices (Not resolved yet, Rejected), no status line, Rejected / Historical in the note', () => {
+    render(<FollowupCharts state={fuState(SUMMARY)} part="resolved" />);
+    expect(screen.getByText('Resolved by time')).toBeTruthy();
+    expect(screen.queryByText('Detractors by stage')).toBeNull();
+    expect(screen.getByTestId('fu-resolved-resolved_48h').textContent).toContain('Resolved < 48 h');
+    expect(screen.getByTestId('fu-resolved-pending').textContent).toContain('Not resolved yet');
+    expect(screen.getByTestId('fu-resolved-pending').textContent).toContain('13');
+    expect(screen.getByTestId('fu-resolved-rejected').textContent).toContain('Rejected (not resolved)');
+    expect(screen.queryByTestId('fu-by-status')).toBeNull();
     expect(screen.getByTestId('fu-left-out').textContent).toBe('Rejected: 1 · Historical: 28');
     expect(screen.queryByText(/Waiting for the follow-up data source|No follow-up data/)).toBeNull();
+  });
+
+  it('status: Open / Close / Disputed; a click drills into the stages (0 kept as 0) and "← All statuses" goes back', () => {
+    render(<FollowupCharts state={fuState(SUMMARY)} part="status" />);
+    expect(screen.getByText('Detractors by status')).toBeTruthy();
+    expect(screen.getByTestId('fu-status-OPEN').textContent).toContain('Open');
+    expect(screen.getByTestId('fu-status-OPEN').textContent).toContain('13');
+    expect(screen.getByTestId('fu-status-DISPUTED').textContent).toContain('Disputed');
+    expect(screen.getByTestId('fu-left-out').textContent).toBe('Historical: 28');
+    fireEvent.click(screen.getByTestId('fu-status-OPEN').querySelector('button') as HTMLButtonElement);
+    expect(screen.getByText('Detractors by status — Open')).toBeTruthy();
+    expect(screen.getByTestId('fu-status-stage-NEW').textContent).toContain('11');
+    expect(screen.getByTestId('fu-status-stage-CONTACTED').textContent).toContain('0');
+    expect(screen.getByTestId('fu-status-stage-IN_PROGRESS').textContent).toContain('In Progress');
+    fireEvent.click(screen.getByTestId('fu-status-back'));
+    expect(screen.getByText('Detractors by status')).toBeTruthy();
+    expect(screen.queryByTestId('fu-status-stage-NEW')).toBeNull();
+  });
+
+  it('the same filters give the same total in the centre of every follow-up chart', () => {
+    const centre = (part: 'reason' | 'status' | 'resolved') => {
+      const { container, unmount } = render(<FollowupCharts state={fuState(SUMMARY)} part={part} />);
+      const n = container.querySelector('.ps-nps-donut-center strong')?.textContent;
+      unmount();
+      return n;
+    };
+    expect([centre('reason'), centre('status'), centre('resolved')]).toEqual(['15', '15', '15']);
   });
 
   it('reason: by category, "Not yet classified" for cases without a reason', () => {
@@ -172,7 +207,7 @@ describe('follow-up charts (live)', () => {
     // "Not yet classified" has no sub-reasons: not a drill target
     expect(screen.getByTestId('fu-reason-none').querySelector('[data-selectable]')).toBeNull();
     fireEvent.click(screen.getByTestId('fu-reason-delivery').querySelector('button') as HTMLButtonElement);
-    expect(screen.getByText('Detractors by reason · Delivery & Logistics')).toBeTruthy();
+    expect(screen.getByText('Detractors by reason — Delivery & Logistics')).toBeTruthy();
     expect(screen.getByTestId('fu-subreason-15').textContent).toContain('Late deliveries');
     expect(screen.getByTestId('fu-subreason-5').textContent).toContain('Not specified');
     fireEvent.click(screen.getByTestId('fu-reason-back'));

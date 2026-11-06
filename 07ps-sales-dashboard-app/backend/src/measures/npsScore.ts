@@ -35,8 +35,10 @@ import {
 import { addDaysIso, weekStartIso, weekStartSql } from '../lib/businessWeek';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 import {
+  FOLLOWUP_STAGES,
   FOLLOWUP_STATUSES,
   hoursOpen,
+  statusOfStage,
   nowLocal,
   reasonLabel,
   timeBand,
@@ -464,25 +466,31 @@ export async function fetchNpsReach(pool: Pool, q: NpsQuery, f: Filters, user: U
 }
 
 // -- follow-up (live) --------------------------------------------------------------------------------------------------
-/** The STAGE with its time: Resolved < 48 h / 48 h .. 5 days / > 5 days, or still in an open stage (pending). */
-export type FollowupBucket = 'resolved_48h' | 'resolved_5d' | 'resolved_late' | 'pending';
+/**
+ * "Resolved by time": the STAGE with its time -- Resolved < 48 h / 48 h .. 5 days / > 5 days, still in an open stage
+ * (pending = "Not resolved yet"), or Rejected ("Rejected (not resolved)").
+ */
+export type FollowupBucket = 'resolved_48h' | 'resolved_5d' | 'resolved_late' | 'pending' | 'rejected';
 
 export interface NpsFollowupSummary {
   dateFrom: string;
   dateTo: string;
   /** detractor ratings of the filters = the Detractors box = the detractor list */
   detractors: number;
-  /** followed-up cases charted (stage not Historical, not Rejected) */
+  /**
+   * THE total of every follow-up chart (Reason, Status, Resolved by time): the detractor cases WITH a status (Open,
+   * Close, Disputed -- Rejected included). Historical (no status) and the detractors without a case yet are left out.
+   */
   charted: number;
-  /** stage Rejected: left out of both charts, shown under them */
+  /** stage Rejected (= status Disputed), inside `charted`; shown in the note too */
   rejected: number;
   historical: number;
   /** detractors without a case yet (process_nps creates them on its next run); 0 normally */
   noCase: number;
-  /** by STAGE and time: Resolved in < 48 h (green), 48 h .. 5 days (yellow), > 5 days (red); Pending = New / Contacted / In progress */
+  /** "Resolved by time", by stage and time; sums to `charted` */
   byStage: { key: FollowupBucket; count: number }[];
-  /** by STATUS (the generated column): every case with a status, Rejected (Disputed) included, Historical not */
-  byStatus: { key: FollowupStatus; count: number }[];
+  /** by STATUS (the generated column), with its stages for the drill-down (every stage listed, 0 included); sums to `charted` */
+  byStatus: { key: FollowupStatus; count: number; stages: { stage: FollowupStage; count: number }[] }[];
   /** by reason CATEGORY; categoryKey null = "Not yet classified". subReasons = the drill-down (most cases first; the
    *  category's own row reads "Not specified"); empty for Other and "Not yet classified", which have no sub-reasons. */
   byReason: { categoryKey: string | null; label: string; labelAr: string | null; count: number; subReasons: NpsSubReasonCount[] }[];
@@ -500,10 +508,10 @@ const BUCKET_OF_BAND: Record<TimeBand, FollowupBucket> = { green: 'resolved_48h'
 export const NOT_CLASSIFIED = 'Not yet classified';
 
 /**
- * Detractors by stage (with time) and by reason category, plus the status counts, from nps_followup_case at request
- * time (an edit on the follow-up page shows on the next load), for the same detractors as the Detractors box: rating
- * date, global filters, role scope. Historical (rated before NPS_FOLLOWUP_START) and Rejected cases are left out of
- * both charts and counted separately; byStatus counts Rejected as Disputed.
+ * The follow-up charts of the NPS page -- by reason category, by status (drill: its stages) and "Resolved by time" --
+ * from nps_followup_case at request time (an edit on the follow-up page shows on the next load), for the same
+ * detractors as the Detractors box: rating date, global filters, role scope. ONE total for all three: the cases with
+ * a status (Rejected included); Historical (rated before NPS_FOLLOWUP_START, no status) is left out and counted apart.
  */
 export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filters, now: string = nowLocal()): Promise<NpsFollowupSummary> {
   const w = npsWhere(q, f);
@@ -515,8 +523,9 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
        LEFT JOIN dim_nps_reason r ON r.reason_id = fc.reason_id
       WHERE f.nps_level = 1 AND ${w.sql}`, w.params);
   const list = rows as Record<string, unknown>[];
-  const buckets: Record<FollowupBucket, number> = { resolved_48h: 0, resolved_5d: 0, resolved_late: 0, pending: 0 };
+  const buckets: Record<FollowupBucket, number> = { resolved_48h: 0, resolved_5d: 0, resolved_late: 0, pending: 0, rejected: 0 };
   const statuses: Record<FollowupStatus, number> = { OPEN: 0, CLOSE: 0, DISPUTED: 0 };
+  const stages = new Map<FollowupStage, number>();
   type Sub = NpsSubReasonCount & { sort: number };
   const reasons = new Map<string | null, { categoryKey: string | null; label: string; labelAr: string | null; count: number; sort: number;
     noSubs: boolean; subs: Map<number, Sub> }>();
@@ -526,14 +535,18 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
   for (const r of list) {
     const stage = (r.stage as FollowupStage | null) ?? null;
     const status = (r.status as FollowupStatus | null) ?? null;
-    if (status && FOLLOWUP_STATUSES.includes(status)) statuses[status] += 1;
     if (stage === null) noCase += 1;
-    else if (stage === 'REJECTED') rejected += 1;
-    else if (stage === 'HISTORICAL') historical += 1;
+    else if (stage === 'HISTORICAL' || !status || !FOLLOWUP_STATUSES.includes(status)) historical += 1;
     else {
+      // a case with a status: counted once in every chart, so their centres always show the same total
+      statuses[status] += 1;
+      stages.set(stage, (stages.get(stage) ?? 0) + 1);
       if (stage === 'RESOLVED') {
         const band = timeBand(hoursOpen({ stage, ratedAt: asDateTime(r.rated_at_local), resolvedAt: asDateTime(r.resolved_at) }, now));
         buckets[band ? BUCKET_OF_BAND[band] : 'resolved_late'] += 1;
+      } else if (stage === 'REJECTED') {
+        buckets.rejected += 1;
+        rejected += 1;
       } else buckets.pending += 1;
       const key = r.reason_id === null || r.reason_id === undefined ? null : String(r.category_key);
       const entry = reasons.get(key) ?? {
@@ -562,7 +575,7 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
       reasons.set(key, entry);
     }
   }
-  const charted = buckets.resolved_48h + buckets.resolved_5d + buckets.resolved_late + buckets.pending;
+  const charted = statuses.OPEN + statuses.CLOSE + statuses.DISPUTED;
   return {
     dateFrom: q.dateFrom,
     dateTo: q.dateTo,
@@ -572,7 +585,11 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
     historical,
     noCase,
     byStage: (Object.keys(buckets) as FollowupBucket[]).map((key) => ({ key, count: buckets[key] })),
-    byStatus: FOLLOWUP_STATUSES.map((key) => ({ key, count: statuses[key] })),
+    byStatus: FOLLOWUP_STATUSES.map((key) => ({
+      key,
+      count: statuses[key],
+      stages: FOLLOWUP_STAGES.filter((st) => statusOfStage(st) === key).map((stage) => ({ stage, count: stages.get(stage) ?? 0 })),
+    })),
     byReason: [...reasons.values()]
       .sort((a, b) => b.count - a.count || a.sort - b.sort || a.label.localeCompare(b.label))
       .map(({ categoryKey, label, labelAr, count, noSubs, subs }) => ({

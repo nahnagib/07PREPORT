@@ -61,7 +61,8 @@ import {
  * Row 3 WhatsApp message reach: company/date only.
  * Row 4 the trend: Weekly (Saturday..Friday) / Monthly / Yearly from the first period with ratings; NPS and CSAT lines
  *       plus monthly stacked responders; periods below the minimum faded on the score chart.
- * Row 5 Errors by reason · Detractors by reason · Detractors by stage, with the counts by status (live from the follow-up cases).
+ * Row 5 Errors by reason · Detractors by reason · Detractors by status · Resolved by time (live from the follow-up cases;
+ *       4 columns wide, 2 x 2 medium, 1 on phones).
  * Row 6 the detractor list with the follow-up case and the customers' comments: only with the nps_comments permission.
  * Every rating visual filters on the rating date (Tripoli time), the global filters and the role's data scope.
  */
@@ -173,10 +174,11 @@ function NpsScoreBody() {
             </section>
 
             {/* Row 5: reasons and follow-up (live from the follow-up cases) */}
-            <section className="ps-nps-row" aria-label="Reasons and follow-up">
+            <section className="ps-nps-row ps-nps-row-4" aria-label="Reasons and follow-up" data-testid="nps-followup-row">
               <NpsReach state={reach} part="errors" />
               <FollowupCharts state={followup} part="reason" />
-              <FollowupCharts state={followup} part="stage" />
+              <FollowupCharts state={followup} part="status" />
+              <FollowupCharts state={followup} part="resolved" />
             </section>
 
             {/* Row 6: the detractor list (nps_comments) */}

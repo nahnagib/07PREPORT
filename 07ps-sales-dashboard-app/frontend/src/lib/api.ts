@@ -3034,24 +3034,27 @@ export interface NpsResponseRate {
   variancePts: number | null;
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
 }
-/** the follow-up STAGE with its time (Resolved < 48 h / 48 h - 5 days / > 5 days, or still open = pending) */
-export type NpsFollowupBucket = 'resolved_48h' | 'resolved_5d' | 'resolved_late' | 'pending';
+/** "Resolved by time": Resolved < 48 h / 48 h - 5 days / > 5 days, still open (pending = Not resolved yet), or Rejected */
+export type NpsFollowupBucket = 'resolved_48h' | 'resolved_5d' | 'resolved_late' | 'pending' | 'rejected';
 /** the follow-up workflow step (lib/nps/followup.ts) */
 export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'REJECTED';
 /** the outcome group, worked out from the stage */
 export type NpsFollowupStatus = 'OPEN' | 'CLOSE' | 'DISPUTED';
-/** detractors by follow-up stage, by status and by reason category, live from nps_followup_case */
+/** the follow-up charts (reason, status, resolved by time), live from nps_followup_case */
 export interface NpsFollowupSummary {
   dateFrom: string;
   dateTo: string;
   detractors: number;
+  /** THE total of every follow-up chart: the cases with a status (Rejected included, Historical not) */
   charted: number;
-  /** stage Rejected (left out of the charts) */
+  /** stage Rejected (inside charted) */
   rejected: number;
   historical: number;
   noCase: number;
+  /** "Resolved by time" */
   byStage: { key: NpsFollowupBucket; count: number }[];
-  byStatus: { key: NpsFollowupStatus; count: number }[];
+  /** by status, with its stages for the drill-down (0 included) */
+  byStatus: { key: NpsFollowupStatus; count: number; stages: { stage: NpsFollowupStage; count: number }[] }[];
   /** by reason category; categoryKey null = not yet classified; subReasons = the drill-down (empty: none to show) */
   byReason: {
     categoryKey: string | null;

@@ -274,7 +274,7 @@ describe('follow-up summary (live from nps_followup_case)', () => {
     sort_order: reasonId, requires_note: 0,
   });
 
-  it('by stage: resolved < 48 h green, 48 h - 5 d yellow, > 5 d red, pending; by status from the status; Historical / Rejected apart', async () => {
+  it('one total for every chart (cases with a status, Rejected included); resolved by time; status with its stages; Historical apart', async () => {
     const { pool: p, queries } = pool(() => [
       row('RESOLVED', '2026-10-01 10:00:00', '2026-10-02 09:00:00', 1),   // 23 h
       row('RESOLVED', '2026-10-01 10:00:00', '2026-10-03 10:00:00', 3),   // 48 h -> yellow
@@ -287,19 +287,27 @@ describe('follow-up summary (live from nps_followup_case)', () => {
       row(null, '2026-10-20 08:00:00', null, null), // rated after the last process_nps run: no case yet
     ]);
     const s = await fetchNpsFollowupSummary(p, parseNpsQuery({}, NOW), {}, NOW_LOCAL);
-    expect(Object.fromEntries(s.byStage.map((b) => [b.key, b.count]))).toEqual({ resolved_48h: 1, resolved_5d: 1, resolved_late: 1, pending: 2 });
-    // the status counts come from the status column: Rejected is Disputed, Historical has none
-    expect(s.byStatus).toEqual([{ key: 'OPEN', count: 2 }, { key: 'CLOSE', count: 3 }, { key: 'DISPUTED', count: 1 }]);
-    expect(s).toMatchObject({ detractors: 9, charted: 5, rejected: 1, historical: 2, noCase: 1 });
-    expect(s.charted + s.rejected + s.historical + s.noCase).toBe(s.detractors);
+    expect(Object.fromEntries(s.byStage.map((b) => [b.key, b.count]))).toEqual({ resolved_48h: 1, resolved_5d: 1, resolved_late: 1, pending: 2, rejected: 1 });
+    // the status counts come from the status column: Rejected is Disputed, Historical has none; each with its stages
+    expect(s.byStatus).toEqual([
+      { key: 'OPEN', count: 2, stages: [{ stage: 'NEW', count: 1 }, { stage: 'CONTACTED', count: 0 }, { stage: 'IN_PROGRESS', count: 1 }] },
+      { key: 'CLOSE', count: 3, stages: [{ stage: 'RESOLVED', count: 3 }] },
+      { key: 'DISPUTED', count: 1, stages: [{ stage: 'REJECTED', count: 1 }] },
+    ]);
+    expect(s).toMatchObject({ detractors: 9, charted: 6, rejected: 1, historical: 2, noCase: 1 });
+    expect(s.charted + s.historical + s.noCase).toBe(s.detractors);
+    // the same total in the centre of every chart
+    const sum = (xs: { count: number }[]) => xs.reduce((n, x) => n + x.count, 0);
+    expect([sum(s.byReason), sum(s.byStatus), sum(s.byStage)]).toEqual([s.charted, s.charted, s.charted]);
+    for (const st of s.byStatus) expect(sum(st.stages)).toBe(st.count);
     // by category, most cases first; a tie keeps the categories' order; "Not yet classified" for cases without a reason
-    // each category carries its sub-reasons for the drill-down ("Not specified" = the category's own row)
+    // each category carries its sub-reasons for the drill-down ("Not specified" = the category's own row); Rejected counted
     expect(s.byReason).toEqual([
+      { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'Delivery & Logistics-ar', count: 3,
+        subReasons: [{ reasonId: 1, label: 'Late deliveries', labelAr: 'Late deliveries-ar', count: 2 },
+          { reasonId: 3, label: 'Damaged goods', labelAr: 'Damaged goods-ar', count: 1 }] },
       { categoryKey: 'quality', label: 'Product Quality', labelAr: 'Product Quality-ar', count: 2,
         subReasons: [{ reasonId: 2, label: 'Not specified', labelAr: 'غير محدد', count: 2 }] },
-      { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'Delivery & Logistics-ar', count: 2,
-        subReasons: [{ reasonId: 1, label: 'Late deliveries', labelAr: 'Late deliveries-ar', count: 1 },
-          { reasonId: 3, label: 'Damaged goods', labelAr: 'Damaged goods-ar', count: 1 }] },
       { categoryKey: null, label: 'Not yet classified', labelAr: null, count: 1, subReasons: [] },
     ]);
     for (const c of s.byReason) if (c.subReasons.length) expect(c.subReasons.reduce((n, x) => n + x.count, 0)).toBe(c.count);

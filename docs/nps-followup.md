@@ -51,6 +51,24 @@ Two cards in the same column always have the same badge. That is expected.
 - `backend/src/services/__tests__/npsStageStatusSql.test.ts` fails if any SQL or code in the repo (outside 0052 and the
   `down/` files) still compares `status` with a stage value.
 
+**The follow-up charts on the NPS Score page** (one row: Errors by reason · Detractors by reason · Detractors by
+status · Resolved by time; 4 columns on wide screens, 2 × 2 on medium ones, 1 on phones):
+
+| Chart | Slices | Click |
+|---|---|---|
+| Detractors by reason | the reason categories, "Not yet classified" | a category → its sub-reasons ("Not specified" included); "← All reasons" |
+| Detractors by status | Open, Close, Disputed (the generated `status`) | a status → its stages (Open → New / Contacted / In Progress, Close → Resolved, Disputed → Rejected; a stage with no case shows 0); "← All statuses" |
+| Resolved by time | Resolved < 48 h, Resolved 48 h – 5 days, Resolved > 5 days, Not resolved yet (New, Contacted, In progress), Rejected (not resolved) | — |
+
+**One total for every follow-up chart:** the detractor cases **with a status** (Open + Close + Disputed, so Rejected
+is in). Historical has no status: it is left out of all three and shown in the note under each ("Historical: n"; on
+Resolved by time "Rejected: n · Historical: n"). So the three centres always show the same number for the same
+filters (`charted` in `/nps-score/followup-summary`), and `charted + historical + noCase` = the detractors.
+
+Colours (`--ps-fu-*` in `frontend/src/styles/tokens.css`, light and dark, checked with the dataviz palette validator):
+Open = Not resolved yet (blue), Close = Resolved < 48 h (green), Disputed = Resolved > 5 days (red), plus amber
+(48 h – 5 days), brown (Rejected) and, in the Open drill, plum (In progress).
+
 **Reasons in two levels** (0067, `dim_nps_reason`, managed on the Reasons tab): a **category** and its **sub-reasons**,
 English and Arabic. On a case people pick a category, then a sub-reason. **Other** has no sub-reasons; it needs a short
 note (`reason_note`, up to 200 characters). Each category also has its own row, **Not specified**: the cases the
@@ -124,8 +142,8 @@ A case whose old reason is not in the map stops 0067 before anything is moved (a
   - Dates can't be before the rating or in the future.
   - If someone else saved the case while you were editing, your save is refused and their version is shown; make
     your change again.
-- **The NPS Score page follows your edits at once:** its Detractors table (stage, status, reason, owner, time open),
-  *Detractors by reason* (by category) and *Detractors by stage* (with the counts by status under it) read the cases live, so a saved change shows on the next page load. A row of
+- **The NPS Score page follows your edits at once:** its Detractors table (stage, status, reason, owner, time open)
+  and the follow-up charts read the cases live (see "The follow-up charts on the NPS Score page" below), so a saved change shows on the next page load. A row of
   that table opens the case here.
 - **Source changed:** the rating left the NPS source or is no longer a detractor. The case and its follow-up are kept
   and marked ⚠; the history says when.
