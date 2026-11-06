@@ -101,7 +101,6 @@ REQUIRED_OUTPUT_SHEETS = [
     "QA_Inventory_DataQuality",
     "Fact_ProductSalesDaily",
     "Dim_ProductDashboard",
-    "Dim_ProductDashboardGroup",
     "QA_ProductOdooGaps",
     "QA_ProductDataQuality",
     "ProductDashboard_Meta",
@@ -903,9 +902,8 @@ class PowerBISalesPipeline:
             fact_sales_lines, dim_product, inventory_result.fact_inventory, line_costs=line_costs
         )
         self.logger.info(
-            "Product dashboard tables: products=%s groups=%s daily_rows=%s odoo_gaps=%s dq=%s",
+            "Product dashboard tables: products=%s daily_rows=%s odoo_gaps=%s dq=%s",
             len(product_tables["Dim_ProductDashboard"]),
-            len(product_tables["Dim_ProductDashboardGroup"]),
             len(product_tables["Fact_ProductSalesDaily"]),
             len(product_tables["QA_ProductOdooGaps"]),
             len(product_tables["QA_ProductDataQuality"]),

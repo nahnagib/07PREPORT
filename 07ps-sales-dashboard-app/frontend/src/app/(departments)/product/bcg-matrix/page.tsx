@@ -1,5 +1,5 @@
 'use client';
-import { VisualInfoIcons, tooltipBoxStyle } from '@07ps/ui';
+import { VisualInfoIcons } from '@07ps/ui';
 import { vh } from '../../../../lib/visualHelp';
 import React, { useMemo, useState } from 'react';
 import { AppHeader } from '../../../../components/AppHeader';
@@ -19,18 +19,10 @@ import {
   DonutChart,
   LoadingSkeleton,
   ErrorState,
-  exportRowsAsPdf,
-  PerformanceReportTable,
-  exportPerformanceTablePdf,
-  SEMANTIC_STATUS_LABEL,
   type DataGridColumn,
   type Column,
   type SemanticStatus,
   type DonutSegment,
-  type PdfExportColumn,
-  type PerformanceReportRow,
-  type PerformanceTablePdfColumn,
-  useCanExport,
 } from '@07ps/ui';
 import {
   toProductFacts,
@@ -43,9 +35,23 @@ import {
   MOVEMENT_COLOR,
   MOVEMENT_LABEL,
   UNCLASSIFIED_NO_COST,
+  isProductPageCompany,
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
+import {
+  CompanyBadge,
+  ExportButtons,
+  LTR,
+  Pill,
+  ProductName,
+  ProductTooltip,
+  TooltipRow,
+  exportProductCsv,
+  exportProductPdf,
+  useHoverTooltip,
+  type ExportColumn,
+} from '../../../../components/product/ProductUi';
 
 type BcgFact = ProductFact;
 const getDisplayName = (r: ProductFact) => r.ProductName;
@@ -90,107 +96,28 @@ interface TableRow extends BcgFact, Record<string, unknown> {
   displayName: string;
 }
 
-/** Shared PDF export shape -- same columns as the Product Detail table's own export (Product
- * Name, BCG Class, Movement, Revenue YTD, Revenue LYTD, Volume YTD, ASP, GP%, Vol Growth), reused
- * by the Section 1 matrix panels' full-class-list export and Section 3's movement drill-down
- * export so all 3 PDF exports on this page read as the same report format, just pre-filtered
- * differently. */
-const PRODUCT_PDF_COLUMNS: PdfExportColumn[] = [
-  { header: 'Product Name' },
-  { header: 'BCG Class' },
-  { header: 'Movement' },
-  { header: 'Revenue YTD', align: 'right' },
-  { header: 'Revenue LYTD', align: 'right' },
-  { header: 'Volume YTD', align: 'right' },
-  { header: 'ASP', align: 'right' },
-  { header: 'GP%', align: 'right' },
-  { header: 'Vol Growth', align: 'right' },
+/** One export shape for every product list on this page (each class panel, the movement drill-down and the whole
+ * matrix): the CSV gets raw numbers, the PDF the formatted text. Company is its own column (one company per product). */
+const growthText = (r: BcgFact) => (r.bcg_movement === 'Lost' ? '—' : r.quantity_growth_pct === null ? 'New' : fmtPct(r.quantity_growth_pct));
+const PRODUCT_EXPORT_COLUMNS: ExportColumn<BcgFact>[] = [
+  { header: 'Product Name', value: (r) => getDisplayName(r) },
+  { header: 'Company', value: (r) => r.Company },
+  { header: 'Odoo ID', value: (r) => r.ProductKey },
+  { header: 'Category', value: (r) => r.Category },
+  { header: 'BCG Class', value: (r) => r.bcg_class_YTD, text: (r) => r.bcg_class_YTD ?? '—' },
+  { header: 'Movement', value: (r) => (r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : null), text: (r) => (r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : '—') },
+  { header: 'Revenue YTD (LYD)', align: 'right', value: (r) => r.total_value_YTD, text: (r) => fmtLYD(r.total_value_YTD) },
+  { header: 'Revenue LYTD (LYD)', align: 'right', value: (r) => r.total_value_LYTD, text: (r) => fmtLYD(r.total_value_LYTD) },
+  { header: 'Volume YTD', align: 'right', value: (r) => r.total_quantity_YTD, text: (r) => fmtNum(r.total_quantity_YTD) },
+  { header: 'ASP (LYD)', align: 'right', value: (r) => r.avg_unit_price_YTD, text: (r) => fmtLYD(r.avg_unit_price_YTD) },
+  { header: 'GP%', align: 'right', value: (r) => r.perc_gross_profit_YTD, text: (r) => fmtGp(r.perc_gross_profit_YTD) },
+  { header: 'Vol Growth %', align: 'right', value: (r) => (r.bcg_movement === 'Lost' ? null : r.quantity_growth_pct), text: growthText },
 ];
 
-function factToPdfRow(r: BcgFact, displayName: string): string[] {
-  return [
-    displayName,
-    r.bcg_class_YTD ?? '—',
-    r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : '—',
-    fmtLYD(r.total_value_YTD),
-    fmtLYD(r.total_value_LYTD),
-    fmtNum(r.total_quantity_YTD),
-    fmtLYD(r.avg_unit_price_YTD),
-    fmtGp(r.perc_gross_profit_YTD),
-    r.bcg_movement === 'Lost' ? '—' : r.quantity_growth_pct === null ? 'New' : fmtPct(r.quantity_growth_pct),
-  ];
-}
-
-// ---------------------------------------------------------------------------
-// Executive Summary -- no target/benchmark exists for any BCG metric (classification thresholds
-// are precomputed upstream by the ETL, not exposed as a per-row target); the 4 class rows reuse
-// CLASS_META's own already-established status per class (Stars=success, Cash Cows=watch,
-// Strategic=neutral, Dogs=alert) rather than a variance-derived one, so this table never disagrees
-// with the KPI tiles/matrix cells above for the same class. Portfolio Movement Health bands on a
-// documented, tunable share of "improving" SKUs (New/Stable/Improved) vs "declining" ones
-// (Declined/Lost): >= 70% healthy, >= 50% watch, below that alert.
-// ---------------------------------------------------------------------------
-
-const MOVEMENT_HEALTH_SUCCESS_PCT = 0.7;
-const MOVEMENT_HEALTH_WATCH_PCT = 0.5;
-
-interface BcgClassStat {
-  key: string;
-  status: SemanticStatus;
-  count: number;
-  valueYTD: number;
-  deltaPct: number;
-}
-
-// Mirrors the on-screen PerformanceReportTable's default layout (Trend sparkline omitted -- it has
-// no text form), same shared exportPerformanceTablePdf used by the Promotion pages.
-function pctLabel(v: number | null): string {
-  return v !== null ? `${(v * 100).toFixed(2)}%` : '—';
-}
-const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
-  { header: 'Metric Name', getValue: (row) => row.metric },
-  { header: 'Actual', getValue: (row) => row.actualLabel },
-  { header: 'Target', getValue: (row) => row.targetLabel },
-  { header: 'Variance%', getValue: (row) => pctLabel(row.variancePct) },
-  { header: 'Variance LY', getValue: (row) => pctLabel(row.varianceLyPct) },
-  { header: 'Status', getValue: (row) => (row.status ? SEMANTIC_STATUS_LABEL[row.status] : '—') },
-  { header: 'Takeaway', getValue: (row) => row.takeaway ?? '—' },
-];
-
-function toExecutiveSummaryRows(classStats: BcgClassStat[], movementSegments: DonutSegment[]): PerformanceReportRow[] {
-  const rows: PerformanceReportRow[] = classStats.map((s) => ({
-    id: `class-${s.key}`,
-    metric: s.key,
-    actualLabel: fmtLYD(s.valueYTD),
-    targetLabel: '—',
-    variancePct: null,
-    varianceLyPct: s.deltaPct / 100,
-    status: s.status,
-    takeaway: `${s.key}: ${fmtNum(s.count)} SKUs, ${fmtLYD(s.valueYTD)} revenue YTD (${fmtPct(s.deltaPct)} vs last year).`,
-  }));
-
-  const healthyCount = movementSegments.filter((m) => m.id === 'New' || m.id === 'Stable' || m.id === 'Improved').reduce((sum, m) => sum + m.value, 0);
-  const decliningCount = movementSegments.filter((m) => m.id === 'Declined' || m.id === 'Lost').reduce((sum, m) => sum + m.value, 0);
-  const totalMovement = healthyCount + decliningCount;
-  const healthyPct = totalMovement > 0 ? healthyCount / totalMovement : null;
-  const movementStatus: SemanticStatus =
-    healthyPct == null ? 'neutral' : healthyPct >= MOVEMENT_HEALTH_SUCCESS_PCT ? 'success' : healthyPct >= MOVEMENT_HEALTH_WATCH_PCT ? 'watch' : 'alert';
-
-  rows.push({
-    id: 'movementHealth',
-    metric: 'Portfolio Movement Health',
-    actualLabel: healthyPct != null ? fmtPct(healthyPct * 100) : '—',
-    targetLabel: `> ${Math.round(MOVEMENT_HEALTH_SUCCESS_PCT * 100)}%`,
-    variancePct: null,
-    varianceLyPct: null,
-    status: movementStatus,
-    takeaway:
-      healthyPct == null
-        ? 'No movement data available.'
-        : `${fmtPct(healthyPct * 100)} of tracked SKUs are New, Stable, or Improved rather than Declined or Lost.`,
-  });
-
-  return rows;
+function exportProducts(kind: 'csv' | 'pdf', title: string, subtitle: string, fileName: string, rows: BcgFact[]) {
+  return kind === 'csv'
+    ? exportProductCsv(fileName, PRODUCT_EXPORT_COLUMNS, rows)
+    : exportProductPdf({ title, subtitle, fileName, columns: PRODUCT_EXPORT_COLUMNS, rows });
 }
 
 /**
@@ -223,7 +150,9 @@ export default function BcgMatrixPage() {
   // already-classified products come back (Fact_SalesLines product-set membership), they never
   // reclassify a product's quadrant against the filtered subset's own volume, and the date range
   // never redefines what "YTD"/"LYTD" means -- every number stays real calendar YTD vs LYTD.
-  const filterOptionsCompanies = filterOptions.businessUnits.data;
+  // Athena is not on the Product pages: never offered in the company filter, never a selected company here.
+  const productBusinessUnits = useMemo(() => (filterOptions.businessUnits.data ?? []).filter((u) => isProductPageCompany(String(u.company_name))), [filterOptions.businessUnits.data]);
+  const filterOptionsCompanies = productBusinessUnits;
   const selectedCompanyNames = useMemo(() => {
     const businessUnits = filterOptionsCompanies ?? [];
     const keys = new Set((effectiveFilters.companyKeys ?? []).map(String));
@@ -231,8 +160,8 @@ export default function BcgMatrixPage() {
       businessUnits.filter((u) => keys.has(String(u.company_key))).map((u) => String(u.company_name)),
     );
   }, [filterOptionsCompanies, effectiveFilters.companyKeys]);
-  // One company selected = that company's view; none or both = BMH view, where a product both companies
-  // sell is one combined row classified on the combined figures (applied by the API).
+  // One company selected = that company's view; none or both = every company's products side by side (one row per
+  // Odoo product per company -- never combined across companies).
   const companyView = selectedCompanyNames.size === 1 ? [...selectedCompanyNames][0] : undefined;
   const bcgScope = useMemo(
     () => ({
@@ -266,7 +195,7 @@ export default function BcgMatrixPage() {
   // own JSX already renders showCompanyDimension, no custom placement needed). fact_bcgmatrix's
   // `Company` column is a name string ('Majaal'/'Tika'), not the numeric key, so the selected
   // keys are translated via businessUnits (selectedCompanyNames, above) and sent as the API's company
-  // view; the rows that come back are already that company's (or the BMH view's).
+  // view; the rows that come back are already that company's (or every company's, side by side).
   const filtered = facts;
   const filteredDiscontinued = discontinued;
 
@@ -346,16 +275,16 @@ export default function BcgMatrixPage() {
     return { listRows, allSorted, moreCount: Math.max(0, allSorted.length - top.length) };
   }, [movementDrill, filtered, filteredDiscontinued]);
 
-  const handleExportMovementPdf = () => {
+  const exportMovement = (kind: 'csv' | 'pdf') => {
     if (!movementDrill || !movementDrillData) return;
-    exportRowsAsPdf({
-      title: 'Portfolio Movement',
-      subtitle: `${MOVEMENT_LABEL[movementDrill]} — ${movementDrillData.allSorted.length} product${movementDrillData.allSorted.length === 1 ? '' : 's'}`,
-      columns: PRODUCT_PDF_COLUMNS,
-      rows: movementDrillData.allSorted.map((r) => factToPdfRow(r, getDisplayName(r))),
-      fileName: `bcg-matrix-movement-${movementDrill.toLowerCase()}`,
-    });
+    const n = movementDrillData.allSorted.length;
+    return exportProducts(kind, 'Portfolio Movement', `${MOVEMENT_LABEL[movementDrill]} — ${n} product${n === 1 ? '' : 's'}`, `bcg-matrix-movement-${movementDrill.toLowerCase()}`, movementDrillData.allSorted);
   };
+
+  // Whole matrix: every classified product, class by class (Stars, Cash Cows, Strategic, Dogs), highest revenue first.
+  const matrixRows = classStats.flatMap((s) => s.allSorted);
+  const exportMatrix = (kind: 'csv' | 'pdf') =>
+    exportProducts(kind, 'BCG Matrix', `All classes — ${matrixRows.length} products · ${selectedCompanyNames.size ? [...selectedCompanyNames].join(', ') : 'Majaal + Tika'}`, 'bcg-matrix-all-classes', matrixRows);
 
   // ---- Product Detail table -- includes discontinued products now (their BCG Class column reads
   // "—", not a stale prior-year class; their Movement column reads "Discontinued" via
@@ -371,12 +300,13 @@ export default function BcgMatrixPage() {
   }));
 
   const columns: DataGridColumn<TableRow>[] = [
-    { key: 'displayName', header: 'Product Name', width: 220, render: (row) => <span title={row.ProductName}>{row.displayName}</span> },
+    { key: 'displayName', header: 'Product Name', width: 240, render: (row) => <ProductName name={row.displayName} />, rawValue: (row) => row.displayName },
+    { key: 'Company', header: 'Company', render: (row) => row.Company, rawValue: (row) => row.Company },
     // Category no longer has a global filter pill on this page (Section 2 simplification) -- kept
     // reachable via this column's own per-column filter instead (DataGrid supports this on every
     // column already, same as BCG Class/Movement below), so slicing by Category isn't silently
     // lost, just relocated to where the other per-product breakdowns already live.
-    { key: 'Category', header: 'Category', render: (row) => row.Category ?? '—' },
+    { key: 'Category', header: 'Category', render: (row) => <ProductName name={row.Category ?? '—'} />, rawValue: (row) => row.Category ?? '' },
     {
       key: 'bcg_class_YTD',
       header: 'BCG Class',
@@ -435,18 +365,16 @@ export default function BcgMatrixPage() {
   // bcg_class_YTD at all, hence the null-guard on the Class pill below -- every other field is
   // still populated for those rows). */
   const rowTooltipContent = (r: BcgFact, label: string) => (
-    <div
-      style={{
-        ...tooltipBoxStyle,
-        padding: '10px 12px',
-        minWidth: 180,
-      }}
+    <ProductTooltip
+      name={label}
+      company={r.Company}
+      badges={
+        <>
+          {r.bcg_class_YTD && <Pill color={BCG_COLOR[r.bcg_class_YTD] ?? 'var(--ps-color-muted-text)'} label={r.bcg_class_YTD} />}
+          {r.bcg_movement && <Pill color={MOVEMENT_COLOR[r.bcg_movement]} label={MOVEMENT_LABEL[r.bcg_movement]} />}
+        </>
+      }
     >
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-        {r.bcg_class_YTD && <Pill color={BCG_COLOR[r.bcg_class_YTD] ?? 'var(--ps-color-muted-text)'} label={r.bcg_class_YTD} />}
-        {r.bcg_movement && <Pill color={MOVEMENT_COLOR[r.bcg_movement]} label={MOVEMENT_LABEL[r.bcg_movement]} />}
-      </div>
       <TooltipRow label="Revenue YTD" value={fmtLYD(r.total_value_YTD)} />
       <TooltipRow label="Volume YTD" value={fmtNum(r.total_quantity_YTD)} />
       <TooltipRow label="ASP" value={fmtLYD(r.avg_unit_price_YTD)} />
@@ -456,22 +384,8 @@ export default function BcgMatrixPage() {
         value={r.quantity_growth_pct === null ? 'New' : fmtPct(r.quantity_growth_pct)}
         valueColor={r.quantity_growth_pct === null ? 'var(--ps-color-muted-text)' : r.quantity_growth_pct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)'}
       />
-    </div>
+    </ProductTooltip>
   );
-
-  const performanceRows = toExecutiveSummaryRows(classStats, movementSegments);
-  async function handleExportPerformanceTablePdf() {
-    try {
-      await exportPerformanceTablePdf({
-        title: 'Performance Details',
-        rows: performanceRows,
-        columns: PERFORMANCE_PDF_COLUMNS,
-        fileName: 'bcg-matrix-performance-details',
-      });
-    } catch (err) {
-      console.error('PDF export failed:', err);
-    }
-  }
 
   return (
     <PermissionGuard pageKey="bcg_matrix">
@@ -490,7 +404,7 @@ export default function BcgMatrixPage() {
           dateFromDate={dateFromDate}
           dateToDate={dateToDate}
           onDateRangeChange={onDateRangeChange}
-          businessUnits={filterOptions.businessUnits.data ?? []}
+          businessUnits={productBusinessUnits}
           customerGroups={filterOptions.customerGroups.data ?? []}
           distributionChannels={filterOptions.distributionChannels.data ?? []}
           branches={filterOptions.branches.data ?? []}
@@ -549,7 +463,10 @@ export default function BcgMatrixPage() {
               richer detail (Volume/ASP/GP%/Vol Growth/Movement) is still hover-only, same content
               as the old bubble tooltip (see rowTooltipContent above). */}
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 2 }}>BCG Matrix <VisualInfoIcons title="BCG Matrix" {...vh('product.bcgMatrix.matrix')} /></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 2 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', flex: 1 }}>BCG Matrix <VisualInfoIcons title="BCG Matrix" {...vh('product.bcgMatrix.matrix')} /></div>
+              {!overview.loading && !overview.error && <ExportButtons label="the whole BCG matrix" onCsv={() => exportMatrix('csv')} onPdf={() => exportMatrix('pdf')} />}
+            </div>
             <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
               Top {MATRIX_CELL_TOP_N} products per class by Revenue YTD · bar length = revenue relative to that class&apos;s own top product · hover a row for Volume/ASP/GP%/Vol Growth/Movement · {filtered.length} products classified
               {filteredNoCost.length > 0 ? ` · ${filteredNoCost.length} sold this year without a standard cost in Odoo are "${UNCLASSIFIED_NO_COST}" (listed in Product Detail and the data-quality log)` : ''}
@@ -561,7 +478,7 @@ export default function BcgMatrixPage() {
             ) : overview.error ? (
               <ErrorState message={overview.error} onRetry={overview.retry} />
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
+              <div data-layout="2x2 on a wide screen, one column on a phone" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(max(min(100%, 420px), calc((100% - 16px) / 2)), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
                 {classStats.map((s) => (
                   <MatrixCell key={s.key} classKey={s.key} icon={s.icon} rows={s.listRows} allSorted={s.allSorted} moreCount={s.moreCount} tooltipContent={rowTooltipContent} />
                 ))}
@@ -571,13 +488,13 @@ export default function BcgMatrixPage() {
 
           {/* Row 2: donut (narrow) + Product Detail table (wide), same asymmetric two-panel-row
               pattern as Stock Velocity's chart+DOH-boxes row. */}
-          <div style={{ display: 'grid', gridTemplateColumns: '4fr 8fr', gap: 'var(--ps-space-3, 16px)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
             <Card>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>Portfolio Movement <VisualInfoIcons title="Portfolio Movement" {...vh('product.bcgMatrix.movement')} /></div>
                 </div>
-                {movementDrill && <PdfButton label="Export as PDF" onClick={handleExportMovementPdf} />}
+                {movementDrill && <ExportButtons label={`${MOVEMENT_LABEL[movementDrill]} products`} onCsv={() => exportMovement('csv')} onPdf={() => exportMovement('pdf')} />}
               </div>
               <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
                 {movementDrill
@@ -594,7 +511,7 @@ export default function BcgMatrixPage() {
                   <RankedProductList rows={movementDrillData.listRows} barColor={MOVEMENT_COLOR[movementDrill]} tooltipContent={rowTooltipContent} />
                   {movementDrillData.moreCount > 0 && (
                     <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
-                      +{fmtNum(movementDrillData.moreCount)} more SKUs not shown -- use Export as PDF for the full list
+                      +{fmtNum(movementDrillData.moreCount)} more SKUs not shown -- export to CSV or PDF for the full list
                     </div>
                   )}
                 </>
@@ -624,17 +541,12 @@ export default function BcgMatrixPage() {
                   rows={tableRows}
                   getRowId={(row) => row.id}
                   fileName="bcg-matrix-product-detail"
-                  filtersSummary={selectedCompanyNames.size ? [...selectedCompanyNames].join(', ') : 'All companies'}
+                  filtersSummary={selectedCompanyNames.size ? [...selectedCompanyNames].join(', ') : 'Majaal + Tika'}
                 />
               )}
             </Card>
           </div>
 
-          {/* Outside the donut/Product Detail grid above so it spans the full page width rather
-              than wrapping into that grid's narrow 4fr column. */}
-          {!overview.loading && !overview.error && (
-            <PerformanceReportTable {...vh("product.bcgMatrix.details")} title="Performance Details" rows={performanceRows} showStatus showTakeaway onExportPdf={handleExportPerformanceTablePdf} />
-          )}
         </main>
 
         <RefreshFooter
@@ -663,22 +575,6 @@ interface MatrixListRow extends Record<string, unknown> {
   fact: BcgFact;
 }
 
-/** Hover state for a matrix cell's floating tooltip -- viewport coordinates (from
- * getBoundingClientRect on mouseenter), not anything relative to the row's own DOM position. See
- * MatrixCell's header comment for why this replaced a CSS-only :hover reveal. */
-interface HoveredRow {
-  row: MatrixListRow;
-  left: number;
-  /** Exactly one of top/bottom is set -- bottom (anchored to the row's top edge, tooltip growing
-   * upward) when there isn't enough room below the row in the viewport, top otherwise. Mirrors the
-   * flip-to-avoid-viewport-edge behavior a real tooltip library would give for free. */
-  top?: number;
-  bottom?: number;
-}
-
-const TOOLTIP_ESTIMATED_HEIGHT = 190;
-const TOOLTIP_WIDTH = 200;
-
 /** Ranked product list -- shared by the Section 1 matrix panels (one class's top N by Revenue
  * YTD) and Section 3's movement drill-down (one movement category's top N, spanning every class).
  * Reuses DataTable -- the same row/hover styling (`.ps-datatable-row`) the Product Detail table
@@ -701,43 +597,20 @@ function RankedProductList({
   barColor: string;
   tooltipContent: (fact: BcgFact, label: string) => React.ReactNode;
 }) {
-  const [hovered, setHovered] = useState<HoveredRow | null>(null);
-
-  const handleEnter = (row: MatrixListRow) => (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const left = Math.min(rect.left, window.innerWidth - TOOLTIP_WIDTH - 8);
-    const fitsBelow = rect.bottom + TOOLTIP_ESTIMATED_HEIGHT <= window.innerHeight;
-    setHovered({
-      row,
-      left,
-      ...(fitsBelow ? { top: rect.bottom + 6 } : { bottom: window.innerHeight - rect.top + 6 }),
-    });
-  };
-  const handleLeave = () => setHovered(null);
+  const tip = useHoverTooltip(220, 200);
+  const byId = new Map(rows.map((r) => [r.id, r]));
 
   const columns: Column<MatrixListRow>[] = [
     {
       key: 'label',
       header: 'Product',
       render: (row) => (
-        <div onMouseEnter={handleEnter(row)} onMouseLeave={handleLeave} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+        <div dir="ltr" {...tip.bind(row.id)} style={{ ...LTR, display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
           <div style={{ width: 32, height: 6, borderRadius: 3, background: 'var(--ps-color-muted-bg)', flexShrink: 0, overflow: 'hidden' }}>
             <div style={{ width: `${row.barPct}%`, height: '100%', background: barColor, borderRadius: 3 }} />
           </div>
-          {/* `flex: 1` + `minWidth: 0` (not a fixed maxWidth) -- the <td> itself already stretches
-              to fill whatever width the Volume YTD/Revenue YTD columns don't need (standard auto
-              table layout), so a hardcoded maxWidth here was leaving that stretched space empty
-              instead of letting the name use it, truncating well before the row's actual right
-              edge. Every panel gets its own natural width this way (varies with how wide that
-              panel's numbers are), rather than one fixed width forced across all of them.
-              `minWidth: 0` is required on a flex child for text-overflow:ellipsis to engage at all
-              -- without it a flex item won't shrink below its content's intrinsic width. */}
-          <span
-            title={row.fact.ProductName}
-            style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          >
-            {row.label}
-          </span>
+          {/* flex: 1 + minWidth: 0 so the name uses the cell's width and ellipsis-truncates; LTR, left-aligned. */}
+          <ProductName name={row.label} style={{ flex: 1 }} />
         </div>
       ),
     },
@@ -761,21 +634,10 @@ function RankedProductList({
   return (
     <div style={{ position: 'relative' }}>
       <DataTable columns={columns} rows={rows} getRowId={(row) => row.id} />
-      {hovered && (
-        <div
-          style={{
-            position: 'fixed',
-            left: hovered.left,
-            top: hovered.top,
-            bottom: hovered.bottom,
-            width: TOOLTIP_WIDTH,
-            zIndex: 1000,
-            pointerEvents: 'none',
-          }}
-        >
-          {tooltipContent(hovered.row.fact, hovered.row.label)}
-        </div>
-      )}
+      {tip.render((key) => {
+        const row = byId.get(key);
+        return row ? tooltipContent(row.fact, row.label) : null;
+      })}
     </div>
   );
 }
@@ -805,26 +667,19 @@ function MatrixCell({
 }) {
   const color = BCG_COLOR[classKey];
 
-  const handleExportPdf = () => {
-    exportRowsAsPdf({
-      title: 'BCG Matrix',
-      subtitle: `${classKey} — ${allSorted.length} product${allSorted.length === 1 ? '' : 's'}`,
-      columns: PRODUCT_PDF_COLUMNS,
-      rows: allSorted.map((r) => factToPdfRow(r, getDisplayName(r))),
-      fileName: `bcg-matrix-${classKey.toLowerCase().replace(/\s+/g, '-')}`,
-    });
-  };
+  const exportClass = (kind: 'csv' | 'pdf') =>
+    exportProducts(kind, 'BCG Matrix', `${classKey} — ${allSorted.length} product${allSorted.length === 1 ? '' : 's'}`, `bcg-matrix-${classKey.toLowerCase().replace(/\s+/g, '-')}`, allSorted);
 
   return (
     <Card>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 16, lineHeight: 1 }}>{icon}</span>
         <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color }}>{classKey}</span>
         <span style={{ flex: 1 }} />
         {moreCount > 0 && (
           <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>+{fmtNum(moreCount)} more SKUs in this class</span>
         )}
-        <PdfButton label="Export as PDF" onClick={handleExportPdf} />
+        <ExportButtons label={`${classKey} products`} onCsv={() => exportClass('csv')} onPdf={() => exportClass('pdf')} />
       </div>
       <RankedProductList rows={rows} barColor={color} tooltipContent={tooltipContent} />
     </Card>
@@ -856,62 +711,3 @@ function DrillBreadcrumb({ active, rootLabel, onReset }: { active: string | null
     </div>
   );
 }
-
-/** Same bordered-pill "Export as PDF" convention every other report page's ChartPanel
- * headerActions uses (see stock-velocity/page.tsx's own PdfButton) -- duplicated locally per that
- * same established per-page convention, not centralized in @07ps/ui. */
-function PdfButton({ label, onClick }: { label: string; onClick: () => void }) {
-  // Hidden without Export permission on this page (the backend refuses the export anyway).
-  const canExport = useCanExport();
-  if (!canExport) return null;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        fontSize: 11,
-        fontWeight: 600,
-        color: 'var(--ps-color-muted-text)',
-        background: 'var(--ps-color-muted-bg)',
-        border: '1px solid var(--ps-color-border)',
-        borderRadius: 6,
-        padding: '4px 10px',
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-/** Colored pill -- same treatment for BCG Class/Movement wherever they appear (matrix cell header
- * above, bubble chart tooltip) so they read as the same design system, not a plain text list. */
-function Pill({ color, label }: { color: string; label: string }) {
-  return (
-    <span
-      style={{
-        fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
-        color, background: `color-mix(in srgb, ${color} 16%, transparent)`,
-        padding: '3px 8px', borderRadius: 999,
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-/** Label/value row for the bubble chart tooltip -- same right-aligned value convention the
- * Product Detail table already uses for these fields. */
-function TooltipRow({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, lineHeight: 1.7 }}>
-      <span style={{ color: 'var(--ps-color-muted-text)' }}>{label}</span>
-      <span style={{ fontWeight: 600, color: valueColor ?? 'var(--ps-color-text)' }}>{value}</span>
-    </div>
-  );
-}
-

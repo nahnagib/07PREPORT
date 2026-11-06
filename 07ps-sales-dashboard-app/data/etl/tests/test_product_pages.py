@@ -215,65 +215,43 @@ def test_odoo_gap_report_lists_sold_products_missing_brand_family_size_or_sku_la
     assert gaps.iloc[0]["ProductName"] == "Nothing" and gaps.iloc[0]["Company"] == "Majaal"
 
 
-# ---------------------------------------------------------------- BMH view: one Odoo template sold by both companies
-def _shared_case():
-    # products 1 (Majaal) and 2 (Tika) are variants of template 100; product 3 is template 300; 99 has no catalog row.
-    dim = _dim({"id": 1, "name": "Cemair", "tmpl": 100}, {"id": 2, "name": "Cem Air", "tmpl": 100}, {"id": 3, "name": "Other", "tmpl": 300})
-    lines = [
-        _line("Majaal", 1, "2026-03-01", 100, 300),
-        _line("Tika", 2, "2026-09-01", 90, 700),
-        _line("Majaal", 3, "2026-09-01", 1, 5),
-        _line("Tika", 99, "2026-09-02", 1, 5),
-    ]
-    inv = pd.DataFrame([_inv("Majaal", 1, 60, 60), _inv("Tika", 2, 120, 240)])
-    # standard cost per unit: product 1 -> 1, product 2 -> 2, 3 -> 1, 99 -> 1
-    return _build(lines, dim, inventory=inv, costs=[1.0, 2.0, 1.0, 1.0])
-
-
-def test_bmh_view_groups_by_odoo_template_never_by_name() -> None:
-    out = _shared_case()
+# ---------------------------------------------------------------- one company per product; Athena left out; one "Unit"
+def test_every_product_row_is_one_odoo_product_in_one_company_never_combined() -> None:
+    # products 1 (Majaal) and 2 (Tika) share template 100: still two rows, never "Majaal + Tika"
+    dim = _dim({"id": 1, "name": "Cemair", "tmpl": 100}, {"id": 2, "name": "Cem Air", "tmpl": 100})
+    out = _build([_line("Majaal", 1, "2026-03-01", 100, 300), _line("Tika", 2, "2026-09-01", 90, 700)], dim)
     p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
-    g = out["Dim_ProductDashboardGroup"].set_index("ProductGroupKey")
-    assert p.loc["Majaal|1", "ValueYTD"] == 300 and p.loc["Tika|2", "ValueYTD"] == 700
-    assert p.loc["Majaal|1", "ProductGroupKey"] == p.loc["Tika|2", "ProductGroupKey"] == "T|100"  # different names, one template
-    row = g.loc["T|100"]
-    assert row["Companies"] == "Majaal + Tika" and row["CompanyCount"] == 2
-    assert row["ValueYTD"] == 1000 and row["QtyYTD"] == 190
-    assert row["StockQty"] == 180 and row["StockValue"] == 300
-    assert g.loc["T|300", "ValueYTD"] == 5 and g.loc["T|300", "Companies"] == "Majaal"
-    assert "Tika|99" in g.index  # a product with no template stays on its own
+    assert sorted(p.index) == ["Majaal|1", "Tika|2"]
+    assert set(p["Company"]) == {"Majaal", "Tika"} and not p["Company"].str.contains("+", regex=False).any()
+    assert "Dim_ProductDashboardGroup" not in out and "ProductGroupKey" not in p.columns
+    assert (p["ThresholdCompany"] == p["Company"]).all()
 
 
-def test_grouping_does_not_change_grand_totals() -> None:
-    out = _shared_case()
-    p, g = out["Dim_ProductDashboard"], out["Dim_ProductDashboardGroup"]
-    for col in ["ValueYTD", "QtyYTD", "ValueLYTD", "QtyLYTD", "StockQty", "StockValue"]:
-        assert g[col].sum() == pytest.approx(p[col].sum()), col
-    assert g["ValueYTD"].sum() == pytest.approx(out["Fact_ProductSalesDaily"]["Value"].sum()) == 1010
+def test_athena_is_left_out_of_every_product_table() -> None:
+    dim = _dim({"id": 1, "name": "A", "company": "Athena"}, {"id": 2, "name": "B", "company": "Majaal"})
+    inv = pd.DataFrame([_inv("Athena", 1, 10, 10), _inv("Majaal", 2, 5, 5)])
+    out = _build([_line("Athena", 1, "2026-09-01", 1, 1000), _line("Majaal", 2, "2026-09-01", 1, 10)], dim, inventory=inv)
+    assert set(out["Fact_ProductSalesDaily"]["Company"]) == {"Majaal"}
+    assert out["Fact_ProductSalesDaily"]["Value"].sum() == 10
+    assert set(out["Dim_ProductDashboard"]["Company"]) == {"Majaal"}
+    assert out["ProductDashboard_Meta"]["SalesLinesValue"].iloc[0] == 10
+    assert "Athena" not in set(out["QA_ProductOdooGaps"]["Company"]) and "Athena" not in set(out["QA_ProductDataQuality"]["Company"])
 
 
-def test_shared_template_non_additive_metrics_are_recomputed_not_averaged() -> None:
-    out = _shared_case()
-    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
-    row = out["Dim_ProductDashboardGroup"].set_index("ProductGroupKey").loc["T|100"]
-    # Days of inventory = combined stock / combined daily sales: 180 / (90 sold in the last 90 days / 90) = 180
-    assert row["AvgDailySales"] == pytest.approx(1.0)
-    assert row["DaysOfInventory"] == pytest.approx(180.0)
-    assert pd.isna(p.loc["Majaal|1", "DaysOfInventory"]) and p.loc["Tika|2", "DaysOfInventory"] == pytest.approx(120.0)
-    # Margin = combined (value - cost) / combined value = (1000 - 100 - 180) / 1000 = 72 % (the average would be 70.48 %)
-    assert row["GrossProfitPctYTD"] == pytest.approx(72.0)
-    assert p.loc["Majaal|1", "GrossProfitPctYTD"] == pytest.approx(200 / 3)
-    assert p.loc["Tika|2", "GrossProfitPctYTD"] == pytest.approx(520 / 7)
-    # BCG on combined figures with the lead company's (Tika, larger YTD value) thresholds: 190 < 25,000 -> LV; 72 % -> HP
-    assert row["ThresholdCompany"] == "Tika"
-    assert row["BcgClassYTD"] == "Strategic"
-    assert row["LifecycleSegment"] == "Growing"
-    assert row["StockBand"] == "Overstock"
+def test_unit_type_uoms_are_one_unit_and_their_quantities_add_up() -> None:
+    dim = _dim({"id": 1, "name": "Tile"})
+    lines = [_line("Majaal", 1, "2026-09-01", 10, 10, uom="وحدة"), _line("Majaal", 1, "2026-09-02", 5, 5, uom="UNIT"),
+             _line("Majaal", 1, "2026-09-03", 2, 2, uom="Units"), _line("Majaal", 1, "2026-09-03", 3, 3, uom="m²")]
+    out = _build(lines, dim)
+    daily = out["Fact_ProductSalesDaily"].groupby("UoM")["Qty"].sum().to_dict()
+    assert daily == {"Unit": 17, "m²": 3}  # 10 + 5 + 2 in one unit; m² is not a unit-type UoM and keeps its name
+    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey").loc["Majaal|1"]
+    assert p["UoMList"] == "Unit | m²"
 
 
 def test_product_ratio_columns_are_stored_as_decimal_not_float() -> None:
     """MySQL FLOAT keeps ~7 significant digits: DaysOfInventory 12857.142857 came back as 12857.1 and failed the
-    SQL/DataFrame mirror validation of Dim_ProductDashboard / Dim_ProductDashboardGroup in production."""
+    SQL/DataFrame mirror validation of Dim_ProductDashboard in production."""
     from sqlalchemy.dialects import mysql
 
     from sales_pipeline.export.database_exporter import DatabaseExporter
@@ -286,5 +264,5 @@ def test_product_ratio_columns_are_stored_as_decimal_not_float() -> None:
 def test_meta_built_at_has_whole_seconds() -> None:
     """MySQL DATETIME rounds fractional seconds; a .5s+ value read back one second later and failed the
     SQL/DataFrame mirror validation of ProductDashboard_Meta in production (run 218)."""
-    built = _shared_case()["ProductDashboard_Meta"]["BuiltAtUtc"].iloc[0]
+    built = _build([_line("Majaal", 1, "2026-09-01", 1, 1)], _dim({"id": 1, "name": "A"}))["ProductDashboard_Meta"]["BuiltAtUtc"].iloc[0]
     assert built == built.floor("s")

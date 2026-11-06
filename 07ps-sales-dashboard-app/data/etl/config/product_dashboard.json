@@ -27,6 +27,13 @@
     "_not_listed_needs_confirmation": ["شركة النماء القابضة", "شركة النماء المتألق", "مديونية شركة اثينا"]
   },
 
+  "product_pages": {
+    "_comment": "Product pages only (BCG Matrix, Stock Velocity, PIM Contribution, Product Lifecycle). excluded_companies are left out of every product table and total. unit_uom_names (case-insensitive) are shown as one unit, unit_label, and their quantities added together; any other unit of measure keeps its own name.",
+    "excluded_companies": ["Athena"],
+    "unit_uom_names": ["UNIT", "Unit", "Units", "وحدة"],
+    "unit_label": "Unit"
+  },
+
   "discounts": {
     "_comment": "Odoo product.product ids whose sales lines are discounts. Those lines keep their Odoo product name exactly as Odoo stores it; they are only flagged is_discount = 1 (never renamed).",
     "discount_product_ids": [1068, 2881, 4691, 6009]
