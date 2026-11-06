@@ -39,7 +39,7 @@ import {
 
 /**
  * NPS Detractor Follow-up (Process department; docs/nps-followup.md). One case per detractor rating, created by the
- * nightly NPS refresh (process_nps, 02:00): a new detractor appears here the next morning.
+ * NPS refresh (process_nps, in the 30-minute refresh and the 02:00 full run): a new detractor appears here within 30 minutes.
  *
  * Stage and status are separate (lib/nps/followup.ts): the board's columns are STAGES, New -> Contacted -> In progress
  * -> Resolved -> Rejected (Resolved shows the last 30 days only, Rejected has no window; Historical cases, rated before
@@ -193,7 +193,7 @@ function FollowupBody() {
               <KaizenKpi label="Not classified" value={String(board.kpis.noReason)} sub="no reason chosen yet" accent="var(--ps-color-watch)" />
             </section>
             <p className="ps-fu-muted" style={{ margin: 0 }}>
-              New detractors appear as cases after the nightly refresh at 02:00 (the next morning). The columns are stages; the badge is the status. Resolved shows the last 30 days; Historical cases are in the List view.
+              New detractors appear as cases within 30 minutes (the refresh runs every 30 min). The columns are stages; the badge is the status. Resolved shows the last 30 days; Historical cases are in the List view.
               {board.truncated ? ' Only the first 2,000 cases are shown: narrow the filters.' : ''}
             </p>
             {board.cases.length === 0 && <EmptyState message="No cases for these filters." />}
