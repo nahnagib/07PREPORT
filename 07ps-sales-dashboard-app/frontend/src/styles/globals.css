@@ -670,6 +670,8 @@ textarea.ps-kaizen-input { min-height: 84px; resize: vertical; }
 .ps-fu-card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 2px; }
 .ps-fu-time { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; }
 .ps-fu-flag { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--ps-color-alert); }
+/* the STATUS badge (Open / Close / Disputed, from the stage): outlined, so it never reads as the stage pill */
+.ps-fu-status { display: inline-flex; align-items: center; padding: 1px 7px; border: 1px solid; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; line-height: 1.5; white-space: nowrap; }
 .ps-fu-overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.45); display: flex; justify-content: flex-end; }
 .ps-fu-dialog { width: min(720px, 100%); height: 100%; overflow-y: auto; background: var(--ps-card-bg, var(--ps-color-surface)); border-inline-start: 1px solid var(--ps-color-border); padding: 18px 20px 28px; display: flex; flex-direction: column; gap: 16px; color: var(--ps-color-text); }
 .ps-fu-dialog-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }

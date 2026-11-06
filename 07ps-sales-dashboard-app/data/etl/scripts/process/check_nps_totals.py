@@ -248,7 +248,7 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
                 checks.append(("rate", rr["status"] == "ready" and rr["responders"] == rr_resp and rr["reached"] == reached and _close(rr["rate"], rate)))
                 fu = _api_get(api_base, token, "followup-summary", params)
                 checks.append(("followup", fu["detractors"] == want["detractors"]
-                               and fu["charted"] + fu["cancelled"] + fu["historical"] + fu["noCase"] == fu["detractors"]))
+                               and fu["charted"] + fu["rejected"] + fu["historical"] + fu["noCase"] == fu["detractors"]))
                 try:
                     dl = _api_get(api_base, token, "detractors", [*params, ("pageSize", "500")])
                     checks.append(("detractor list", dl["total"] == want["detractors"]))

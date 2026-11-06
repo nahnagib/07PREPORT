@@ -175,11 +175,11 @@ export function responseRateTooltip(r: Pick<NpsResponseRate, 'responders' | 'del
 }
 
 // -- follow-up charts -----------------------------------------------------------------------------------------------------
-/** Follow-up status colors match the page's muted semantic palette; pending is blue. */
+/** Follow-up stage (with time) colors match the page's muted semantic palette; pending is blue. */
 export const FOLLOWUP_BUCKETS: readonly { key: NpsFollowupBucket; label: string; color: string }[] = [
-  { key: 'solved_48h', label: 'Solved < 48 h', color: 'var(--ps-nps-teal)' },
-  { key: 'solved_5d', label: 'Solved 48 h – 5 days', color: 'var(--ps-nps-amber)' },
-  { key: 'solved_late', label: 'Solved > 5 days', color: 'var(--ps-nps-rose)' },
+  { key: 'resolved_48h', label: 'Resolved < 48 h', color: 'var(--ps-nps-teal)' },
+  { key: 'resolved_5d', label: 'Resolved 48 h – 5 days', color: 'var(--ps-nps-amber)' },
+  { key: 'resolved_late', label: 'Resolved > 5 days', color: 'var(--ps-nps-rose)' },
   { key: 'pending', label: 'Pending', color: 'var(--ps-nps-blue)' },
 ];
 

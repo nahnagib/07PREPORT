@@ -1,31 +1,63 @@
 import { API_BASE, ApiError, apiRequest, type TachometerFilters } from '../api';
 
-/** NPS Detractor Follow-up API client and view helpers (backend routes/npsFollowup.ts; docs/nps-followup.md). */
+/**
+ * NPS Detractor Follow-up API client and view helpers (backend routes/npsFollowup.ts; docs/nps-followup.md).
+ *
+ * STAGE and STATUS are two separate things and are never mixed:
+ *   stage   the workflow step (editable): the board columns, the Stage filter, the history.
+ *   status  OPEN / CLOSE / DISPUTED, worked out from the stage by the database (read-only): the badge, the Status
+ *           filter, the Open / Close / Disputed KPIs. Two cards in the same column always have the same badge.
+ */
 
-export const STATUSES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'SOLVED', 'CANCELLED'] as const;
+/** The workflow steps. */
+export const STAGES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'] as const;
+export type FollowupStage = (typeof STAGES)[number];
+/** The board's columns (stages), left to right (Historical cases appear only in the List view). */
+export const BOARD_COLUMNS: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'];
+export const EDITABLE_STAGES: readonly FollowupStage[] = BOARD_COLUMNS;
+
+/** The outcome groups. */
+export const STATUSES = ['OPEN', 'CLOSE', 'DISPUTED'] as const;
 export type FollowupStatus = (typeof STATUSES)[number];
-/** The board's columns, left to right (Historical cases appear only in the List view). */
-export const BOARD_COLUMNS: readonly FollowupStatus[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'SOLVED', 'CANCELLED'];
-export const EDITABLE_STATUSES: readonly FollowupStatus[] = BOARD_COLUMNS;
 export type TimeBand = 'green' | 'yellow' | 'red';
 
-export const STATUS_LABEL: Record<FollowupStatus, string> = {
+export const STAGE_LABEL: Record<FollowupStage, string> = {
   HISTORICAL: 'Historical',
   NEW: 'New',
   CONTACTED: 'Contacted',
   IN_PROGRESS: 'In progress',
-  SOLVED: 'Solved',
-  CANCELLED: 'Cancelled',
+  RESOLVED: 'Resolved',
+  REJECTED: 'Rejected',
 };
 
-export const STATUS_COLOR: Record<FollowupStatus, string> = {
+export const STAGE_COLOR: Record<FollowupStage, string> = {
   HISTORICAL: 'var(--ps-color-muted-text)',
   NEW: 'var(--ps-color-accent)',
   CONTACTED: 'var(--ps-color-watch)',
   IN_PROGRESS: 'var(--ps-color-gold)',
-  SOLVED: 'var(--ps-color-success)',
-  CANCELLED: 'var(--ps-color-muted-text)',
+  RESOLVED: 'var(--ps-color-success)',
+  REJECTED: 'var(--ps-color-muted-text)',
 };
+
+export const STATUS_LABEL: Record<FollowupStatus, string> = {
+  OPEN: 'Open',
+  CLOSE: 'Close',
+  DISPUTED: 'Disputed',
+};
+
+export const STATUS_COLOR: Record<FollowupStatus, string> = {
+  OPEN: 'var(--ps-color-accent)',
+  CLOSE: 'var(--ps-color-success)',
+  DISPUTED: 'var(--ps-color-alert)',
+};
+
+/** The same rule as the database's generated column (migration 0066), for the form's preview only. */
+export function statusOfStage(stage: FollowupStage): FollowupStatus | null {
+  if (stage === 'NEW' || stage === 'CONTACTED' || stage === 'IN_PROGRESS') return 'OPEN';
+  if (stage === 'RESOLVED') return 'CLOSE';
+  if (stage === 'HISTORICAL') return null;
+  return 'DISPUTED';
+}
 
 export const BAND_COLOR: Record<TimeBand, string> = {
   green: 'var(--ps-color-success)',
@@ -33,20 +65,34 @@ export const BAND_COLOR: Record<TimeBand, string> = {
   red: 'var(--ps-color-alert)',
 };
 
-export const BAND_HINT = 'Time open, from the rating to Solved (or to now while open): green under 48 h, yellow 48 h to 5 days, red over 5 days.';
+export const BAND_HINT = 'Time open, from the rating to Resolved (or to now while in an open stage): green under 48 h, yellow 48 h to 5 days, red over 5 days.';
 
 export interface FollowupCase {
   caseId: number;
   responseId: number;
   ratedAt: string | null;
-  status: FollowupStatus;
+  /** the workflow step (editable) */
+  stage: FollowupStage;
+  /** worked out from the stage (read-only); null for Historical */
+  status: FollowupStatus | null;
   reasonId: number | null;
-  reasonEn: string | null;
-  reasonAr: string | null;
+  categoryKey: string | null;
+  categoryEn: string | null;
+  categoryAr: string | null;
+  /** null = the category's "Not specified" row (or Other) */
+  subReasonEn: string | null;
+  subReasonAr: string | null;
+  /** "Category › Sub-reason" (or "… › Not specified", or "Other"); null = not classified */
+  reasonLabelEn: string | null;
+  reasonLabelAr: string | null;
+  /** the note an "Other" reason requires */
+  reasonNote: string | null;
   ownerUserId: number | null;
   ownerName: string | null;
   contactedAt: string | null;
-  solvedAt: string | null;
+  resolvedAt: string | null;
+  /** when the stage became Rejected (read-only) */
+  rejectedAt: string | null;
   rootCause: string | null;
   actionTaken: string | null;
   notes: string | null;
@@ -84,26 +130,87 @@ export interface FollowupDetail extends FollowupCase {
   history: FollowupHistoryRow[];
 }
 
+/**
+ * One row of the two-level reason list (dim_nps_reason). subReasonEn null = the category's own row: "Not specified"
+ * (never offered), or Other (requiresNote: offered, with a required note).
+ */
 export interface FollowupReason {
   reasonId: number;
-  nameEn: string;
-  nameAr: string;
+  reasonKey: string;
+  categoryKey: string;
+  categoryEn: string;
+  categoryAr: string;
+  subReasonEn: string | null;
+  subReasonAr: string | null;
+  categorySort: number;
   sortOrder: number;
+  requiresNote: boolean;
   isActive: boolean;
+  categoryActive: boolean;
+  pickable: boolean;
+  labelEn: string;
+  labelAr: string;
   usageCount: number;
 }
 
+export interface ReasonCategory {
+  categoryKey: string;
+  categoryEn: string;
+  categoryAr: string;
+  /** the category's own row ("Not specified", or Other) */
+  row: FollowupReason;
+  subReasons: FollowupReason[];
+}
+
+/** The flat list as categories with their sub-reasons, in the list's order. */
+export function groupReasons(rows: FollowupReason[]): ReasonCategory[] {
+  const out = new Map<string, ReasonCategory>();
+  for (const r of rows) {
+    if (r.subReasonEn === null) out.set(r.categoryKey, { categoryKey: r.categoryKey, categoryEn: r.categoryEn, categoryAr: r.categoryAr, row: r, subReasons: [] });
+  }
+  for (const r of rows) if (r.subReasonEn !== null) out.get(r.categoryKey)?.subReasons.push(r);
+  return [...out.values()];
+}
+
+/** POST / PATCH /nps-followup/reasons: a sub-reason (categoryKey + subReason*), a category (category*), or a change. */
+export interface ReasonInput {
+  categoryKey?: string;
+  categoryEn?: string;
+  categoryAr?: string;
+  subReasonEn?: string;
+  subReasonAr?: string;
+  sortOrder?: number;
+  isActive?: boolean;
+}
+
 export interface FollowupOptions {
+  stages: FollowupStage[];
   statuses: FollowupStatus[];
   reasons: FollowupReason[];
   /** Owner names already used on cases plus active users' names (suggestions for the free-text Owner). */
   owners: string[];
 }
 
+export interface FollowupKpis {
+  /** by status (every case of the filters, Historical has none) */
+  open: number;
+  close: number;
+  disputed: number;
+  total: number;
+  openShare: number | null;
+  closeShare: number | null;
+  disputedShare: number | null;
+  /** by stage and its times (the board's cases) */
+  openOver5Days: number;
+  resolved30Days: number;
+  resolvedWithin48h: number;
+  noReason: number;
+}
+
 export interface FollowupBoard {
   cases: FollowupCase[];
   truncated: boolean;
-  kpis: { open: number; openOver5Days: number; solved30Days: number; solvedWithin48h: number; noReason: number; cancelled: number };
+  kpis: FollowupKpis;
   now: string;
 }
 
@@ -119,7 +226,11 @@ export interface FollowupFilters {
   view: 'board' | 'list';
   dateFrom?: string;
   dateTo?: string;
+  stages: FollowupStage[];
   statuses: FollowupStatus[];
+  /** reason category keys */
+  categories: string[];
+  /** exact reasons (sub-reasons) */
   reasonIds: number[];
   /** owner names (the Owner is free text); NO_OWNER = no owner yet */
   owners: string[];
@@ -127,36 +238,39 @@ export interface FollowupFilters {
   search?: string;
 }
 
-export const EMPTY_FILTERS: FollowupFilters = { view: 'board', statuses: [], reasonIds: [], owners: [] };
+export const EMPTY_FILTERS: FollowupFilters = { view: 'board', stages: [], statuses: [], categories: [], reasonIds: [], owners: [] };
 
 /** `owners` filter value meaning "no owner yet" (same token as the API). */
 export const NO_OWNER = '__none__';
 
 export interface CaseEdit {
   version: number;
-  status?: FollowupStatus;
+  stage?: FollowupStage;
   reasonId?: number | null;
+  reasonNote?: string | null;
   /** free text; '' clears it */
   owner?: string | null;
   contactedAt?: string | null;
-  solvedAt?: string | null;
+  resolvedAt?: string | null;
   rootCause?: string | null;
   actionTaken?: string | null;
   notes?: string | null;
 }
 
 const ints = (v: string | null) => (v ? v.split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 0) : []);
+const oneOf = <T extends string>(v: string | null, allowed: readonly T[]): T[] => (v ?? '').split(',').filter((s): s is T => (allowed as readonly string[]).includes(s));
 
 export function filtersFromSearch(search: string): FollowupFilters & { caseId: number | null } {
   const p = new URLSearchParams(search);
-  const statuses = (p.get('statuses') ?? '').split(',').filter((s): s is FollowupStatus => (STATUSES as readonly string[]).includes(s));
   const sc = p.get('sourceChanged');
   const caseId = Number(p.get('case'));
   return {
     view: p.get('view') === 'list' ? 'list' : 'board',
     dateFrom: p.get('dateFrom') || undefined,
     dateTo: p.get('dateTo') || undefined,
-    statuses,
+    stages: oneOf(p.get('stages'), STAGES),
+    statuses: oneOf(p.get('statuses'), STATUSES),
+    categories: (p.get('categories') ?? '').split(',').map((c) => c.trim()).filter((c) => /^[a-z0-9_]{1,40}$/.test(c)),
     reasonIds: ints(p.get('reasonIds')).filter((n) => n > 0),
     owners: (p.get('owners') ?? '').split(',').map((o) => o.trim()).filter(Boolean),
     sourceChanged: sc === 'true' ? true : sc === 'false' ? false : undefined,
@@ -171,7 +285,9 @@ export function filtersToSearch(f: FollowupFilters, caseId: number | null = null
   if (f.view === 'list') p.set('view', 'list');
   if (f.dateFrom) p.set('dateFrom', f.dateFrom);
   if (f.dateTo) p.set('dateTo', f.dateTo);
+  if (f.stages.length) p.set('stages', f.stages.join(','));
   if (f.statuses.length) p.set('statuses', f.statuses.join(','));
+  if (f.categories.length) p.set('categories', f.categories.join(','));
   if (f.reasonIds.length) p.set('reasonIds', f.reasonIds.join(','));
   if (f.owners.length) p.set('owners', f.owners.join(','));
   if (f.sourceChanged !== undefined) p.set('sourceChanged', String(f.sourceChanged));
@@ -205,9 +321,9 @@ export const followupApi = {
   updateCase: (token: string, id: number, edit: CaseEdit) =>
     apiRequest<{ case: FollowupCase }>(`/nps-followup/cases/${id}`, token, { method: 'PATCH', ...json(edit) }),
   reasons: (token: string) => apiRequest<{ rows: FollowupReason[] }>('/nps-followup/reasons', token),
-  createReason: (token: string, input: Partial<FollowupReason>) =>
+  createReason: (token: string, input: ReasonInput) =>
     apiRequest<{ row: FollowupReason }>('/nps-followup/reasons', token, { method: 'POST', ...json(input) }),
-  updateReason: (token: string, id: number, input: Partial<FollowupReason>) =>
+  updateReason: (token: string, id: number, input: ReasonInput) =>
     apiRequest<{ row: FollowupReason }>(`/nps-followup/reasons/${id}`, token, { method: 'PATCH', ...json(input) }),
   deleteReason: (token: string, id: number) => apiRequest<{ success: boolean }>(`/nps-followup/reasons/${id}`, token, { method: 'DELETE' }),
 
@@ -241,10 +357,10 @@ export function formatHoursOpen(hours: number | null): string {
   return `${(Math.floor((hours / 24) * 10) / 10).toFixed(1)} d`;
 }
 
-/** The board's cases by column, in rating order (oldest first: the longest waiting on top). */
-export function byColumn(cases: FollowupCase[]): Record<FollowupStatus, FollowupCase[]> {
-  const out = Object.fromEntries(STATUSES.map((s) => [s, [] as FollowupCase[]])) as unknown as Record<FollowupStatus, FollowupCase[]>;
-  for (const c of cases) out[c.status].push(c);
+/** The board's cases by column (= by STAGE), in rating order (oldest first: the longest waiting on top). */
+export function byColumn(cases: FollowupCase[]): Record<FollowupStage, FollowupCase[]> {
+  const out = Object.fromEntries(STAGES.map((s) => [s, [] as FollowupCase[]])) as unknown as Record<FollowupStage, FollowupCase[]>;
+  for (const c of cases) out[c.stage].push(c);
   return out;
 }
 
@@ -253,22 +369,24 @@ export const toInput = (wall: string | null): string => (wall ? wall.slice(0, 16
 /** Back from the input: "2026-10-19T09:37" -> "2026-10-19 09:37" (null when empty). */
 export const fromInput = (v: string): string | null => (v ? v.replace('T', ' ') : null);
 
+/** The history's fields. The workflow step is `stage`; the status is never in the history (it follows the stage). */
 export const FIELD_LABEL: Record<string, string> = {
-  status: 'Status',
+  stage: 'Stage',
   reason: 'Reason',
+  reason_note: 'Reason note',
   owner: 'Owner',
   contacted_at: 'Contacted at',
-  solved_at: 'Solved at',
+  resolved_at: 'Resolved at',
   root_cause: 'Root cause',
   action_taken: 'Action taken',
   notes: 'Notes',
   source_changed: 'Source changed',
 };
 
-/** History values as people read them (statuses by their label). */
+/** History values as people read them (stages by their label). */
 export function historyValue(field: string, value: string | null): string {
   if (value === null || value === '') return '—';
-  if (field === 'status') return STATUS_LABEL[value as FollowupStatus] ?? value;
-  if (field === 'contacted_at' || field === 'solved_at') return value.slice(0, 16);
+  if (field === 'stage') return STAGE_LABEL[value as FollowupStage] ?? value;
+  if (field === 'contacted_at' || field === 'resolved_at') return value.slice(0, 16);
   return value;
 }

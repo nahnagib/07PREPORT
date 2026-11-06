@@ -8,22 +8,35 @@ import { ReasonPie } from './ReasonPie';
 
 export type FollowupState = { data: NpsFollowupSummary | null; loading: boolean; error: string | null; retry: () => void };
 
-/** "Cancelled: 1 · Historical: 28" under both charts (they are left out of them). */
+const NOTE = { fontSize: 12, color: 'var(--ps-color-neutral-text)', margin: '4px 0 0' } as const;
+const STATUS_LABEL: Record<string, string> = { OPEN: 'Open', CLOSE: 'Close', DISPUTED: 'Disputed' };
+
+/** "Rejected: 1 · Historical: 28" under both charts (stages left out of them). */
 function LeftOut({ s }: { s: NpsFollowupSummary }) {
   return (
-    <p style={{ fontSize: 12, color: 'var(--ps-color-neutral-text)', margin: '4px 0 0' }} data-testid="fu-left-out">
-      Cancelled: {formatNumber(s.cancelled)} · Historical: {formatNumber(s.historical)}
+    <p style={NOTE} data-testid="fu-left-out">
+      Rejected: {formatNumber(s.rejected)} · Historical: {formatNumber(s.historical)}
       {s.noCase > 0 ? ` · Not yet a case: ${formatNumber(s.noCase)}` : ''}
     </p>
   );
 }
 
+/** "By status: Open 13 · Close 1 · Disputed 1" (the status, worked out from the stage; Historical has none). */
+function ByStatus({ s }: { s: NpsFollowupSummary }) {
+  return (
+    <p style={NOTE} data-testid="fu-by-status">
+      By status: {s.byStatus.map((b) => `${STATUS_LABEL[b.key]} ${formatNumber(b.count)}`).join(' · ')}
+    </p>
+  );
+}
+
 /**
- * Detractors by reason and by status, read live from the follow-up cases (nps_followup_case) for the page's period and
- * filters: an edit on the follow-up page shows here on the next load. Historical (rated before the follow-up started)
- * and Cancelled cases are left out of both charts and counted under them.
+ * Detractors by reason category and by stage, read live from the follow-up cases (nps_followup_case) for the page's
+ * period and filters: an edit on the follow-up page shows here on the next load. Historical (rated before the
+ * follow-up started) and Rejected cases are left out of both charts and counted under them; the stage chart also
+ * gives the counts by status.
  */
-export function FollowupCharts({ state, part }: { state: FollowupState; part: 'reason' | 'status' }) {
+export function FollowupCharts({ state, part }: { state: FollowupState; part: 'reason' | 'stage' }) {
   const s = state.data;
   let body: React.ReactNode;
   if (state.error) body = <ErrorState message={state.error} onRetry={state.retry} />;
@@ -33,26 +46,27 @@ export function FollowupCharts({ state, part }: { state: FollowupState; part: 'r
     body = (
       <>
         <ReasonPie ariaLabel="Detractors by reason" testId="fu-reason" totalLabel="Detractors"
-          items={s.byReason.map((r) => ({
-            key: r.reasonId === null ? 'none' : String(r.reasonId), label: r.label, hint: r.labelAr ?? undefined, count: r.count,
-            color: r.reasonId === null ? 'var(--ps-nps-slate)' : ['var(--ps-nps-blue)', 'var(--ps-nps-teal)', 'var(--ps-nps-cyan)', 'var(--ps-nps-lilac)', 'var(--ps-nps-amber)'][Math.abs(r.reasonId - 1) % 5],
+          items={s.byReason.map((r, i) => ({
+            key: r.categoryKey ?? 'none', label: r.label, hint: r.labelAr ?? undefined, count: r.count,
+            color: r.categoryKey === null ? 'var(--ps-nps-slate)' : ['var(--ps-nps-blue)', 'var(--ps-nps-teal)', 'var(--ps-nps-cyan)', 'var(--ps-nps-lilac)', 'var(--ps-nps-amber)'][i % 5],
           }))} />
         <LeftOut s={s} />
       </>
     );
   } else {
-    const counts = Object.fromEntries(s.byStatus.map((b) => [b.key, b.count]));
+    const counts = Object.fromEntries(s.byStage.map((b) => [b.key, b.count]));
     body = (
       <>
-        <ReasonPie ariaLabel="Detractors by status" testId="fu-status" totalLabel="Detractors"
+        <ReasonPie ariaLabel="Detractors by stage" testId="fu-stage" totalLabel="Detractors"
           items={FOLLOWUP_BUCKETS.map((b) => ({ key: b.key, label: b.label, count: counts[b.key] ?? 0, color: b.color }))} />
+        <ByStatus s={s} />
         <LeftOut s={s} />
       </>
     );
   }
   return (
-    <ChartPanel {...vh(part === 'reason' ? 'process.npsScore.byReason' : 'process.npsScore.byStatus')}
-      title={part === 'reason' ? 'Detractors by reason' : 'Detractors by status'}
+    <ChartPanel {...vh(part === 'reason' ? 'process.npsScore.byReason' : 'process.npsScore.byStage')}
+      title={part === 'reason' ? 'Detractors by reason' : 'Detractors by stage'}
     >
       {body}
     </ChartPanel>

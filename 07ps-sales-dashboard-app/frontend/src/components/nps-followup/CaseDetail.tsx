@@ -1,43 +1,52 @@
 'use client';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { Button, ErrorState, LoadingSkeleton } from '@07ps/ui';
 import { useAuth } from '../../lib/AuthProvider';
 import { ApiError } from '../../lib/api';
 import {
-  EDITABLE_STATUSES,
+  EDITABLE_STAGES,
   FIELD_LABEL,
-  STATUS_LABEL,
+  STAGE_LABEL,
   followupApi,
   fromInput,
+  groupReasons,
   historyValue,
+  statusOfStage,
   toInput,
   type CaseEdit,
   type FollowupCase,
   type FollowupDetail,
   type FollowupOptions,
-  type FollowupStatus,
+  type FollowupReason,
+  type FollowupStage,
 } from '../../lib/nps/followup';
-import { StatusPill, TimeOpen } from './FollowupBits';
+import { StagePill, StatusBadge, TimeOpen } from './FollowupBits';
 import { OdooLink } from '../OdooLink';
 
+/** The form never holds a status: the status follows the stage (the database works it out). */
 interface Form {
-  status: FollowupStatus;
+  stage: FollowupStage;
+  /** the picker's first level (not sent: the reason id names its category) */
+  category: string;
   reasonId: string;
+  reasonNote: string;
   owner: string;
   contactedAt: string;
-  solvedAt: string;
+  resolvedAt: string;
   rootCause: string;
   actionTaken: string;
   notes: string;
 }
 
 const formOf = (c: FollowupCase): Form => ({
-  status: c.status,
+  stage: c.stage,
+  category: c.categoryKey ?? '',
   reasonId: c.reasonId ? String(c.reasonId) : '',
+  reasonNote: c.reasonNote ?? '',
   owner: c.ownerName ?? '',
   contactedAt: toInput(c.contactedAt),
-  solvedAt: toInput(c.solvedAt),
+  resolvedAt: toInput(c.resolvedAt),
   rootCause: c.rootCause ?? '',
   actionTaken: c.actionTaken ?? '',
   notes: c.notes ?? '',
@@ -47,11 +56,12 @@ const formOf = (c: FollowupCase): Form => ({
 export function editOf(c: FollowupCase, f: Form): CaseEdit {
   const edit: CaseEdit = { version: c.version };
   const before = formOf(c);
-  if (f.status !== before.status) edit.status = f.status;
+  if (f.stage !== before.stage) edit.stage = f.stage;
   if (f.reasonId !== before.reasonId) edit.reasonId = f.reasonId ? Number(f.reasonId) : null;
+  if (f.reasonNote.trim() !== before.reasonNote.trim()) edit.reasonNote = f.reasonNote.trim() || null;
   if (f.owner.trim() !== before.owner.trim()) edit.owner = f.owner.trim() || null;
   if (f.contactedAt !== before.contactedAt) edit.contactedAt = fromInput(f.contactedAt);
-  if (f.solvedAt !== before.solvedAt) edit.solvedAt = fromInput(f.solvedAt);
+  if (f.resolvedAt !== before.resolvedAt) edit.resolvedAt = fromInput(f.resolvedAt);
   if (f.rootCause !== before.rootCause) edit.rootCause = f.rootCause;
   if (f.actionTaken !== before.actionTaken) edit.actionTaken = f.actionTaken;
   if (f.notes !== before.notes) edit.notes = f.notes;
@@ -130,7 +140,19 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => (f ? { ...f, [k]: v } : f));
   const invalid = (field: string) => (error?.field === field ? { 'aria-invalid': true as const } : {});
-  const reasons = (options?.reasons ?? []).filter((r) => r.isActive || String(r.reasonId) === form?.reasonId);
+  // two levels: a category, then one of its sub-reasons (Other: no sub-reason, a required note). Only pickable rows are
+  // offered, plus the case's own reason (a migrated "Not specified" or a since deactivated one) so it is never lost.
+  const keep = (r: FollowupReason) => r.pickable || String(r.reasonId) === String(detail?.reasonId ?? '');
+  const categories = useMemo(
+    () => groupReasons(options?.reasons ?? []).filter((c) => keep(c.row) || c.subReasons.some(keep)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [options, detail?.reasonId]);
+  const category = categories.find((c) => c.categoryKey === form?.category);
+  const isOther = !!category && category.row.requiresNote;
+  const pickCategory = (key: string) => {
+    const next = categories.find((c) => c.categoryKey === key);
+    setForm((f) => (f ? { ...f, category: key, reasonId: next?.row.requiresNote ? String(next.row.reasonId) : '' } : f));
+  };
   const fact = (label: string, value: React.ReactNode, wide = false) => (
     <div className={wide ? 'ps-kaizen-full' : undefined} style={{ minWidth: 0 }}>
       <div className="ps-fu-label">{label}</div>
@@ -155,7 +177,8 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
         ) : (
           <>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-              <StatusPill status={detail.status} />
+              <StatusBadge status={detail.status} />
+              <StagePill stage={detail.stage} />
               <TimeOpen c={detail} />
               {detail.updatedAt && <span className="ps-fu-muted">Last change {detail.updatedAt.slice(0, 16)}{detail.updatedByName ? ` by ${detail.updatedByName}` : ''}</span>}
             </div>
@@ -186,19 +209,42 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
               )}
               <fieldset disabled={!editable || busy} className="ps-kaizen-form" style={{ border: 0, padding: 0, margin: 0 }}>
                 <label className="ps-kaizen-field">
-                  <span>Status</span>
-                  <select className="ps-kaizen-input" value={form.status} onChange={(e) => set('status', e.target.value as FollowupStatus)} {...invalid('status')}>
-                    {form.status === 'HISTORICAL' && <option value="HISTORICAL">Historical (before the cut-over)</option>}
-                    {EDITABLE_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+                  <span>Stage</span>
+                  <select className="ps-kaizen-input" data-testid="fu-stage-input" value={form.stage} onChange={(e) => set('stage', e.target.value as FollowupStage)} {...invalid('stage')}>
+                    {form.stage === 'HISTORICAL' && <option value="HISTORICAL">Historical (before the cut-over)</option>}
+                    {EDITABLE_STAGES.map((s) => <option key={s} value={s}>{STAGE_LABEL[s]}</option>)}
                   </select>
                 </label>
+                <div className="ps-kaizen-field">
+                  <span>Status (follows the stage)</span>
+                  <div className="ps-fu-value" data-testid="fu-status-preview" style={{ minHeight: 32, display: 'flex', alignItems: 'center' }}>
+                    {statusOfStage(form.stage) ? <StatusBadge status={statusOfStage(form.stage)} /> : <span className="ps-fu-muted">None (Historical)</span>}
+                  </div>
+                </div>
                 <label className="ps-kaizen-field">
-                  <span>Reason{form.status === 'SOLVED' ? ' (required to solve)' : ''}</span>
-                  <select className="ps-kaizen-input" value={form.reasonId} onChange={(e) => set('reasonId', e.target.value)} {...invalid('reasonId')}>
+                  <span>Reason category{form.stage === 'RESOLVED' ? ' (required to resolve)' : ''}</span>
+                  <select className="ps-kaizen-input" data-testid="fu-category-input" value={form.category} onChange={(e) => pickCategory(e.target.value)} {...invalid('reasonId')}>
                     <option value="">Not classified yet</option>
-                    {reasons.map((r) => <option key={r.reasonId} value={r.reasonId}>{r.nameEn} · {r.nameAr}</option>)}
+                    {categories.map((c) => <option key={c.categoryKey} value={c.categoryKey}>{c.categoryEn} · {c.categoryAr}</option>)}
                   </select>
                 </label>
+                {category && !isOther && (
+                  <label className="ps-kaizen-field">
+                    <span>Sub-reason</span>
+                    <select className="ps-kaizen-input" data-testid="fu-subreason-input" value={form.reasonId} onChange={(e) => set('reasonId', e.target.value)} {...invalid('reasonId')}>
+                      <option value="">Choose a sub-reason</option>
+                      {keep(category.row) && <option value={category.row.reasonId}>Not specified · غير محدد</option>}
+                      {category.subReasons.filter(keep).map((r) => <option key={r.reasonId} value={r.reasonId}>{r.subReasonEn} · {r.subReasonAr}</option>)}
+                    </select>
+                  </label>
+                )}
+                {isOther && (
+                  <label className="ps-kaizen-field">
+                    <span>What is the reason? (required for Other)</span>
+                    <input type="text" dir="auto" className="ps-kaizen-input" maxLength={200} value={form.reasonNote}
+                      onChange={(e) => set('reasonNote', e.target.value)} {...invalid('reasonNote')} />
+                  </label>
+                )}
                 <label className="ps-kaizen-field">
                   <span>Owner</span>
                   {/* Free text (owners are often people without a login); suggestions = names already used + users. */}
@@ -212,11 +258,17 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
                   <span>Contacted at</span>
                   <input type="datetime-local" className="ps-kaizen-input" value={form.contactedAt} onChange={(e) => set('contactedAt', e.target.value)} {...invalid('contactedAt')} />
                 </label>
-                {form.status === 'SOLVED' && (
+                {form.stage === 'RESOLVED' && (
                   <label className="ps-kaizen-field">
-                    <span>Solved at (empty = now)</span>
-                    <input type="datetime-local" className="ps-kaizen-input" value={form.solvedAt} onChange={(e) => set('solvedAt', e.target.value)} {...invalid('solvedAt')} />
+                    <span>Resolved at (empty = now)</span>
+                    <input type="datetime-local" className="ps-kaizen-input" value={form.resolvedAt} onChange={(e) => set('resolvedAt', e.target.value)} {...invalid('resolvedAt')} />
                   </label>
+                )}
+                {form.stage === 'REJECTED' && detail.stage === 'REJECTED' && detail.rejectedAt && (
+                  <div className="ps-kaizen-field">
+                    <span>Rejected at</span>
+                    <div className="ps-fu-value">{detail.rejectedAt.slice(0, 16)}</div>
+                  </div>
                 )}
                 <label className="ps-kaizen-field ps-kaizen-full">
                   <span>Root cause</span>
@@ -227,7 +279,7 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
                   <textarea dir="auto" className="ps-kaizen-input" maxLength={2000} value={form.actionTaken} onChange={(e) => set('actionTaken', e.target.value)} {...invalid('actionTaken')} />
                 </label>
                 <label className="ps-kaizen-field ps-kaizen-full">
-                  <span>Notes{form.status === 'CANCELLED' ? ' (say why it is cancelled)' : ''}</span>
+                  <span>Notes{form.stage === 'REJECTED' ? ' (say why it is rejected)' : ''}</span>
                   <textarea dir="auto" className="ps-kaizen-input" maxLength={2000} value={form.notes} onChange={(e) => set('notes', e.target.value)} {...invalid('notes')} />
                 </label>
               </fieldset>

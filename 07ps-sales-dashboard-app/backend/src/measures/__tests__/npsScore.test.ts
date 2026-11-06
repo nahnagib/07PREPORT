@@ -261,33 +261,41 @@ describe('response rate = responders / (Delivered + Read)', () => {
 
 describe('follow-up summary (live from nps_followup_case)', () => {
   const NOW_LOCAL = '2026-10-20 12:00:00';
-  const row = (status: string | null, rated: string, solved: string | null, reasonId: number | null, name: string | null = null) =>
-    ({ case_id: status ? 1 : null, status, rated_at_local: rated, solved_at: solved, reason_id: reasonId, name_en: name, name_ar: name ? `${name}-ar` : null, sort_order: reasonId });
+  const STATUS: Record<string, string | null> = { NEW: 'OPEN', CONTACTED: 'OPEN', IN_PROGRESS: 'OPEN', RESOLVED: 'CLOSE', REJECTED: 'DISPUTED', HISTORICAL: null };
+  const CAT: Record<number, [string, string, number]> = { 1: ['delivery', 'Delivery & Logistics', 5], 2: ['quality', 'Product Quality', 1] };
+  const row = (stage: string | null, rated: string, resolved: string | null, reasonId: number | null) => ({
+    case_id: stage ? 1 : null, stage, status: stage ? STATUS[stage] : null, rated_at_local: rated, resolved_at: resolved, reason_id: reasonId,
+    category_key: reasonId ? CAT[reasonId][0] : null, category_en: reasonId ? CAT[reasonId][1] : null,
+    category_ar: reasonId ? `${CAT[reasonId][1]}-ar` : null, category_sort: reasonId ? CAT[reasonId][2] : null,
+  });
 
-  it('buckets: solved < 48 h green, 48 h - 5 d yellow, > 5 d red, pending black; Historical / Cancelled counted apart', async () => {
+  it('by stage: resolved < 48 h green, 48 h - 5 d yellow, > 5 d red, pending; by status from the status; Historical / Rejected apart', async () => {
     const { pool: p, queries } = pool(() => [
-      row('SOLVED', '2026-10-01 10:00:00', '2026-10-02 09:00:00', 1, 'Late delivery'),   // 23 h
-      row('SOLVED', '2026-10-01 10:00:00', '2026-10-03 10:00:00', 1, 'Late delivery'),   // 48 h -> yellow
-      row('SOLVED', '2026-10-01 10:00:00', '2026-10-06 10:00:01', 2, 'Damaged product'), // > 5 days
+      row('RESOLVED', '2026-10-01 10:00:00', '2026-10-02 09:00:00', 1),   // 23 h
+      row('RESOLVED', '2026-10-01 10:00:00', '2026-10-03 10:00:00', 1),   // 48 h -> yellow
+      row('RESOLVED', '2026-10-01 10:00:00', '2026-10-06 10:00:01', 2),   // > 5 days
       row('NEW', '2026-10-19 10:00:00', null, null),
-      row('IN_PROGRESS', '2026-10-05 10:00:00', null, 2, 'Damaged product'),
-      row('CANCELLED', '2026-10-05 10:00:00', null, 1, 'Late delivery'),
+      row('IN_PROGRESS', '2026-10-05 10:00:00', null, 2),
+      row('REJECTED', '2026-10-05 10:00:00', null, 1),
       row('HISTORICAL', '2026-08-05 10:00:00', null, null),
       row('HISTORICAL', '2026-09-05 10:00:00', null, null),
       row(null, '2026-10-20 08:00:00', null, null), // rated after the last process_nps run: no case yet
     ]);
     const s = await fetchNpsFollowupSummary(p, parseNpsQuery({}, NOW), {}, NOW_LOCAL);
-    expect(Object.fromEntries(s.byStatus.map((b) => [b.key, b.count]))).toEqual({ solved_48h: 1, solved_5d: 1, solved_late: 1, pending: 2 });
-    expect(s).toMatchObject({ detractors: 9, charted: 5, cancelled: 1, historical: 2, noCase: 1 });
-    expect(s.charted + s.cancelled + s.historical + s.noCase).toBe(s.detractors);
-    // most cases first; a tie keeps the reason list's order; "Not yet classified" for cases without a reason
+    expect(Object.fromEntries(s.byStage.map((b) => [b.key, b.count]))).toEqual({ resolved_48h: 1, resolved_5d: 1, resolved_late: 1, pending: 2 });
+    // the status counts come from the status column: Rejected is Disputed, Historical has none
+    expect(s.byStatus).toEqual([{ key: 'OPEN', count: 2 }, { key: 'CLOSE', count: 3 }, { key: 'DISPUTED', count: 1 }]);
+    expect(s).toMatchObject({ detractors: 9, charted: 5, rejected: 1, historical: 2, noCase: 1 });
+    expect(s.charted + s.rejected + s.historical + s.noCase).toBe(s.detractors);
+    // by category, most cases first; a tie keeps the categories' order; "Not yet classified" for cases without a reason
     expect(s.byReason).toEqual([
-      { reasonId: 1, label: 'Late delivery', labelAr: 'Late delivery-ar', count: 2 },
-      { reasonId: 2, label: 'Damaged product', labelAr: 'Damaged product-ar', count: 2 },
-      { reasonId: null, label: 'Not yet classified', labelAr: null, count: 1 },
+      { categoryKey: 'quality', label: 'Product Quality', labelAr: 'Product Quality-ar', count: 2 },
+      { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'Delivery & Logistics-ar', count: 2 },
+      { categoryKey: null, label: 'Not yet classified', labelAr: null, count: 1 },
     ]);
     expect(s.byReason.reduce((n, r) => n + r.count, 0)).toBe(s.charted);
     expect(queries[0].sql).toContain('LEFT JOIN nps_followup_case fc');
+    expect(queries[0].sql).toContain('LEFT JOIN dim_nps_reason r');
     expect(queries[0].sql).toContain('f.nps_level = 1');
     expect(queries[0].sql).toContain('f.RatingDateKey BETWEEN ? AND ?');
   });
@@ -306,23 +314,24 @@ describe('Odoo links (lib/odooLinks.ts)', () => {
     expect(odooFormUrl(null, 'stock.picking', 7001, 3)).toBeNull();
   });
 
-  it('detractor rows: status / reason / owner / time open from the case; order and delivery link with and without a picking id', async () => {
+  it('detractor rows: stage / status / reason / owner / time open from the case; order and delivery link with and without a picking id', async () => {
     const old = process.env.ODOO_URL;
     process.env.ODOO_URL = 'https://erp.example.com';
     try {
       const { pool: p } = pool((sql) => (sql.includes('COUNT(*) AS n') ? [{ n: 2 }] : [
         { response_id: 1, rated_at_local: '2026-10-10 10:00:00', CompanyKey: 3, CustomerKey: 100, order_ref: 'S1', delivery_code: 'TIKA/OUT/1',
-          SalesOrderKey: 4000, PickingID: 7001, case_id: 11, status: 'NEW', case_rated_at: '2026-10-10 10:00:00', solved_at: null,
-          reason_en: 'Late delivery', reason_ar: 'تأخر التوصيل', owner_name: 'Amal' },
+          SalesOrderKey: 4000, PickingID: 7001, case_id: 11, stage: 'NEW', status: 'OPEN', case_rated_at: '2026-10-10 10:00:00', resolved_at: null,
+          category_en: 'Delivery & Logistics', category_ar: 'التوصيل', sub_reason_en: 'Late deliveries', sub_reason_ar: 'تأخر التوصيل', requires_note: 0, owner_name: 'Amal' },
         { response_id: 2, rated_at_local: '2026-10-10 10:00:00', CompanyKey: 1, CustomerKey: 101, order_ref: 'S2', delivery_code: 'WH/OUT/2',
-          SalesOrderKey: -1, PickingID: -1, case_id: 12, status: 'SOLVED', case_rated_at: '2026-10-10 10:00:00', solved_at: '2026-10-11 10:00:00',
-          reason_en: null, reason_ar: null, owner_name: null },
+          SalesOrderKey: -1, PickingID: -1, case_id: 12, stage: 'RESOLVED', status: 'CLOSE', case_rated_at: '2026-10-10 10:00:00', resolved_at: '2026-10-11 10:00:00',
+          category_en: null, category_ar: null, sub_reason_en: null, sub_reason_ar: null, requires_note: null, owner_name: null },
       ]));
       const page = await fetchNpsDetractors(p, parseNpsQuery({}, NOW), {}, '2026-10-20 10:00:00');
-      expect(page.rows[0]).toMatchObject({ caseId: 11, status: 'NEW', reason: 'Late delivery', owner: 'Amal', hoursOpen: 240, timeBand: 'red',
+      expect(page.rows[0]).toMatchObject({ caseId: 11, stage: 'NEW', status: 'OPEN', reason: 'Delivery & Logistics › Late deliveries',
+        reasonAr: 'التوصيل › تأخر التوصيل', owner: 'Amal', hoursOpen: 240, timeBand: 'red',
         orderUrl: 'https://erp.example.com/web#id=4000&model=sale.order&view_type=form&cids=3',
         deliveryUrl: 'https://erp.example.com/web#id=7001&model=stock.picking&view_type=form&cids=3' });
-      expect(page.rows[1]).toMatchObject({ caseId: 12, status: 'SOLVED', reason: null, hoursOpen: 24, timeBand: 'green', orderUrl: null, deliveryUrl: null });
+      expect(page.rows[1]).toMatchObject({ caseId: 12, stage: 'RESOLVED', status: 'CLOSE', reason: null, hoursOpen: 24, timeBand: 'green', orderUrl: null, deliveryUrl: null });
     } finally {
       if (old === undefined) delete process.env.ODOO_URL;
       else process.env.ODOO_URL = old;

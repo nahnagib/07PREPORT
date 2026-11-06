@@ -206,11 +206,13 @@ describe.skipIf(!RUN)('NPS page consistency, YTD, default B2B + B2C filter and a
     const fu = (await get(`/nps-score/followup-summary?${q}`)).body;
     expect(list.total).toBe(o.detractors);
     expect(fu.detractors).toBe(o.detractors);
-    expect(fu.charted + fu.cancelled + fu.historical + fu.noCase).toBe(o.detractors);
-    expect(sum(fu.byStatus, 'count')).toBe(fu.charted);
+    expect(fu.charted + fu.rejected + fu.historical + fu.noCase).toBe(o.detractors);
+    // by status: every case but Historical (and the detractors without a case yet)
+    expect(sum(fu.byStatus, 'count')).toBe(o.detractors - fu.historical - fu.noCase);
+    expect(sum(fu.byStage, 'count')).toBe(fu.charted);
     expect(sum(fu.byReason, 'count')).toBe(fu.charted);
     const [hist] = await qa(`SELECT COUNT(*) AS n FROM nps_followup_case c JOIN fact_process_nps_response f ON f.response_id = c.response_id
-      WHERE c.status = 'HISTORICAL' AND f.nps_level = 1 AND f.RatingDateKey BETWEEN ? AND ?${filters ? ' AND f.SegmentKey IN (1, 2)' : ''}`,
+      WHERE c.stage = 'HISTORICAL' AND f.nps_level = 1 AND f.RatingDateKey BETWEEN ? AND ?${filters ? ' AND f.SegmentKey IN (1, 2)' : ''}`,
     [key(`${today.slice(0, 4)}-01-01`), key(today)]);
     expect(fu.historical).toBe(n(hist.n));
     // the reach boxes add up; errors by reason = the Error box

@@ -3034,18 +3034,26 @@ export interface NpsResponseRate {
   variancePts: number | null;
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
 }
-export type NpsFollowupBucket = 'solved_48h' | 'solved_5d' | 'solved_late' | 'pending';
-/** detractors by follow-up status / reason, live from nps_followup_case */
+/** the follow-up STAGE with its time (Resolved < 48 h / 48 h - 5 days / > 5 days, or still open = pending) */
+export type NpsFollowupBucket = 'resolved_48h' | 'resolved_5d' | 'resolved_late' | 'pending';
+/** the follow-up workflow step (lib/nps/followup.ts) */
+export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'REJECTED';
+/** the outcome group, worked out from the stage */
+export type NpsFollowupStatus = 'OPEN' | 'CLOSE' | 'DISPUTED';
+/** detractors by follow-up stage, by status and by reason category, live from nps_followup_case */
 export interface NpsFollowupSummary {
   dateFrom: string;
   dateTo: string;
   detractors: number;
   charted: number;
-  cancelled: number;
+  /** stage Rejected (left out of the charts) */
+  rejected: number;
   historical: number;
   noCase: number;
-  byStatus: { key: NpsFollowupBucket; count: number }[];
-  byReason: { reasonId: number | null; label: string; labelAr: string | null; count: number }[];
+  byStage: { key: NpsFollowupBucket; count: number }[];
+  byStatus: { key: NpsFollowupStatus; count: number }[];
+  /** by reason category; categoryKey null = not yet classified */
+  byReason: { categoryKey: string | null; label: string; labelAr: string | null; count: number }[];
   now: string;
 }
 export interface NpsReach {
@@ -3079,8 +3087,10 @@ export interface NpsDetractor {
   teamBranch: string | null;
   /** the follow-up case (live); null only before process_nps created it */
   caseId: number | null;
-  status: 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'SOLVED' | 'CANCELLED' | null;
-  /** null = not yet classified */
+  stage: NpsFollowupStage | null;
+  /** worked out from the stage; null for Historical and before the case exists */
+  status: NpsFollowupStatus | null;
+  /** "Category › Sub-reason"; null = not yet classified */
   reason: string | null;
   reasonAr: string | null;
   owner: string | null;

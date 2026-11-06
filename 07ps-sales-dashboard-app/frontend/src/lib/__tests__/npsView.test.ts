@@ -142,9 +142,9 @@ describe('the top row', () => {
 });
 
 describe('follow-up', () => {
-  it('status buckets: muted semantic accents for solved, blue pending', () => {
+  it('stage buckets: muted semantic accents for resolved, blue pending', () => {
     expect(FOLLOWUP_BUCKETS.map((b) => [b.key, b.color])).toEqual([
-      ['solved_48h', 'var(--ps-nps-teal)'], ['solved_5d', 'var(--ps-nps-amber)'], ['solved_late', 'var(--ps-nps-rose)'], ['pending', 'var(--ps-nps-blue)'],
+      ['resolved_48h', 'var(--ps-nps-teal)'], ['resolved_5d', 'var(--ps-nps-amber)'], ['resolved_late', 'var(--ps-nps-rose)'], ['pending', 'var(--ps-nps-blue)'],
     ]);
   });
 

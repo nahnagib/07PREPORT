@@ -139,26 +139,31 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
 });
 
 const SUMMARY: NpsFollowupSummary = {
-  dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 14, cancelled: 1, historical: 28, noCase: 0,
-  byStatus: [{ key: 'solved_48h', count: 1 }, { key: 'solved_5d', count: 0 }, { key: 'solved_late', count: 0 }, { key: 'pending', count: 13 }],
-  byReason: [{ reasonId: null, label: 'Not yet classified', labelAr: null, count: 12 }, { reasonId: 1, label: 'Late delivery', labelAr: 'تأخر التوصيل', count: 2 }],
+  dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 14, rejected: 1, historical: 28, noCase: 0,
+  byStage: [{ key: 'resolved_48h', count: 1 }, { key: 'resolved_5d', count: 0 }, { key: 'resolved_late', count: 0 }, { key: 'pending', count: 13 }],
+  byStatus: [{ key: 'OPEN', count: 13 }, { key: 'CLOSE', count: 1 }, { key: 'DISPUTED', count: 1 }],
+  byReason: [{ categoryKey: null, label: 'Not yet classified', labelAr: null, count: 12 },
+    { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'التوصيل والخدمات اللوجستية', count: 2 }],
   now: '2026-10-20 12:00:00',
 };
 const fuState = (data: NpsFollowupSummary | null) => ({ data, loading: false, error: null, retry: () => undefined });
 
 describe('follow-up charts (live)', () => {
-  it('status: the four buckets in their colours, Cancelled / Historical counted under the chart', () => {
-    render(<FollowupCharts state={fuState(SUMMARY)} part="status" />);
-    expect(screen.getByTestId('fu-status-solved_48h').textContent).toContain('Solved < 48 h');
-    expect(screen.getByTestId('fu-status-pending').textContent).toContain('13');
-    expect(screen.getByTestId('fu-left-out').textContent).toBe('Cancelled: 1 · Historical: 28');
+  it('stage: the four buckets in their colours, the counts by status, Rejected / Historical counted under the chart', () => {
+    render(<FollowupCharts state={fuState(SUMMARY)} part="stage" />);
+    expect(screen.getByText('Detractors by stage')).toBeTruthy();
+    expect(screen.queryByText('Detractors by status')).toBeNull();
+    expect(screen.getByTestId('fu-stage-resolved_48h').textContent).toContain('Resolved < 48 h');
+    expect(screen.getByTestId('fu-stage-pending').textContent).toContain('13');
+    expect(screen.getByTestId('fu-by-status').textContent).toBe('By status: Open 13 · Close 1 · Disputed 1');
+    expect(screen.getByTestId('fu-left-out').textContent).toBe('Rejected: 1 · Historical: 28');
     expect(screen.queryByText(/Waiting for the follow-up data source|No follow-up data/)).toBeNull();
   });
 
-  it('reason: "Not yet classified" for cases without a reason', () => {
+  it('reason: by category, "Not yet classified" for cases without a reason', () => {
     render(<FollowupCharts state={fuState(SUMMARY)} part="reason" />);
     expect(screen.getByTestId('fu-reason-none').textContent).toContain('Not yet classified');
-    expect(screen.getByTestId('fu-reason-1').textContent).toContain('Late delivery');
+    expect(screen.getByTestId('fu-reason-delivery').textContent).toContain('Delivery & Logistics');
   });
 });
 

@@ -9,10 +9,13 @@ import { useAuth } from '../../lib/AuthProvider';
 import {
   BAND_COLOR,
   BAND_HINT,
+  STAGE_COLOR,
+  STAGE_LABEL,
   STATUS_COLOR,
   STATUS_LABEL,
   formatHoursOpen,
   type FollowupCase,
+  type FollowupStage,
   type FollowupStatus,
   type TimeBand,
 } from '../../lib/nps/followup';
@@ -66,42 +69,58 @@ export function FollowupShell({ view, onView, actions, filters, children }: {
   );
 }
 
-export function StatusPill({ status }: { status: FollowupStatus }) {
+/** The STAGE (the workflow step): the List view's Stage column, the NPS page's detractor table. */
+export function StagePill({ stage }: { stage: FollowupStage }) {
+  const color = STAGE_COLOR[stage];
+  return (
+    <span className="ps-kaizen-pill" data-testid="fu-stage" style={{ background: `color-mix(in srgb, ${color} 16%, transparent)`, color }}>
+      <span className="ps-kaizen-dot" style={{ background: color }} />
+      {STAGE_LABEL[stage]}
+    </span>
+  );
+}
+
+/** The STATUS badge (Open / Close / Disputed, worked out from the stage); none for Historical. */
+export function StatusBadge({ status }: { status: FollowupStatus | null }) {
+  if (!status) return null;
   const color = STATUS_COLOR[status];
   return (
-    <span className="ps-kaizen-pill" data-testid="fu-status" style={{ background: `color-mix(in srgb, ${color} 16%, transparent)`, color }}>
-      <span className="ps-kaizen-dot" style={{ background: color }} />
+    <span className="ps-fu-status" data-testid="fu-status" data-status={status} title="Status: worked out from the stage"
+      style={{ borderColor: color, color }}>
       {STATUS_LABEL[status]}
     </span>
   );
 }
 
-/** Time open with its colour; Solved says "solved in". */
-export function TimeOpen({ c }: { c: Pick<FollowupCase, 'hoursOpen' | 'timeBand' | 'status'> }) {
+/** Time open with its colour; Resolved says "resolved in". */
+export function TimeOpen({ c }: { c: Pick<FollowupCase, 'hoursOpen' | 'timeBand' | 'stage'> }) {
   if (c.hoursOpen === null || c.timeBand === null) return null;
   const color = BAND_COLOR[c.timeBand as TimeBand];
   return (
     <span className="ps-fu-time" title={BAND_HINT} data-band={c.timeBand} data-testid="fu-time" style={{ color }}>
       <span className="ps-kaizen-dot" style={{ background: color }} aria-hidden="true" />
-      {c.status === 'SOLVED' ? 'solved in ' : 'open '}
+      {c.stage === 'RESOLVED' ? 'resolved in ' : 'open '}
       {formatHoursOpen(c.hoursOpen)}
     </span>
   );
 }
 
-/** One case on the board: order / delivery, customer, company and branch, reason, owner, time open. */
+/** One case on the board: order / delivery, the status badge, customer, company and branch, reason, owner, time open. */
 export function CaseCard({ c, onOpen }: { c: FollowupCase; onOpen: (id: number) => void }) {
   return (
     <button type="button" className="ps-fu-card" data-testid="fu-card" data-band={c.timeBand ?? 'none'} onClick={() => onOpen(c.caseId)}
       style={{ borderInlineStartColor: c.timeBand ? BAND_COLOR[c.timeBand] : 'var(--ps-color-border)' }}>
       <div className="ps-fu-card-top">
         <strong>{c.orderRef ?? c.deliveryCode ?? `Case #${c.caseId}`}</strong>
-        <span className="ps-fu-muted">#{c.caseId}</span>
+        <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+          <StatusBadge status={c.status} />
+          <span className="ps-fu-muted">#{c.caseId}</span>
+        </span>
       </div>
       <div className="ps-fu-card-customer" dir="auto">{c.customer ?? '—'}</div>
       <div className="ps-fu-muted">{[c.company, c.teamBranch ?? c.salesTeam].filter(Boolean).join(' · ') || '—'}</div>
       <div className="ps-fu-card-meta">
-        <span title={c.reasonAr ?? undefined}>{c.reasonEn ?? <em className="ps-fu-muted">No reason yet</em>}</span>
+        <span title={c.reasonLabelAr ?? undefined}>{c.reasonLabelEn ?? <em className="ps-fu-muted">No reason yet</em>}</span>
         <span className="ps-fu-muted">{c.ownerName ? `Owner: ${c.ownerName}` : 'No owner'}</span>
       </div>
       <div className="ps-fu-card-foot">
