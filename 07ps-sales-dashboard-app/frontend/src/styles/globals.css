@@ -575,6 +575,8 @@ input:not([type]), input[type='text'], input[type='search'],
 .ps-nps-donut-center > span { font-size: 11px; color: var(--ps-color-muted-text); }
 .ps-nps-pie-legend { list-style: none; padding: 0; margin: 0; width: 100%; display: flex; flex-direction: column; gap: 4px; }
 .ps-nps-pie-legend-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--ps-color-text); font: inherit; font-size: 12px; text-align: start; cursor: pointer; }
+.ps-nps-back { align-self: flex-start; margin-bottom: 6px; padding: 4px 10px; border: 1px solid var(--ps-color-border); border-radius: 6px; background: transparent; color: var(--ps-color-text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.ps-nps-back:hover { background: var(--ps-color-muted-bg); }
 .ps-nps-pie-legend-item:hover, .ps-nps-pie-legend-item:focus-visible { background: var(--ps-color-muted-bg); outline: 1px solid var(--ps-color-border); }
 .ps-nps-pie-swatch { width: 10px; height: 10px; flex: none; border-radius: 2px; }
 .ps-nps-pie-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Gauge, RadialGauge } from '@07ps/ui';
 import type { NpsCounts, NpsFollowupSummary, NpsResponseRate } from '../../../lib/api';
 import { FollowupCharts } from '../FollowupCharts';
@@ -142,8 +142,9 @@ const SUMMARY: NpsFollowupSummary = {
   dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 14, rejected: 1, historical: 28, noCase: 0,
   byStage: [{ key: 'resolved_48h', count: 1 }, { key: 'resolved_5d', count: 0 }, { key: 'resolved_late', count: 0 }, { key: 'pending', count: 13 }],
   byStatus: [{ key: 'OPEN', count: 13 }, { key: 'CLOSE', count: 1 }, { key: 'DISPUTED', count: 1 }],
-  byReason: [{ categoryKey: null, label: 'Not yet classified', labelAr: null, count: 12 },
-    { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'التوصيل والخدمات اللوجستية', count: 2 }],
+  byReason: [{ categoryKey: null, label: 'Not yet classified', labelAr: null, count: 12, subReasons: [] },
+    { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'التوصيل والخدمات اللوجستية', count: 2,
+      subReasons: [{ reasonId: 15, label: 'Late deliveries', labelAr: 'تأخر التوصيل', count: 1 }, { reasonId: 5, label: 'Not specified', labelAr: 'غير محدد', count: 1 }] }],
   now: '2026-10-20 12:00:00',
 };
 const fuState = (data: NpsFollowupSummary | null) => ({ data, loading: false, error: null, retry: () => undefined });
@@ -164,6 +165,19 @@ describe('follow-up charts (live)', () => {
     render(<FollowupCharts state={fuState(SUMMARY)} part="reason" />);
     expect(screen.getByTestId('fu-reason-none').textContent).toContain('Not yet classified');
     expect(screen.getByTestId('fu-reason-delivery').textContent).toContain('Delivery & Logistics');
+  });
+
+  it('reason: a category drills into its sub-reasons, and "← All reasons" goes back', () => {
+    render(<FollowupCharts state={fuState(SUMMARY)} part="reason" />);
+    // "Not yet classified" has no sub-reasons: not a drill target
+    expect(screen.getByTestId('fu-reason-none').querySelector('[data-selectable]')).toBeNull();
+    fireEvent.click(screen.getByTestId('fu-reason-delivery').querySelector('button') as HTMLButtonElement);
+    expect(screen.getByText('Detractors by reason · Delivery & Logistics')).toBeTruthy();
+    expect(screen.getByTestId('fu-subreason-15').textContent).toContain('Late deliveries');
+    expect(screen.getByTestId('fu-subreason-5').textContent).toContain('Not specified');
+    fireEvent.click(screen.getByTestId('fu-reason-back'));
+    expect(screen.getByText('Detractors by reason')).toBeTruthy();
+    expect(screen.queryByTestId('fu-subreason-15')).toBeNull();
   });
 });
 

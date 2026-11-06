@@ -3052,8 +3052,14 @@ export interface NpsFollowupSummary {
   noCase: number;
   byStage: { key: NpsFollowupBucket; count: number }[];
   byStatus: { key: NpsFollowupStatus; count: number }[];
-  /** by reason category; categoryKey null = not yet classified */
-  byReason: { categoryKey: string | null; label: string; labelAr: string | null; count: number }[];
+  /** by reason category; categoryKey null = not yet classified; subReasons = the drill-down (empty: none to show) */
+  byReason: {
+    categoryKey: string | null;
+    label: string;
+    labelAr: string | null;
+    count: number;
+    subReasons: { reasonId: number; label: string; labelAr: string | null; count: number }[];
+  }[];
   now: string;
 }
 export interface NpsReach {

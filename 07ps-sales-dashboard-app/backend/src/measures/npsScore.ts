@@ -483,9 +483,17 @@ export interface NpsFollowupSummary {
   byStage: { key: FollowupBucket; count: number }[];
   /** by STATUS (the generated column): every case with a status, Rejected (Disputed) included, Historical not */
   byStatus: { key: FollowupStatus; count: number }[];
-  /** by reason CATEGORY; categoryKey null = "Not yet classified" */
-  byReason: { categoryKey: string | null; label: string; labelAr: string | null; count: number }[];
+  /** by reason CATEGORY; categoryKey null = "Not yet classified". subReasons = the drill-down (most cases first; the
+   *  category's own row reads "Not specified"); empty for Other and "Not yet classified", which have no sub-reasons. */
+  byReason: { categoryKey: string | null; label: string; labelAr: string | null; count: number; subReasons: NpsSubReasonCount[] }[];
   now: string;
+}
+
+export interface NpsSubReasonCount {
+  reasonId: number;
+  label: string;
+  labelAr: string | null;
+  count: number;
 }
 
 const BUCKET_OF_BAND: Record<TimeBand, FollowupBucket> = { green: 'resolved_48h', yellow: 'resolved_5d', red: 'resolved_late' };
@@ -501,7 +509,7 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
   const w = npsWhere(q, f);
   const [rows] = await pool.query(
     `SELECT fc.case_id, fc.stage, fc.status, fc.rated_at_local, fc.resolved_at, fc.reason_id,
-            r.category_key, r.category_en, r.category_ar, r.category_sort
+            r.category_key, r.category_en, r.category_ar, r.category_sort, r.sub_reason_en, r.sub_reason_ar, r.sort_order, r.requires_note
        FROM v_process_nps_response f
        LEFT JOIN nps_followup_case fc ON fc.response_id = f.response_id
        LEFT JOIN dim_nps_reason r ON r.reason_id = fc.reason_id
@@ -509,7 +517,9 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
   const list = rows as Record<string, unknown>[];
   const buckets: Record<FollowupBucket, number> = { resolved_48h: 0, resolved_5d: 0, resolved_late: 0, pending: 0 };
   const statuses: Record<FollowupStatus, number> = { OPEN: 0, CLOSE: 0, DISPUTED: 0 };
-  const reasons = new Map<string | null, { categoryKey: string | null; label: string; labelAr: string | null; count: number; sort: number }>();
+  type Sub = NpsSubReasonCount & { sort: number };
+  const reasons = new Map<string | null, { categoryKey: string | null; label: string; labelAr: string | null; count: number; sort: number;
+    noSubs: boolean; subs: Map<number, Sub> }>();
   let rejected = 0;
   let historical = 0;
   let noCase = 0;
@@ -532,8 +542,23 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
         labelAr: key === null ? null : ((r.category_ar as string) ?? null),
         count: 0,
         sort: key === null ? Number.MAX_SAFE_INTEGER : Number(r.category_sort ?? 0),
+        noSubs: key === null || Number(r.requires_note ?? 0) === 1,
+        subs: new Map<number, Sub>(),
       };
       entry.count += 1;
+      if (key !== null) {
+        const id = Number(r.reason_id);
+        const sub = entry.subs.get(id) ?? {
+          reasonId: id,
+          label: (r.sub_reason_en as string) ?? 'Not specified',
+          labelAr: (r.sub_reason_ar as string) ?? (r.sub_reason_en ? null : 'غير محدد'),
+          count: 0,
+          // "Not specified" (the category's own row) last
+          sort: r.sub_reason_en ? Number(r.sort_order ?? 0) : Number.MAX_SAFE_INTEGER,
+        };
+        sub.count += 1;
+        entry.subs.set(id, sub);
+      }
       reasons.set(key, entry);
     }
   }
@@ -550,7 +575,12 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
     byStatus: FOLLOWUP_STATUSES.map((key) => ({ key, count: statuses[key] })),
     byReason: [...reasons.values()]
       .sort((a, b) => b.count - a.count || a.sort - b.sort || a.label.localeCompare(b.label))
-      .map(({ categoryKey, label, labelAr, count }) => ({ categoryKey, label, labelAr, count })),
+      .map(({ categoryKey, label, labelAr, count, noSubs, subs }) => ({
+        categoryKey, label, labelAr, count,
+        subReasons: noSubs ? [] : [...subs.values()]
+          .sort((a, b) => b.count - a.count || a.sort - b.sort || a.label.localeCompare(b.label))
+          .map(({ reasonId, label: l, labelAr: la, count: n }) => ({ reasonId, label: l, labelAr: la, count: n })),
+      })),
     now,
   };
 }

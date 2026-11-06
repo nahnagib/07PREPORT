@@ -262,17 +262,22 @@ describe('response rate = responders / (Delivered + Read)', () => {
 describe('follow-up summary (live from nps_followup_case)', () => {
   const NOW_LOCAL = '2026-10-20 12:00:00';
   const STATUS: Record<string, string | null> = { NEW: 'OPEN', CONTACTED: 'OPEN', IN_PROGRESS: 'OPEN', RESOLVED: 'CLOSE', REJECTED: 'DISPUTED', HISTORICAL: null };
-  const CAT: Record<number, [string, string, number]> = { 1: ['delivery', 'Delivery & Logistics', 5], 2: ['quality', 'Product Quality', 1] };
+  // 1 = Delivery › Late deliveries, 2 = Product Quality › Not specified (the category's own row), 3 = Delivery › Damaged goods
+  const CAT: Record<number, [string, string, number, string | null]> = {
+    1: ['delivery', 'Delivery & Logistics', 5, 'Late deliveries'], 2: ['quality', 'Product Quality', 1, null], 3: ['delivery', 'Delivery & Logistics', 5, 'Damaged goods'],
+  };
   const row = (stage: string | null, rated: string, resolved: string | null, reasonId: number | null) => ({
     case_id: stage ? 1 : null, stage, status: stage ? STATUS[stage] : null, rated_at_local: rated, resolved_at: resolved, reason_id: reasonId,
     category_key: reasonId ? CAT[reasonId][0] : null, category_en: reasonId ? CAT[reasonId][1] : null,
     category_ar: reasonId ? `${CAT[reasonId][1]}-ar` : null, category_sort: reasonId ? CAT[reasonId][2] : null,
+    sub_reason_en: reasonId ? CAT[reasonId][3] : null, sub_reason_ar: reasonId && CAT[reasonId][3] ? `${CAT[reasonId][3]}-ar` : null,
+    sort_order: reasonId, requires_note: 0,
   });
 
   it('by stage: resolved < 48 h green, 48 h - 5 d yellow, > 5 d red, pending; by status from the status; Historical / Rejected apart', async () => {
     const { pool: p, queries } = pool(() => [
       row('RESOLVED', '2026-10-01 10:00:00', '2026-10-02 09:00:00', 1),   // 23 h
-      row('RESOLVED', '2026-10-01 10:00:00', '2026-10-03 10:00:00', 1),   // 48 h -> yellow
+      row('RESOLVED', '2026-10-01 10:00:00', '2026-10-03 10:00:00', 3),   // 48 h -> yellow
       row('RESOLVED', '2026-10-01 10:00:00', '2026-10-06 10:00:01', 2),   // > 5 days
       row('NEW', '2026-10-19 10:00:00', null, null),
       row('IN_PROGRESS', '2026-10-05 10:00:00', null, 2),
@@ -288,11 +293,16 @@ describe('follow-up summary (live from nps_followup_case)', () => {
     expect(s).toMatchObject({ detractors: 9, charted: 5, rejected: 1, historical: 2, noCase: 1 });
     expect(s.charted + s.rejected + s.historical + s.noCase).toBe(s.detractors);
     // by category, most cases first; a tie keeps the categories' order; "Not yet classified" for cases without a reason
+    // each category carries its sub-reasons for the drill-down ("Not specified" = the category's own row)
     expect(s.byReason).toEqual([
-      { categoryKey: 'quality', label: 'Product Quality', labelAr: 'Product Quality-ar', count: 2 },
-      { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'Delivery & Logistics-ar', count: 2 },
-      { categoryKey: null, label: 'Not yet classified', labelAr: null, count: 1 },
+      { categoryKey: 'quality', label: 'Product Quality', labelAr: 'Product Quality-ar', count: 2,
+        subReasons: [{ reasonId: 2, label: 'Not specified', labelAr: 'غير محدد', count: 2 }] },
+      { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'Delivery & Logistics-ar', count: 2,
+        subReasons: [{ reasonId: 1, label: 'Late deliveries', labelAr: 'Late deliveries-ar', count: 1 },
+          { reasonId: 3, label: 'Damaged goods', labelAr: 'Damaged goods-ar', count: 1 }] },
+      { categoryKey: null, label: 'Not yet classified', labelAr: null, count: 1, subReasons: [] },
     ]);
+    for (const c of s.byReason) if (c.subReasons.length) expect(c.subReasons.reduce((n, x) => n + x.count, 0)).toBe(c.count);
     expect(s.byReason.reduce((n, r) => n + r.count, 0)).toBe(s.charted);
     expect(queries[0].sql).toContain('LEFT JOIN nps_followup_case fc');
     expect(queries[0].sql).toContain('LEFT JOIN dim_nps_reason r');

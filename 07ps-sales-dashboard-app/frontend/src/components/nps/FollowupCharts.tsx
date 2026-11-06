@@ -1,5 +1,5 @@
 import { vh } from '../../lib/visualHelp';
-import React from 'react';
+import React, { useState } from 'react';
 import { ChartPanel, EmptyState, ErrorState, LoadingSkeleton } from '@07ps/ui';
 import type { NpsFollowupSummary } from '../../lib/api';
 import { formatNumber } from '../../lib/format';
@@ -36,19 +36,38 @@ function ByStatus({ s }: { s: NpsFollowupSummary }) {
  * follow-up started) and Rejected cases are left out of both charts and counted under them; the stage chart also
  * gives the counts by status.
  */
+const REASON_COLORS = ['var(--ps-nps-blue)', 'var(--ps-nps-teal)', 'var(--ps-nps-cyan)', 'var(--ps-nps-lilac)', 'var(--ps-nps-amber)'];
+
 export function FollowupCharts({ state, part }: { state: FollowupState; part: 'reason' | 'stage' }) {
   const s = state.data;
+  /** the reason donut's drill-down: the category whose sub-reasons are shown (null = all categories) */
+  const [drill, setDrill] = useState<string | null>(null);
+  const drilled = part === 'reason' ? s?.byReason.find((r) => r.categoryKey !== null && r.categoryKey === drill) : undefined;
   let body: React.ReactNode;
   if (state.error) body = <ErrorState message={state.error} onRetry={state.retry} />;
   else if (!s || state.loading) body = <LoadingSkeleton variant="chart" />;
   else if (s.charted === 0) body = <><EmptyState message="No followed-up detractors for these filters and dates." /><LeftOut s={s} /></>;
-  else if (part === 'reason') {
+  else if (part === 'reason' && drilled) {
+    // step 2: the sub-reasons of one category
+    body = (
+      <>
+        <button type="button" className="ps-nps-back" data-testid="fu-reason-back" onClick={() => setDrill(null)}>← All reasons</button>
+        <ReasonPie ariaLabel={`${drilled.label} by sub-reason`} testId="fu-subreason" totalLabel={drilled.label}
+          items={drilled.subReasons.map((r, i) => ({
+            key: String(r.reasonId), label: r.label, hint: r.labelAr ?? undefined, count: r.count,
+            color: r.label === 'Not specified' ? 'var(--ps-nps-slate)' : REASON_COLORS[i % REASON_COLORS.length],
+          }))} />
+      </>
+    );
+  } else if (part === 'reason') {
+    // step 1: the categories; a click on one with sub-reasons drills into them
     body = (
       <>
         <ReasonPie ariaLabel="Detractors by reason" testId="fu-reason" totalLabel="Detractors"
+          onSelect={setDrill} canSelect={(key) => (s.byReason.find((r) => r.categoryKey === key)?.subReasons.length ?? 0) > 0}
           items={s.byReason.map((r, i) => ({
             key: r.categoryKey ?? 'none', label: r.label, hint: r.labelAr ?? undefined, count: r.count,
-            color: r.categoryKey === null ? 'var(--ps-nps-slate)' : ['var(--ps-nps-blue)', 'var(--ps-nps-teal)', 'var(--ps-nps-cyan)', 'var(--ps-nps-lilac)', 'var(--ps-nps-amber)'][i % 5],
+            color: r.categoryKey === null ? 'var(--ps-nps-slate)' : REASON_COLORS[i % REASON_COLORS.length],
           }))} />
         <LeftOut s={s} />
       </>
@@ -66,7 +85,7 @@ export function FollowupCharts({ state, part }: { state: FollowupState; part: 'r
   }
   return (
     <ChartPanel {...vh(part === 'reason' ? 'process.npsScore.byReason' : 'process.npsScore.byStage')}
-      title={part === 'reason' ? 'Detractors by reason' : 'Detractors by stage'}
+      title={part === 'reason' ? (drilled ? `Detractors by reason · ${drilled.label}` : 'Detractors by reason') : 'Detractors by stage'}
     >
       {body}
     </ChartPanel>
