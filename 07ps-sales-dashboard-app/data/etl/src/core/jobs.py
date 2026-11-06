@@ -80,7 +80,14 @@ ODOO_RAW = {
         (F("product_tmpl_id", "product_tmpl_id", "m2o_id"), F("name", "name"), F("display_name", "display_name"),
          F("default_code", "default_code"), F("company_id", "company_id", "m2o_id"), F("categ_id", "categ_id", "m2o_id"),
          F("categ_name", "categ_id", "m2o_name"), F("uom_id", "uom_id", "m2o_id"), F("uom_name", "uom_id", "m2o_name"),
-         F("detailed_type", "detailed_type"), F("active", "active", "bool"))),
+         F("detailed_type", "detailed_type"), F("active", "active", "bool"),
+         # product attributes (2026-11-03, Odoo is the only source): the display names of the template's spec values;
+         # the brand is the main vendor (raw_odoo_product_supplierinfo)
+         F("sub_brand", "sub_brand_id", "m2o_name"),
+         F("family", "product_family_id", "m2o_name"), F("size", "size_dimensions_id", "m2o_name"))),
+    "raw_odoo_product_supplierinfo": RawOdooSpec("raw_odoo_product_supplierinfo", "product.supplierinfo", "raw_odoo_product_supplierinfo",
+        (F("partner_id", "partner_id", "m2o_id"), F("partner_name", "partner_id", "m2o_name"), F("product_tmpl_id", "product_tmpl_id", "m2o_id"),
+         F("sequence", "sequence", "int"), F("min_qty", "min_qty", "float"), F("company_id", "company_id", "m2o_id"))),
     "raw_odoo_account_payment_term": RawOdooSpec("raw_odoo_account_payment_term", "account.payment.term", "raw_odoo_account_payment_term",
         (F("name", "name"), F("company_id", "company_id", "m2o_id"), F("active", "active", "bool"))),
     "raw_odoo_account_payment_term_line": RawOdooSpec("raw_odoo_account_payment_term_line", "account.payment.term.line", "raw_odoo_account_payment_term_line",
@@ -275,19 +282,13 @@ def build_customer_dims(ctx: RunContext) -> TaskResult:
 
 
 def build_product_dims(ctx: RunContext) -> TaskResult:
-    names, by_name = _company_maps(ctx)
-    raw_master = _read(ctx, "SELECT * FROM raw_excel_products")
-    master = prod.build_product_master(raw_master, by_name)
-    products = prod.build_products(_read(ctx, "SELECT * FROM raw_odoo_product_product"))
-    # the sheet's optional OdooProductID column lets an id match win over the name match
-    master_for_map = master.merge(raw_master[["ProductMasterKey", "OdooProductID"]], on="ProductMasterKey", how="left", validate="1:1")
-    pm_map = prod.build_product_master_map(products, master_for_map, names)
+    vendors = _read(ctx, "SELECT id, partner_name, product_tmpl_id, sequence, min_qty FROM raw_odoo_product_supplierinfo WHERE _deleted_at IS NULL")
+    products = prod.build_products(_read(ctx, "SELECT * FROM raw_odoo_product_product"), vendors)
     with ctx.engine.begin() as conn:
-        sets = [upsert_changed(conn, "dim_product_master", master), upsert_changed(conn, "dim_product", products),
-                replace_changed(conn, "map_product_master", pm_map)]
-    unmatched = int((pm_map["match_status"] == prod.STATUS_NONE).sum())
-    return TaskResult(rows_loaded=sum(c.written for c in sets), details={"products": len(products), "master_rows": len(master), "map_rows": len(pm_map),
-                                                                         "unmatched": unmatched, "changed": _changes(*sets)})
+        sets = [upsert_changed(conn, "dim_product", products)]
+    unassigned = {c: int((products[c] == prod.UNASSIGNED).sum()) for c in prod.ATTRIBUTES}
+    return TaskResult(rows_loaded=sum(c.written for c in sets), details={"products": len(products), "unassigned": unassigned,
+                                                                         "changed": _changes(*sets)})
 
 
 def dim_date_start() -> _dt.date:
@@ -359,10 +360,6 @@ _ds("dim_customer_company", "core", "sql", "dim_customer_company", "upsert", ("C
     _o("dim_customer_company", "CustomerKey", "dim_customer", "CustomerKey"), _o("dim_customer_company", "CompanyKey", "dim_company", "CompanyKey"),
     _o("dim_customer_company", "PaymentTermKey", "dim_payment_term", "PaymentTermKey")])
 _ds("dim_product", "core", "sql", "dim_product", "upsert", ("ProductKey",), [_o("dim_product", "CompanyKey", "dim_company", "CompanyKey")])
-_ds("dim_product_master", "core", "sql", "dim_product_master", "upsert", ("ProductMasterKey",), [_o("dim_product_master", "CompanyKey", "dim_company", "CompanyKey")])
-_ds("map_product_master", "core", "sql", "map_product_master", "replace", ("ProductKey", "CompanyKey"), [
-    _o("map_product_master", "ProductKey", "dim_product", "ProductKey"), _o("map_product_master", "ProductMasterKey", "dim_product_master", "ProductMasterKey"),
-    _o("map_product_master", "CompanyKey", "dim_company", "CompanyKey")])
 _ds("dim_date", "core", "sql", "dim_date", "upsert", ("DateKey",))
 _ds("dim_odoo_selection_label", "core", "odoo", "dim_odoo_selection_label", "replace", ("model", "field", "value"), model="fields_get")
 _ds("dim_offday", "core", "sql", "dim_offday", "replace", ("DateKey", "OffDayType", "CompanyKey", "SalesTeamKey"), [
@@ -376,7 +373,6 @@ for name in ODOO_RAW:
     EXTRACT_TASKS.append(f"extract_{name}")
 REGISTRY.task(T("extract_raw_odoo_res_partner_company", extract_partner_company, datasets=("raw_odoo_res_partner_company",)))
 REGISTRY.task(T("load_org_file", load_org_file, datasets=tuple(s.dataset for s in xl.INPUTS if s.file == xl.ORG_FILE)))
-REGISTRY.task(T("load_products_file", _excel_task("raw_excel_products", prod.complete_master_keys), datasets=("raw_excel_products",)))
 REGISTRY.task(T("load_offdays_file", _excel_task("raw_excel_offdays"), datasets=("raw_excel_offdays",)))
 REGISTRY.task(T("load_blocked_customers_file", _excel_task("raw_excel_blocked_customers"), datasets=("raw_excel_blocked_customers",)))
 REGISTRY.task(T("build_reference_dims", build_reference_dims,
@@ -389,15 +385,16 @@ REGISTRY.task(T("build_org_dims", build_org_dims,
 REGISTRY.task(T("build_customer_dims", build_customer_dims,
                 depends_on=("extract_raw_odoo_res_partner", "extract_raw_odoo_res_partner_company", "load_blocked_customers_file", "build_org_dims"),
                 datasets=("dim_customer", "map_partner_customer", "dim_customer_company")))
-REGISTRY.task(T("build_product_dims", build_product_dims, depends_on=("extract_raw_odoo_product_product", "load_products_file", "build_reference_dims"),
-                datasets=("dim_product", "dim_product_master", "map_product_master")))
+REGISTRY.task(T("build_product_dims", build_product_dims, depends_on=("extract_raw_odoo_product_product", "extract_raw_odoo_product_supplierinfo",
+                                                                       "build_reference_dims"),
+                datasets=("dim_product",)))
 REGISTRY.task(T("build_calendar_dims", build_calendar_dims, depends_on=("load_offdays_file", "build_org_dims"),
                 datasets=("dim_date", "dim_offday")))
 REGISTRY.task(T("load_selection_labels", load_selection_labels, datasets=("dim_odoo_selection_label",)))
 
 REGISTRY.job(JobSpec(
     "core_dims", DEPARTMENT, mode="full", reuse_within_minutes="config",
-    tasks=(*EXTRACT_TASKS, "extract_raw_odoo_res_partner_company", "load_org_file", "load_products_file", "load_offdays_file",
+    tasks=(*EXTRACT_TASKS, "extract_raw_odoo_res_partner_company", "load_org_file", "load_offdays_file",
            "load_blocked_customers_file", "build_reference_dims", "build_org_dims", "build_customer_dims", "build_product_dims",
            "build_calendar_dims", "load_selection_labels"),
     description="Shared reference data (Odoo + Excel) -> conformed dimensions and maps.",

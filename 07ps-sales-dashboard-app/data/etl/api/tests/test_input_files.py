@@ -70,14 +70,14 @@ def test_requires_auth(client, folders):
     assert client.put("/etl/input-files/OffDays.xlsx", data=b"x").status_code == 401
 
 
-def test_lists_all_five_slots_with_expected_structure(client, folders):
+def test_lists_the_four_slots_with_expected_structure(client, folders):
     inputs, _ = folders
     (inputs / "OffDays.xlsx").write_bytes(xlsx({"Sheet1": OFFDAYS}))
     body = client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()
     assert body["input_dir"] == str(inputs.resolve())
     assert [f["name"] for f in body["files"]] == [
-        "sales_targets.xlsx", "SalesTeam.xlsx", "OffDays.xlsx", "PRODUCTS.xlsx", "BlockedCustomers.xlsx",
-    ]
+        "sales_targets.xlsx", "SalesTeam.xlsx", "OffDays.xlsx", "BlockedCustomers.xlsx",
+    ]  # PRODUCTS.xlsx is retired: products come from Odoo
     offdays = next(f for f in body["files"] if f["name"] == "OffDays.xlsx")
     assert offdays["exists"] is True and offdays["size_bytes"] > 0
     assert "Date" in offdays["sheets"][0]["required"]
@@ -155,15 +155,10 @@ def test_sales_team_valid(client, folders):
     assert response.get_json()["validation"]["counts"] == {"active_salespersons": 1, "teams": 1}
 
 
-def test_products_without_any_mapping_is_rejected(client, folders, monkeypatch):
-    monkeypatch.delenv("ETL_ALLOW_EMPTY_PRODUCT_MAPPING", raising=False)
-    columns = ["ProductKey", "Company", "Category", "Brand", "SubBrand", "Family", "ProductName",
-               "OdooProductName", "ProductLevel", "SKU", "Size", "IsActive"]
-    row = {c: ["x"] for c in columns}
-    row["OdooProductName"] = [None]
-    response = put(client, "PRODUCTS.xlsx", xlsx({"Sheet1": row}))
-    assert response.status_code == 422
-    assert "OdooProductName is blank" in response.get_json()["error"]
+def test_products_xlsx_can_no_longer_be_uploaded(client, folders):
+    response = put(client, "PRODUCTS.xlsx", xlsx({"Sheet1": {"x": [1]}}))
+    assert response.status_code in (400, 404, 422)
+    assert not (folders[0] / "PRODUCTS.xlsx").exists()
 
 
 def test_upload_blocked_while_a_run_is_active(folders):

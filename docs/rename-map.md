@@ -56,8 +56,8 @@ by the migration (rollback copy) and dropped in 0035 (retire, at deployment) aft
 | `dim_date` | `dim_date` (rebuilt) | `DateKey` yyyymmdd | earliest source date → 31 Dec next year, auto-extends to the max due date; + `IsWeeklyRestDay` |
 | `fact_offdays` | `dim_offday` | (`DateKey`, `OffDayType`, `CompanyKey`, `SalesTeamKey`) | calendar, not a business event; rows can apply to every company or one branch, so `-1` = all |
 | `dim_product` | `dim_product` (rebuilt) | `ProductKey` = Odoo `product.product.id` | see decision D1 |
-| — | `dim_product_master` | `ProductMasterKey` = the PRODUCTS.xlsx code (frozen) | catalogue incl. never-sold items (product pages). See D1 |
-| — | `map_product_master` | (`ProductKey`, `CompanyKey`) | → `ProductMasterKey` (existing company-aware matching) |
+| — | ~~`dim_product_master`~~ | ~~`ProductMasterKey` = the PRODUCTS.xlsx code~~ | **retired 2026-11-03 (0064)**: renamed `dim_product_master_deprecated`; products are Odoo ids only |
+| — | ~~`map_product_master`~~ | ~~(`ProductKey`, `CompanyKey`)~~ | **retired 2026-11-03 (0064)**: renamed `map_product_master_deprecated` |
 | — | `dim_currency` | `CurrencyKey` = Odoo `res.currency.id` | code, decimals (LYD 3) |
 | — | `dim_payment_term` | `PaymentTermKey` = Odoo id | max_days, is_instalment |
 
@@ -93,8 +93,8 @@ by the migration (rollback copy) and dropped in 0035 (retire, at deployment) aft
 | `dim_crmstage` | `dim_sales_crm_stage` (`StageKey` = Odoo id, unchanged values) |
 | `dim_lostreason` | `dim_sales_lost_reason` (`LostReasonKey` = Odoo id, unchanged values) |
 | `dim_productcost` | `dim_sales_product_cost` (`ProductKey`, `CompanyKey`) |
-| `dim_productdashboard` | `dim_sales_product_dashboard` (key `ProductMasterKey` + `CompanyKey`) |
-| `dim_productdashboardgroup` | `dim_sales_product_group` (`ProductGroupKey`, deterministic from PRODUCTS.xlsx) |
+| `dim_productdashboard` | `dim_sales_product_dashboard` (key `ProductCompanyKey` = Company + Odoo product id, since 0064) |
+| `dim_productdashboardgroup` | `dim_sales_product_group` (`ProductGroupKey` = `T|<Odoo product_tmpl_id>`, since 0064) |
 | `productdashboard_meta` | `etl_sales_product_dashboard_meta` |
 
 ### Finance mart (phase 5, as agreed earlier, with conformed keys)

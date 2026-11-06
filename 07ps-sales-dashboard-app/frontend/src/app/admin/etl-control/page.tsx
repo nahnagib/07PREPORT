@@ -18,6 +18,7 @@ import {
   EtlRunStatus,
   EtlRunStep,
   EtlSchedulerConfigResponse,
+  EtlProductGapsReport,
   EtlShadowCompareResponse,
   EtlStatusResponse,
 } from '../../../lib/api';
@@ -676,6 +677,9 @@ function EtlControlBody() {
       {/* --- Phase B: live vs shadow comparison (ETL_SALES_MODE=shadow) --- */}
       <ShadowCompareCard token={token} />
 
+      {/* --- Products to complete in Odoo (the gap report of the last full refresh) --- */}
+      <ProductGapsCard token={token} />
+
       {/* --- Input files preflight --- */}
       <PreflightCard preflight={preflight} onRecheck={loadPreflight} />
 
@@ -1136,6 +1140,50 @@ const FILE_STATUS_TEXT: Record<string, string> = {
 /** Shows what the ETL service sees in its input folder, before anyone clicks Run. */
 /** The latest live-vs-shadow comparisons of the sales tables (sales_shadow_compare, after each 02:00 refresh in shadow
  * mode): MATCH means the 30-minute build from the Odoo mirror wrote exactly what the 02:00 rebuild from Odoo wrote. */
+/** Sold products that have no Brand, Family, Size or SKU in Odoo (Odoo is the only source of product attributes). */
+function ProductGapsCard({ token }: { token: string | null }) {
+  const [report, setReport] = useState<EtlProductGapsReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    adminApi
+      .getEtlProductGaps(token)
+      .then((res) => {
+        setReport(res.report);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load the product gap report.'));
+  }, [token]);
+
+  if (!report && !error) return null; // no full refresh has written the report yet
+  return (
+    <Card>
+      <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>Products to complete in Odoo</h3>
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
+        Products come from Odoo only. These sold products have no Brand, Family, Size or SKU there and show as Unassigned on the
+        Product pages. The full list, largest sales first, is written to the ETL output folder on every full refresh.
+      </p>
+      {error && <ErrorState message={error} />}
+      {report && (
+        <div data-testid="etl-product-gaps" style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5 }}>
+          <div>
+            <strong>{formatCount(report.products)}</strong> product(s) to complete
+            {Object.keys(report.by_company).length > 0 &&
+              ` (${Object.entries(report.by_company).map(([c, n]) => `${c} ${formatCount(n)}`).join(' · ')})`}
+          </div>
+          <div>
+            Missing: {(['Brand', 'Family', 'Size', 'SKU'] as const).map((k) => `${k} ${formatCount(report.missing[k] ?? 0)}`).join(' · ')}
+          </div>
+          <div style={{ color: 'var(--ps-color-muted-text)', fontSize: 12.5 }}>
+            File: <code>{report.path}</code> · full refresh of {formatDateTime(report.finishedAtUtc)}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ShadowCompareCard({ token }: { token: string | null }) {
   const [data, setData] = useState<EtlShadowCompareResponse | null>(null);
   const [error, setError] = useState<string | null>(null);

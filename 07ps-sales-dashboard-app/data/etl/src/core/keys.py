@@ -2,7 +2,7 @@
 
 * Join keys are named ``<Entity>Key`` everywhere (CustomerKey, CompanyKey, SalespersonKey, ...).
 * Every dimension has an Unknown/Unassigned member: -1 for integer keys, '-1' for text keys
-  (SalesTeamKey, ProductMasterKey). Facts never hold NULL keys -- they fall back to the -1 member and the
+  (SalesTeamKey). Facts never hold NULL keys -- they fall back to the -1 member and the
   task reports the fallback (RunContext.record_fallback).
 """
 

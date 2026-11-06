@@ -905,6 +905,7 @@ export const adminApi = {
     request('/admin/etl/scheduler-config', token),
 
   getEtlShadowCompare: (token: string): Promise<EtlShadowCompareResponse> => request('/admin/etl/shadow-compare', token),
+  getEtlProductGaps: (token: string): Promise<EtlProductGapsResponse> => request('/admin/etl/product-gaps', token),
 
   startEtlRun: (token: string, mode: EtlStartMode): Promise<{ ok: boolean; runId: number; jobId: string }> =>
     request(`/admin/etl/start/${mode}`, token, { method: 'POST' }),
@@ -1405,6 +1406,20 @@ export interface EtlShadowCompareResponse {
   runs: EtlShadowCompareRun[];
   cells: EtlShadowDiffCell[];
   note?: string;
+}
+
+/** Summary of OUTPUT/product_odoo_gaps.csv from the last full refresh: sold products missing Brand / Family / Size / SKU in Odoo. */
+export interface EtlProductGapsReport {
+  path: string;
+  products: number;
+  by_company: Record<string, number>;
+  sales_value: number;
+  missing: Record<'Brand' | 'Family' | 'Size' | 'SKU', number>;
+  finishedAtUtc: string;
+}
+
+export interface EtlProductGapsResponse {
+  report: EtlProductGapsReport | null;
 }
 
 export interface EtlScheduleInfo {
@@ -2450,15 +2465,18 @@ export type BcgMovement = 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost';
 /** Per-company split of a row's period sales (BMH view: one entry per company selling the product). */
 export interface ProductCompanyPart {
   company: string;
-  productMatchKey: string;
+  productCompanyKey: string;
   value: number;
   lines: number;
   volumeByUom: UomQty[];
 }
 
 export interface ProductDashboardRow {
-  productMatchKey: string;
+  /** Company|Odoo product id (company view) or the Odoo template group 'T|<id>' (BMH view). */
+  productCompanyKey: string;
+  /** Odoo product.product id (null for sales lines without a product). */
   productKey: string | null;
+  productTemplateId: number | null;
   company: string;
   productName: string;
   odooProductName: string | null;
@@ -2469,7 +2487,6 @@ export interface ProductDashboardRow {
   size: string | null;
   sku: string | null;
   isActive: number | null;
-  isMapped: boolean;
   value: number;
   /** Null when the product was sold in more than one unit of measure in the period (see volumeByUom). */
   volume: number | null;
@@ -2521,7 +2538,6 @@ export interface ProductDashboardOverview {
     [key: string]: unknown;
   };
   products: ProductDashboardRow[];
-  unmapped: { value: number; lines: number; volumeByUom: UomQty[]; products: number };
   totals: { value: number; lines: number; volumeByUom: UomQty[] };
   intercompanyValue: number;
 }

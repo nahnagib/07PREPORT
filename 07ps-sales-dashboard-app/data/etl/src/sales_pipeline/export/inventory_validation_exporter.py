@@ -11,12 +11,10 @@ FLAG_COLUMNS = [
     "Flag_No_DimProduct_Match",
     "Flag_Negative_Stock",
     "Flag_Missing_Cost",
-    "Flag_Not_Official_Master",
 ]
 
 DATA_SHEET_NAME = "Inventory_Validation"
 SUMMARY_SHEET_NAME = "Summary"
-UNMAPPED_SHEET_NAME = "Unmapped_Products"
 
 _FLAG_HIGHLIGHT_FILL = "#FFF2CC"
 _NEEDS_REVIEW_FILL = "#F8CBAD"
@@ -35,7 +33,7 @@ class InventoryValidationExporter:
     @staticmethod
     def build_validation_frame(fact_inventory: pd.DataFrame, dim_product: pd.DataFrame) -> pd.DataFrame:
         fact = fact_inventory.copy()
-        dim = dim_product[["ProductKey", "ProductMappingStatus"]].drop_duplicates("ProductKey", keep="first")
+        dim = dim_product[["ProductKey"]].drop_duplicates("ProductKey", keep="first")
 
         merged = fact.merge(dim, on="ProductKey", how="left", validate="m:1", indicator=True)
         matched = merged["_merge"].eq("both")
@@ -49,11 +47,6 @@ class InventoryValidationExporter:
         merged["Flag_No_DimProduct_Match"] = (~matched).astype(bool)
         merged["Flag_Negative_Stock"] = on_hand.lt(0).fillna(False).astype(bool)
         merged["Flag_Missing_Cost"] = (cost.isna() | cost.eq(0)).astype(bool)
-        # Unmatched rows (no Dim_Product row at all) are treated as not an official
-        # master product, since their mapping status can't be confirmed either way.
-        merged["Flag_Not_Official_Master"] = (
-            merged["ProductMappingStatus"].astype("string").ne("OfficialProductMaster").fillna(True).astype(bool)
-        )
         merged["Needs_Review"] = merged[FLAG_COLUMNS].any(axis=1).astype(bool)
 
         return merged.drop(columns=["_merge"])
@@ -74,22 +67,6 @@ class InventoryValidationExporter:
             len(validation),
             int(validation["Needs_Review"].sum()),
         )
-        return out
-
-    def export_unmapped_products(self, fact_inventory: pd.DataFrame, dim_product: pd.DataFrame, path: Path) -> Path:
-        """Write only the inventory rows with no matching product in Dim_Product at all."""
-        out = Path(path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        validation = self.build_validation_frame(fact_inventory, dim_product)
-        unmapped = validation[validation["Flag_No_DimProduct_Match"]].reset_index(drop=True)
-
-        with pd.ExcelWriter(out, engine="xlsxwriter") as writer:
-            unmapped.to_excel(writer, sheet_name=UNMAPPED_SHEET_NAME, index=False)
-            sheet = writer.sheets[UNMAPPED_SHEET_NAME]
-            sheet.autofilter(0, 0, len(unmapped), len(unmapped.columns) - 1)
-            sheet.freeze_panes(1, 0)
-
-        self.logger.info("Unmapped products workbook exported: %s rows=%s", out, len(unmapped))
         return out
 
     @staticmethod
@@ -145,7 +122,6 @@ class InventoryValidationExporter:
             "Flag_No_DimProduct_Match": "No Dim_Product match",
             "Flag_Negative_Stock": "Negative stock",
             "Flag_Missing_Cost": "Missing product cost",
-            "Flag_Not_Official_Master": "Not official product master",
             "Needs_Review": "Needs review (any flag)",
         }
 

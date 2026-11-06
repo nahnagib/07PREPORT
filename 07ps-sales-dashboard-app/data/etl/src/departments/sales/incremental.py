@@ -88,12 +88,18 @@ def mirror_sync(ctx: RunContext) -> TaskResult:
 
 
 # -- sales_build -----------------------------------------------------------------------------------------------------------
+# The workbooks the sales build reads. Products come from Odoo (PRODUCTS.xlsx is retired), so no product file is here:
+# a product changes through Odoo (the mirror), never through an input file.
+SALES_INPUT_FILES = ("SalesTeam.xlsx", "sales_targets.xlsx", "OffDays.xlsx", "BlockedCustomers.xlsx")
+
+
 def _inputs_signature(input_dir: Path) -> str:
-    """Name, size and modification time of every input file the sales build reads (SalesTeam.xlsx, PRODUCTS.xlsx,
-    sales_targets.xlsx, ...): a changed workbook rebuilds."""
+    """Name, size and modification time of every input file the sales build reads (SALES_INPUT_FILES): a changed
+    workbook rebuilds; any other file in the folder does not."""
     parts = []
-    for f in sorted(Path(input_dir).glob("*")):
-        if f.is_file() and not f.name.startswith("~$"):
+    for name in SALES_INPUT_FILES:
+        f = Path(input_dir) / name
+        if f.is_file():
             st = f.stat()
             parts.append(f"{f.name}|{st.st_size}|{int(st.st_mtime)}")
     return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()

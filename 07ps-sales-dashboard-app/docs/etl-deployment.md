@@ -113,7 +113,7 @@ cd ..\..
 # run (sales targets, sales team roster, off-days calendar, product master, blocked customers).
 # These are DATA, not code -- gitignored, not vendored automatically -- copy them from wherever
 # the business currently maintains them into data\etl\Input\:
-#   BlockedCustomers.xlsx, OffDays.xlsx, PRODUCTS.xlsx, SalesTeam.xlsx, sales_targets.xlsx
+#   BlockedCustomers.xlsx, OffDays.xlsx, SalesTeam.xlsx, sales_targets.xlsx  (products come from Odoo; PRODUCTS.xlsx is retired)
 
 # Start the ETL Flask API (pythonRunner.ts calls this now, regardless of --sync/queued below):
 cd data\etl\api

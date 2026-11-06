@@ -30,7 +30,6 @@ class Settings:
     timezone: str
     assume_utc_for_naive: bool
     inventory_validation_file: str = "Inventory_Validation.xlsx"
-    unmapped_products_file: str = "Unmapped_Products.xlsx"
     crm_inactive_days_threshold: int = 30
     crm_recent_activity_days: int = 14
     db_type: str = "mysql"
@@ -51,13 +50,9 @@ class Settings:
     force_sales_full_refresh: bool = False
     # Session time_zone applied to every MySQL connection this pipeline opens (DB_SESSION_TIMEZONE).
     db_session_timezone: str = "+00:00"
-    allow_empty_product_mapping: bool = False
     # Rebuild the whole sale.report cache from Odoo on this run (it is also rebuilt automatically when
     # the incremental refresh cannot be verified against Odoo's totals).
     sale_report_full_reload: bool = False
-    # Old behaviour: rewrite PRODUCTS.xlsx[IsActive] from Odoo's product.active on every run. Off by
-    # default -- PRODUCTS.xlsx is maintained by hand and its IsActive drives "Discontinued".
-    products_write_back_isactive: bool = False
     product_dashboard_config: Path = Path(__file__).resolve().parent / "product_dashboard.json"
 
     @property
@@ -67,10 +62,6 @@ class Settings:
     @property
     def inventory_validation_path(self) -> Path:
         return self.output_dir / self.inventory_validation_file
-
-    @property
-    def unmapped_products_path(self) -> Path:
-        return self.output_dir / self.unmapped_products_file
 
     @property
     def targets_path(self) -> Path:
@@ -83,10 +74,6 @@ class Settings:
     @property
     def offdays_path(self) -> Path:
         return self.input_dir / "OffDays.xlsx"
-
-    @property
-    def products_path(self) -> Path:
-        return self.input_dir / "PRODUCTS.xlsx"
 
     @property
     def blocked_customers_path(self) -> Path:
@@ -109,7 +96,6 @@ class Settings:
             output_dir=output_dir,
             output_file=os.getenv("OUTPUT_FILE", "SalesModel_OneOutput.xlsx"),
             inventory_validation_file=os.getenv("INVENTORY_VALIDATION_FILE", "Inventory_Validation.xlsx"),
-            unmapped_products_file=os.getenv("UNMAPPED_PRODUCTS_FILE", "Unmapped_Products.xlsx"),
             batch_size=int(os.getenv("BATCH_SIZE", "500")),
             timezone=os.getenv("TIMEZONE", "Africa/Tripoli"),
             assume_utc_for_naive=_bool_env("ASSUME_UTC_FOR_NAIVE", False),
@@ -132,9 +118,7 @@ class Settings:
             include_uninvoiced_sales_lines=_bool_env("INCLUDE_UNINVOICED_SALES_LINES", False),
             force_sales_full_refresh=_bool_env("FORCE_SALES_FULL_REFRESH", False),
             db_session_timezone=os.getenv("DB_SESSION_TIMEZONE", "+00:00").strip() or "+00:00",
-            allow_empty_product_mapping=_bool_env("ETL_ALLOW_EMPTY_PRODUCT_MAPPING", False),
             sale_report_full_reload=_bool_env("SALE_REPORT_FULL_RELOAD", False),
-            products_write_back_isactive=_bool_env("PRODUCTS_WRITE_BACK_ISACTIVE", False),
             product_dashboard_config=Path(os.getenv("PRODUCT_DASHBOARD_CONFIG", "") or (Path(__file__).resolve().parent / "product_dashboard.json")),
         )
 

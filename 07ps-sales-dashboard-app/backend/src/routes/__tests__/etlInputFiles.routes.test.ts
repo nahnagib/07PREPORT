@@ -198,7 +198,7 @@ describe('GET /admin/etl/input-files', () => {
       input_dir: '/etl/input',
       backup_dir: '/etl/input_backups',
       max_bytes: 5242880,
-      files: [{ name: 'OffDays.xlsx' }, { name: 'PRODUCTS.xlsx' }],
+      files: [{ name: 'OffDays.xlsx' }, { name: 'BlockedCustomers.xlsx' }],
     });
     latestAuditMock.mockResolvedValue(
       new Map([['OffDays.xlsx', { changed_at: new Date('2026-09-23T09:00:00Z'), changed_by: 7, changed_by_name: 'Admin User' }]]),

@@ -7,8 +7,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from sales_pipeline.legacy_transform import DataFrameUtils, ProductMapper, TextUtils
-from sales_pipeline.product_matching import match_key_series
+from sales_pipeline.legacy_transform import DataFrameUtils, TextUtils
+from sales_pipeline import odoo_products
 from sales_pipeline.odoo.base_repository import OdooRepositoryBase, flatten_many2one_columns
 from sales_pipeline.odoo.client import OdooClient
 
@@ -47,10 +47,8 @@ FACT_INVENTORY_COLUMNS = [
     "CompanyKey",
     "ProductKey",
     "ProductName",
-    "ProductNameClean",
     "OdooProductID",
     "OdooProductName",
-    "OdooProductNameClean",
     "SKU",
     "LocationID",
     "LocationName",
@@ -65,26 +63,11 @@ FACT_INVENTORY_COLUMNS = [
     "DOH",
     "Avg_Daily_Sales",
     "Velocity_Class",
-    "ProductMatchKey",
+    "ProductCompanyKey",
     "StockClass",
 ]
 
 QA_INVENTORY_COLUMNS = ["CheckName", "MetricValue", "Status", "Notes"]
-
-QA_INVENTORY_UNMAPPED_COLUMNS = [
-    "Company",
-    "OdooProductID",
-    "OdooProductName",
-    "OdooProductNameClean",
-    "ProductKey",
-    "Source",
-    "FirstSeenDate",
-    "RefreshDate",
-    "OnHandQty",
-    "ReservedQty",
-    "AvailableQty",
-    "Reason",
-]
 
 
 class InventoryRepository(OdooRepositoryBase):
@@ -131,7 +114,6 @@ class InventoryBuildResult:
     dim_product: pd.DataFrame
     dim_company: pd.DataFrame
     qa_data_quality: pd.DataFrame
-    qa_unmapped_products: pd.DataFrame
     products_added_count: int
     internal_rows_count: int
 
@@ -170,7 +152,6 @@ class InventoryModelBuilder:
                 dim_product=dim_product,
                 dim_company=dim_company,
                 qa_data_quality=qa,
-                qa_unmapped_products=pd.DataFrame(columns=QA_INVENTORY_UNMAPPED_COLUMNS),
                 products_added_count=0,
                 internal_rows_count=0,
             )
@@ -196,21 +177,19 @@ class InventoryModelBuilder:
             validate="m:1",
         )
         inventory = self._coalesce_odoo_product_names(inventory)
-        inventory = self._attach_product_mapping(inventory, dim_product)
-        dim_product_augmented, products_added_count = self._add_missing_products(dim_product, inventory)
+        inventory = self._attach_products(inventory, dim_product)
+        dim_product_augmented, products_added_count = dim_product, 0
         dim_company_augmented = self._add_missing_companies(dim_company, inventory)
         inventory = self._attach_company_keys(inventory, dim_company_augmented)
         inventory = self._attach_product_cost(inventory, product_lookup)
 
         fact = self._build_fact(inventory, snapshot, product_sales_summary=product_sales_summary)
         qa_data_quality = self._build_qa(fact, products_added_count, include_qa=include_qa)
-        qa_unmapped = self._build_unmapped_qa(inventory, snapshot) if include_qa else pd.DataFrame(columns=QA_INVENTORY_UNMAPPED_COLUMNS)
         return InventoryBuildResult(
             fact_inventory=fact,
             dim_product=dim_product_augmented,
             dim_company=dim_company_augmented,
             qa_data_quality=qa_data_quality,
-            qa_unmapped_products=qa_unmapped,
             products_added_count=products_added_count,
             internal_rows_count=internal_rows_count,
         )
@@ -345,138 +324,25 @@ class InventoryModelBuilder:
             out["OdooProductName"].astype("string").str.strip().replace("", pd.NA).notna(),
             out["OdooProductNameFromProduct"],
         )
-        names = TextUtils.product_name_frame(out["OdooProductName"])
-        out["OdooProductName"] = names["ProductNameRaw"]
-        out["OdooProductNameClean"] = names["ProductNameClean"]
-        out["SKU"] = (
-            out["SKU"]
-            .astype("string")
-            .str.strip()
-            .replace({"": pd.NA, "False": pd.NA, "false": pd.NA, "None": pd.NA, "none": pd.NA, "nan": pd.NA, "<NA>": pd.NA})
-        )
         return out
 
     @staticmethod
-    def _attach_product_mapping(inventory: pd.DataFrame, dim_product: pd.DataFrame) -> pd.DataFrame:
+    def _attach_products(inventory: pd.DataFrame, dim_product: pd.DataFrame) -> pd.DataFrame:
+        """The Odoo product of each quant, by its product id (sales_pipeline.odoo_products): ProductKey = the id,
+        name and SKU exactly as Odoo stores them. Never matched on a name."""
         out = inventory.copy()
-        dim = DataFrameUtils.ensure_columns(
-            dim_product.copy(),
-            [
-                "ProductKey",
-                "ProductName",
-                "ProductNameClean",
-                "OdooProductName",
-                "OdooProductNameClean",
-                "SKU",
-                "ProductJoinKey",
-            ],
-        )
-        # Same rule as sales (product_matching.py): Company + normalized Odoo name, PRODUCTS.xlsx rows only.
-        dim = DataFrameUtils.ensure_columns(dim, ["ProductMatchKey", "ProductSource"])
-        dim = dim[dim["ProductSource"].astype("string").eq("Input Master")].copy()
-        dim["_odoo_key"] = dim["ProductMatchKey"].astype("string").fillna("")
-        out["_odoo_key"] = match_key_series(out["Company"], out["OdooProductName"])
-        out["ProductMatchKey"] = out["_odoo_key"]
-
-        mapped = pd.Series(False, index=out.index)
-        bridge_columns = ["ProductKey", "ProductName", "ProductNameClean", "SKU"]
-        out["ProductMappingStatus"] = pd.NA
-        out["ProductMappingReason"] = pd.NA
-        for key, status, reason in [
-            ("_odoo_key", "MatchedByCompanyAndName", "Matched Company + normalized Odoo name to PRODUCTS.xlsx"),
-        ]:
-            lookup = (
-                dim.loc[dim[key].astype("string").str.strip().ne(""), bridge_columns + [key]]
-                .drop_duplicates(key, keep="first")
-                .rename(columns={column: f"_mapped_{column}" for column in bridge_columns})
-            )
-            candidate = out.loc[~mapped, [key]].merge(lookup, on=key, how="left", validate="m:1")
-            candidate.index = out.index[~mapped]
-            hit = candidate["_mapped_ProductKey"].notna()
-            if not hit.any():
-                continue
-            hit_index = candidate.index[hit]
-            for column in bridge_columns:
-                out.loc[hit_index, column] = candidate.loc[hit, f"_mapped_{column}"].to_numpy()
-            out.loc[hit_index, "ProductMappingStatus"] = status
-            out.loc[hit_index, "ProductMappingReason"] = reason
-            mapped.loc[hit_index] = True
-
-        missing = ~mapped
-        raw_names = TextUtils.product_name_frame(out.loc[missing, "OdooProductName"]) if missing.any() else pd.DataFrame()
-        if missing.any():
-            out.loc[missing, "ProductKey"] = [
-                ProductMapper._raw_product_key(company, clean_name)
-                for company, clean_name in zip(out.loc[missing, "Company"], raw_names["ProductNameClean"])
-            ]
-            out.loc[missing, "ProductName"] = raw_names["ProductName"].to_numpy()
-            out.loc[missing, "ProductNameClean"] = raw_names["ProductNameClean"].to_numpy()
-            out.loc[missing, "ProductMappingStatus"] = "Unmapped"
-            out.loc[missing, "ProductMappingReason"] = "No official PRODUCTS.xlsx match for inventory Odoo product name"
-        return out.drop(columns=["_odoo_key"], errors="ignore")
-
-    @staticmethod
-    def _add_missing_products(dim_product: pd.DataFrame, inventory: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-        dim = DataFrameUtils.ensure_columns(
-            dim_product.copy(),
-            [
-                "ProductKey",
-                "Company",
-                "Category",
-                "Brand",
-                "SubBrand",
-                "Family",
-                "ProductNameRaw",
-                "ProductName",
-                "ProductNameClean",
-                "OdooProductName",
-                "OdooProductNameClean",
-                "ProductLevel",
-                "SKU",
-                "Size",
-                "IsActive",
-                "ProductMappingStatus",
-                "ProductMappingReason",
-                "ProductSource",
-                "IsMappedProduct",
-            ],
-        )
-        existing_keys = set(dim["ProductKey"].dropna().astype("string"))
-        missing = inventory[
-            inventory["ProductMappingStatus"].astype("string").eq("Unmapped")
-            & ~inventory["ProductKey"].astype("string").isin(existing_keys)
-        ].copy()
-        if missing.empty:
-            return dim.reset_index(drop=True), 0
-        additions = (
-            missing.sort_values(["Company", "OdooProductNameClean"], na_position="last")
-            .drop_duplicates("ProductKey", keep="first")
-        )
-        rows = pd.DataFrame(
-            {
-                "ProductKey": additions["ProductKey"],
-                "Company": additions["Company"],
-                "Category": pd.NA,
-                "Brand": pd.NA,
-                "SubBrand": pd.NA,
-                "Family": pd.NA,
-                "ProductNameRaw": additions["OdooProductName"],
-                "ProductName": additions["ProductName"],
-                "ProductNameClean": additions["ProductNameClean"],
-                "OdooProductName": additions["OdooProductName"],
-                "OdooProductNameClean": additions["OdooProductNameClean"],
-                "ProductLevel": pd.NA,
-                "SKU": pd.NA,
-                "Size": pd.NA,
-                "IsActive": 0,
-                "ProductMappingStatus": "Unmapped",
-                "ProductMappingReason": "No official PRODUCTS.xlsx match for inventory Odoo product name",
-                "ProductSource": "Unmapped Odoo",
-                "IsMappedProduct": False,
-                "ProductMatchKey": additions["ProductMatchKey"],
-            }
-        )
-        return pd.concat([dim, rows], ignore_index=True).drop_duplicates("ProductKey", keep="first").reset_index(drop=True), len(rows)
+        pid = pd.to_numeric(out["OdooProductID"], errors="coerce").astype("Int64")
+        out["ProductKey"] = pid.astype("string").fillna(odoo_products.UNKNOWN_PRODUCT_KEY)
+        if dim_product is not None and not dim_product.empty and "OdooProductID" in dim_product.columns:
+            catalog = dim_product.drop_duplicates("OdooProductID").set_index("OdooProductID")
+            found = pid.isin(catalog.index).fillna(False).astype(bool)
+            out["ProductName"] = pid.map(catalog["ProductName"]).where(found, out["OdooProductName"])
+            out["SKU"] = pid.map(catalog["SKU"]).where(found, pd.NA)
+        else:
+            out["ProductName"] = out["OdooProductName"]
+            out["SKU"] = pd.NA
+        out["ProductCompanyKey"] = odoo_products.product_company_keys(out["Company"], out["ProductKey"])
+        return out
 
     @staticmethod
     def _add_missing_companies(dim_company: pd.DataFrame, inventory: pd.DataFrame) -> pd.DataFrame:
@@ -531,10 +397,8 @@ class InventoryModelBuilder:
             "CompanyKey",
             "ProductKey",
             "ProductName",
-            "ProductNameClean",
             "OdooProductID",
             "OdooProductName",
-            "OdooProductNameClean",
             "SKU",
             "LocationID",
             "LocationName",
@@ -544,7 +408,7 @@ class InventoryModelBuilder:
             "AvailableQty",
             "ProductCost",
             "OdooTotalValue",
-            "ProductMatchKey",
+            "ProductCompanyKey",
             "StockClass",
         ]:
             out[column] = inventory[column] if column in inventory.columns else pd.NA
@@ -569,7 +433,7 @@ class InventoryModelBuilder:
         No sales in the look-back window: Avg_Daily_Sales = 0 and DOH is left empty (infinite) --
         it used to be written as 0, which made unsold stock look like a stock-out risk."""
         fact = fact.copy()
-        key = "ProductMatchKey"
+        key = "ProductCompanyKey"
         if product_sales_summary is None or product_sales_summary.empty or key not in product_sales_summary.columns:
             fact["Avg_Daily_Sales"] = 0.0
             fact["DOH"] = np.nan
@@ -587,8 +451,8 @@ class InventoryModelBuilder:
     def build_product_sales_summary(sales: pd.DataFrame, lookback_days: int = 90, as_of: Any = None) -> pd.DataFrame:
         """Average daily invoiced quantity per Company + product over the last `lookback_days` days
         (days elapsed, not days with sales)."""
-        columns = ["ProductMatchKey", "Avg_Daily_Sales"]
-        if sales is None or sales.empty or "ProductMatchKey" not in sales.columns:
+        columns = ["ProductCompanyKey", "Avg_Daily_Sales"]
+        if sales is None or sales.empty or "ProductKey" not in sales.columns:
             return pd.DataFrame(columns=columns)
         today = pd.Timestamp(as_of).normalize() if as_of is not None else pd.Timestamp.today().normalize()
         start = today - pd.Timedelta(days=lookback_days - 1)
@@ -596,13 +460,15 @@ class InventoryModelBuilder:
         quantity_col = next((c for c in ["quantity", "Volume", "Quantity"] if c in sales.columns), None)
         if quantity_col is None:
             return pd.DataFrame(columns=columns)
+        company_col = next((c for c in ["company_final", "Company", "company"] if c in sales.columns), None)
+        company = sales[company_col] if company_col else pd.Series(pd.NA, index=sales.index)
         work = pd.DataFrame({
-            "ProductMatchKey": sales["ProductMatchKey"].astype("string"),
+            "ProductCompanyKey": odoo_products.product_company_keys(company, sales["ProductKey"]),
             "Quantity": pd.to_numeric(sales[quantity_col], errors="coerce").fillna(0.0),
         })[dates.between(start, today)]
         if work.empty:
             return pd.DataFrame(columns=columns)
-        summary = work.groupby("ProductMatchKey", as_index=False)["Quantity"].sum()
+        summary = work.groupby("ProductCompanyKey", as_index=False)["Quantity"].sum()
         summary["Avg_Daily_Sales"] = summary["Quantity"].clip(lower=0.0) / float(lookback_days)
         return summary[columns]
 
@@ -672,7 +538,6 @@ class InventoryModelBuilder:
         rows = [
             ("Total inventory rows", len(fact), "PASS", ""),
             ("Products with stock but missing ProductKey", missing_product_key, "PASS" if missing_product_key == 0 else "FAIL", ""),
-            ("Placeholder unmapped rows added to Dim_Product from inventory", products_added_count, "INFO", ""),
             ("Negative stock rows", negative_rows, "PASS" if negative_rows == 0 else "WARN", ""),
             ("Rows with missing company", missing_company, "PASS" if missing_company == 0 else "FAIL", ""),
             ("Rows with missing product cost", missing_cost, "PASS" if missing_cost == 0 else "WARN", ""),
@@ -680,24 +545,3 @@ class InventoryModelBuilder:
             ("Total InventoryValue", float(value.sum()), "INFO", ""),
         ]
         return pd.DataFrame(rows, columns=QA_INVENTORY_COLUMNS)
-
-    @staticmethod
-    def _build_unmapped_qa(inventory: pd.DataFrame, snapshot: pd.Timestamp) -> pd.DataFrame:
-        unmapped = inventory[inventory["ProductMappingStatus"].astype("string").eq("Unmapped")].copy()
-        if unmapped.empty:
-            return pd.DataFrame(columns=QA_INVENTORY_UNMAPPED_COLUMNS)
-        out = pd.DataFrame(index=unmapped.index)
-        for column in QA_INVENTORY_UNMAPPED_COLUMNS:
-            if column == "Reason":
-                out[column] = unmapped["ProductMappingReason"]
-            elif column == "Source":
-                out[column] = "Odoo Inventory"
-            elif column in {"FirstSeenDate", "RefreshDate"}:
-                out[column] = snapshot
-            else:
-                out[column] = unmapped[column] if column in unmapped.columns else pd.NA
-        return (
-            out[QA_INVENTORY_UNMAPPED_COLUMNS]
-            .sort_values(["Company", "OdooProductNameClean"], na_position="last")
-            .reset_index(drop=True)
-        )

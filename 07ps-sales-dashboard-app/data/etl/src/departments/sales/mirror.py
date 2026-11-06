@@ -44,6 +44,7 @@ from departments.sales import sale_report as sr
 from sales_pipeline.inventory import RES_COMPANY_FIELDS, STOCK_LOCATION_FIELDS, STOCK_QUANT_FIELDS
 from sales_pipeline.odoo.crm_repository import CRM_LEAD_FIELDS, CRM_LOST_REASON_FIELDS, CRM_STAGE_FIELDS
 from sales_pipeline.odoo.product_cost_repository import PRODUCT_COST_FIELDS
+from sales_pipeline.odoo_products import SUPPLIERINFO_FIELDS
 from sales_pipeline.odoo.sale_order_line_repository import SALE_ORDER_LINE_FIELDS
 from sales_pipeline.odoo.sale_order_repository import SALE_ORDER_FIELDS
 from sales_pipeline.odoo.stock_move_repository import STOCK_MOVE_FIELDS
@@ -82,6 +83,9 @@ SPECS: tuple[MirrorSpec, ...] = (
     MirrorSpec("crm.stage", _u(CRM_STAGE_FIELDS)),
     MirrorSpec("crm.lost.reason", _u(CRM_LOST_REASON_FIELDS), context=ARCHIVED),
     MirrorSpec("product.product", _u(PRODUCT_COST_FIELDS, sr.PRODUCT_FIELDS), context=ARCHIVED, per_company=True),
+    # vendor lines: the Brand is the main vendor (sales_pipeline.odoo_products.main_vendors); removing a line leaves no
+    # write_date, so ids are re-checked every cycle
+    MirrorSpec("product.supplierinfo", _u(SUPPLIERINFO_FIELDS), context=ARCHIVED, per_company=True, id_check_every_cycle=True),
     MirrorSpec("stock.quant", _u(STOCK_QUANT_FIELDS), id_check_every_cycle=True),
     MirrorSpec("stock.location", _u(STOCK_LOCATION_FIELDS), context=ARCHIVED),
     MirrorSpec("res.company", _u(RES_COMPANY_FIELDS, ["name", "currency_id"]), context=ARCHIVED),
@@ -93,7 +97,8 @@ SPEC_BY_MODEL = {s.model: s for s in SPECS}
 CHILDREN = {"sale.order.line": ("sale.order", "order_id"), "stock.move": ("stock.picking", "picking_id")}
 USER_MODEL = "res.users"  # the ETL user's company_ids (ProductCostRepository._accessible_companies), one record
 # display names that follow another model (a rename there does not move this model's write_date)
-NAME_FOLLOWS = {"res.users": ("res.partner", "partner_id"), "product.product": ("product.template", "product_tmpl_id")}
+NAME_FOLLOWS = {"res.users": ("res.partner", "partner_id"), "product.product": ("product.template", "product_tmpl_id"),
+                "product.supplierinfo": ("res.partner", "partner_id")}
 
 
 class MirrorError(RuntimeError):
@@ -309,8 +314,10 @@ class SyncResult:
 
 # non-stored fields that a rule below keeps current; any other non-stored field is reported (summary.non_stored_fields)
 COVERED_NON_STORED = {
-    # template rule (name / display_name / uom_id / company_id are the template's); standard_price moves the product write_date
-    "product.product": {"display_name", "name", "standard_price", "uom_id", "company_id"},
+    # template rule (name / display_name / uom_id / company_id and the product attributes -- categ_id, manufacturer_id,
+    # sub_brand_id, product_family_id, size_dimensions_id -- are the template's); standard_price moves the product write_date
+    "product.product": {"display_name", "name", "standard_price", "uom_id", "company_id", "categ_id", "sub_brand_id",
+                        "product_family_id", "size_dimensions_id"},
     "stock.picking": {"picking_type_code"},                           # the operation type's code: fixed per type
     "stock.quant": {"value", "inventory_value"},                      # product cost rule
     "crm.lead": {"activity_date_deadline", "activity_summary", "activity_state", "activity_type_id", "activity_user_id"},

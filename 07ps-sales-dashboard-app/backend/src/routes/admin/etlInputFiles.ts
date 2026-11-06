@@ -10,7 +10,7 @@ import { ETL_INPUT_FILE_ENTITY, latestAuditByEntity, writeAuditLog } from '../..
 
 /**
  * Replacing the ETL's manual input workbooks (sales_targets.xlsx, SalesTeam.xlsx, OffDays.xlsx,
- * PRODUCTS.xlsx, BlockedCustomers.xlsx) from the ETL Control Center. Admin-role-only, same as the
+ * BlockedCustomers.xlsx) from the ETL Control Center. Products come from Odoo (PRODUCTS.xlsx is retired). Admin-role-only, same as the
  * rest of /admin/etl.
  *
  * The file itself is validated, backed up and swapped in by the ETL service (data/etl/api/

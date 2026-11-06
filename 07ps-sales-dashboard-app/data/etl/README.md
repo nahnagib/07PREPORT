@@ -106,7 +106,7 @@ python -m sales_pipeline.main --output sql --load-mode incremental --profile
 
 ## Inputs And Environment
 
-Required files: `sales_targets.xlsx`, `SalesTeam.xlsx`, `OffDays.xlsx`, and `PRODUCTS.xlsx`. `BlockedCustomers.xlsx` is optional and an empty template is created when absent.
+Required files: `sales_targets.xlsx`, `SalesTeam.xlsx` and `OffDays.xlsx` (products come from Odoo; PRODUCTS.xlsx is retired). `BlockedCustomers.xlsx` is optional and an empty template is created when absent.
 
 Required Odoo variables: `ODOO_URL`, `ODOO_DB`, `ODOO_USER`, `ODOO_API_KEY`.
 
@@ -142,7 +142,7 @@ Incremental SQL loading and manual commands are documented in [INCREMENTAL_LOADI
 - Missing Excel input: place the required files in `C:\Users\Lenovo\Desktop\PowerBIData\Input`.
 - Missing `BlockedCustomers.xlsx`: the pipeline creates an empty template automatically.
 - Date shifts in Power BI: use `order_date_date` / `DateKey` for date relationships. Avoid filtering `order_date <= CURRENT_DATE`, because that excludes today's rows after midnight.
-- Products present in sales but absent from the manual master: check `Exports\QA_UnmappedProducts.xlsx`.
+- Products missing a Brand, Family, Size or SKU in Odoo: check `product_odoo_gaps.csv` in the ETL output folder (written by every full refresh) or the "Products to complete in Odoo" card of the ETL Control Center.
 - CRM missing links: check the `QA_CRM_MissingLinks` sheet.
 - CRM optional fields: check the `QA_CRM_FieldAvailability` sheet.
 - Incremental cache issue: run with `--full-refresh`.

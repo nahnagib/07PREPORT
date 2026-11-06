@@ -52,9 +52,7 @@ class SourceChanges:
 class DimChanges:
     customers: set[int] = field(default_factory=set)       # dim_customer.CustomerKey
     partners: set[int] = field(default_factory=set)        # map_partner_customer.partner_id (re-pointed partners)
-    products: set[int] = field(default_factory=set)        # dim_product (Odoo product id)
-    product_masters: set[int] = field(default_factory=set)  # dim_product_master.ProductMasterKey (PRODUCTS.xlsx)
-    mapped_products: set[int] = field(default_factory=set)  # map_product_master.product id (re-mapped)
+    products: set[int] = field(default_factory=set)        # dim_product (Odoo product id): name / attributes changed in Odoo
     odoo_users: set[int] = field(default_factory=set)       # map_odoo_user_salesperson.odoo_user_id
     odoo_teams: set[int] = field(default_factory=set)       # map_odoo_team_sales_team.odoo_team_id
     salespeople: set[int] = field(default_factory=set)      # dim_salesperson.SalespersonKey
@@ -75,11 +73,10 @@ class SalesIndex:
     orders: pd.DataFrame        # raw mirror: order_id, partner_id, user_id, team_id, company_id, opportunity_id
     lines: pd.DataFrame         # raw mirror: line_id, order_id, product_id
     partner_customer: pd.DataFrame   # partner_id, CustomerKey
-    product_master: pd.DataFrame     # product_id, ProductMasterKey
     user_salesperson: pd.DataFrame   # odoo_user_id, SalespersonKey
     team_map: pd.DataFrame           # odoo_team_id, SalesTeamKey
     fact_lines: pd.DataFrame    # live fact_sales_lines: OdooOrderID, CustomerKey, SalespersonKey, SalesTeamKey, ChannelKey, SegmentKey,
-                                #   CompanyKey, OdooProductID, ProductMasterKey, ProductMatchKey, DateKey
+                                #   CompanyKey, OdooProductID, ProductKey, DateKey
     pickings: pd.DataFrame      # raw mirror: picking_id, sale_order_id
     moves: pd.DataFrame         # raw mirror: move_id, picking_id
 
@@ -88,7 +85,7 @@ class SalesIndex:
 class Affected:
     orders: set[int] = field(default_factory=set)
     customers: set[int] = field(default_factory=set)                     # CustomerKey
-    product_days: set[tuple] = field(default_factory=set)                # (CompanyKey, ProductMatchKey, DateKey)
+    product_days: set[tuple] = field(default_factory=set)                # (CompanyKey, ProductKey = Odoo product id, DateKey)
     salesperson_months: set[tuple[int, int]] = field(default_factory=set)  # (SalespersonKey, YYYYMM)
     companies: set[int] = field(default_factory=set)                     # CompanyKey: BCG / product dashboard
     pickings: set[int] = field(default_factory=set)
@@ -123,12 +120,12 @@ def compute_affected(src: SourceChanges, dims: DimChanges, idx: SalesIndex, *, m
     teams = set(dims.odoo_teams) | _ids(_where(idx.team_map, "SalesTeamKey", dims.teams)["odoo_team_id"])
     orders |= _ids(_where(o, "team_id", teams)["order_id"])
     orders |= _ids(_where(o, "company_id", dims.companies)["order_id"])
-    products = set(dims.products) | set(dims.mapped_products) | _ids(_where(idx.product_master, "ProductMasterKey", dims.product_masters)["product_id"])
+    products = set(dims.products)
     orders |= _ids(_where(li, "product_id", products)["order_id"])
     # ... and OLD side (what the live rows carry now)
     for col, values in (("CustomerKey", dims.customers), ("SalespersonKey", dims.salespeople), ("SalesTeamKey", dims.teams),
                         ("ChannelKey", dims.channels), ("SegmentKey", dims.segments), ("CompanyKey", dims.companies),
-                        ("ProductMasterKey", dims.product_masters), ("OdooProductID", products)):
+                        ("OdooProductID", products)):
         if col in f.columns:
             orders |= _ids(_where(f, col, values)["OdooOrderID"])
     out.orders = orders
@@ -140,7 +137,7 @@ def compute_affected(src: SourceChanges, dims: DimChanges, idx: SalesIndex, *, m
     out.customers = _ids(old_rows["CustomerKey"]) | new_customers | set(dims.customers)
     out.companies = _ids(old_rows["CompanyKey"]) | _ids(_where(o, "order_id", orders)["company_id"])
     # product days / salesperson months: OLD rows here; the caller adds the NEW rows' keys after rebuilding the orders
-    out.product_days = {tuple(r) for r in old_rows[["CompanyKey", "ProductMatchKey", "DateKey"]].itertuples(index=False, name=None)}
+    out.product_days = {tuple(r) for r in old_rows[["CompanyKey", "ProductKey", "DateKey"]].itertuples(index=False, name=None)}
     out.salesperson_months = {(int(s), int(d) // 100) for s, d in old_rows[["SalespersonKey", "DateKey"]].itertuples(index=False, name=None)
                               if pd.notna(s) and pd.notna(d)}
 

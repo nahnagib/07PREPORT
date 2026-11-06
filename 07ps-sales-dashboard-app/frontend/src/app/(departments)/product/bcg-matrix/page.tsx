@@ -8,7 +8,9 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
-import { ProductDataStatusBar, ProductRefreshFooter } from '../../../../components/ProductDataStatus';
+import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
+import { RefreshFooter } from '../../../../components/RefreshFooter';
+import { formatTimestamp } from '../../../../lib/format';
 import {
   Card,
   KpiTile,
@@ -500,7 +502,12 @@ export default function BcgMatrixPage() {
           showLastOrderInfo={false}
         />
 
-        <ProductDataStatusBar refresh={refresh.data} data={overview.data} />
+        <ValidationStatusBar
+          isStale={refresh.data?.isStale}
+          isInverted={refresh.data?.isInverted}
+          refreshCheck={refresh.data?.refreshCheck}
+          lastRefreshTime={refresh.data ? formatTimestamp(refresh.data.lastRefreshTime) : undefined}
+        />
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
@@ -630,7 +637,11 @@ export default function BcgMatrixPage() {
           )}
         </main>
 
-        <ProductRefreshFooter refresh={refresh.data} />
+        <RefreshFooter
+          lastUpdate={formatTimestamp(refresh.data?.lastUpdate ?? null)}
+          lastOrderCreated={formatTimestamp(refresh.data?.lastOrderCreated ?? null)}
+          lastRefreshTime={formatTimestamp(refresh.data?.lastRefreshTime ?? null)}
+        />
         <BottomNavBar active="BCG Matrix" />
       </div>
     </PermissionGuard>

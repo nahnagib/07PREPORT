@@ -15,7 +15,7 @@ from sqlalchemy import inspect, text
 
 from config.input_check import InputValidationError, inspect_input_dir
 from config.settings import Settings
-from sales_pipeline.cleaning import DataFrameUtils, ProductMapper, SalesCleaner, SalesOrgEnricher
+from sales_pipeline.cleaning import DataFrameUtils, SalesCleaner, SalesOrgEnricher
 from sales_pipeline.dimensions import (
     CompanyDimensionBuilder,
     CrmStageDimensionBuilder,
@@ -50,8 +50,6 @@ from sales_pipeline.legacy_transform import (
     BlockedCustomersLoader,
     Logger as LegacyLogger,
     PipelineSettings,
-    ProductActiveFlagReconciler,
-    ProductMasterLoader,
     ProductCostDimensionBuilder,
     ProductCostMatcher,
     SALES_COLUMN_MAP,
@@ -60,13 +58,12 @@ from sales_pipeline.legacy_transform import (
 )
 from sales_pipeline.odoo import CrmRepository, OdooClient, ProductCostRepository, SaleOrderLineRepository, SaleOrderRepository, SalesReportRepository, StockMoveRepository, StockPickingRepository
 from sales_pipeline.odoo.sales_report_repository import odoo_utc_datetime_to_local
-from sales_pipeline.qa import QAService
 from sales_pipeline.etl_run_log import EtlRunLog, utc_now
 from sales_pipeline.runtime import PipelineRunContext
 from sales_pipeline.reference_cache import ReferenceDataCache
 from sales_pipeline.staging import StagingStore, odoo_incremental_domain
 from sales_pipeline.validation import ModelValidator
-from sales_pipeline.product_name_mapper import ProductMappingError, ProductNameMapper
+from sales_pipeline import odoo_products
 from sales_pipeline.product_dashboard import IntercompanyFlagger, ProductDashboardBuilder, ProductDashboardConfig
 
 
@@ -105,7 +102,7 @@ REQUIRED_OUTPUT_SHEETS = [
     "Fact_ProductSalesDaily",
     "Dim_ProductDashboard",
     "Dim_ProductDashboardGroup",
-    "QA_ProductUnmapped",
+    "QA_ProductOdooGaps",
     "QA_ProductDataQuality",
     "ProductDashboard_Meta",
 ]
@@ -162,31 +159,6 @@ class PowerBISalesPipeline:
         self.pipeline_settings = PipelineSettings(verbose=True)
         self._latest_odoo_sale_order_start: dict[str, Any] = {}
         self._latest_odoo_sale_order_end: dict[str, Any] = {}
-        # Centralized product-name mapper -- built lazily (see `mapper`), after input validation, so
-        # constructing the pipeline never touches files and a bad input dir fails in step one.
-        self._mapper: ProductNameMapper | None = None
-
-    @property
-    def mapper(self) -> ProductNameMapper:
-        if self._mapper is None:
-            self._mapper = ProductNameMapper(self.settings.products_path)
-            self.logger.info(
-                "ProductNameMapper ready — %d Odoo→clean mappings loaded from %s",
-                self._mapper.mapping_count(),
-                self.settings.products_path,
-            )
-            if self._mapper.mapping_count() == 0:
-                message = (
-                    f"ProductNameMapper loaded 0 mappings from {self.settings.products_path}: every product would "
-                    "pass through under its raw Odoo name and corrupt Dim_Product. Check the file is the current "
-                    "PRODUCTS.xlsx (first sheet, OdooProductName + ProductName columns filled). Set "
-                    "ETL_ALLOW_EMPTY_PRODUCT_MAPPING=true only for a brand-new, deliberately empty master."
-                )
-                if not self.settings.allow_empty_product_mapping:
-                    self._mapper = None
-                    raise ProductMappingError(message)
-                self.logger.warning("%s (continuing: ETL_ALLOW_EMPTY_PRODUCT_MAPPING=true)", message)
-        return self._mapper
 
     def run(
         self,
@@ -256,10 +228,9 @@ class PowerBISalesPipeline:
         try:
             with run_context.step("validate_config_and_inputs"):
                 # Inputs first: a wrong/unmounted input folder is the cheapest thing to detect, so it
-                # must fail before config checks that lead into DB access or the product mapper.
+                # must fail before config checks that lead into DB access.
                 self._validate_inputs()
                 self.settings.validate(require_database=output_mode in {"sql", "both"} or load_mode == "incremental")
-                _ = self.mapper  # raises ProductMappingError if PRODUCTS.xlsx is unreadable
                 self.settings.output_dir.mkdir(parents=True, exist_ok=True)
                 self.logger.info("Pipeline load mode: %s", load_mode.upper())
                 self.logger.info("Pipeline output mode: %s", output_mode.upper())
@@ -502,12 +473,6 @@ class PowerBISalesPipeline:
                         self.settings.inventory_validation_path,
                     )
                     self.logger.info("Inventory validation workbook exported: %s", inventory_validation_path)
-                    unmapped_products_path = inventory_validation_exporter.export_unmapped_products(
-                        sheets["Fact_Inventory"],
-                        sheets["Dim_Product"],
-                        self.settings.unmapped_products_path,
-                    )
-                    self.logger.info("Unmapped products workbook exported: %s", unmapped_products_path)
 
             if output_mode in {"sql", "both"}:
                 with run_context.step("load_database_and_validate"):
@@ -668,7 +633,6 @@ class PowerBISalesPipeline:
         with run_context.step("validate_config_and_inputs"):
             self._validate_inputs()
             self.settings.validate(require_database=False)
-            _ = self.mapper
         if source is None:
             with run_context.step("odoo_authenticate"):
                 client = OdooClient(
@@ -784,27 +748,12 @@ class PowerBISalesPipeline:
         sales = self._normalize_sales_export(sales_raw)
         self.logger.info("PERF transform normalize_sales_export rows=%s duration_seconds=%.2f", len(sales), time.perf_counter() - _t0)
 
-        # Keep Odoo's own product name. The old global OdooProductName -> ProductName rename ran before
-        # company was known, so e.g. Tika "Cem Air" became "Cemair" and then matched Majaal's product.
-        # ProductMapper.attach now matches on Company + normalized Odoo name and sets ProductName.
-        if "product_name" in sales.columns:
-            sales["_odoo_name_raw"] = sales["product_name"]
-
         _t1 = time.perf_counter()
         reference_cache = ReferenceDataCache(self.settings.output_dir / ".pipeline_cache")
         load_reference = reference_cache.load if use_reference_cache else lambda _name, _path, loader: loader()
         sales_org = load_reference("sales_org", self.settings.sales_team_path, lambda: SalesOrgRepository(self.legacy_logger).load(self.settings.sales_team_path))
         sales_org_enricher = SalesOrgEnricher(sales_org)
         targets = load_reference("targets", self.settings.targets_path, lambda: TargetsLoader(self.legacy_logger).load(self.settings.targets_path))
-        product_master = load_reference(
-            "product_master",
-            self.settings.products_path,
-            lambda: ProductMasterLoader(
-                logger=self.legacy_logger,
-                export_conflicts=True,
-                base_dir=self.settings.output_dir.parent,
-            ).load(self.settings.products_path),
-        )
         blocked_customers = load_reference(
             "blocked_customers",
             self.settings.blocked_customers_path,
@@ -822,11 +771,12 @@ class PowerBISalesPipeline:
         sales = cleaner.clean_order_numbers(sales)
         sales = cleaner.clean_customer(sales)
         sales = IntercompanyFlagger.from_config(self.settings.product_dashboard_config).flag(sales)
-        sales = cleaner.clean_product_names(sales)
-        self.logger.info("PERF transform clean_product_names rows=%s duration_seconds=%.2f", len(sales), time.perf_counter() - _t2)
+        # Products are Odoo's, by id: name, SKU, category, brand, family, size, active exactly as Odoo stores them.
         _t3 = time.perf_counter()
-        sales = ProductMapper.attach(sales, product_master, product_cost_raw if product_cost_raw is not None else pd.DataFrame())
-        self.logger.info("PERF transform product_mapper_attach rows=%s duration_seconds=%.2f", len(sales), time.perf_counter() - _t3)
+        products = odoo_products.catalog(product_cost_raw)
+        discount_ids = odoo_products.discount_ids(ProductDashboardConfig.load(self.settings.product_dashboard_config).section("discounts"))
+        sales = odoo_products.attach(sales, products, discount_ids)
+        self.logger.info("PERF transform odoo_products_attach rows=%s catalog=%s duration_seconds=%.2f", len(sales), len(products), time.perf_counter() - _t3)
         sales = cleaner.clean_quantity(sales)
         sales = cleaner.clean_value(sales)
         if "untaxed_total" in sales.columns:
@@ -865,15 +815,8 @@ class PowerBISalesPipeline:
         self.logger.info("PERF transform normalize_targets duration_seconds=%.2f", time.perf_counter() - _t6)
 
         _t7 = time.perf_counter()
-        dim_product = ProductDimensionBuilder().build(
-            product_master,
-            sales,
-            raw_odoo_products=product_cost_raw if product_cost_raw is not None else pd.DataFrame(),
-        )
-        self.logger.info(
-            "Dim_Product loaded: %d products from manual and Odoo sources",
-            len(dim_product),
-        )
+        dim_product = ProductDimensionBuilder().build(product_cost_raw)
+        self.logger.info("Dim_Product loaded: %d Odoo products", len(dim_product))
         dim_salesperson = SalespersonDimensionBuilder(sales_org, self.pipeline_settings).build(sales)
         dim_channel = DistributionChannelDimensionBuilder().build(sales_org.people_active, targets)
         dim_salesteam = SalesTeamDimensionBuilder(sales_org, self.pipeline_settings).build()
@@ -912,22 +855,6 @@ class PowerBISalesPipeline:
             dim_product=dim_product,
         )
         self.logger.info("PERF transform product_cost_dim duration_seconds=%.2f", time.perf_counter() - _t9)
-
-        _t9b = time.perf_counter()
-        if self.settings.products_write_back_isactive:
-            active_product_keys = ProductActiveFlagReconciler.active_base_keys(dim_product_cost)
-            product_master = ProductActiveFlagReconciler.reconcile(
-                product_master,
-                active_product_keys,
-                self.legacy_logger,
-                products_path=self.settings.products_path,
-            )
-            dim_product = ProductActiveFlagReconciler.patch_dim_product(
-                dim_product, active_product_keys, ProductDimensionBuilder.PRODUCT_SOURCE_INPUT
-            )
-        else:
-            self.logger.info("IsActive comes from PRODUCTS.xlsx as maintained (PRODUCTS_WRITE_BACK_ISACTIVE is off)")
-        self.logger.info("PERF transform product_active_flag_reconcile duration_seconds=%.2f", time.perf_counter() - _t9b)
 
         _t10 = time.perf_counter()
         sales = self._attach_salesperson_fields(sales, dim_salesperson)
@@ -976,11 +903,11 @@ class PowerBISalesPipeline:
             fact_sales_lines, dim_product, inventory_result.fact_inventory, line_costs=line_costs
         )
         self.logger.info(
-            "Product dashboard tables: products=%s groups=%s daily_rows=%s unmapped=%s dq=%s",
+            "Product dashboard tables: products=%s groups=%s daily_rows=%s odoo_gaps=%s dq=%s",
             len(product_tables["Dim_ProductDashboard"]),
             len(product_tables["Dim_ProductDashboardGroup"]),
             len(product_tables["Fact_ProductSalesDaily"]),
-            len(product_tables["QA_ProductUnmapped"]),
+            len(product_tables["QA_ProductOdooGaps"]),
             len(product_tables["QA_ProductDataQuality"]),
         )
         bcg_summary = BCGMatrixBuilder.quality_summary(fact_sales_lines, fact_bcg, dim_segment)
@@ -1028,7 +955,6 @@ class PowerBISalesPipeline:
                 fact_sales_lines, dim_product_cost
             )
             sheets["QA_Inventory_DataQuality"] = inventory_result.qa_data_quality
-            self.logger.info("Product unmapped QA exports disabled; all Odoo products are loaded")
             self.logger.info("QA inventory checks completed")
         else:
             self.logger.info("Skipping product QA generation for fast incremental SQL run")
@@ -1235,7 +1161,6 @@ class PowerBISalesPipeline:
             "sales_targets.xlsx": self.settings.targets_path,
             "SalesTeam.xlsx": self.settings.sales_team_path,
             "OffDays.xlsx": self.settings.offdays_path,
-            "PRODUCTS.xlsx": self.settings.products_path,
             "BlockedCustomers.xlsx": self.settings.blocked_customers_path,
         }
         return source_paths

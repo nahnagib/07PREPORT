@@ -111,7 +111,6 @@ def _write_required_input_files(settings: Settings) -> None:
         settings.targets_path,
         settings.sales_team_path,
         settings.offdays_path,
-        settings.products_path,
         settings.blocked_customers_path,
     ]:
         path.write_bytes(f"{path.name}:v1".encode("utf-8"))
@@ -131,6 +130,7 @@ def test_full_mode_does_not_force_unchanged_excel_reload(tmp_path: Path, caplog)
 
     assert "sales_targets.xlsx unchanged; skipping Excel reload" in caplog.text
     assert "changed or full mode" not in caplog.text
+    assert "PRODUCTS.xlsx" not in pipeline._excel_source_paths()  # retired: products come from Odoo
 
 
 def test_modified_target_file_is_detected_and_metadata_updates_after_success(tmp_path: Path, caplog) -> None:

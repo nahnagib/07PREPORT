@@ -9,7 +9,7 @@ Rules (docs/adding-a-department.md "Org rules"):
   SegmentKey      follows the TEAM (dim_sales_team.SegmentKey)
   ChannelKey      follows the SALESPERSON (dim_salesperson.ChannelKey)
   CompanyKey      the document's company id (unknown -> -1)
-  ProductKey      Odoo product.product id; ProductMasterKey through map_product_master (ProductKey, CompanyKey)
+  ProductKey      Odoo product.product id (the only product identity; nothing is matched on a product name)
 Every function returns the keys plus the source ids that fell back to -1, for RunContext.record_fallback.
 """
 
@@ -52,8 +52,6 @@ class KeyMaps:
     company_keys: set[int] = field(default_factory=set)
     company_name_keys: dict[str, int] = field(default_factory=dict)
     product_keys: set[int] = field(default_factory=set)
-    product_master: dict[tuple[int, int], str] = field(default_factory=dict)
-    master_keys: set[str] = field(default_factory=set)
 
     @classmethod
     def load(cls, conn) -> "KeyMaps":
@@ -71,8 +69,6 @@ class KeyMaps:
             company_keys={int(c) for c, _ in company_rows},
             company_name_keys={normalize_match_company(n).upper(): int(c) for c, n in company_rows if n is not None},
             product_keys={int(p) for (p,) in rows("SELECT ProductKey FROM dim_product")},
-            product_master={(int(p), int(c)): str(m) for p, c, m in rows("SELECT ProductKey, CompanyKey, ProductMasterKey FROM map_product_master")},
-            master_keys={str(m) for (m,) in rows("SELECT ProductMasterKey FROM dim_product_master")},
         )
 
     # -- resolvers (all vectorised over Python lists; inputs may be ids, floats, NaN, None or Odoo [id, name]) ----
@@ -153,6 +149,3 @@ class KeyMaps:
                 if pid is not None:
                     fell.append(pid)
         return keys, fell
-
-    def product_masters(self, product_keys: Sequence[int], company_keys: Sequence[int]) -> list[str]:
-        return [self.product_master.get((int(p), int(c)), UNKNOWN_TEXT) for p, c in zip(product_keys, company_keys)]

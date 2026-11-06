@@ -120,80 +120,31 @@ def test_payment_term_instalment_flag_and_max_days():
 
 # -- products ----------------------------------------------------------------------------------------------------------
 RAW_PRODUCTS = pd.DataFrame([
-    {"id": 500, "product_tmpl_id": 500, "name": "Grout", "display_name": "[GR-1] Grout", "default_code": "GR-1", "company_id": None, "categ_name": "G", "uom_name": "u", "detailed_type": "product", "active": True},
-    {"id": 501, "product_tmpl_id": 501, "name": "Cem Air", "display_name": "Cem Air", "default_code": None, "company_id": 3, "categ_name": "C", "uom_name": "u", "detailed_type": "product", "active": True},
-    {"id": 502, "product_tmpl_id": 502, "name": "Mystery", "display_name": "Mystery", "default_code": None, "company_id": None, "categ_name": "X", "uom_name": "u", "detailed_type": "consu", "active": False},
+    {"id": 500, "product_tmpl_id": 500, "name": "  Grout  crema", "display_name": "[GR-1] Grout", "default_code": "GR-1", "company_id": None,
+     "categ_id": 5, "categ_name": "All / Grout", "sub_brand": None, "family": None, "size": "5kg", "uom_name": "Units",
+     "detailed_type": "product", "active": 1},
+    {"id": 501, "product_tmpl_id": 501, "name": "Cem Air", "display_name": "Cem Air", "default_code": None, "company_id": 3, "categ_id": 6,
+     "categ_name": "All / Cement", "sub_brand": None, "family": None, "size": None, "uom_name": "Units",
+     "detailed_type": "product", "active": 0},
 ])
-MASTER_RAW = pd.DataFrame([
-    {"ProductMasterKey": "M-GR", "SheetProductKey": "GR", "Company": "Majaal", "Category": "Adhesive", "Brand": "Weber", "SubBrand": None, "Family": "Grout",
-     "ProductName": "Grout", "OdooProductName": "[GR-1]  grout", "ProductLevel": "SKU", "SKU": "GR-1", "Size": None, "IsActive": True, "OdooProductID": None, "_excel_row": 2},
-    {"ProductMasterKey": None, "SheetProductKey": "CEM", "Company": "Tika", "Category": "Cement", "Brand": "CemAir", "SubBrand": None, "Family": None,
-     "ProductName": None, "OdooProductName": "[OLD] Cem Air", "ProductLevel": "SKU", "SKU": None, "Size": None, "IsActive": True, "OdooProductID": None, "_excel_row": 3},
-    {"ProductMasterKey": "M-MYS", "SheetProductKey": "MYS", "Company": "Tika", "Category": "Misc", "Brand": "B", "SubBrand": None, "Family": None,
-     "ProductName": "Mystery", "OdooProductName": "Renamed In Odoo", "ProductLevel": "SKU", "SKU": None, "Size": None, "IsActive": True, "OdooProductID": 502, "_excel_row": 4},
-])
-COMPANIES = {1: "Majaal", 3: "Tika"}
 
 
-def _map():
-    master_raw = prod.complete_master_keys(MASTER_RAW)
-    master = prod.build_product_master(master_raw, {"Majaal": 1, "Tika": 3}).merge(master_raw[["ProductMasterKey", "OdooProductID"]], on="ProductMasterKey")
-    return prod.build_product_master_map(prod.build_products(RAW_PRODUCTS), master, COMPANIES), master
-
-
-def test_generated_master_key_depends_only_on_its_own_row():
-    a = prod.generated_master_key("CEM", "TIKA|CEM AIR")
-    assert a == prod.generated_master_key("CEM", "TIKA|CEM AIR") and a.startswith("CEM|") and len(a) == 14
-    assert prod.generated_master_key(None, "TIKA|X").startswith("PRODUCT|")
-    keys_alone = prod.complete_master_keys(MASTER_RAW.iloc[[1]])["ProductMasterKey"].tolist()
-    keys_with_others = prod.complete_master_keys(MASTER_RAW)["ProductMasterKey"].tolist()
-    assert keys_alone[0] == keys_with_others[1]
-
-
-def test_product_master_map_is_company_aware_and_an_odoo_id_wins():
-    pm, master = _map()
-    rows = pm.set_index(["ProductKey", "CompanyKey"])
-    assert rows.loc[(500, 1)].tolist() == ["M-GR", prod.STATUS_NAME]  # code prefix, spacing and case ignored
-    assert rows.loc[(500, 3)].tolist() == ["-1", prod.STATUS_NONE]  # never matched across companies
-    assert rows.loc[(501, 3), "match_status"] == prod.STATUS_NAME  # "[OLD] Cem Air" -> "CEM AIR"
-    assert (501, 1) not in rows.index  # restricted to Tika in Odoo
-    assert rows.loc[(502, 3)].tolist() == ["M-MYS", prod.STATUS_ID]  # name differs, id in the sheet wins
-    assert master.set_index("SheetProductKey").loc["CEM", "ProductName"] == "Cem Air"  # blank name -> Odoo name w/o code
-
-
-def test_duplicate_company_and_name_in_the_catalogue_is_rejected():
-    dup = pd.concat([MASTER_RAW, MASTER_RAW.iloc[[0]].assign(ProductMasterKey="M-GR-2", _excel_row=9)], ignore_index=True)
-    with pytest.raises(prod.ProductMasterError, match="ProductMatchKey 'MAJAAL\\|GROUT' appears on several rows: 2, 9"):
-        prod.build_product_master(prod.complete_master_keys(dup), {"Majaal": 1, "Tika": 3})
-
-
-# rewritten from the legacy QA_UnmappedProducts side-workbook tests (see test_product_dimension.py)
-def test_unmatched_products_are_listed_biggest_sales_first():
-    pm, _ = _map()
-    sales = pd.DataFrame([
-        {"ProductKey": 500, "CompanyKey": 3, "sales_value": 10.0, "sales_value_last_12m": 10.0, "line_count": 1, "last_sale_date": "2026-01-01"},
-        {"ProductKey": 502, "CompanyKey": 1, "sales_value": 900.0, "sales_value_last_12m": 0.0, "line_count": 4, "last_sale_date": "2025-01-01"},
-        {"ProductKey": 500, "CompanyKey": 1, "sales_value": 5000.0, "sales_value_last_12m": 50.0, "line_count": 9, "last_sale_date": "2026-09-01"},  # matched
+def test_products_are_odoo_ids_with_odoo_values_and_unassigned_when_empty():
+    vendors = pd.DataFrame([
+        {"id": 2, "partner_name": "Weber", "product_tmpl_id": 500, "sequence": 1, "min_qty": 0},
+        {"id": 1, "partner_name": "Local trader", "product_tmpl_id": 500, "sequence": 2, "min_qty": 0},
     ])
-    report = prod.unmatched_report(prod.build_products(RAW_PRODUCTS), pm, sales, COMPANIES)
-    assert report[["ProductKey", "company", "sales_value"]].values.tolist() == [[502, "Majaal", 900.0], [500, "Tika", 10.0]]
+    p = prod.build_products(RAW_PRODUCTS, vendors).set_index("ProductKey")  # brand = the main vendor
+    assert p.index.tolist() == [500, 501]
+    assert p.loc[500, "product_name"] == "  Grout  crema"   # as stored in Odoo: never cleaned
+    assert p.loc[500, "OdooProductName"] == "[GR-1] Grout" and p.loc[500, "default_code"] == "GR-1"
+    assert p.loc[500, "CompanyKey"] == UNKNOWN and p.loc[501, "CompanyKey"] == 3
+    assert p.loc[500, ["category", "brand", "sub_brand", "family", "size"]].tolist() == ["All / Grout", "Weber", "Unassigned", "Unassigned", "5kg"]
+    assert p.loc[501, ["brand", "family", "size"]].tolist() == ["Unassigned"] * 3
+    assert p.loc[501, "active"] == 0
+    assert not hasattr(prod, "build_product_master") and not hasattr(prod, "unmatched_report")  # PRODUCTS.xlsx is retired
 
 
-def test_unmatched_products_without_sales_are_listed_with_zero():
-    pm, _ = _map()
-    report = prod.unmatched_report(prod.build_products(RAW_PRODUCTS), pm, None, COMPANIES)
-    assert set(map(tuple, report[["ProductKey", "company"]].values.tolist())) == {(500, "Tika"), (502, "Majaal")}
-    assert report["sales_value"].eq(0).all()
-
-
-def test_every_sold_product_and_company_pair_has_a_map_row():
-    pm, _ = _map()
-    covered = set(zip(pm["ProductKey"], pm["CompanyKey"]))
-    for product, company in [(500, 1), (500, 3), (501, 3), (502, 1), (502, 3)]:
-        assert (product, company) in covered  # unmatched pairs map to '-1', so facts never lose a product row
-
-
-# -- calendar ---------------------------------------------------------------------------------------------------------
 def test_dates_are_a_pure_function_of_the_day():
     a = cal.build_dates(dt.date(2026, 1, 1), dt.date(2026, 1, 10))
     b = cal.build_dates(dt.date(2025, 12, 1), dt.date(2026, 2, 1))

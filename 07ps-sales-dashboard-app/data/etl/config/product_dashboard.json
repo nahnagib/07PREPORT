@@ -27,6 +27,11 @@
     "_not_listed_needs_confirmation": ["شركة النماء القابضة", "شركة النماء المتألق", "مديونية شركة اثينا"]
   },
 
+  "discounts": {
+    "_comment": "Odoo product.product ids whose sales lines are discounts. Those lines keep their Odoo product name exactly as Odoo stores it; they are only flagged is_discount = 1 (never renamed).",
+    "discount_product_ids": [1068, 2881, 4691, 6009]
+  },
+
   "stock_locations": {
     "_comment": "Odoo internal locations are grouped by warehouse name. On-hand = finished_goods only. In-transit is shown separately and never counted as on-hand. Raw-materials warehouses are excluded. Any internal warehouse not listed under raw_materials or in_transit counts as finished goods.",
     "raw_materials_warehouses": ["RM Warehouse"],
@@ -41,10 +46,10 @@
   },
 
   "bcg": {
-    "_comment": "Unchanged from the existing BCGMatrixBuilder. YTD invoiced quantity vs company threshold; GP% = (Value - Qty x standard cost) / Value. Products without a standard cost are 'Unclassified (no cost)'.",
+    "_comment": "Unchanged from the existing BCGMatrixBuilder. YTD invoiced quantity vs company threshold; GP% = (Value - Qty x standard cost) / Value. Products without a standard cost are 'Unclassified (no cost)'. excluded_category_ids = Odoo product.category ids (categ_id) left out of the matrix; empty = nothing excluded (logged on every run).",
     "volume_threshold": { "Majaal": 3500, "Tika": 25000, "Athena": 3500 },
     "profit_threshold_pct": 35,
-    "excluded_categories": ["Paper Bags", "Raw Materials"]
+    "excluded_category_ids": []
   },
 
   "lifecycle": {

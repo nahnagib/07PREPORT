@@ -42,9 +42,9 @@ MART_KEYS = {  # table -> primary key (migration 0031)
     "fact_sales_targets": ("YearMonth", "SalespersonKey", "SalesTeamKey", "CompanyKey"), "fact_sales_deliveries": ("DeliveryFactID",),
     "fact_sales_leads": ("LeadID", "IsOdooCreatedLead", "IsETLCreatedLead"), "fact_sales_opportunities": ("OpportunityID",),
     "fact_sales_product_daily": ("row_key",), "fact_sales_inventory_snapshot": ("SnapshotDateKey", "CompanyKey", "ProductKey", "LocationID"),
-    "fact_sales_bcg_matrix": ("CompanyKey", "ProductMasterKey", "ProductKey"), "dim_sales_order": ("SalesOrderKey",),
+    "fact_sales_bcg_matrix": ("CompanyKey", "ProductKey"), "dim_sales_order": ("SalesOrderKey",),
     "dim_sales_crm_stage": ("StageID",), "dim_sales_lost_reason": ("LostReasonID",), "dim_sales_product_cost": ("ProductKey", "CompanyKey"),
-    "dim_sales_product_dashboard": ("ProductMatchKey",), "dim_sales_product_group": ("ProductGroupKey",),
+    "dim_sales_product_dashboard": ("ProductCompanyKey",), "dim_sales_product_group": ("ProductGroupKey",),
     "etl_sales_product_dashboard_meta": ("AsOfDate",),
 }
 MART_TABLES = tuple(MART_KEYS)
@@ -53,7 +53,7 @@ KEY_DIMS = {
     "CustomerKey": ("dim_customer", "CustomerKey"), "SalespersonKey": ("dim_salesperson", "SalespersonKey"),
     "SalesTeamKey": ("dim_sales_team", "SalesTeamKey"), "ChannelKey": ("dim_channel", "ChannelKey"),
     "SegmentKey": ("dim_segment", "SegmentKey"), "CompanyKey": ("dim_company", "CompanyKey"),
-    "ProductKey": ("dim_product", "ProductKey"), "ProductMasterKey": ("dim_product_master", "ProductMasterKey"),
+    "ProductKey": ("dim_product", "ProductKey"),
     "SalesOrderKey": ("dim_sales_order", "SalesOrderKey"),
     **{c: ("dim_date", "DateKey") for c in cf.DATE_KEY_COLUMNS},
 }
@@ -111,8 +111,32 @@ def conform_sales(ctx: RunContext) -> TaskResult:
         ctx.record_fallback(key, ids)
     _apply_customer_growth(ctx, result, write=ctx.state.get("write_customer_growth", True))
     ctx.state["conformed"] = result
+    gaps = write_product_gap_report(ctx, result.product_gaps) if ctx.full_refresh else None
     return TaskResult(rows_loaded=0, details={"tables": {k: len(v) for k, v in result.tables.items()}, "legacy_key_parity": result.parity,
-                                              "notes": result.notes})
+                                              "notes": result.notes, **({"product_odoo_gaps": gaps} if gaps else {})})
+
+
+PRODUCT_GAP_REPORT = "product_odoo_gaps.csv"
+
+
+def write_product_gap_report(ctx: RunContext, gaps: pd.DataFrame | None) -> dict[str, Any] | None:
+    """OUTPUT/product_odoo_gaps.csv on every full refresh: every product sold with no Brand, Family, Size or SKU in
+    Odoo, largest sales first (the list to fill in Odoo). Returns the counts for the task log / Control Center."""
+    if gaps is None:
+        return None
+    settings = _settings(ctx)
+    settings.output_dir.mkdir(parents=True, exist_ok=True)
+    path = settings.output_dir / PRODUCT_GAP_REPORT
+    gaps.to_csv(path, index=False, encoding="utf-8-sig")
+    missing = gaps["Missing"].astype(str) if "Missing" in gaps.columns else pd.Series(dtype=str)
+    by_company = gaps.groupby("Company").size().to_dict() if len(gaps) else {}
+    summary = {
+        "path": str(path), "products": int(len(gaps)), "by_company": {str(k): int(v) for k, v in by_company.items()},
+        "sales_value": float(pd.to_numeric(gaps.get("SalesValue"), errors="coerce").sum()) if len(gaps) else 0.0,
+        "missing": {a: int(missing.str.contains(a, regex=False).sum()) for a in ("Brand", "Family", "Size", "SKU")},
+    }
+    log.info("Product Odoo gap report: %s products written to %s", summary["products"], path)
+    return summary
 
 
 def _apply_customer_growth(ctx: RunContext, result: cf.Conformed, *, write: bool = True) -> None:

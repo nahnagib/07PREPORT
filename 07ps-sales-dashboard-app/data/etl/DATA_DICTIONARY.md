@@ -1,5 +1,34 @@
 # Data Dictionary
 
+## Product columns (Odoo is the only source, 2026-11-03)
+
+PRODUCTS.xlsx is retired (archived as `data/etl/input_backups/PRODUCTS_retired_2026-11-03.xlsx`; migration 0064). Every
+product attribute is read from Odoo `product.product` by its id, exactly as Odoo stores it; nothing is matched, grouped or
+renamed by a product name. An empty Category / Brand / SubBrand / Family / Size is `Unassigned` (never a fallback).
+`OUTPUT/product_odoo_gaps.csv` (every full refresh) lists the sold products still missing Brand, Family, Size or SKU.
+
+| Column | Tables | Odoo source |
+|---|---|---|
+| `ProductKey` | `dim_product`, `fact_sales_lines`, `fact_sales_product_daily`, `fact_sales_inventory_snapshot`, `fact_sales_bcg_matrix`, `dim_sales_product_cost`, `dim_sales_product_dashboard` | `product.product.id` (`-1` = a line without a product) |
+| `ProductTemplateID` / `product_tmpl_id` | `fact_sales_lines`, `dim_sales_product_dashboard`, `dim_sales_product_group`, `dim_product` | `product.product.product_tmpl_id` |
+| `ProductName` / `product_name` | every product table / `dim_product` | `product.product.name`, byte-for-byte |
+| `OdooProductName` | every product table | `product.product.display_name` (`[internal ref] name`) |
+| `SKU` / `default_code` | product tables / `dim_product` | `default_code` (empty stays empty) |
+| `Category` / `category` | product tables / `dim_product` | `categ_id`, full path (`complete_name`) |
+| `CategoryID` / `categ_id` | `dim_sales_product_dashboard`, `dim_sales_product_group` / `dim_product` | `categ_id` id; `bcg.excluded_category_ids` in `config/product_dashboard.json` lists the ids left out of the BCG matrix |
+| `Brand` / `brand` | product tables / `dim_product` | the main vendor (Purchase tab, `seller_ids` → `product.supplierinfo`): lowest sequence, then lowest minimum quantity, then oldest line; `raw_odoo_product_supplierinfo` |
+| `SubBrand` / `sub_brand` | product tables / `dim_product` | `sub_brand_id` |
+| `Family` / `family` | product tables / `dim_product` | `product_family_id` ("Product Family / Range") |
+| `Size` / `size` | product tables / `dim_product` | `size_dimensions_id` ("Dimensions") |
+| `IsActive` / `active` | product tables / `dim_product` | `active` (archived = 0) |
+| `is_discount` | `fact_sales_lines` | product id in `discounts.discount_product_ids` (1068, 2881, 4691, 6009) |
+| `ProductCompanyKey` | `fact_sales_product_daily`, `fact_sales_inventory_snapshot`, `dim_sales_product_dashboard` | `<Company>|<product id>`: the Product pages' grain |
+| `ProductGroupKey` | `dim_sales_product_dashboard`, `dim_sales_product_group` | `T|<product_tmpl_id>`: the cross-company (BMH) view groups by Odoo template |
+
+Removed (0064): `ProductMasterKey`, `SheetProductKey`, `ProductMatchKey`, `ProductNameRaw`, `ProductNameClean`,
+`OdooProductNameClean`, `product_name_raw`, `product_name_clean`, `ProductJoinKey`, `ProductLevel`, `ProductMappingStatus`,
+`ProductMappingReason`, `IsMappedProduct`, `IsMapped`. The legacy sections below still show them; they no longer exist.
+
 > The sections below are generated from the legacy workbook. The ETL platform's own tables are documented in their
 > migrations; the NPS Score tables (Process department) are described at the end of this file.
 

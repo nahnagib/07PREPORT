@@ -8,8 +8,9 @@ import type { BcgMovement, LifecycleSegment, ProductCompanyPart, ProductDashboar
  * every threshold (BCG volume/profit, days-of-inventory bands, lifecycle rule) is applied by the ETL
  * from data/etl/config/product_dashboard.json and arrives precomputed.
  *
- * One product = Company + Odoo product name (PRODUCTS.xlsx row). `id` is that key; `ProductKey` from
- * the sheet is NOT unique and is never used to group.
+ * One product = one Odoo product (product.product id) in one company; `id` is that key ('Majaal|2163'), or the
+ * Odoo template ('T|<product_tmpl_id>') in the BMH view. Every attribute is Odoo's value as stored, 'Unassigned'
+ * where Odoo has none. Nothing is matched or grouped on a product name.
  */
 
 export type BcgClass = 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs';
@@ -17,7 +18,7 @@ export const BCG_CLASSES: BcgClass[] = ['Stars', 'Cash Cows', 'Strategic', 'Dogs
 export const UNCLASSIFIED_NO_COST = 'Unclassified (no cost)';
 
 export interface ProductFact {
-  /** Company + normalized Odoo product name -- the product's identity. */
+  /** Company|Odoo product id (or the Odoo template in the BMH view) -- the product's identity. */
   id: string;
   ProductKey: string | null;
   ProductName: string;
@@ -30,7 +31,6 @@ export interface ProductFact {
   Size: string | null;
   SKU: string | null;
   IsActive: number | null;
-  isMapped: boolean;
   // -- period (follows the date range; default calendar YTD) --
   value: number;
   volume: number | null;
@@ -77,7 +77,7 @@ function daysBetween(fromIso: string | null, toIso: string | null): number | nul
 export function toProductFacts(data: ProductDashboardOverview | null | undefined): ProductFact[] {
   if (!data) return [];
   return data.products.map((r: ProductDashboardRow) => ({
-    id: r.productMatchKey,
+    id: r.productCompanyKey,
     ProductKey: r.productKey,
     ProductName: r.productName,
     OdooProductName: r.odooProductName,
@@ -89,7 +89,6 @@ export function toProductFacts(data: ProductDashboardOverview | null | undefined
     Size: r.size,
     SKU: r.sku,
     IsActive: r.isActive,
-    isMapped: r.isMapped,
     value: r.value,
     volume: r.volume,
     volumeByUom: r.volumeByUom,
@@ -280,22 +279,23 @@ export function filterByPageFilters<T extends { Company: string; Companies?: str
   );
 }
 
-/** Partner brand tracking list (PIM Contribution). `matched` = the Brand value as stored in PRODUCTS.xlsx,
+/** Partner brand tracking list (PIM Contribution). `matched` = the Brand value as stored in Odoo (the main vendor's name),
  * or null when no such brand exists (rendered as "not currently stocked"). */
 export interface PartnerBrand {
   requested: string;
   matched: string | null;
 }
 
+// matched = the Odoo vendor name exactly as Odoo stores it (the Brand is the product's main vendor, 2026-11-04)
 export const PARTNER_BRANDS: PartnerBrand[] = [
-  { requested: 'Ape Grupo', matched: 'APE' },
-  { requested: 'VitrA', matched: null },
-  { requested: 'Onyx', matched: 'ONIX' },
-  { requested: 'Mayor', matched: 'MAYOR' },
+  { requested: 'Ape Grupo', matched: 'APE Group' },
+  { requested: 'VitrA', matched: 'Vitra' },
+  { requested: 'Onyx', matched: 'Onix' },
+  { requested: 'Mayor', matched: 'Ceramica Mayor' },
   { requested: 'QUA', matched: 'QUA' },
   { requested: 'RAK CERAMICS', matched: null },
   { requested: 'Porcelanosa', matched: null },
-  { requested: 'FILA', matched: 'FILA' },
+  { requested: 'FILA', matched: 'FILA SOLUTIONS' },
 ];
 
 export function slugifyBrand(name: string): string {

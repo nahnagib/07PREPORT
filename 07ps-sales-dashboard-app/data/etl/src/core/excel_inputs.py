@@ -1,13 +1,12 @@
-"""Excel inputs owned by core: the org file (SalesTeam.xlsx), the product catalogue (PRODUCTS.xlsx), off days
-(OffDays.xlsx) and blocked customers (BlockedCustomers.xlsx).
+"""Excel inputs owned by core: the org file (SalesTeam.xlsx), off days (OffDays.xlsx) and blocked customers
+(BlockedCustomers.xlsx). Products come from Odoo only (PRODUCTS.xlsx was retired on 2026-11-03).
 
 Each sheet is validated against its schema (etl_platform.sources.excel) and copied as a whole into its
 raw_excel_* table (replace_all), with the Excel row number and the file's SHA-256, so every dimension row can be
 traced to the exact file and row it came from. The ETL never writes to an input file.
 
 Key columns (docs/rename-map.md): SalespersonKey / ChannelKey / SegmentKey / CompanyKey in the org file,
-ProductMasterKey in PRODUCTS.xlsx, CompanyKey in OffDays.xlsx, CustomerKey (Odoo commercial partner id) in
-BlockedCustomers.xlsx.
+CompanyKey in OffDays.xlsx, CustomerKey (Odoo commercial partner id) in BlockedCustomers.xlsx.
 """
 
 from __future__ import annotations
@@ -22,7 +21,6 @@ from etl_platform.runner import RunContext, TaskResult
 from etl_platform.sources.excel import Column, ExcelSource, SheetSchema
 
 ORG_FILE = "SalesTeam.xlsx"
-PRODUCTS_FILE = "PRODUCTS.xlsx"
 OFFDAYS_FILE = "OffDays.xlsx"
 BLOCKED_FILE = "BlockedCustomers.xlsx"
 
@@ -77,25 +75,6 @@ SEGMENT = SheetSchema(
     sheet=("segment",),
     columns=(Column("SegmentKey", "int", nullable=False, unique=True), Column("Segment", "str", nullable=False, unique=True)),
 )
-PRODUCTS = SheetSchema(
-    sheet=("Products",),
-    columns=(
-        Column("ProductMasterKey", "str", unique=True),  # blank -> generated (core.transforms.product)
-        Column("ProductKey", "str"),  # the sheet's family/SKU code; NOT unique
-        Column("Company", "str", nullable=False, allowed=("Majaal", "Tika", "Athena")),
-        Column("Category", "str"),
-        Column("Brand", "str"),
-        Column("SubBrand", "str"),
-        Column("Family", "str"),
-        Column("ProductName", "str"),
-        Column("OdooProductName", "str", nullable=False),
-        Column("ProductLevel", "str"),
-        Column("SKU", "str"),
-        Column("Size", "str"),
-        Column("IsActive", "bool"),
-        Column("OdooProductID", "int", required=False),
-    ),
-)
 OFFDAYS = SheetSchema(
     sheet=("Sheet1", "OffDays"),
     columns=(
@@ -144,7 +123,6 @@ INPUTS = (
     ExcelInput("raw_excel_odoo_teams", ORG_FILE, ODOO_TEAMS, "raw_excel_odoo_teams"),
     ExcelInput("raw_excel_channel", ORG_FILE, CHANNEL, "raw_excel_channel"),
     ExcelInput("raw_excel_segment", ORG_FILE, SEGMENT, "raw_excel_segment"),
-    ExcelInput("raw_excel_products", PRODUCTS_FILE, PRODUCTS, "raw_excel_products", rename=(("ProductKey", "SheetProductKey"),)),
     ExcelInput("raw_excel_offdays", OFFDAYS_FILE, OFFDAYS, "raw_excel_offdays", row_is_key=True),
     ExcelInput("raw_excel_blocked_customers", BLOCKED_FILE, BLOCKED, "raw_excel_blocked_customers", row_is_key=True),
 )
@@ -159,8 +137,8 @@ def read_input(source: ExcelSource, spec: ExcelInput) -> pd.DataFrame:
 
 
 def load_excel_input(ctx: RunContext, spec: ExcelInput, *, transform=None) -> TaskResult:
-    """Validates the sheet and replaces its raw_excel_* table. ``transform(df) -> df`` may finish the rows
-    (e.g. generate blank ProductMasterKeys) before they are written."""
+    """Validates the sheet and replaces its raw_excel_* table. ``transform(df) -> df`` may finish the rows before
+    they are written."""
     source = ctx.excel()
     df = read_input(source, spec)
     if transform is not None:

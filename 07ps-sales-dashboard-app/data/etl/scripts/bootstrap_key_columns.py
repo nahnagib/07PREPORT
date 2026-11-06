@@ -5,12 +5,11 @@ Writes into a COPY of the input folder (refuses the production Input folder unle
   SalesTeam.xlsx      salesperson: + SalespersonKey, ChannelKey; + the Odoo-only salespeople (no team, Inactive);
                       salesteam: + CompanyKey, SegmentKey; new sheets OdooUsers, OdooTeams, channel, segment
   sales_targets.xlsx  Targets: + SalespersonKey, CompanyKey
-  PRODUCTS.xlsx       Products: + ProductMasterKey (today's derived key, frozen)
   OffDays.xlsx        + CompanyKey
   BlockedCustomers    + CustomerKey (unique exact name match to an Odoo commercial partner; others left blank)
 
 and review files into --docs-dir:
-  customer_name_duplicates.csv, product_unmatched.csv, blocked_customers_mapping_review.csv,
+  customer_name_duplicates.csv, blocked_customers_mapping_review.csv,
   bootstrap_salespeople_added.csv
 
 Inputs: the reviewed mapping CSV (Odoo user -> salesperson), the current warehouse (read-only, DB_* / DB_URL:
@@ -41,10 +40,8 @@ for p in (ROOT, ROOT / "src"):
         sys.path.insert(0, str(p))
 
 from core.keys import UNKNOWN  # noqa: E402
-from core.transforms import product as prod  # noqa: E402
 from etl_platform.config import PlatformConfig  # noqa: E402
 from etl_platform.sources.odoo import OdooSource  # noqa: E402
-from sales_pipeline.legacy_transform import ProductMasterLoader  # noqa: E402
 
 log = logging.getLogger("bootstrap_key_columns")
 
@@ -225,21 +222,6 @@ def targets_file(input_dir: Path, sp_keys: dict[str, int]) -> list[str]:
     return sorted(unknown)
 
 
-def products_file(input_dir: Path) -> pd.DataFrame:
-    path = input_dir / "PRODUCTS.xlsx"
-    loaded = ProductMasterLoader(logging.getLogger("ProductMasterLoader"), export_conflicts=False, base_dir=input_dir).load(path)  # today's exact rules
-    key_by_row = dict(zip(loaded["SourceRow"].astype(int), loaded["ProductKey"]))
-    wb = openpyxl.load_workbook(path)
-    ws = wb["Products"]
-    col = ensure_column(ws, "ProductMasterKey")
-    for row in data_rows(ws):
-        if row in key_by_row:
-            ws.cell(row=row, column=col, value=key_by_row[row])
-    wb.save(path)
-    log.info("PRODUCTS.xlsx: %s ProductMasterKey values frozen", len(key_by_row))
-    return loaded
-
-
 def offdays_file(input_dir: Path) -> None:
     path = input_dir / "OffDays.xlsx"
     wb = openpyxl.load_workbook(path)
@@ -293,14 +275,6 @@ def customer_duplicates(partners: pd.DataFrame, orders: pd.DataFrame) -> pd.Data
         columns={"name": "customer_name", "id": "CustomerKey (Odoo commercial partner id)"})
 
 
-def product_unmatched(products: pd.DataFrame, master: pd.DataFrame, sales: pd.DataFrame) -> pd.DataFrame:
-    dim = prod.build_products(products)
-    m = prod.build_product_master(master, {"Majaal": 1, "Tika": 3})
-    m = m.merge(master[["ProductMasterKey", "OdooProductID"]], on="ProductMasterKey", how="left")
-    pm = prod.build_product_master_map(dim, m, {1: "Majaal", 3: "Tika"})
-    return prod.unmatched_report(dim, pm, sales, {1: "Majaal", 3: "Tika"})
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input-dir", required=True, type=Path)
@@ -321,35 +295,21 @@ def main(argv=None) -> int:
         legacy_sp = {norm(n): int(k) for k, n in conn.execute(text("SELECT SalespersonKey, salesperson FROM dim_salesperson"))}
         orders = pd.read_sql(text("SELECT id, partner_id_id, company_id AS company, LEFT(date_order, 10) AS date_order, "
                                   "CAST(team_id_id AS SIGNED) AS team_id_id FROM raw_sale_order"), conn)
-        sales = pd.read_sql(text(
-            "SELECT OdooProductID AS ProductKey, CASE CompanyKey WHEN 2 THEN 3 ELSE CompanyKey END AS CompanyKey, "
-            "SUM(Value) AS sales_value, SUM(CASE WHEN order_date_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH) THEN Value ELSE 0 END) AS sales_value_last_12m, "
-            "COUNT(*) AS line_count, MAX(order_date_date) AS last_sale_date FROM fact_saleslines GROUP BY 1, 2"), conn)
     mapping = pd.read_csv(args.mapping_csv, encoding="utf-8-sig")
 
     source = OdooSource.connect(config, "default")
     partners = pd.DataFrame(source.search_read_all("res.partner", [], ["id", "name", "commercial_partner_id", "is_company", "customer_rank", "active", "ref"], include_archived=True))
     partners["commercial_partner_id"] = partners["commercial_partner_id"].map(lambda v: v[0] if v else None)
-    products = pd.DataFrame(source.search_read_all("product.product", [], ["id", "product_tmpl_id", "name", "display_name", "default_code", "company_id", "categ_id", "uom_id", "detailed_type", "active"], include_archived=True))
-    for f in ("product_tmpl_id", "company_id"):
-        products[f] = products[f].map(lambda v: v[0] if v else None)
-    products["categ_name"] = products["categ_id"].map(lambda v: v[1] if v else None)
-    products["uom_name"] = products["uom_id"].map(lambda v: v[1] if v else None)
 
     teams = pd.DataFrame(source.search_read_all("crm.team", [], ["id", "name", "company_id", "active"], include_archived=True))
     sp_keys, added = org_file(args.input_dir, mapping, legacy_sp)
     odoo_teams_sheet(args.input_dir, teams, orders, args.docs_dir / "odoo_team_mapping_review.csv")
     unknown_targets = targets_file(args.input_dir, sp_keys)
-    loaded_master = products_file(args.input_dir)
     offdays_file(args.input_dir)
     blocked = blocked_file(args.input_dir, partners)
 
-    master = loaded_master.rename(columns={"ProductKey": "ProductMasterKey"}).assign(_excel_row=loaded_master["SourceRow"])
-    if "OdooProductID" not in master:
-        master["OdooProductID"] = None
     args.docs_dir.mkdir(parents=True, exist_ok=True)
     customer_duplicates(partners, orders).to_csv(args.docs_dir / "customer_name_duplicates.csv", index=False, encoding="utf-8-sig")
-    product_unmatched(products, master, sales).to_csv(args.docs_dir / "product_unmatched.csv", index=False, encoding="utf-8-sig")
     blocked.to_csv(args.docs_dir / "blocked_customers_mapping_review.csv", index=False, encoding="utf-8-sig")
     added.to_csv(args.docs_dir / "bootstrap_salespeople_added.csv", index=False, encoding="utf-8-sig")
     if unknown_targets:
