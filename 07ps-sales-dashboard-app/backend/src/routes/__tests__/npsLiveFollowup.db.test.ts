@@ -8,7 +8,7 @@ import type { AddressInfo } from 'node:net';
  *
  *   npx vitest run -c vitest.nps-live.config.ts      (DB_* in the environment, e.g. the local powerBI_Data)
  *
- * Edits one open case through the follow-up API (PATCH /nps-followup/cases/:id: status + reason, with its version),
+ * Edits one open case through the follow-up API (PATCH /nps-followup/cases/:id: stage + reason, with its version),
  * then reads the NPS page's endpoints straight away: the detractor list and the follow-up summary must show the change
  * on the very next request (they read nps_followup_case live, not the nightly ETL). Afterwards the case row is put back
  * exactly as it was and the audit rows of the test are deleted.
@@ -53,7 +53,7 @@ describe.skipIf(!RUN)('an edit on the follow-up page shows on the NPS page at on
     server = app.listen(0);
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     [snapshot] = await qa(`SELECT c.* FROM nps_followup_case c JOIN fact_process_nps_response f ON f.response_id = c.response_id
-                            WHERE c.status IN ('NEW', 'CONTACTED') AND f.nps_level = 1 ORDER BY c.rated_at_local DESC LIMIT 1`);
+                            WHERE c.stage IN ('NEW', 'CONTACTED') AND f.nps_level = 1 ORDER BY c.rated_at_local DESC LIMIT 1`);
     const [a] = await qa('SELECT COALESCE(MAX(audit_id), 0) AS m FROM nps_followup_audit');
     lastAudit = Number(a.m);
   });
@@ -61,38 +61,52 @@ describe.skipIf(!RUN)('an edit on the follow-up page shows on the NPS page at on
   afterAll(async () => {
     if (snapshot) {
       await pool.query(
-        `UPDATE nps_followup_case SET status = ?, reason_id = ?, owner_user_id = ?, owner_name = ?, contacted_at = ?, solved_at = ?, root_cause = ?,
-                action_taken = ?, notes = ?, version = ?, updated_by = ?, updated_at = ? WHERE case_id = ?`,
-        [snapshot.status, snapshot.reason_id, snapshot.owner_user_id, snapshot.owner_name ?? null, snapshot.contacted_at, snapshot.solved_at, snapshot.root_cause,
-          snapshot.action_taken, snapshot.notes, snapshot.version, snapshot.updated_by, snapshot.updated_at, snapshot.case_id]);
+        // stage only: status is a generated column (0066) and can't be written
+        `UPDATE nps_followup_case SET stage = ?, reason_id = ?, reason_note = ?, owner_user_id = ?, owner_name = ?, contacted_at = ?, resolved_at = ?,
+                rejected_at = ?, root_cause = ?, action_taken = ?, notes = ?, version = ?, updated_by = ?, updated_at = ? WHERE case_id = ?`,
+        [snapshot.stage, snapshot.reason_id, snapshot.reason_note ?? null, snapshot.owner_user_id, snapshot.owner_name ?? null, snapshot.contacted_at,
+          snapshot.resolved_at, snapshot.rejected_at, snapshot.root_cause, snapshot.action_taken, snapshot.notes, snapshot.version, snapshot.updated_by,
+          snapshot.updated_at, snapshot.case_id]);
       await pool.query('DELETE FROM nps_followup_audit WHERE case_id = ? AND audit_id > ?', [snapshot.case_id, lastAudit]);
     }
     server?.close();
     await pool?.end();
   });
 
-  it('status and reason edited through the API are returned by the NPS endpoints on the next request', async () => {
+  it('stage and reason edited through the API are returned by the NPS endpoints on the next request', async () => {
     expect(snapshot, 'an open (New / Contacted) detractor case to edit').toBeTruthy();
     const ratedOn = new Date(snapshot.rated_at_local).toISOString().slice(0, 10);
     const range = `dateFrom=${ratedOn.slice(0, 4)}-01-01&dateTo=${ratedOn}`;
-    const [reason] = await qa('SELECT reason_id, name_en FROM nps_followup_reason WHERE is_active = 1 AND reason_id <> COALESCE(?, 0) ORDER BY sort_order LIMIT 1',
-      [snapshot.reason_id]);
+    // a pickable sub-reason of another category than the case's current one
+    const [reason] = await qa(
+      `SELECT r.reason_id, r.category_key, r.category_en, r.sub_reason_en FROM dim_nps_reason r
+        WHERE r.is_active = 1 AND r.sub_reason_en IS NOT NULL
+          AND r.category_key <> COALESCE((SELECT x.category_key FROM dim_nps_reason x WHERE x.reason_id = ?), '')
+        ORDER BY r.category_sort, r.sort_order LIMIT 1`, [snapshot.reason_id]);
 
     const before = await call('GET', `/nps-score/followup-summary?${range}`);
-    const countOf = (s: Json, id: number | null) => s.byReason.find((r: Json) => r.reasonId === id)?.count ?? 0;
+    const countOf = (s: Json, key: string | null) => s.byReason.find((r: Json) => r.categoryKey === key)?.count ?? 0;
 
-    const edit = await call('PATCH', `/nps-followup/cases/${snapshot.case_id}`, { version: snapshot.version, status: 'IN_PROGRESS', reasonId: reason.reason_id });
+    // the status can never be written by a client
+    const refused = await call('PATCH', `/nps-followup/cases/${snapshot.case_id}`, { version: snapshot.version, status: 'CLOSE' });
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe('case.statusReadOnly');
+
+    const edit = await call('PATCH', `/nps-followup/cases/${snapshot.case_id}`, { version: snapshot.version, stage: 'IN_PROGRESS', reasonId: reason.reason_id });
     expect(edit.status).toBe(200);
-    expect(edit.body.case).toMatchObject({ status: 'IN_PROGRESS', reasonId: reason.reason_id });
+    expect(edit.body.case).toMatchObject({ stage: 'IN_PROGRESS', status: 'OPEN', reasonId: reason.reason_id });
+    const [audit] = await qa("SELECT COUNT(*) AS n FROM nps_followup_audit WHERE case_id = ? AND audit_id > ? AND field = 'status'", [snapshot.case_id, lastAudit]);
+    expect(Number(audit.n), 'no audit row for the derived status').toBe(0);
 
     const list = await call('GET', `/nps-score/detractors?${range}&pageSize=500`);
     const row = list.body.rows.find((r: Json) => r.caseId === Number(snapshot.case_id));
-    expect(row).toMatchObject({ status: 'IN_PROGRESS', reason: reason.name_en });
+    expect(row).toMatchObject({ stage: 'IN_PROGRESS', status: 'OPEN', reason: `${reason.category_en} › ${reason.sub_reason_en}` });
 
     const after = await call('GET', `/nps-score/followup-summary?${range}`);
-    expect(countOf(after.body, reason.reason_id)).toBe(countOf(before.body, reason.reason_id) + 1);
+    expect(countOf(after.body, reason.category_key)).toBe(countOf(before.body, reason.category_key) + 1);
     expect(after.body.detractors).toBe(before.body.detractors);
-    // still pending (In progress), so the status buckets keep their totals
+    // still pending (In progress) and still Open, so the stage buckets and the status counts keep their totals
+    expect(after.body.byStage).toEqual(before.body.byStage);
     expect(after.body.byStatus).toEqual(before.body.byStatus);
   });
 });

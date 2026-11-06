@@ -12,8 +12,19 @@ export interface PieItem {
   hint?: string;
 }
 
-/** A compact donut with its total in the center; detailed causes appear only on hover/focus/tap. */
-export function ReasonPie({ items, ariaLabel, testId, totalLabel = 'Total' }: { items: PieItem[]; ariaLabel: string; testId: string; totalLabel?: string }) {
+/**
+ * A compact donut with its total in the center; detailed causes appear only on hover/focus/tap. With `onSelect`, a
+ * click on a slice or a legend row selects that item (`canSelect` says which ones can be).
+ */
+export function ReasonPie({ items, ariaLabel, testId, totalLabel = 'Total', onSelect, canSelect }: {
+  items: PieItem[];
+  ariaLabel: string;
+  testId: string;
+  totalLabel?: string;
+  onSelect?: (key: string) => void;
+  canSelect?: (key: string) => boolean;
+}) {
+  const selectable = (key: string) => !!onSelect && (canSelect ? canSelect(key) : true);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const tooltipId = useId();
   const total = items.reduce((sum, item) => sum + item.count, 0);
@@ -27,8 +38,11 @@ export function ReasonPie({ items, ariaLabel, testId, totalLabel = 'Total' }: { 
         <PieChart width={208} height={208}>
           <Pie data={items.filter((item) => item.count > 0)} dataKey="count" nameKey="label"
             cx="50%" cy="50%" innerRadius={64} outerRadius={94} stroke="var(--ps-card-bg)" strokeWidth={2}
-            isAnimationActive={false} onMouseEnter={(item: PieItem) => setActiveKey(item.key)} onMouseLeave={() => setActiveKey(null)}>
-            {items.filter((item) => item.count > 0).map((item) => <Cell key={item.key} fill={item.color} />)}
+            isAnimationActive={false} onMouseEnter={(item: PieItem) => setActiveKey(item.key)} onMouseLeave={() => setActiveKey(null)}
+            onClick={(item: PieItem) => selectable(item.key) && onSelect?.(item.key)}>
+            {items.filter((item) => item.count > 0).map((item) => (
+              <Cell key={item.key} fill={item.color} style={selectable(item.key) ? { cursor: 'pointer' } : undefined} />
+            ))}
           </Pie>
         </PieChart>
         <div className="ps-nps-donut-center" aria-hidden="true">
@@ -40,15 +54,16 @@ export function ReasonPie({ items, ariaLabel, testId, totalLabel = 'Total' }: { 
         {items.map((item) => (
           <li key={item.key} data-testid={`${testId}-${item.key}`}>
             <button type="button" className="ps-nps-pie-legend-item"
-              aria-label={`${item.label}: ${formatNumber(item.count)} (${share(item.count)})`}
+              aria-label={`${item.label}: ${formatNumber(item.count)} (${share(item.count)})${selectable(item.key) ? '. Show its sub-reasons' : ''}`}
+              data-selectable={selectable(item.key) || undefined}
               aria-describedby={activeKey === item.key ? tooltipId : undefined}
               onMouseEnter={() => setActiveKey(item.key)} onMouseLeave={() => setActiveKey(null)}
               onFocus={() => setActiveKey(item.key)} onBlur={() => setActiveKey(null)}
-              onClick={() => setActiveKey(item.key)}
+              onClick={() => (selectable(item.key) ? onSelect?.(item.key) : setActiveKey(item.key))}
               onKeyDown={(event) => { if (event.key === 'Escape') setActiveKey(null); }}>
               <span className="ps-nps-pie-swatch" style={{ background: item.color }} aria-hidden="true" />
               <span className="ps-nps-pie-label" dir="auto">{item.label}</span>
-              <span className="ps-nps-pie-count">{formatNumber(item.count)} <span>({share(item.count)})</span></span>
+              <span className="ps-nps-pie-count">{formatNumber(item.count)} <span>({share(item.count)})</span>{selectable(item.key) ? ' ›' : ''}</span>
             </button>
           </li>
         ))}

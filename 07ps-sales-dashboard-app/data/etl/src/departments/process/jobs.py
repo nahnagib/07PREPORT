@@ -25,8 +25,9 @@ Load (docs/nps-etl.md):
    (deleted_in_source_at) and warn:nps_reach_rows_disappeared reports how many. Checks: an empty state on more than
    NULL_STATE_MAX rows FAILS; another state, an error in "Other", no new message for STALE_DAYS and a
    company other than MAJAAL / TIKA WARN. Every check result is also in the load_nps etl_task_log details.
-4. Detractor Follow-up (departments/process/followup.py, migration 0052), in the same transaction: a case is added for
-   every detractor without one (NEW from NPS_FOLLOWUP_START, HISTORICAL before it); a case whose rating left the source
+4. Detractor Follow-up (departments/process/followup.py, migrations 0052 / 0066), in the same transaction: a case is
+   added for every detractor without one (stage NEW from NPS_FOLLOWUP_START, HISTORICAL before it; only the stage is
+   written, the status is generated from it); a case whose rating left the source
    or is no longer a detractor is flagged (warn:nps_followup_source_changed). Manual fields are never written.
 """
 

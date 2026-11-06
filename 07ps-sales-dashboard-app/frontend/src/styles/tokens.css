@@ -29,6 +29,14 @@
   --ps-nps-slate: #718198;
   --ps-nps-amber: #a1844e;
   --ps-nps-rose: #ab6c76;
+  /* follow-up status + resolution-time donuts (NPS Score page); validated with the dataviz palette checks, light and
+     dark, all pairs incl. the wrap-around: Open = Not resolved yet, Close = Resolved < 48 h, Disputed = Resolved > 5 days */
+  --ps-fu-open: #3d6cc0;
+  --ps-fu-close: #006b48;
+  --ps-fu-disputed: #e46a7e;
+  --ps-fu-mid: #b0893a;
+  --ps-fu-rejected: #8f5a1a;
+  --ps-fu-plum: #9a3f6a; /* In progress, in the Open drill (New = open, Contacted = mid) */
   --ps-nps-lilac: #817b97;
 
   /* Revenue Trend chart palette: Y-1/Target need to read as clearly distinct series (not two
@@ -200,6 +208,12 @@
   --ps-nps-slate: #596d86;
   --ps-nps-amber: #b8a06f;
   --ps-nps-rose: #bd818c;
+  --ps-fu-open: #6a92de;
+  --ps-fu-close: #107a4a;
+  --ps-fu-disputed: #da6c7d;
+  --ps-fu-mid: #9f9238;
+  --ps-fu-rejected: #a0602a;
+  --ps-fu-plum: #b05a7a;
   --ps-nps-lilac: #928aa8;
   /*
    * Design-quality pass finding: the default/Majaal accent (--ps-neutral-charcoal, #1a1a1a) is

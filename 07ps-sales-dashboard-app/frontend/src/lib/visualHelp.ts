@@ -460,13 +460,18 @@ export const VISUAL_HELP = {
     help: { definition: 'Messages that failed, by the error WhatsApp returned.' },
   },
   'process.npsScore.byReason': {
-    help: { definition: 'Detractor cases by the reason recorded on the Detractor Follow-up page, live. "Not yet classified" = a case without a reason yet.' },
+    help: { definition: 'Detractor cases by the reason category recorded on the Detractor Follow-up page, live. "Not yet classified" = a case without a reason yet. Click a category to see its sub-reasons. Same total as the other follow-up charts (Historical left out).' },
+    interactions: ['Click a category to see its sub-reasons; "← All reasons" goes back'],
   },
   'process.npsScore.byStatus': {
-    help: { definition: 'Detractor cases by follow-up status (Detractor Follow-up page), live.' },
+    help: { definition: 'Detractor cases by status (Open, Close, Disputed), worked out from the follow-up stage, live. Click a status to see its stages. Historical cases have no status and are left out. Same total as the other follow-up charts.' },
+    interactions: ['Click a status to see its stages; "← All statuses" goes back'],
+  },
+  'process.npsScore.resolvedByTime': {
+    help: { definition: 'Detractor cases by how fast they were resolved (rating → Resolved): under 48 h, 48 h to 5 days, over 5 days; Not resolved yet = still New, Contacted or In progress; Rejected (not resolved). Same total as the other follow-up charts.' },
   },
   'process.npsScore.detractors': {
-    help: { definition: 'Every ★ rating of the period, newest first, with its follow-up case (status, reason, owner, time open) and the customer\'s comment (phone numbers and e-mails masked).' },
+    help: { definition: 'Every ★ rating of the period, newest first, with its follow-up case (stage, status, reason, owner, time open) and the customer\'s comment (phone numbers and e-mails masked).' },
     interactions: ['Click a row to open its follow-up case', ODOO],
   },
   'process.kaizen.byStatus': {
