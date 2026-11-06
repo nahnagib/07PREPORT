@@ -6,6 +6,9 @@ import {
   hoursOpen,
   nowLocal,
   parseFollowupQuery,
+  reasonLabel,
+  slugOf,
+  statusOfStage,
   timeBand,
   type FollowupCase,
 } from '../npsFollowupService';
@@ -14,8 +17,9 @@ const NOW = '2026-10-19 12:00:00';
 
 function aCase(over: Partial<FollowupCase> = {}): FollowupCase {
   return {
-    caseId: 1, responseId: 10, ratedAt: '2026-10-15 09:00:00', status: 'NEW', reasonId: null, reasonEn: null, reasonAr: null,
-    ownerUserId: null, ownerName: null, contactedAt: null, solvedAt: null, rootCause: null, actionTaken: null, notes: null,
+    caseId: 1, responseId: 10, ratedAt: '2026-10-15 09:00:00', stage: 'NEW', status: 'OPEN', reasonId: null, categoryKey: null,
+    categoryEn: null, categoryAr: null, subReasonEn: null, subReasonAr: null, reasonLabelEn: null, reasonLabelAr: null, reasonNote: null,
+    ownerUserId: null, ownerName: null, contactedAt: null, resolvedAt: null, rejectedAt: null, rootCause: null, actionTaken: null, notes: null,
     sourceChanged: false, sourceChangedAt: null, sourceChangeReason: null, version: 1, updatedAt: null, updatedByName: null,
     company: 'MAJAAL', customer: 'x', orderRef: 'S1', deliveryCode: 'WH/OUT/1', salesTeam: null, salesperson: null, teamBranch: null,
     hasComment: false, orderUrl: null, deliveryUrl: null, hoursOpen: null, timeBand: null, ...over,
@@ -41,11 +45,11 @@ describe('time open', () => {
     expect(timeBand(null)).toBeNull();
   });
 
-  it('runs to now while open, to the solved time once solved, and not at all for cancelled or historical cases', () => {
+  it('runs to now in an open stage, to the resolved time once resolved, and not at all for rejected or historical cases', () => {
     expect(hoursOpen(aCase(), NOW)).toBe(99);
-    expect(hoursOpen(aCase({ status: 'SOLVED', solvedAt: '2026-10-16 10:00:00' }), NOW)).toBe(25);
-    expect(hoursOpen(aCase({ status: 'CANCELLED' }), NOW)).toBeNull();
-    expect(hoursOpen(aCase({ status: 'HISTORICAL' }), NOW)).toBeNull();
+    expect(hoursOpen(aCase({ stage: 'RESOLVED', status: 'CLOSE', resolvedAt: '2026-10-16 10:00:00' }), NOW)).toBe(25);
+    expect(hoursOpen(aCase({ stage: 'REJECTED', status: 'DISPUTED' }), NOW)).toBeNull();
+    expect(hoursOpen(aCase({ stage: 'HISTORICAL', status: null }), NOW)).toBeNull();
   });
 
   it('now is the Tripoli wall clock (UTC+2), not the server zone', () => {
@@ -53,36 +57,78 @@ describe('time open', () => {
   });
 });
 
+describe('stage and status', () => {
+  it('the status is worked out from the stage, exactly like the generated column of migration 0066', () => {
+    expect((['NEW', 'CONTACTED', 'IN_PROGRESS'] as const).map((s) => statusOfStage(s))).toEqual(['OPEN', 'OPEN', 'OPEN']);
+    expect(statusOfStage('RESOLVED')).toBe('CLOSE');
+    expect(statusOfStage('REJECTED')).toBe('DISPUTED');
+    expect(statusOfStage('HISTORICAL')).toBeNull();
+  });
+
+  it('a client can never write the status (or rejected_at): the edit is refused, whatever the value', () => {
+    expect(code(() => applyEdit(aCase(), { status: 'CLOSE' }, NOW))).toBe('case.statusReadOnly');
+    expect(code(() => applyEdit(aCase(), { status: 'RESOLVED' }, NOW))).toBe('case.statusReadOnly');
+    expect(code(() => applyEdit(aCase(), { stage: 'CONTACTED', status: 'OPEN' }, NOW))).toBe('case.statusReadOnly');
+    expect(code(() => applyEdit(aCase(), { rejectedAt: NOW }, NOW))).toBe('case.rejectedAtReadOnly');
+  });
+
+  it('the edit result has no status field, so it can never be written or audited', () => {
+    expect(Object.keys(applyEdit(aCase(), { stage: 'CONTACTED' }, NOW))).not.toContain('status');
+  });
+
+  it('a status value is not a stage, and a stage value is not a status', () => {
+    expect(code(() => applyEdit(aCase(), { stage: 'OPEN' }, NOW))).toBe('case.stage');
+    expect(code(() => applyEdit(aCase(), { stage: 'SOLVED' }, NOW))).toBe('case.stage');
+    expect(code(() => applyEdit(aCase(), { stage: 'CANCELLED' }, NOW))).toBe('case.stage');
+    expect(() => parseFollowupQuery({ statuses: 'NEW' })).toThrow(/Unknown status NEW/);
+    expect(() => parseFollowupQuery({ stages: 'OPEN' })).toThrow(/Unknown stage OPEN/);
+  });
+});
+
 describe('editing a case', () => {
   it('Contacted fills the contact time with now when empty', () => {
-    expect(applyEdit(aCase(), { status: 'CONTACTED' }, NOW)).toMatchObject({ status: 'CONTACTED', contactedAt: NOW, solvedAt: null });
+    expect(applyEdit(aCase(), { stage: 'CONTACTED' }, NOW)).toMatchObject({ stage: 'CONTACTED', contactedAt: NOW, resolvedAt: null });
   });
 
-  it('Solved needs a reason, fills the solved time, and leaving Solved clears it', () => {
-    expect(code(() => applyEdit(aCase(), { status: 'SOLVED' }, NOW))).toBe('case.reasonRequired');
-    const solved = applyEdit(aCase(), { status: 'SOLVED', reasonId: 3 }, NOW);
-    expect(solved).toMatchObject({ status: 'SOLVED', solvedAt: NOW, contactedAt: NOW, reasonId: 3 });
-    const reopened = applyEdit(aCase({ status: 'SOLVED', reasonId: 3, solvedAt: NOW, contactedAt: NOW }), { status: 'IN_PROGRESS' }, NOW);
-    expect(reopened.solvedAt).toBeNull();
+  it('Resolved needs a reason, fills the resolved time, and leaving Resolved clears it', () => {
+    expect(code(() => applyEdit(aCase(), { stage: 'RESOLVED' }, NOW))).toBe('case.reasonRequired');
+    const resolved = applyEdit(aCase(), { stage: 'RESOLVED', reasonId: 3 }, NOW);
+    expect(resolved).toMatchObject({ stage: 'RESOLVED', resolvedAt: NOW, contactedAt: NOW, reasonId: 3 });
+    const reopened = applyEdit(aCase({ stage: 'RESOLVED', status: 'CLOSE', reasonId: 3, resolvedAt: NOW, contactedAt: NOW }), { stage: 'IN_PROGRESS' }, NOW);
+    expect(reopened.resolvedAt).toBeNull();
   });
 
-  it('Cancelled needs a note saying why', () => {
-    expect(code(() => applyEdit(aCase(), { status: 'CANCELLED' }, NOW))).toBe('case.cancelNote');
-    expect(applyEdit(aCase(), { status: 'CANCELLED', notes: 'duplicate delivery' }, NOW).status).toBe('CANCELLED');
+  it('Rejected needs a note saying why and records when it was rejected; leaving Rejected clears that time', () => {
+    expect(code(() => applyEdit(aCase(), { stage: 'REJECTED' }, NOW))).toBe('case.rejectNote');
+    expect(applyEdit(aCase(), { stage: 'REJECTED', notes: 'duplicate delivery' }, NOW)).toMatchObject({ stage: 'REJECTED', rejectedAt: NOW });
+    const rejected = aCase({ stage: 'REJECTED', status: 'DISPUTED', notes: 'dup', rejectedAt: '2026-10-16 08:00:00' });
+    expect(applyEdit(rejected, { notes: 'duplicate' }, NOW).rejectedAt).toBe('2026-10-16 08:00:00'); // kept while it stays Rejected
+    expect(applyEdit(rejected, { stage: 'IN_PROGRESS' }, NOW).rejectedAt).toBeNull();
   });
 
-  it('refuses Historical as a new status, dates before the rating or in the future, and solved before contacted', () => {
-    expect(code(() => applyEdit(aCase(), { status: 'HISTORICAL' }, NOW))).toBe('case.status');
-    expect(code(() => applyEdit(aCase(), { status: 'CONTACTED', contactedAt: '2026-10-15 08:59' }, NOW))).toBe('case.contactedAt');
-    expect(code(() => applyEdit(aCase(), { status: 'CONTACTED', contactedAt: '2026-10-20 09:00' }, NOW))).toBe('case.contactedAt');
-    expect(code(() => applyEdit(aCase(), { status: 'SOLVED', reasonId: 1, contactedAt: '2026-10-17 10:00', solvedAt: '2026-10-16 10:00' }, NOW)))
-      .toBe('case.solvedAt');
-    expect(applyEdit(aCase(), { status: 'CONTACTED', contactedAt: '2026-10-15T09:00' }, NOW).contactedAt).toBe('2026-10-15 09:00:00');
+  it('refuses Historical as a new stage, dates before the rating or in the future, and resolved before contacted', () => {
+    expect(code(() => applyEdit(aCase(), { stage: 'HISTORICAL' }, NOW))).toBe('case.stage');
+    expect(code(() => applyEdit(aCase(), { stage: 'CONTACTED', contactedAt: '2026-10-15 08:59' }, NOW))).toBe('case.contactedAt');
+    expect(code(() => applyEdit(aCase(), { stage: 'CONTACTED', contactedAt: '2026-10-20 09:00' }, NOW))).toBe('case.contactedAt');
+    expect(code(() => applyEdit(aCase(), { stage: 'RESOLVED', reasonId: 1, contactedAt: '2026-10-17 10:00', resolvedAt: '2026-10-16 10:00' }, NOW)))
+      .toBe('case.resolvedAt');
+    expect(applyEdit(aCase(), { stage: 'CONTACTED', contactedAt: '2026-10-15T09:00' }, NOW).contactedAt).toBe('2026-10-15 09:00:00');
   });
 
-  it('a Historical case is picked up by moving it to a follow-up status; its text fields stay editable', () => {
-    expect(applyEdit(aCase({ status: 'HISTORICAL' }), { notes: 'old complaint' }, NOW)).toMatchObject({ status: 'HISTORICAL', notes: 'old complaint' });
-    expect(applyEdit(aCase({ status: 'HISTORICAL' }), { status: 'NEW' }, NOW).status).toBe('NEW');
+  it('a Historical case is picked up by moving it to a follow-up stage; its text fields stay editable', () => {
+    const hist = aCase({ stage: 'HISTORICAL', status: null });
+    expect(applyEdit(hist, { notes: 'old complaint' }, NOW)).toMatchObject({ stage: 'HISTORICAL', notes: 'old complaint' });
+    expect(applyEdit(hist, { stage: 'NEW' }, NOW).stage).toBe('NEW');
+  });
+
+  it('the "Other" reason needs a short note; the note goes when the reason is no longer Other', () => {
+    const other = { requiresNote: true };
+    expect(code(() => applyEdit(aCase(), { reasonId: 11 }, NOW, other))).toBe('case.reasonNote');
+    expect(applyEdit(aCase(), { reasonId: 11, reasonNote: ' asked for a visit ' }, NOW, other).reasonNote).toBe('asked for a visit');
+    expect(code(() => applyEdit(aCase(), { reasonId: 11, reasonNote: 'x'.repeat(201) }, NOW, other))).toBe('case.reasonNote');
+    expect(applyEdit(aCase({ reasonId: 11, reasonNote: 'visit' }), { reasonId: 5 }, NOW, { requiresNote: false }).reasonNote).toBeNull();
+    // a case moved to Other by migration 0067 (no note) can still be edited without adding one
+    expect(applyEdit(aCase({ reasonId: 11 }), { stage: 'CONTACTED' }, NOW, other).stage).toBe('CONTACTED');
   });
 
   it('text is trimmed, empty becomes null, and long text is refused', () => {
@@ -98,23 +144,44 @@ describe('editing a case', () => {
   });
 });
 
+describe('reasons', () => {
+  it('reads as one line: category › sub-reason, category › Not specified, or just Other', () => {
+    expect(reasonLabel('Delivery & Logistics', 'Late deliveries', false)).toBe('Delivery & Logistics › Late deliveries');
+    expect(reasonLabel('Delivery & Logistics', null, false)).toBe('Delivery & Logistics › Not specified');
+    expect(reasonLabel('Other', null, true)).toBe('Other');
+    expect(reasonLabel(null, null, false)).toBeNull();
+  });
+
+  it('new keys are slugs of the English name', () => {
+    expect(slugOf('Late deliveries')).toBe('late_deliveries');
+    expect(slugOf('Claims & After-Sales')).toBe('claims_after_sales');
+    expect(slugOf('عربي')).toBe('reason');
+  });
+});
+
 describe('filters', () => {
   it('parses the follow-up filters and refuses bad values', () => {
-    expect(parseFollowupQuery({ statuses: 'new,solved', reasonIds: '2', owners: '__none__, Ali Ahmed ', search: ' S28 ' })).toMatchObject({
-      statuses: ['NEW', 'SOLVED'], reasonIds: [2], owners: ['__none__', 'Ali Ahmed'], search: 'S28', page: 1, pageSize: 100,
+    expect(parseFollowupQuery({ stages: 'new,resolved', statuses: 'open', categories: 'Delivery', reasonIds: '2', owners: '__none__, Ali Ahmed ', search: ' S28 ' })).toMatchObject({
+      stages: ['NEW', 'RESOLVED'], statuses: ['OPEN'], categories: ['delivery'], reasonIds: [2], owners: ['__none__', 'Ali Ahmed'], search: 'S28', page: 1, pageSize: 100,
     });
+    expect(() => parseFollowupQuery({ categories: 'a b' })).toThrow(/categories/);
     expect(() => parseFollowupQuery({ owners: 'x'.repeat(121) })).toThrow(/owners/);
     expect(() => parseFollowupQuery({ statuses: 'done' })).toThrow(/Unknown status/);
+    expect(() => parseFollowupQuery({ stages: 'SOLVED' })).toThrow(/Unknown stage/);
     expect(() => parseFollowupQuery({ dateFrom: '19/10/2026' })).toThrow(/date/);
     expect(() => parseFollowupQuery({ pageSize: '501' })).toThrow(/pageSize/);
   });
 
-  it('builds parameterised SQL: global filters on the rating, own filters on the case, "no owner" as IS NULL', () => {
-    const w = followupWhere(parseFollowupQuery({ dateFrom: '2026-10-01', dateTo: '2026-10-19', owners: '__none__,Ali Ahmed', statuses: 'NEW' }), { companyKeys: [1] });
+  it('builds parameterised SQL: global filters on the rating, stage and status apart, "no owner" as IS NULL', () => {
+    const q = parseFollowupQuery({ dateFrom: '2026-10-01', dateTo: '2026-10-19', owners: '__none__,Ali Ahmed', stages: 'NEW', statuses: 'CLOSE', categories: 'delivery' });
+    const w = followupWhere(q, { companyKeys: [1] });
     expect(w.sql).toContain('f.CompanyKey');
     expect(w.sql).toContain('c.rated_at_local >= ?');
+    expect(w.sql).toContain('c.stage IN (?)');
+    expect(w.sql).toContain('c.status IN (?)');
+    expect(w.sql).toContain('r.category_key IN (?)');
     expect(w.sql).toContain('(c.owner_name IN (?) OR c.owner_name IS NULL)');
-    expect(w.params).toEqual(expect.arrayContaining([1, '2026-10-01 00:00:00', '2026-10-19', 'NEW', 'Ali Ahmed']));
+    expect(w.params).toEqual(expect.arrayContaining([1, '2026-10-01 00:00:00', '2026-10-19', 'NEW', 'CLOSE', 'delivery', 'Ali Ahmed']));
     expect(followupWhere({ search: '50%_' }, {}).params.slice(-4, -1)).toEqual(['%50\\%\\_%', '%50\\%\\_%', '%50\\%\\_%']);
   });
 });

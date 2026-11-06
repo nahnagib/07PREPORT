@@ -32,15 +32,15 @@ import {
  *                               responders / (Delivered + Read): company and date only, from NPS_REACH_START, with a
  *                               weekly series; the same role restriction as /reach
  *   GET /nps-score/followup-summary?dateFrom=&dateTo=
- *                               detractors by follow-up status bucket and by reason, read LIVE from nps_followup_case
+ *                               detractors by follow-up stage (with time), by status and by reason category, read LIVE from nps_followup_case
  *   GET /nps-score/reach?dateFrom=&dateTo=
  *                               WhatsApp message counts and error groups; company/date only. Unsupported role scopes
  *                               receive no counts. Waiting until the first successful message snapshot.
  *   GET /nps-score/detractors?dateFrom=&dateTo=&page=&pageSize=
- *                               the detractor list with the customers' comments, the live follow-up case (status,
+ *                               the detractor list with the customers' comments, the live follow-up case (stage, status,
  *                               reason, owner, time open) and the Odoo links -- ONLY with View on `nps_comments`
  *
- * Reads only the v_process_nps_* views, fact_process_nps_comment and the follow-up tables (nps_followup_*) in the warehouse pool; there are no NPS credentials
+ * Reads only the v_process_nps_* views, fact_process_nps_comment and the follow-up tables (nps_followup_*, dim_nps_reason) in the warehouse pool; there are no NPS credentials
  * in the backend. Same middleware chain as every report: View on nps_score, then resolveScopedFilters (the role's data
  * scope + the salesperson lock). The global filters are the usual companyKeys / segmentKeys / channelKeys /
  * salesTeamKeys / salespersonKeys / customerKeys parameters; a bad parameter is a 400.

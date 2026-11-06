@@ -3034,18 +3034,35 @@ export interface NpsResponseRate {
   variancePts: number | null;
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
 }
-export type NpsFollowupBucket = 'solved_48h' | 'solved_5d' | 'solved_late' | 'pending';
-/** detractors by follow-up status / reason, live from nps_followup_case */
+/** "Resolved by time": Resolved < 48 h / 48 h - 5 days / > 5 days, still open (pending = Not resolved yet), or Rejected */
+export type NpsFollowupBucket = 'resolved_48h' | 'resolved_5d' | 'resolved_late' | 'pending' | 'rejected';
+/** the follow-up workflow step (lib/nps/followup.ts) */
+export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'REJECTED';
+/** the outcome group, worked out from the stage */
+export type NpsFollowupStatus = 'OPEN' | 'CLOSE' | 'DISPUTED';
+/** the follow-up charts (reason, status, resolved by time), live from nps_followup_case */
 export interface NpsFollowupSummary {
   dateFrom: string;
   dateTo: string;
   detractors: number;
+  /** THE total of every follow-up chart: the cases with a status (Rejected included, Historical not) */
   charted: number;
-  cancelled: number;
+  /** stage Rejected (inside charted) */
+  rejected: number;
   historical: number;
   noCase: number;
-  byStatus: { key: NpsFollowupBucket; count: number }[];
-  byReason: { reasonId: number | null; label: string; labelAr: string | null; count: number }[];
+  /** "Resolved by time" */
+  byStage: { key: NpsFollowupBucket; count: number }[];
+  /** by status, with its stages for the drill-down (0 included) */
+  byStatus: { key: NpsFollowupStatus; count: number; stages: { stage: NpsFollowupStage; count: number }[] }[];
+  /** by reason category; categoryKey null = not yet classified; subReasons = the drill-down (empty: none to show) */
+  byReason: {
+    categoryKey: string | null;
+    label: string;
+    labelAr: string | null;
+    count: number;
+    subReasons: { reasonId: number; label: string; labelAr: string | null; count: number }[];
+  }[];
   now: string;
 }
 export interface NpsReach {
@@ -3079,8 +3096,10 @@ export interface NpsDetractor {
   teamBranch: string | null;
   /** the follow-up case (live); null only before process_nps created it */
   caseId: number | null;
-  status: 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'SOLVED' | 'CANCELLED' | null;
-  /** null = not yet classified */
+  stage: NpsFollowupStage | null;
+  /** worked out from the stage; null for Historical and before the case exists */
+  status: NpsFollowupStatus | null;
+  /** "Category › Sub-reason"; null = not yet classified */
   reason: string | null;
   reasonAr: string | null;
   owner: string | null;

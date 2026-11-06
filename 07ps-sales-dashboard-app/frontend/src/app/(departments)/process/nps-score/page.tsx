@@ -12,7 +12,7 @@ import { NpsReach } from '../../../../components/nps/NpsReach';
 import { NpsTopRow } from '../../../../components/nps/NpsTopRow';
 import { NpsTrendChart, RespondersTrend } from '../../../../components/nps/NpsTrends';
 import { OdooLink } from '../../../../components/OdooLink';
-import { StatusPill, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
+import { StagePill, StatusBadge, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useNpsScore } from '../../../../lib/hooks';
 import type {
@@ -61,7 +61,8 @@ import {
  * Row 3 WhatsApp message reach: company/date only.
  * Row 4 the trend: Weekly (Saturday..Friday) / Monthly / Yearly from the first period with ratings; NPS and CSAT lines
  *       plus monthly stacked responders; periods below the minimum faded on the score chart.
- * Row 5 Errors by reason · Detractors by reason · Detractors by status (live from the follow-up cases).
+ * Row 5 Errors by reason · Detractors by reason · Detractors by status · Resolved by time (live from the follow-up cases;
+ *       4 columns wide, 2 x 2 medium, 1 on phones).
  * Row 6 the detractor list with the follow-up case and the customers' comments: only with the nps_comments permission.
  * Every rating visual filters on the rating date (Tripoli time), the global filters and the role's data scope.
  */
@@ -173,10 +174,11 @@ function NpsScoreBody() {
             </section>
 
             {/* Row 5: reasons and follow-up (live from the follow-up cases) */}
-            <section className="ps-nps-row" aria-label="Reasons and follow-up">
+            <section className="ps-nps-row ps-nps-row-4" aria-label="Reasons and follow-up" data-testid="nps-followup-row">
               <NpsReach state={reach} part="errors" />
               <FollowupCharts state={followup} part="reason" />
               <FollowupCharts state={followup} part="status" />
+              <FollowupCharts state={followup} part="resolved" />
             </section>
 
             {/* Row 6: the detractor list (nps_comments) */}
@@ -208,11 +210,12 @@ function DetractorList({ state, onMore }: { state: ListState; onMore: () => void
     { key: 'orderRef', header: 'Order', render: (r) => (r.orderRef ? <OdooLink href={r.orderUrl}>{r.orderRef}</OdooLink> : '—'), rawValue: (r) => r.orderRef ?? '' },
     { key: 'salesTeam', header: 'Team', render: (r) => <span dir="auto">{r.salesTeam ?? '—'}</span> },
     { key: 'salesperson', header: 'Salesperson', render: (r) => r.salesperson ?? '—' },
-    { key: 'status', header: 'Status', render: (r) => (r.status ? <StatusPill status={r.status} /> : 'Not yet a case'), rawValue: (r) => r.status ?? '' },
+    { key: 'stage', header: 'Stage', render: (r) => (r.stage ? <StagePill stage={r.stage} /> : 'Not yet a case'), rawValue: (r) => r.stage ?? '' },
+    { key: 'status', header: 'Status', width: 100, render: (r) => (r.status ? <StatusBadge status={r.status} /> : '—'), rawValue: (r) => r.status ?? '' },
     { key: 'reason', header: 'Reason', render: (r) => <span title={r.reasonAr ?? undefined}>{r.reason ?? 'Not yet classified'}</span>, rawValue: (r) => r.reason ?? '' },
     { key: 'owner', header: 'Owner', render: (r) => r.owner ?? '—', rawValue: (r) => r.owner ?? '' },
-    { key: 'hoursOpen', header: 'Time open / Solved in', width: 150,
-      render: (r) => (r.status && r.hoursOpen !== null && r.timeBand ? <TimeOpen c={{ status: r.status, hoursOpen: r.hoursOpen, timeBand: r.timeBand }} /> : '—'),
+    { key: 'hoursOpen', header: 'Time open / Resolved in', width: 150,
+      render: (r) => (r.stage && r.hoursOpen !== null && r.timeBand ? <TimeOpen c={{ stage: r.stage, hoursOpen: r.hoursOpen, timeBand: r.timeBand }} /> : '—'),
       rawValue: (r) => r.hoursOpen ?? '' },
     { key: 'comment', header: 'Comment', width: 280, render: (r) => <span dir="auto" style={{ whiteSpace: 'pre-line' }}>{r.comment ?? '—'}</span>,
       rawValue: (r) => r.comment ?? '' },
@@ -220,7 +223,7 @@ function DetractorList({ state, onMore }: { state: ListState; onMore: () => void
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <DataGrid columns={columns} rows={state.data.rows as Row[]} getRowId={(r) => String(r.responseId)} fileName="nps-score-detractors" pageSize={25}
-        onRowClick={(r) => r.caseId !== null && router.push(followupCaseHref(r.caseId, r.status === 'HISTORICAL'))} />
+        onRowClick={(r) => r.caseId !== null && router.push(followupCaseHref(r.caseId, r.stage === 'HISTORICAL'))} />
       {state.data.rows.length < state.data.total && (
         <div>
           <Button variant="secondary" onClick={onMore} disabled={state.loading}>

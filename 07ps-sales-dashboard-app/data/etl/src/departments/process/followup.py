@@ -1,13 +1,17 @@
-"""NPS Detractor Follow-up: the cases process_nps keeps in step with the ratings (migration 0052; docs/nps-followup.md).
+"""NPS Detractor Follow-up: the cases process_nps keeps in step with the ratings (migrations 0052, 0066; docs/nps-followup.md).
 
 nps_followup_case is an APPLICATION table (people edit it on the Detractor Follow-up page). After each load this step
 only:
 * adds a case for every detractor rating (nps_level 1) that has none -- idempotent through the unique response_id.
-  Rated on or after NPS_FOLLOWUP_START (a Tripoli date, ETL setting; the cut-over) -> NEW, before it -> HISTORICAL;
+  Rated on or after NPS_FOLLOWUP_START (a Tripoli date, ETL setting; the cut-over) -> stage NEW, before it -> HISTORICAL.
+  Only the STAGE is written. Since migration 0066 the column `status` is the outcome group (OPEN / CLOSE / DISPUTED)
+  GENERATED from the stage: MySQL refuses any write to it. Before 0066 the stage values still live in the column
+  `status`, so the insert falls back to it -- only while the column `stage` does not exist (stage_column());
 * flags a case whose rating left the source or is no longer a detractor (source_changed, with when and why; one audit
   row) and clears the flag if the rating comes back as a detractor. The case and its manual fields are never touched.
 
 NPS_FOLLOWUP_START not set, or migration 0052 not applied -> no case is created and the step says why.
+The run details say which column was written (stage_column) and count the cases by stage (and by status after 0066).
 """
 
 from __future__ import annotations
@@ -34,6 +38,13 @@ def followup_start() -> _dt.date | None:
         raise ValueError(f"NPS_FOLLOWUP_START must be a date (yyyy-mm-dd), got {raw!r}") from exc
 
 
+def stage_column(conn) -> str:
+    """`stage` once migration 0066 is applied. Before it the stage values are in `status` (0052): the fallback, used
+    only while `stage` does not exist -- after 0066 `status` is a generated column and is never written."""
+    columns = {c["name"] for c in inspect(conn).get_columns(CASES)}
+    return "stage" if "stage" in columns else "status"
+
+
 def sync_cases(conn, now: _dt.datetime, start: _dt.date | None) -> dict[str, Any]:
     """Runs in the load transaction, after the facts were replaced. Returns the counts for the task details."""
     if CASES not in set(inspect(conn).get_table_names()):
@@ -41,8 +52,9 @@ def sync_cases(conn, now: _dt.datetime, start: _dt.date | None) -> dict[str, Any
     if start is None:
         return {"status": "skipped: NPS_FOLLOWUP_START is not set"}
     start_key = start.year * 10000 + start.month * 100 + start.day
+    stage = stage_column(conn)
     created = conn.execute(text(
-        f"INSERT INTO {CASES} (response_id, rated_at_local, status, created_at, updated_at) "
+        f"INSERT INTO {CASES} (response_id, rated_at_local, {stage}, created_at, updated_at) "
         f"SELECT f.response_id, f.rated_at_local, CASE WHEN f.RatingDateKey >= :start THEN 'NEW' ELSE 'HISTORICAL' END, :now, :now "
         f"FROM {FACT} f WHERE f.nps_level = :lvl AND NOT EXISTS (SELECT 1 FROM {CASES} c WHERE c.response_id = f.response_id)"),
         {"start": start_key, "now": now, "lvl": DETRACTOR}).rowcount
@@ -63,9 +75,14 @@ def sync_cases(conn, now: _dt.datetime, start: _dt.date | None) -> dict[str, Any
                               "WHERE case_id = :id"), {"id": case_id})
             _audit(conn, case_id, now, "source_changed", old_reason, None)
             restored += 1
-    by_status = dict(conn.execute(text(f"SELECT status, COUNT(*) FROM {CASES} GROUP BY status")).fetchall())
-    return {"status": "synced", "start": str(start), "created": int(created or 0), "flagged_source_changed": flagged,
-            "restored": restored, "by_status": {k: int(v) for k, v in by_status.items()}}
+    by_stage = dict(conn.execute(text(f"SELECT {stage}, COUNT(*) FROM {CASES} GROUP BY {stage}")).fetchall())
+    out = {"status": "synced", "start": str(start), "stage_column": stage, "created": int(created or 0),
+           "flagged_source_changed": flagged, "restored": restored, "by_stage": {k: int(v) for k, v in by_stage.items()}}
+    if stage == "stage":
+        # the derived outcome groups (HISTORICAL has none: NULL), read only
+        by_status = conn.execute(text(f"SELECT status, COUNT(*) FROM {CASES} WHERE status IS NOT NULL GROUP BY status")).fetchall()
+        out["by_status"] = {k: int(v) for k, v in by_status}
+    return out
 
 
 def _audit(conn, case_id: int, now: _dt.datetime, field: str, old: str | None, new: str | None) -> None:
