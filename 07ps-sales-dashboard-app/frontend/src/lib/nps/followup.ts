@@ -1,4 +1,5 @@
 import { API_BASE, ApiError, apiRequest, type TachometerFilters } from '../api';
+import { HOURS_PER_DAY, type CaseSla } from './sla';
 
 /**
  * NPS Detractor Follow-up API client and view helpers (backend routes/npsFollowup.ts; docs/nps-followup.md).
@@ -19,7 +20,6 @@ export const EDITABLE_STAGES: readonly FollowupStage[] = BOARD_COLUMNS;
 /** The outcome groups. */
 export const STATUSES = ['OPEN', 'CLOSE', 'DISPUTED'] as const;
 export type FollowupStatus = (typeof STATUSES)[number];
-export type TimeBand = 'green' | 'yellow' | 'red';
 
 export const STAGE_LABEL: Record<FollowupStage, string> = {
   HISTORICAL: 'Historical',
@@ -59,13 +59,6 @@ export function statusOfStage(stage: FollowupStage): FollowupStatus | null {
   return 'DISPUTED';
 }
 
-export const BAND_COLOR: Record<TimeBand, string> = {
-  green: 'var(--ps-color-success)',
-  yellow: 'var(--ps-color-watch)',
-  red: 'var(--ps-color-alert)',
-};
-
-export const BAND_HINT = 'Time open, from the rating to Resolved (or to now while in an open stage): green under 48 h, yellow 48 h to 5 days, red over 5 days.';
 
 export interface FollowupCase {
   caseId: number;
@@ -113,8 +106,12 @@ export interface FollowupCase {
   /** Odoo form links of the sale order / the matched picking; null without an id */
   orderUrl: string | null;
   deliveryUrl: string | null;
+  /** when process_nps created the case (Tripoli time): the start of both SLAs */
+  createdAt: string | null;
+  /** hours from created_at to resolved / now; null for Rejected and Historical */
   hoursOpen: number | null;
-  timeBand: TimeBand | null;
+  /** the SLA state (lib/nps/sla.ts) */
+  sla: CaseSla;
 }
 
 export interface FollowupHistoryRow {
@@ -200,10 +197,11 @@ export interface FollowupKpis {
   openShare: number | null;
   closeShare: number | null;
   disputedShare: number | null;
-  /** by stage and its times (the board's cases) */
-  openOver5Days: number;
+  /** by stage and the SLA (the board's cases) */
+  closeSlaMissed: number;
+  contactSlaMissed: number;
   resolved30Days: number;
-  resolvedWithin48h: number;
+  resolvedInSla: number;
   noReason: number;
 }
 
@@ -350,11 +348,11 @@ export const followupApi = {
   },
 };
 
-/** "26 h" under two days, then "3.4 d". */
+/** Calendar hours under two days, then days (formatting only; SLA comparisons use exact hours). */
 export function formatHoursOpen(hours: number | null): string {
   if (hours === null) return '—';
-  if (hours < 48) return `${Math.floor(hours)} h`;
-  return `${(Math.floor((hours / 24) * 10) / 10).toFixed(1)} d`;
+  if (hours < 2 * HOURS_PER_DAY) return `${Math.floor(hours)} h`;
+  return `${(Math.floor((hours / HOURS_PER_DAY) * 10) / 10).toFixed(1)} d`;
 }
 
 /** The board's cases by column (= by STAGE), in rating order (oldest first: the longest waiting on top). */

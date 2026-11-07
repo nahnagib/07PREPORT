@@ -1,4 +1,4 @@
-import type { NpsBand, NpsCounts, NpsFollowupBucket, NpsFollowupStage, NpsFollowupStatus, NpsResponseRate, NpsTrend } from '../api';
+import type { NpsBand, NpsCounts, NpsFollowupStage, NpsFollowupStatus, NpsResponseRate, NpsTrend } from '../api';
 
 /**
  * NPS Score page helpers (app/(departments)/process/nps-score). Pure, so they are unit tested. Every figure comes from
@@ -175,18 +175,6 @@ export function responseRateTooltip(r: Pick<NpsResponseRate, 'responders' | 'del
 }
 
 // -- follow-up charts -----------------------------------------------------------------------------------------------------
-/**
- * "Resolved by time" slices, in this order (validated with the dataviz palette checks, light and dark, incl. the
- * wrap-around pair). Not resolved yet shares Open's blue, Resolved < 48 h Close's green, Resolved > 5 days Disputed's red.
- */
-export const FOLLOWUP_BUCKETS: readonly { key: NpsFollowupBucket; label: string; color: string }[] = [
-  { key: 'resolved_48h', label: 'Resolved < 48 h', color: 'var(--ps-fu-close)' },
-  { key: 'resolved_5d', label: 'Resolved 48 h – 5 days', color: 'var(--ps-fu-mid)' },
-  { key: 'resolved_late', label: 'Resolved > 5 days', color: 'var(--ps-fu-disputed)' },
-  { key: 'pending', label: 'Not resolved yet', color: 'var(--ps-fu-open)' },
-  { key: 'rejected', label: 'Rejected (not resolved)', color: 'var(--ps-fu-rejected)' },
-];
-
 /** "Detractors by status", level 1 (the generated status). */
 export const FOLLOWUP_STATUS_SLICES: Record<NpsFollowupStatus, { label: string; color: string }> = {
   OPEN: { label: 'Open', color: 'var(--ps-fu-open)' },

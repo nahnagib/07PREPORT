@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { NpsCounts } from '../api';
 import { NAV_ITEMS, departmentReports, pageKeyForPath } from '../navItems';
 import {
-  FOLLOWUP_BUCKETS,
   FOLLOWUP_STATUS_SLICES,
   GROUPS,
   bandStatus,
@@ -143,12 +142,7 @@ describe('the top row', () => {
 });
 
 describe('follow-up', () => {
-  it('resolved by time: the status colours for < 48 h / > 5 days / not resolved yet, then Rejected', () => {
-    expect(FOLLOWUP_BUCKETS.map((b) => [b.key, b.label, b.color])).toEqual([
-      ['resolved_48h', 'Resolved < 48 h', 'var(--ps-fu-close)'], ['resolved_5d', 'Resolved 48 h – 5 days', 'var(--ps-fu-mid)'],
-      ['resolved_late', 'Resolved > 5 days', 'var(--ps-fu-disputed)'], ['pending', 'Not resolved yet', 'var(--ps-fu-open)'],
-      ['rejected', 'Rejected (not resolved)', 'var(--ps-fu-rejected)'],
-    ]);
+  it('the status colours', () => {
     expect(FOLLOWUP_STATUS_SLICES.OPEN.color).toBe('var(--ps-fu-open)');
     expect(FOLLOWUP_STATUS_SLICES.CLOSE.color).toBe('var(--ps-fu-close)');
     expect(FOLLOWUP_STATUS_SLICES.DISPUTED.color).toBe('var(--ps-fu-disputed)');

@@ -42,7 +42,7 @@ Two cards in the same column always have the same badge. That is expected.
   (or the other way round) is refused (400), so a mix-up never filters silently.
 - A client can never write `status` (or `rejectedAt`): a PATCH that sends it is refused (`case.statusReadOnly`).
 - KPIs: Open, Close and Disputed (counts and shares) come from the status, over every case of the filters. The time
-  KPIs (open over 5 days, resolved in the last 30 days, within 48 h) come from the stage and its times.
+  KPIs (Close SLA missed, Contact SLA missed, resolved in the last 30 days and within SLA) use the stage and case creation time.
 - The history records only stage changes, as field `stage`. There is never an audit row for `status`: it changes by
   itself with the stage.
 - The ETL (`followup.py`) inserts the stage only. Before 0066 the stage still lives in `status`, so it falls back to
@@ -52,22 +52,65 @@ Two cards in the same column always have the same badge. That is expected.
   `down/` files) still compares `status` with a stage value.
 
 **The follow-up charts on the NPS Score page** (one row: Errors by reason · Detractors by reason · Detractors by
-status · Resolved by time; 4 columns on wide screens, 2 × 2 on medium ones, 1 on phones):
+status · Resolution ageing; 2 × 2 on desktop so the six ageing buckets remain readable, 1 column on phones):
 
 | Chart | Slices | Click |
 |---|---|---|
 | Detractors by reason | the reason categories, "Not yet classified" | a category → its sub-reasons ("Not specified" included); "← All reasons" |
 | Detractors by status | Open, Close, Disputed (the generated `status`) | a status → its stages (Open → New / Contacted / In Progress, Close → Resolved, Disputed → Rejected; a stage with no case shows 0); "← All statuses" |
-| Resolved by time | Resolved < 48 h, Resolved 48 h – 5 days, Resolved > 5 days, Not resolved yet (New, Contacted, In progress), Rejected (not resolved) | — |
+| Resolution ageing | Six age buckets, stacked Resolved / Still open, with the Close SLA marker | No chart-to-table filtering exists on this page |
 
-**One total for every follow-up chart:** the detractor cases **with a status** (Open + Close + Disputed, so Rejected
-is in). Historical has no status: it is left out of all three and shown in the note under each ("Historical: n"; on
-Resolved by time "Rejected: n · Historical: n"). So the three centres always show the same number for the same
-filters (`charted` in `/nps-score/followup-summary`), and `charted + historical + noCase` = the detractors.
+The reason and status donuts share the total of cases **with a status** (Open + Close + Disputed, including Rejected).
+Historical has no status and is shown in the note. The ageing chart excludes Rejected as well and shows
+"Rejected: n · Historical: n" below it. `charted + historical + noCase` equals the detractor total;
+the ageing bars sum to `charted - rejected`. All charts use the same date, scope and global filters.
 
-Colours (`--ps-fu-*` in `frontend/src/styles/tokens.css`, light and dark, checked with the dataviz palette validator):
-Open = Not resolved yet (blue), Close = Resolved < 48 h (green), Disputed = Resolved > 5 days (red), plus amber
-(48 h – 5 days), brown (Rejected) and, in the Open drill, plum (In progress).
+Status colours use `--ps-fu-*`; SLA time colours use the dedicated `--ps-sla-*` tokens described below.
+
+## SLA
+
+Limits live in `backend/src/config/npsSla.ts` and the shared frontend constant `frontend/src/lib/nps/sla.ts`:
+`NPS_SLA = { contactHours: 24, closeDays: 5 }`. A test checks that they agree. Unit conversions use `HOURS_PER_DAY`.
+Both deadlines start at **case creation**, not the rating: contact within 24 calendar hours
+(`contacted_at - created_at ≤ 24 h`), resolve within 5 calendar days (`resolved_at - created_at ≤ 5 d`).
+`created_at` is stored in UTC and converted to Tripoli time before comparing it with the local contact/resolution times.
+Comparisons and buckets use unrounded durations; exactly at either deadline is still within SLA.
+
+| Case | Rule | Time colour |
+|---|---|---|
+| Open | Age ≤ 24 h, contacted or not | Green |
+| Open | 24 h < age ≤ 5 d and contacted | Amber |
+| Open | Age > 24 h and no contact time | Red: Contact SLA missed |
+| Open | Age > 5 d, contacted or not | Red: Close SLA missed (takes precedence in the tooltip) |
+| Resolved | Resolved within 5 d | Green |
+| Resolved | Resolved after 5 d | Red |
+| Rejected / Historical | No SLA | Grey; text says "rejected" / "historical" |
+
+The list, board card edge and time, NPS detractor table and case window all use this state. Each time value has an
+icon and a tooltip naming its rule; a late close shows how many days past the close deadline it is.
+The palette validator checks the green/amber/red palette in both themes; automated WCAG checks require 4.5:1 text
+contrast on card and page surfaces. Icons, labels and chart hatching supplement colour.
+
+**Resolution ageing** replaces "Resolved by time" with vertical stacked bars: **≤ 1 d · 1–2 d · 2–5 d · 5–10 d ·
+10–30 d · > 30 d**. Resolved cases use creation-to-resolution duration (solid); Still open uses creation-to-now age
+(hatched). Buckets through 5 d are green; later buckets are red. A vertical **Close SLA 5 d** marker separates them.
+The two series have tooltips and labels; Rejected, Historical and missing cases are excluded and counted in the note.
+There is no existing chart-to-detractor-table filtering mechanism, so the bars do not filter the table.
+
+Below the chart: **Closed within SLA: x of y (z %) · Contacted within 24 h: x of y (z %)**.
+The close denominator is all resolved cases. The contact denominator is the union of contacted cases, resolved cases
+and open cases older than 24 h; newly open cases still waiting within their contact window are not treated as failures.
+The contact numerator requires a recorded contact time within 24 h. Rejected and Historical are excluded from both.
+Percentages round to whole numbers. An empty denominator displays "— (none due yet)".
+
+Board SLA KPIs remain full width: **Close SLA missed** (open more than 5 days), **Contact SLA missed** (open older
+than 24 h with no contact time), **Resolved, last 30 days** (with "x within SLA (5 d)"), and **Not classified**.
+A case can miss both deadlines and count in both missed KPIs. These stage KPIs use the displayed board cases;
+the existing truncation note applies when there are more than 2,000 cases.
+
+Calendar hours remain in use. The Critical Number feature already has working-day helpers in
+`backend/src/measures/criticalNumber.ts` and `criticalNumberHistory.ts`, which skip Fridays and configured official
+holidays. They do **not** implement the Friday/Saturday weekend required here and are not used for NPS.
 
 **Reasons in two levels** (0067, `dim_nps_reason`, managed on the Reasons tab): a **category** and its **sub-reasons**,
 English and Arabic. On a case people pick a category, then a sub-reason. **Other** has no sub-reasons; it needs a short
@@ -115,12 +158,8 @@ A case whose old reason is not in the map stops 0067 before anything is moved (a
   - Resolved shows the last 30 days only. Rejected has no window.
   - Historical cases (rated before the cut-over) are in the List view only.
 - **List:** every case, newest rating first, with the same filters. **Export** downloads the list as Excel.
-- **Time open** (rating → Resolved, or → now in an open stage) colours each card:
-  - green: under 48 h
-  - yellow: 48 h to 5 days
-  - red: over 5 days
-
-  Rejected and Historical cases have no time.
+- **Time open / Resolved in** runs from case creation and uses the SLA colours and tooltips above.
+  Rejected and Historical show their names in grey.
 - **Filters:**
   - The usual company, customer group, channel, branch, salesperson and customer filters. Your role's data scope
     applies.
@@ -210,7 +249,7 @@ If migration 0052 is not applied, the step is skipped and says so.
 | | |
 |---|---|
 | `GET /nps-followup/options` | stages, statuses, reasons (two levels), owners |
-| `GET /nps-followup/board` | non-Historical cases (Resolved: last 30 days) + KPIs: open, close, disputed (counts and shares, by status); open over 5 days, resolved in 30 days (and within 48 h), not classified (by stage) |
+| `GET /nps-followup/board` | non-Historical cases (Resolved: last 30 days) + KPIs: open, close, disputed (counts and shares, by status); closeSlaMissed, contactSlaMissed, resolved30Days, resolvedInSla, noReason (by stage) |
 | `GET /nps-followup/cases` | the List view, paged (`page`, `pageSize` ≤ 500) |
 | `GET /nps-followup/cases/export` | .xlsx; the comment column only with Export on `nps_comments` |
 | `GET /nps-followup/cases/:id` | the case, the comment (View on `nps_comments`), the history |

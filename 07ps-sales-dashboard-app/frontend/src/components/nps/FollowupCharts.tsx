@@ -3,7 +3,8 @@ import React, { useState } from 'react';
 import { ChartPanel, EmptyState, ErrorState, LoadingSkeleton } from '@07ps/ui';
 import type { NpsFollowupStatus, NpsFollowupSummary } from '../../lib/api';
 import { formatNumber } from '../../lib/format';
-import { FOLLOWUP_BUCKETS, FOLLOWUP_STATUS_SLICES } from '../../lib/nps/view';
+import { FOLLOWUP_STATUS_SLICES } from '../../lib/nps/view';
+import { AgeingBars } from './AgeingBars';
 import { ReasonPie } from './ReasonPie';
 import { StatusPie } from './StatusPie';
 
@@ -11,7 +12,7 @@ export type FollowupState = { data: NpsFollowupSummary | null; loading: boolean;
 
 const NOTE = { fontSize: 12, color: 'var(--ps-color-neutral-text)', margin: '4px 0 0' } as const;
 
-/** Under each chart: what is not in it. "Resolved by time" also names Rejected (one of its slices). */
+/** Under each chart: what is not in it. "Resolution ageing" also names Rejected (no SLA, so not in its bars). */
 function LeftOut({ s, withRejected = false }: { s: NpsFollowupSummary; withRejected?: boolean }) {
   return (
     <p style={NOTE} data-testid="fu-left-out">
@@ -23,7 +24,7 @@ function LeftOut({ s, withRejected = false }: { s: NpsFollowupSummary; withRejec
 
 export type FollowupPart = 'reason' | 'status' | 'resolved';
 
-const TITLE: Record<FollowupPart, string> = { reason: 'Detractors by reason', status: 'Detractors by status', resolved: 'Resolved by time' };
+const TITLE: Record<FollowupPart, string> = { reason: 'Detractors by reason', status: 'Detractors by status', resolved: 'Resolution ageing' };
 const HELP: Record<FollowupPart, VisualHelpId> = {
   reason: 'process.npsScore.byReason', status: 'process.npsScore.byStatus', resolved: 'process.npsScore.resolvedByTime',
 };
@@ -33,9 +34,9 @@ const HELP: Record<FollowupPart, VisualHelpId> = {
  * and filters: an edit on the follow-up page shows here on the next load.
  *   reason    by reason category; a click drills into its sub-reasons ("← All reasons")
  *   status    by status (Open / Close / Disputed); a click drills into its stages ("← All statuses")
- *   resolved  "Resolved by time": Resolved < 48 h / 48 h - 5 days / > 5 days, Not resolved yet, Rejected (not resolved)
- * ONE total in every centre: the cases with a status (Rejected included). Historical has no status: left out of all
- * three, counted under them.
+ *   resolved  "Resolution ageing" (AgeingBars): resolved by time taken, open by age, the Close SLA line, the SLA shares
+ * ONE total in the donut centres: the cases with a status (Rejected included). Historical has no status: left out of
+ * all three, counted under them; the ageing bars also leave out Rejected (no SLA) and name it in the note.
  */
 const REASON_COLORS = ['var(--ps-nps-blue)', 'var(--ps-nps-teal)', 'var(--ps-nps-cyan)', 'var(--ps-nps-lilac)', 'var(--ps-nps-amber)'];
 
@@ -83,11 +84,9 @@ export function FollowupCharts({ state, part }: { state: FollowupState; part: Fo
       </>
     );
   } else {
-    const counts = Object.fromEntries(s.byStage.map((b) => [b.key, b.count]));
     body = (
       <>
-        <ReasonPie ariaLabel="Resolved by time" testId="fu-resolved" totalLabel="Detractors"
-          items={FOLLOWUP_BUCKETS.map((b) => ({ key: b.key, label: b.label, count: counts[b.key] ?? 0, color: b.color }))} />
+        <AgeingBars ageing={s.ageing} />
         <LeftOut s={s} withRejected />
       </>
     );

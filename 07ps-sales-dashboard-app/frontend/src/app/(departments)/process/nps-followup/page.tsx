@@ -7,12 +7,11 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import { CaseDetail } from '../../../../components/nps-followup/CaseDetail';
-import { CaseCard, FollowupShell, StagePill, StatusBadge, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
+import { CaseCard, FollowupShell, SlaKpis, StagePill, StatusBadge, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
 import { KaizenKpi } from '../../../../components/kaizen/KaizenBits';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { ApiError } from '../../../../lib/api';
 import {
-  BAND_COLOR,
   BOARD_COLUMNS,
   EMPTY_FILTERS,
   NO_OWNER,
@@ -185,13 +184,7 @@ function FollowupBody() {
                   sub={`${sharePct(board.kpis[STATUS_SHARE[s]])} of ${board.kpis.total} · ${STATUS_HINT[s]}`} accent={STATUS_COLOR[s]} />
               ))}
             </section>
-            <section className="ps-fu-kpis" aria-label="Time in stage" data-testid="fu-kpis-stage">
-              {/* by STAGE and its times (the board's cases) */}
-              <KaizenKpi label="Open over 5 days" value={String(board.kpis.openOver5Days)} sub="in an open stage, red on the board" accent={BAND_COLOR.red} />
-              <KaizenKpi label="Resolved, last 30 days" value={String(board.kpis.resolved30Days)}
-                sub={`${board.kpis.resolvedWithin48h} within 48 h`} accent={BAND_COLOR.green} />
-              <KaizenKpi label="Not classified" value={String(board.kpis.noReason)} sub="no reason chosen yet" accent="var(--ps-color-watch)" />
-            </section>
+            <SlaKpis kpis={board.kpis} />
             <p className="ps-fu-muted" style={{ margin: 0 }}>
               New detractors appear as cases within 30 minutes (the refresh runs every 30 min). The columns are stages; the badge is the status. Resolved shows the last 30 days; Historical cases are in the List view.
               {board.truncated ? ' Only the first 2,000 cases are shown: narrow the filters.' : ''}
@@ -316,7 +309,7 @@ function CaseList({ list, onOpen, onMore }: { list: Paged<FollowupCase>; onOpen:
         <table className="ps-fu-table" data-testid="fu-list">
           <thead>
             <tr>
-              <th>Case</th><th>Rated at</th><th>Stage</th><th>Status</th><th>Customer</th><th>Order</th><th>Company · Branch</th><th>Reason</th><th>Owner</th><th>Time open</th>
+              <th>Case</th><th>Rated at</th><th>Stage</th><th>Status</th><th>Customer</th><th>Order</th><th>Company · Branch</th><th>Reason</th><th>Owner</th><th>Time open / Resolved in</th>
             </tr>
           </thead>
           <tbody>

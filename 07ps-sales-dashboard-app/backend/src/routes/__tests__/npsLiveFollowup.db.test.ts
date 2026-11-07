@@ -106,7 +106,7 @@ describe.skipIf(!RUN)('an edit on the follow-up page shows on the NPS page at on
     expect(countOf(after.body, reason.category_key)).toBe(countOf(before.body, reason.category_key) + 1);
     expect(after.body.detractors).toBe(before.body.detractors);
     // still pending (In progress) and still Open, so the stage buckets and the status counts keep their totals
-    expect(after.body.byStage).toEqual(before.body.byStage);
+    expect(after.body.ageing.buckets).toEqual(before.body.ageing.buckets);
     expect(after.body.byStatus).toEqual(before.body.byStatus);
   });
 });

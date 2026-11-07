@@ -74,6 +74,13 @@ describe.each([['light', light], ['dark', dark]] as const)('%s theme', (_name, s
     expect(ratio(c('--ps-color-alert'), surface)).toBeGreaterThanOrEqual(4.5);
   });
 
+  it('NPS SLA colours are AA text and visible chart marks on card and page surfaces', () => {
+    for (const token of ['--ps-sla-green', '--ps-sla-amber', '--ps-sla-red', '--ps-color-neutral-text']) {
+      expect(ratio(c(token), surface), `${token} on card`).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(c(token), page), `${token} on page`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it('chart series colours are at least 3:1 on the card', () => {
     for (const k of ['--ps-color-accent', '--ps-color-last-year', '--ps-color-trend-target', '--ps-chart-target']) {
       expect(ratio(c(k), surface), `${k}`).toBeGreaterThanOrEqual(3);

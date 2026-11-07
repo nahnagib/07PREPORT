@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { DateTime } from 'luxon';
+import type { Pool } from 'mysql2/promise';
+import { getAppTimezone } from '../../lib/timezone';
 import {
   FollowupValidationError,
   applyEdit,
+  fetchBoard,
   followupWhere,
-  hoursOpen,
   nowLocal,
   parseFollowupQuery,
   reasonLabel,
   slugOf,
   statusOfStage,
-  timeBand,
   type FollowupCase,
 } from '../npsFollowupService';
 
@@ -22,7 +24,8 @@ function aCase(over: Partial<FollowupCase> = {}): FollowupCase {
     ownerUserId: null, ownerName: null, contactedAt: null, resolvedAt: null, rejectedAt: null, rootCause: null, actionTaken: null, notes: null,
     sourceChanged: false, sourceChangedAt: null, sourceChangeReason: null, version: 1, updatedAt: null, updatedByName: null,
     company: 'MAJAAL', customer: 'x', orderRef: 'S1', deliveryCode: 'WH/OUT/1', salesTeam: null, salesperson: null, teamBranch: null,
-    hasComment: false, orderUrl: null, deliveryUrl: null, hoursOpen: null, timeBand: null, ...over,
+    hasComment: false, orderUrl: null, deliveryUrl: null, createdAt: '2026-10-15 09:30:00', hoursOpen: null,
+    sla: { band: 'grey', rule: 'historical', hours: null, exactHours: null, overByHours: null, contactedInSla: null }, ...over,
   };
 }
 
@@ -36,24 +39,42 @@ const code = (fn: () => unknown) => {
 };
 
 describe('time open', () => {
-  it('green under 48 h, yellow from 48 h to 5 days, red after 5 days', () => {
-    expect(timeBand(0)).toBe('green');
-    expect(timeBand(47.99)).toBe('green');
-    expect(timeBand(48)).toBe('yellow');
-    expect(timeBand(120)).toBe('yellow');
-    expect(timeBand(120.01)).toBe('red');
-    expect(timeBand(null)).toBeNull();
-  });
-
-  it('runs to now in an open stage, to the resolved time once resolved, and not at all for rejected or historical cases', () => {
-    expect(hoursOpen(aCase(), NOW)).toBe(99);
-    expect(hoursOpen(aCase({ stage: 'RESOLVED', status: 'CLOSE', resolvedAt: '2026-10-16 10:00:00' }), NOW)).toBe(25);
-    expect(hoursOpen(aCase({ stage: 'REJECTED', status: 'DISPUTED' }), NOW)).toBeNull();
-    expect(hoursOpen(aCase({ stage: 'HISTORICAL', status: null }), NOW)).toBeNull();
-  });
-
+  // the SLA colour rule itself: config/__tests__/npsSla.test.ts
   it('now is the Tripoli wall clock (UTC+2), not the server zone', () => {
     expect(nowLocal(new Date('2026-10-19T22:30:00Z'))).toBe('2026-10-20 00:30:00');
+  });
+});
+
+describe('board SLA KPIs', () => {
+  it('uses exact created_at age, contact presence and resolved duration, including one second past each deadline', async () => {
+    const now = '2026-11-07 12:00:00';
+    const local = DateTime.fromSQL(now, { zone: getAppTimezone() });
+    const at = (hoursAgo: number) => local.minus({ seconds: hoursAgo * 3600 });
+    const row = (id: number, stage: string, age: number, contacted = false, took: number | null = null) => ({
+      case_id: id, response_id: id, stage, status: statusOfStage(stage as FollowupCase['stage']),
+      rated_at_local: '2026-01-01 00:00:00', // rating age must never drive the SLA
+      created_at: at(age).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
+      contacted_at: contacted ? at(age - 1).toFormat('yyyy-MM-dd HH:mm:ss') : null,
+      resolved_at: took === null ? null : at(age - took).toFormat('yyyy-MM-dd HH:mm:ss'),
+      reason_id: id === 1 ? null : 1,
+    });
+    const rows = [
+      row(1, 'NEW', 24), row(2, 'NEW', 24 + 1 / 3600), row(3, 'CONTACTED', 60, true),
+      row(4, 'IN_PROGRESS', 120, true), row(5, 'NEW', 120 + 1 / 3600), row(6, 'CONTACTED', 121, true),
+      row(7, 'RESOLVED', 150, true, 120), row(8, 'RESOLVED', 150, true, 120 + 1 / 3600),
+      row(9, 'REJECTED', 900),
+    ];
+    const pool = { query: async (sql: string) => [sql.includes('GROUP BY c.status')
+      ? [{ status: 'OPEN', n: 6 }, { status: 'CLOSE', n: 2 }, { status: 'DISPUTED', n: 1 }]
+      : rows] } as unknown as Pool;
+    const board = await fetchBoard(pool, parseFollowupQuery({}), {}, now);
+    expect(board.kpis).toEqual({
+      open: 6, close: 2, disputed: 1, total: 9,
+      openShare: 6 / 9 * 100, closeShare: 2 / 9 * 100, disputedShare: 1 / 9 * 100,
+      closeSlaMissed: 2, contactSlaMissed: 2, resolved30Days: 2, resolvedInSla: 1, noReason: 1,
+    });
+    expect(board.cases[0].sla).toMatchObject({ band: 'green', hours: 24 });
+    expect(board.cases[1].sla).toMatchObject({ band: 'red', hours: 24, rule: 'contact_missed' });
   });
 });
 
