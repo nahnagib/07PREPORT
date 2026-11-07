@@ -70,14 +70,16 @@ def test_requires_auth(client, folders):
     assert client.put("/etl/input-files/OffDays.xlsx", data=b"x").status_code == 401
 
 
-def test_lists_the_four_slots_with_expected_structure(client, folders):
+def test_lists_the_five_slots_with_expected_structure(client, folders):
     inputs, _ = folders
     (inputs / "OffDays.xlsx").write_bytes(xlsx({"Sheet1": OFFDAYS}))
     body = client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()
     assert body["input_dir"] == str(inputs.resolve())
     assert [f["name"] for f in body["files"]] == [
-        "sales_targets.xlsx", "SalesTeam.xlsx", "OffDays.xlsx", "BlockedCustomers.xlsx",
+        "sales_targets.xlsx", "SalesTeam.xlsx", "OffDays.xlsx", "BlockedCustomers.xlsx", "ProductExclusions.xlsx",
     ]  # PRODUCTS.xlsx is retired: products come from Odoo
+    exclusions = next(f for f in body["files"] if f["name"] == "ProductExclusions.xlsx")
+    assert exclusions["required"] is False and [x["sheet_names"] for x in exclusions["sheets"]] == [["Customers"], ["Categories"], ["Products"]]
     offdays = next(f for f in body["files"] if f["name"] == "OffDays.xlsx")
     assert offdays["exists"] is True and offdays["size_bytes"] > 0
     assert "Date" in offdays["sheets"][0]["required"]
@@ -218,3 +220,27 @@ def test_read_only_input_folder_validates_then_refuses_to_write(client, folders)
     assert listing["read_only"] is True
     assert (inputs / "OffDays.xlsx").read_bytes() == old
     assert not backups.exists()
+
+
+def _exclusions(categories_active="Yes", category_id=39):
+    return xlsx({
+        "Instructions": {"Product pages – exclusions list": ["read me"]},
+        "Customers": {"Company": ["Tika"], "Odoo Partner ID": [9709], "Customer Name (reference)": ["x"], "Action": ["Keep"], "Active": ["No"]},
+        "Categories": {"Company": ["All"], "Odoo Category ID": [category_id], "Category Name (reference)": ["Packaging"],
+                       "Action": ["Exclude"], "Active": [categories_active]},
+        "Products": {"Company": [], "Odoo Product ID": [], "Product Name (reference)": [], "Action": [], "Active": []},
+        "Lists": {"Company": ["All", "Majaal", "Tika"]},
+    })
+
+
+def test_product_exclusions_upload_is_validated_and_counted(client, folders):
+    response = put(client, "ProductExclusions.xlsx", _exclusions())
+    assert response.status_code == 200, response.get_json()
+    counts = response.get_json()["validation"]["counts"]
+    assert counts["categories_active"] == 1 and counts["customers_ignored"] == 1 and counts["products_active"] == 0
+
+
+def test_product_exclusions_upload_with_an_invalid_row_is_refused_and_lists_it(client, folders):
+    response = put(client, "ProductExclusions.xlsx", _exclusions(category_id="Packaging"))
+    assert response.status_code == 422
+    assert "Categories row 2: Odoo Category ID must be a whole positive number" in str(response.get_json())

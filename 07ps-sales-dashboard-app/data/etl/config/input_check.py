@@ -30,7 +30,8 @@ REQUIRED_INPUT_FILES: tuple[str, ...] = (
 )
 # Loaded on every run, but the pipeline can create an empty template if it is absent (which needs a
 # writable input folder) -- so a problem here is reported as a warning, not a blocker, in preflight.
-OPTIONAL_INPUT_FILES: tuple[str, ...] = ("BlockedCustomers.xlsx",)
+# ProductExclusions.xlsx: when absent the Product pages simply get no extra exclusions (no template is created).
+OPTIONAL_INPUT_FILES: tuple[str, ...] = ("BlockedCustomers.xlsx", "ProductExclusions.xlsx")
 
 LISTING_LIMIT = 20
 _WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")

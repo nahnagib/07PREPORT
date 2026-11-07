@@ -65,6 +65,7 @@ from sales_pipeline.staging import StagingStore, odoo_incremental_domain
 from sales_pipeline.validation import ModelValidator
 from sales_pipeline import odoo_products
 from sales_pipeline.product_dashboard import IntercompanyFlagger, ProductDashboardBuilder, ProductDashboardConfig
+from sales_pipeline.product_exclusions import ProductExclusionsLoader
 
 
 SALE_REPORT_CACHE_TABLE = "raw_sale_report_api"
@@ -726,7 +727,8 @@ class PowerBISalesPipeline:
         business_today = pd.Timestamp.now(tz=self.settings.timezone).tz_localize(None).normalize()
         dim_product, dim_product_cost = sheets["Dim_Product"], sheets["Dim_ProductCost"]
         line_costs = ProductCostMatcher.attach(fact_sales_lines, dim_product_cost)["product_cost"]
-        tables = ProductDashboardBuilder(dashboard_config, business_today).build(
+        exclusions = ProductExclusionsLoader().load(self.settings.product_exclusions_path)
+        tables = ProductDashboardBuilder(dashboard_config, business_today, exclusions).build(
             fact_sales_lines, dim_product, sheets["Fact_Inventory"], line_costs=line_costs
         )
         tables["Fact_BCGMatrix"] = BCGMatrixBuilder.build(fact_sales_lines, dim_product_cost, dim_product=dim_product)
@@ -898,7 +900,8 @@ class PowerBISalesPipeline:
         _t14 = time.perf_counter()
         fact_bcg = BCGMatrixBuilder.build(fact_sales_lines, dim_product_cost, dim_product=dim_product)
         line_costs = ProductCostMatcher.attach(fact_sales_lines, dim_product_cost)["product_cost"]
-        product_tables = ProductDashboardBuilder(dashboard_config, business_today).build(
+        exclusions = ProductExclusionsLoader().load(self.settings.product_exclusions_path)
+        product_tables = ProductDashboardBuilder(dashboard_config, business_today, exclusions).build(
             fact_sales_lines, dim_product, inventory_result.fact_inventory, line_costs=line_costs
         )
         self.logger.info(
@@ -1160,6 +1163,7 @@ class PowerBISalesPipeline:
             "SalesTeam.xlsx": self.settings.sales_team_path,
             "OffDays.xlsx": self.settings.offdays_path,
             "BlockedCustomers.xlsx": self.settings.blocked_customers_path,
+            "ProductExclusions.xlsx": self.settings.product_exclusions_path,
         }
         return source_paths
 

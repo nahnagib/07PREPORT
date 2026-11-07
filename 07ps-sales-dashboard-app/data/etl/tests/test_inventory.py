@@ -214,3 +214,17 @@ def test_inventory_workbook_sheets_exist_and_existing_sheets_are_preserved(tmp_p
     assert "QA_Inventory_DataQuality" in book.sheet_names
     assert pd.read_excel(book, sheet_name="ExistingSheet").to_dict("records") == [{"Keep": "yes"}]
     assert set(FACT_INVENTORY_COLUMNS).issubset(pd.read_excel(book, sheet_name="Fact_Inventory").columns)
+
+
+def test_stock_quant_in_date_is_read_and_kept_naive_utc_false_is_empty() -> None:
+    from sales_pipeline.inventory import STOCK_QUANT_FIELDS, InventoryModelBuilder
+
+    assert "in_date" in STOCK_QUANT_FIELDS
+    quants = pd.DataFrame([
+        {"id": 1, "product_id": "P", "product_id_id": 7, "company_id": "Majaal", "company_id_id": 1, "location_id": "WH", "location_id_id": 5,
+         "quantity": 3, "reserved_quantity": 0, "value": 30, "inventory_value": 30, "in_date": "2026-05-02 10:15:00"},
+        {"id": 2, "product_id": "P", "product_id_id": 7, "company_id": "Majaal", "company_id_id": 1, "location_id": "WH", "location_id_id": 5,
+         "quantity": 1, "reserved_quantity": 0, "value": 10, "inventory_value": 10, "in_date": False},
+    ])
+    out = InventoryModelBuilder._normalize_quants(quants)
+    assert str(out.loc[0, "InDate"]) == "2026-05-02 10:15:00" and pd.isna(out.loc[1, "InDate"])

@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { chartTooltipProps, exportSvgAsImage, useCanExport } from '@07ps/ui';
 import { ltrLabel } from './ProductUi';
+import { safeOdooUrl } from '../../lib/debt/view';
 
 export interface ProductBar {
   id: string;
@@ -11,6 +12,8 @@ export interface ProductBar {
   value: number;
   /** Text printed at the end of the bar. */
   valueLabel: string;
+  /** The product in Odoo (ProductFact.odooUrl): the name opens it in a new tab. */
+  href?: string | null;
 }
 
 const BAR_ROW = 28;
@@ -63,12 +66,21 @@ type CategoryTick = { x: number; y: number; payload: { value: string } };
 
 export function NameTick({ x, y, row, width }: { x: number; y: number; row: ProductBar; width: number }) {
   const room = width - 12 - textWidth(tag(row.company));
-  return (
-    <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fontFamily={FONT_FAMILY} fill="var(--ps-color-text)" direction="ltr" data-testid="product-bar-label">
-      <title>{`${ltrLabel(row.name)}${tag(row.company)}`}</title>
+  const url = row.href ? safeOdooUrl(row.href) : null;
+  const label = (
+    <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fontFamily={FONT_FAMILY} fill={url ? 'var(--ps-color-accent)' : 'var(--ps-color-text)'}
+      textDecoration={url ? 'underline' : undefined} direction="ltr" data-testid="product-bar-label">
+      <title>{url ? `${ltrLabel(row.name)}${tag(row.company)} — open in Odoo (new tab)` : `${ltrLabel(row.name)}${tag(row.company)}`}</title>
       {ltrLabel(fitEnd(row.name, room))}
       {row.company && <tspan fill="var(--ps-color-muted-text)" fontSize={11}>{tag(row.company)}</tspan>}
     </text>
+  );
+  return url ? (
+    <a href={url} target="_blank" rel="noopener noreferrer" data-testid="product-bar-odoo-link" style={{ cursor: 'pointer' }}>
+      {label}
+    </a>
+  ) : (
+    label
   );
 }
 

@@ -87,6 +87,9 @@ export interface FilterBarProps {
    * in the same field row as the built-in fields above -- the extension point requested instead of
    * forking a second filter-bar component. */
   extraFields?: React.ReactNode;
+  /** Page-specific filters on their OWN row under the standard bar (Product pages: Category, Stock Band, BCG Class,
+   * Lifecycle Segment), so the standard fields, Reset and the refresh info stay exactly as on every other page. */
+  secondRow?: React.ReactNode;
   /** Overrides the Reset filters button for pages whose filters are local state instead of the
    * shared FilterProvider (Materials Analogy pages); pass together with `isPristine`. */
   onReset?: () => void;
@@ -151,6 +154,7 @@ export function FilterBar({
   showCustomerFilter = false,
   showLastOrderInfo = true,
   extraFields,
+  secondRow,
   onReset,
   isPristine,
 }: FilterBarProps) {
@@ -467,6 +471,15 @@ export function FilterBar({
               Last Refresh Time: {formatTimestamp(lastRefreshTime)}
             </div>
           ) : null}
+        </div>
+      )}
+
+      {secondRow && (
+        <div
+          data-testid="filter-bar-second-row"
+          style={{ flexBasis: '100%', display: 'flex', alignItems: 'flex-start', flexWrap: 'wrap', gap: 'var(--ps-space-2, 8px)', paddingTop: 'var(--ps-space-2, 8px)', borderTop: '1px solid var(--ps-color-border)' }}
+        >
+          {secondRow}
         </div>
       )}
         </div>

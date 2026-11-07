@@ -7,6 +7,7 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
+import { standardFilterBarProps } from '../../../../components/standardFilterBarProps';
 import {
   ChartPanel,
   InsightCard,
@@ -180,15 +181,8 @@ function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => vo
  */
 export default function RevenueTrendPage() {
   const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
-  const {
-    effectiveFilters,
-    anchorDate,
-    dateFromDate,
-    dateToDate,
-    onFiltersChange,
-    onAnchorDateChange,
-    onDateRangeChange,
-  } = useFilterState();
+  const filterState = useFilterState();
+  const { effectiveFilters, anchorDate, dateFromDate, dateToDate, onAnchorDateChange } = filterState;
 
   const filterOptions = useScopedFilterOptions();
   const overview = useRevenueTrendOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
@@ -277,24 +271,7 @@ export default function RevenueTrendPage() {
           showDateInput={false}
         />
 
-        <FilterBar
-          filters={effectiveFilters}
-          onChange={onFiltersChange}
-          anchorDate={anchorDate}
-          onAnchorDateChange={onAnchorDateChange}
-          businessUnits={filterOptions.businessUnits.data ?? []}
-          customerGroups={filterOptions.customerGroups.data ?? []}
-          distributionChannels={filterOptions.distributionChannels.data ?? []}
-          branches={filterOptions.branches.data ?? []}
-          salespersons={filterOptions.salespersons.data ?? []}
-          isSalesperson={isSalesperson}
-          lastUpdate={refreshStatus.data?.lastUpdate ?? null}
-          lastOrderCreated={refreshStatus.data?.lastOrderCreated ?? null}
-          lastRefreshTime={refreshStatus.data?.lastRefreshTime ?? null}
-          dateFromDate={dateFromDate}
-          dateToDate={dateToDate}
-          onDateRangeChange={onDateRangeChange}
-        />
+        <FilterBar {...standardFilterBarProps({ state: filterState, options: filterOptions, isSalesperson, refresh: refreshStatus.data })} />
 
         <ValidationStatusBar
           isStale={refreshStatus.data?.isStale}

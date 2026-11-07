@@ -34,6 +34,7 @@ def _write_workbooks(folder: Path, names=REQUIRED_INPUT_FILES) -> None:
     for name in names:
         pd.DataFrame({"x": [1]}).to_excel(folder / name, index=False)
     pd.DataFrame({"x": [1]}).to_excel(folder / "BlockedCustomers.xlsx", index=False)
+    pd.DataFrame({"x": [1]}).to_excel(folder / "ProductExclusions.xlsx", index=False)
 
 
 def _settings(input_dir: Path, output_dir: Path) -> Settings:

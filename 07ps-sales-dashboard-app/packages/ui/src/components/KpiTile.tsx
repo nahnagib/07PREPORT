@@ -1,5 +1,6 @@
 import React from 'react';
 import { Card } from './Card';
+import { VisualInfoIcons, type VisualHelpContent } from './VisualHelp';
 
 export type SemanticStatus = 'success' | 'watch' | 'alert' | 'neutral';
 
@@ -34,6 +35,8 @@ export interface KpiTileProps {
   icon?: string;
   accentColor?: string;
   badgeLabel?: string;
+  /** Optional "?" next to the label: one short definition / formula line (same icon as the charts' VisualInfoIcons). */
+  help?: VisualHelpContent;
 }
 
 const statusColorVar: Record<SemanticStatus, string> = {
@@ -49,7 +52,7 @@ const statusColorVar: Record<SemanticStatus, string> = {
  * Color-coding follows the single semantic scale (3.9); KPIs with no target use neutral grey/white.
  * Color is never the only signal (Section 5.10) - the numeric value is always shown alongside it.
  */
-export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelDetail, variance, status = 'neutral', loading, icon, accentColor, badgeLabel }: KpiTileProps) {
+export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelDetail, variance, status = 'neutral', loading, icon, accentColor, badgeLabel, help }: KpiTileProps) {
   const hasHeader = icon !== undefined && accentColor !== undefined && badgeLabel !== undefined;
 
   if (loading) {
@@ -72,6 +75,7 @@ export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelD
       {emphasizeLabel && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px 8px', marginBottom: 12, minHeight: 20 }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>{label}</span>
+          {help && <VisualInfoIcons title={label} help={help} size={13} />}
           {labelDetail && <span dir="auto" style={{ fontSize: 12, fontWeight: 400, color: 'var(--ps-color-muted-text)' }}>{labelDetail}</span>}
         </div>
       )}
@@ -89,7 +93,12 @@ export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelD
       {subValue && (
         <div style={{ fontSize: emphasizeLabel ? 13 : 14, fontWeight: emphasizeLabel ? 300 : 600, color: emphasizeLabel ? 'var(--ps-color-muted-text)' : 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums', marginTop: emphasizeLabel ? 8 : 2 }}>{subValue}</div>
       )}
-      {!emphasizeLabel && <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>{label}</div>}
+      {!emphasizeLabel && (
+        <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+          {label}
+          {help && <VisualInfoIcons title={label} help={help} size={13} />}
+        </div>
+      )}
       {variance && (
         <div
           style={{

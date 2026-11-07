@@ -2,7 +2,7 @@
   "_comment": "Business rules for the Product pages and the IsIntercompany flag. Edit here, not in code. See docs/product_data_runbook.md.",
 
   "intercompany_customers": {
-    "_comment": "Group-company customers. IsIntercompany is INFORMATION ONLY: nothing is filtered on it. A sales line is flagged when its Odoo partner id OR its customer name (trimmed, case-insensitive) is listed.",
+    "_comment": "Group-company customers. A sales line is flagged IsIntercompany when its Odoo partner id OR its customer name (trimmed, case-insensitive) is listed. The Product pages drop flagged lines (product_pages_exclude_intercompany); every other page keeps them (flag only).",
     "partner_ids": [9641, 3798, 17259, 9627, 17846, 24813, 25124, 10691, 12496, 9470, 9136, 9469, 9642, 28102, 1, 12330, 9313, 6251, 9526, 11412],
     "names": [
       "شركة مجال بنغازي لاستيراد مواد البناء",
@@ -26,6 +26,10 @@
     ],
     "_not_listed_needs_confirmation": ["شركة النماء القابضة", "شركة النماء المتألق", "مديونية شركة اثينا"]
   },
+
+  "_product_pages_exclusions_comment": "Not real sales (branch-to-branch transfers, samples) are dropped from EVERY Product page and calculation before anything is computed: lines whose Customer Group (stored SegmentKey) is listed (3 Backoffice, 4 Inter Company) and, when true, lines flagged IsIntercompany. Promotion / Price / Process pages are not affected.",
+  "product_pages_excluded_segment_keys": [3, 4],
+  "product_pages_exclude_intercompany": true,
 
   "product_pages": {
     "_comment": "Product pages only (BCG Matrix, Stock Velocity, PIM Contribution, Product Lifecycle). excluded_companies are left out of every product table and total. unit_uom_names (case-insensitive) are shown as one unit, unit_label, and their quantities added together; any other unit of measure keeps its own name.",
@@ -52,11 +56,39 @@
     "stockout_risk_days": { "Majaal": 60, "Tika": 30, "Athena": 60 }
   },
 
+  "stock": {
+    "_comment": "Stock Velocity page. ISR = inventory on hand value (LYD at cost, finished goods) / net sales value (LYD) of the selected period: green <= isr_target_pct, yellow up to isr_red_pct, red at or above isr_red_pct. Stock Aging = units-weighted average age (days since Odoo stock.quant in_date) of a product's finished-goods stock on hand; each bucket holds ages up to max_days (null = no upper limit).",
+    "isr_target_pct": 15,
+    "isr_red_pct": 25,
+    "_movers_comment": "Fast vs Slow Movers: each SKU's velocity (units sold per day in the period) against the MEDIAN velocity of the SKUs of its own category in the same company: Fast >= fast_mover_vs_category_median_pct, Slow <= slow_mover_vs_category_median_pct, Normal in between.",
+    "fast_mover_vs_category_median_pct": 150,
+    "slow_mover_vs_category_median_pct": 50,
+    "aging_buckets": [
+      { "label": "0–90 days", "max_days": 90 },
+      { "label": "91–180 days", "max_days": 180 },
+      { "label": "181–365 days", "max_days": 365 },
+      { "label": "1–2 years", "max_days": 730 },
+      { "label": "> 2 years", "max_days": null }
+    ]
+  },
+
+  "sales_frequency": {
+    "_comment": "Stock Velocity Sales Frequency: average days between selling days = days in the period / distinct selling days; each bucket holds gaps up to max_gap_days (null = no upper limit).",
+    "buckets": [
+      { "key": "Daily", "max_gap_days": 2 },
+      { "key": "Weekly", "max_gap_days": 7 },
+      { "key": "Monthly", "max_gap_days": 30 },
+      { "key": "Quarterly", "max_gap_days": 90 },
+      { "key": "Rarely", "max_gap_days": null }
+    ]
+  },
+
   "bcg": {
-    "_comment": "Unchanged from the existing BCGMatrixBuilder. YTD invoiced quantity vs company threshold; GP% = (Value - Qty x standard cost) / Value. Products without a standard cost are 'Unclassified (no cost)'. excluded_category_ids = Odoo product.category ids (categ_id) left out of the matrix; empty = nothing excluded (logged on every run).",
+    "_comment": "Unchanged from the existing BCGMatrixBuilder. YTD invoiced quantity vs company threshold; GP% = (Value - Qty x standard cost) / Value. Products without a standard cost are 'Unclassified (no cost)'. Categories / products / customers left out of every Product page are in the input file ProductExclusions.xlsx (no longer here; product_pages_excluded_category_ids is read only when that file is missing).",
     "volume_threshold": { "Majaal": 3500, "Tika": 25000, "Athena": 3500 },
     "profit_threshold_pct": 35,
-    "excluded_category_ids": []
+    "_movement_comment": "Product Movement is on VOLUME: QtyYTD vs QtyLYTD (same calendar dates). Discontinued = archived in Odoo; New = first sale within lifecycle.new_first_sale_within_days or no LYTD volume; Improved / Drop = volume growth above +band / below -band; Stable = within the band.",
+    "movement_stable_band_pct": 10
   },
 
   "lifecycle": {

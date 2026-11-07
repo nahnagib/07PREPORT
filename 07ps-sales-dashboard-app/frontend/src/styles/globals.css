@@ -735,3 +735,21 @@ option, optgroup {
   background-color: var(--ps-color-surface);
   color: var(--ps-color-text);
 }
+
+/* PIM Contribution Brand Performance: a fixed grid of 5 columns (10 partner brands = 5 x 2), every card the same
+   height; 2 columns on a phone. */
+.ps-brand-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: var(--ps-space-3, 16px);
+}
+.ps-brand-grid > * {
+  height: 100%;
+  min-width: 0;
+}
+@media (max-width: 767px) {
+  .ps-brand-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

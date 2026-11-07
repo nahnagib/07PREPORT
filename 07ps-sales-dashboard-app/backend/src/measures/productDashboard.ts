@@ -8,8 +8,10 @@
  * stored, 'Unassigned' where Odoo has none. Nothing is matched or grouped on a product name.
  *
  *   v_sales_product_daily  Company + product (ProductCompanyKey) + day + filter keys + UoM. Built from the
- *                           same v_sales_lines rows the Sales pages read, so the grand total of all
- *                           products equals the Sales pages' SUM(Value) for the same period.
+ *                           same v_sales_lines rows the Sales pages read, minus the lines that are not real
+ *                           sales (Customer Group Backoffice / Inter Company and IsIntercompany lines, config
+ *                           product_pages_excluded_segment_keys / product_pages_exclude_intercompany), so the
+ *                           grand total = the Sales pages' SUM(Value) for the same period minus those lines.
  *   v_sales_product_dashboard    one row per Company + product (every product sold or in stock in that company,
  *                           plus its active never-sold Odoo products) with today's stock, days of inventory,
  *                           stock band, lifecycle segment and BCG class.
@@ -24,22 +26,26 @@
  *
  * Metric definitions (docs/product_data_runbook.md):
  *   Value    = SUM(untaxed line amount) in LYD, confirmed orders, order date in Africa/Tripoli.
- *   Volume   = SUM(invoiced quantity) -- same quantity as the Sales pages. Never summed across units of
- *              measure: a product sold in several UoMs in the period gets volume = null and volumeByUom.
+ *   Volume   = SUM(invoiced quantity) -- same quantity as the Sales pages, always added up as "Unit" whatever the
+ *              Odoo UoM (2026-11-07 decision). volumeByUom keeps the split by UoM for reference.
  *   Velocity = Volume / days in the period (period end capped at today).
  *   Order days = distinct days in the period with at least one sales line of the product (Sales Frequency).
- * Stock, days of inventory, lifecycle and BCG class are "as of the last ETL run" and do not move with the
- * period; BCG is calendar YTD vs LYTD, as before.
+ * Stock, days of inventory, lifecycle, BCG class and Product Movement are "as of the last ETL run", company-wide,
+ * and do not move with the period or the filters. Volume / Revenue YTD and LYTD (calendar, as of today) DO follow
+ * the Customer Group / Channel / Branch / Salesperson filters (2026-11-07, option a); the class is never recomputed
+ * for the filtered subset.
  *
- * Scope: Customer Group / Channel / Branch / Salesperson filters and the RBAC lock (resolveScopedFilters)
- * narrow the sales metrics. When any of them is active, only products with sales in scope during the
- * period are returned (a salesperson does not see the whole company's stock list).
+ * Scope: Customer Group / Channel / Branch / Salesperson filters and the RBAC lock (resolveScopedFilters) narrow the
+ * sales metrics. When any of them is active, a product is listed when it sold in scope in the period OR in the same
+ * period last year. Products with no sale at all in either period (stock only, never sold) have no customer, so they
+ * stay listed -- except for a SALESPERSON-tier user, who sees only products they sold.
  */
 
 import type { Pool } from 'mysql2/promise';
 import { DateTime } from 'luxon';
 import { buildWhereClause, type Filters } from './filters';
 import { getAppTimezone } from '../lib/timezone';
+import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 
 export interface UomQty {
   uom: string;
@@ -51,6 +57,8 @@ export interface ProductDashboardRow {
   productCompanyKey: string;
   /** Odoo product.product id; null for sales lines without a product. */
   productKey: string | null;
+  /** The product's form in Odoo (product.product, opened in its own company); null without ODOO_URL or a real id. */
+  odooUrl: string | null;
   productTemplateId: number | null;
   company: string;
   productName: string;
@@ -68,7 +76,8 @@ export interface ProductDashboardRow {
   parts: ProductCompanyPart[];
   // Period (filter-dependent)
   value: number;
-  volume: number | null;
+  /** Invoiced quantity of the period, added up across UoMs ("Unit"). */
+  volume: number;
   volumeByUom: UomQty[];
   uom: string | null;
   lines: number;
@@ -76,7 +85,7 @@ export interface ProductDashboardRow {
   orderDays: number;
   velocity: number | null;
   valuePrior: number;
-  volumePrior: number | null;
+  volumePrior: number;
   avgUnitPrice: number | null;
   grossProfitPct: number | null;
   // Snapshot (as of the last ETL run)
@@ -87,12 +96,16 @@ export interface ProductDashboardRow {
   avgDailySales: number;
   daysOfInventory: number | null;
   stockBand: 'Overstock' | 'Normal' | 'StockOutRisk' | 'NoMovement' | 'NoStockNoSales';
+  /** Units-weighted average days since the finished-goods stock on hand arrived (Odoo in_date); null = no stock. */
+  stockAgeDays: number | null;
+  /** Stock Aging bucket (config stock.aging_buckets), null = no stock on hand. */
+  stockAgeBucket: string | null;
   lifecycleSegment: 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued' | 'Never sold';
   firstSaleDate: string | null;
   lastSaleDate: string | null;
   bcgClassYTD: string | null;
   bcgClassLYTD: string | null;
-  bcgMovement: 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost' | null;
+  bcgMovement: 'New' | 'Stable' | 'Improved' | 'Drop' | 'Discontinued' | null;
   bcgExcludedCategory: boolean;
   valueYTD: number;
   volumeYTD: number;
@@ -132,6 +145,8 @@ export interface ProductDashboardQuery {
   company?: string;
   /** companyKeys only ever comes from the user's role data scope (the page sends a company name). */
   filters?: Pick<Filters, 'companyKeys' | 'segmentKeys' | 'channelKeys' | 'salesTeamKeys' | 'salespersonKeys'>;
+  /** SALESPERSON-tier caller: products without any sale in the period / prior period are not listed. */
+  salespersonTier?: boolean;
 }
 
 /** A company the caller's role may not see was requested (the route answers 403). */
@@ -141,6 +156,8 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Companies never shown on the Product pages (Promotion / Price / Process are not affected). */
 export const EXCLUDED_COMPANIES = ['Athena'];
+/** Label of a quantity added up across units of measure. */
+export const UNIT_LABEL = 'Unit';
 
 function num(v: unknown): number {
   const n = Number(v);
@@ -179,6 +196,11 @@ export function resolvePeriod(fromDate?: string, toDate?: string, now: DateTime 
     days,
     priorFrom: priorFrom.toISODate() as string,
     priorTo: priorTo.toISODate() as string,
+    // BCG windows: calendar YTD and the same dates last year, whatever the period (the ETL's own windows).
+    ytdFrom: today.startOf('year').toISODate() as string,
+    ytdTo: today.toISODate() as string,
+    lytdFrom: today.minus({ years: 1 }).startOf('year').toISODate() as string,
+    lytdTo: today.minus({ years: 1 }).toISODate() as string,
   };
 }
 
@@ -196,30 +218,38 @@ export function resolveView(company?: string): ProductDashboardView {
 type Agg = {
   value: number;
   lines: number;
+  linesPrior: number;
   cost: number;
   uncosted: number;
   valuePrior: number;
   qty: Map<string, number>;
   qtyPrior: Map<string, number>;
+  valueYTD: number;
+  qtyYTD: number;
+  valueLYTD: number;
+  qtyLYTD: number;
 };
 
 function emptyAgg(): Agg {
-  return { value: 0, lines: 0, cost: 0, uncosted: 0, valuePrior: 0, qty: new Map(), qtyPrior: new Map() };
+  return { value: 0, lines: 0, linesPrior: 0, cost: 0, uncosted: 0, valuePrior: 0, qty: new Map(), qtyPrior: new Map(), valueYTD: 0, qtyYTD: 0, valueLYTD: 0, qtyLYTD: 0 };
 }
 
+const sumQty = (m: Map<string, number>) => [...m.values()].reduce((t, q) => t + q, 0);
+
 /** One page row from a v_sales_product_dashboard row and its period sums. */
-function toRow(key: string, p: any, a: Agg | undefined, days: number, companies: string[], parts: ProductCompanyPart[], orderDays = 0): ProductDashboardRow {
+function toRow(key: string, p: any, a: Agg | undefined, days: number, companies: string[], parts: ProductCompanyPart[], orderDays = 0, odooBase: string | null = null): ProductDashboardRow {
   const value = a?.value ?? 0;
   const lines = a?.lines ?? 0;
   const volumeByUom = a ? uomList(a.qty) : [];
   const single = volumeByUom.length <= 1;
-  const volume = single ? (volumeByUom[0]?.qty ?? 0) : null;
-  const priorByUom = a ? uomList(a.qtyPrior) : [];
-  const volumePrior = priorByUom.length <= 1 ? (priorByUom[0]?.qty ?? 0) : null;
+  // Always added up as "Unit", whatever the Odoo UoM (2026-11-07); a product sold in one UoM keeps that UoM's name.
+  const volume = a ? sumQty(a.qty) : 0;
+  const volumePrior = a ? sumQty(a.qtyPrior) : 0;
   const costed = a && a.uncosted === 0 && lines > 0;
   return {
     productCompanyKey: key,
     productKey: p.ProductKey === null || p.ProductKey === undefined || String(p.ProductKey) === '-1' ? null : String(p.ProductKey),
+    odooUrl: odooFormUrl(odooBase, 'product.product', Number(p.ProductKey), numOrNull(p.CompanyKey)),
     productTemplateId: numOrNull(p.ProductTemplateID),
     company: String(p.Company ?? ''),
     productName: String(p.ProductName ?? p.OdooProductName ?? key),
@@ -236,10 +266,10 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     value,
     volume,
     volumeByUom,
-    uom: single ? (volumeByUom[0]?.uom || str(p.UoM)) : null,
+    uom: single ? (volumeByUom[0]?.uom || str(p.UoM)) : UNIT_LABEL,
     lines,
     orderDays,
-    velocity: volume === null ? null : volume / days,
+    velocity: volume / days,
     valuePrior: a?.valuePrior ?? 0,
     volumePrior,
     avgUnitPrice: volume ? value / volume : null,
@@ -251,6 +281,8 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     avgDailySales: num(p.AvgDailySales),
     daysOfInventory: numOrNull(p.DaysOfInventory),
     stockBand: String(p.StockBand) as ProductDashboardRow['stockBand'],
+    stockAgeDays: numOrNull(p.StockAgeDays),
+    stockAgeBucket: str(p.StockAgeBucket),
     lifecycleSegment: String(p.LifecycleSegment) as ProductDashboardRow['lifecycleSegment'],
     firstSaleDate: isoDate(p.FirstSaleDate),
     lastSaleDate: isoDate(p.LastSaleDate),
@@ -258,10 +290,11 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     bcgClassLYTD: str(p.BcgClassLYTD),
     bcgMovement: (str(p.BcgMovement) as ProductDashboardRow['bcgMovement']) ?? null,
     bcgExcludedCategory: Boolean(num(p.BcgExcludedCategory)),
-    valueYTD: num(p.ValueYTD),
-    volumeYTD: num(p.QtyYTD),
-    valueLYTD: num(p.ValueLYTD),
-    volumeLYTD: num(p.QtyLYTD),
+    // Follow the filters (calendar YTD / LYTD of the period's sales rows); class and movement stay the ETL's.
+    valueYTD: a?.valueYTD ?? 0,
+    volumeYTD: a?.qtyYTD ?? 0,
+    valueLYTD: a?.valueLYTD ?? 0,
+    volumeLYTD: a?.qtyLYTD ?? 0,
     grossProfitPctYTD: numOrNull(p.GrossProfitPctYTD),
     grossProfitPctLYTD: numOrNull(p.GrossProfitPctLYTD),
     negativeStockRows: num(p.NegativeStockRows),
@@ -294,14 +327,25 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.UncostedQty ELSE 0 END) AS uncostedQty,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS valuePrior,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qtyPrior,
-      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? AND d.IsIntercompany = 1 THEN d.Value ELSE 0 END) AS icValue
+      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? AND d.IsIntercompany = 1 THEN d.Value ELSE 0 END) AS icValue,
+      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Lines ELSE 0 END)      AS linesPrior,
+      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS valueYTD,
+      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qtyYTD,
+      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS valueLYTD,
+      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qtyLYTD
     FROM v_sales_product_daily d
-    WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?)) AND ${scope.clause}${companyClause}
+    WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?))
+      AND ${scope.clause}${companyClause}
       AND d.Company NOT IN (?)
     GROUP BY d.ProductCompanyKey, COALESCE(d.UoM, '')`;
   const cur = [period.from, period.to];
   const prior = [period.priorFrom, period.priorTo];
-  const salesParams: Array<string | number> = [...cur, ...cur, ...cur, ...cur, ...cur, ...prior, ...prior, ...cur, ...cur, ...prior, ...scope.params];
+  const ytd = [period.ytdFrom, period.ytdTo];
+  const lytd = [period.lytdFrom, period.lytdTo];
+  const salesParams: Array<string | number> = [
+    ...cur, ...cur, ...cur, ...cur, ...cur, ...prior, ...prior, ...cur, ...prior, ...ytd, ...ytd, ...lytd, ...lytd,
+    ...cur, ...prior, ...ytd, ...lytd, ...scope.params,
+  ];
   if (requestedView !== 'BMH') salesParams.push(requestedView);
   salesParams.push(EXCLUDED_COMPANIES as unknown as string);
 
@@ -314,9 +358,19 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   if (requestedView !== 'BMH') orderDaysParams.push(requestedView);
   orderDaysParams.push(EXCLUDED_COMPANIES);
 
-  const [[salesRows], [orderDayRows], [productRows], [metaRows]] = await Promise.all([
+  // Products with any sale (in any scope) in the period or the prior period: under a filter, those without a sale in
+  // scope are hidden; the ones that never sold in either period (stock only, never sold) stay listed (not a salesperson).
+  const soldSql = `
+    SELECT DISTINCT d.ProductCompanyKey AS k FROM v_sales_product_daily d
+    WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?)) AND d.Lines > 0${companyClause} AND d.Company NOT IN (?)`;
+  const soldParams: Array<string | string[]> = [...cur, ...prior];
+  if (requestedView !== 'BMH') soldParams.push(requestedView);
+  soldParams.push(EXCLUDED_COMPANIES);
+
+  const [[salesRows], [orderDayRows], [soldRows], [productRows], [metaRows]] = await Promise.all([
     pool.query(salesSql, salesParams),
     pool.query(orderDaysSql, orderDaysParams),
+    scoped ? pool.query(soldSql, soldParams) : Promise.resolve([[]] as unknown[]),
     pool.query('SELECT * FROM v_sales_product_dashboard WHERE Company NOT IN (?)', [EXCLUDED_COMPANIES]),
     pool.query('SELECT AsOfDate, BuiltAtUtc, LookbackDays, ConfigJson FROM etl_sales_product_dashboard_meta LIMIT 1'),
   ]);
@@ -332,6 +386,11 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     a.cost += num(r.costValue);
     a.uncosted += num(r.uncostedQty);
     a.valuePrior += num(r.valuePrior);
+    a.linesPrior += num(r.linesPrior);
+    a.valueYTD += num(r.valueYTD);
+    a.qtyYTD += num(r.qtyYTD);
+    a.valueLYTD += num(r.valueLYTD);
+    a.qtyLYTD += num(r.qtyLYTD);
     const uom = String(r.uom ?? '');
     if (num(r.lineCount) > 0) a.qty.set(uom, (a.qty.get(uom) ?? 0) + num(r.qty));
     if (num(r.qtyPrior) !== 0) a.qtyPrior.set(uom, (a.qtyPrior.get(uom) ?? 0) + num(r.qtyPrior));
@@ -348,12 +407,15 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   });
 
   const orderDaysOf = new Map((orderDayRows as any[]).map((r) => [String(r.k), num(r.orderDays)]));
+  const soldAnywhere = new Set((soldRows as any[]).map((r) => String(r.k)));
+  const odooBase = odooConfiguredBaseUrl();
   const products: ProductDashboardRow[] = [];
   for (const p of (productRows as any[]).filter((r) => view === 'BMH' || String(r.Company ?? '') === view)) {
     const key = String(p.ProductCompanyKey);
     const a = byProduct.get(key);
-    if (scoped && !(a && a.lines > 0)) continue;
-    products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)], orderDaysOf.get(key) ?? 0));
+    const soldInScope = Boolean(a && (a.lines > 0 || a.linesPrior > 0));
+    if (scoped && !soldInScope && (query.salespersonTier || soldAnywhere.has(key))) continue;
+    products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)], orderDaysOf.get(key) ?? 0, odooBase));
   }
 
   // Totals straight from the sales rows (not from the product list), so a key missing from

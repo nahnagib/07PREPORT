@@ -6,7 +6,7 @@ import { computeProductDashboard, resolvePeriod } from '../productDashboard';
 /** Mocks pool.query by SQL text (same convention as the other measure tests). */
 const META = [{ AsOfDate: '2026-09-29', LookbackDays: 90, ConfigJson: '{"intercompany_customers":{"names":["x"]},"bcg":{"profit_threshold_pct":35}}' }];
 
-function makePool(salesRows: unknown[], productRows: unknown[], meta: unknown[] = META, orderDayRows: unknown[] = []) {
+function makePool(salesRows: unknown[], productRows: unknown[], meta: unknown[] = META, orderDayRows: unknown[] = [], soldRows: unknown[] = []) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
@@ -15,6 +15,7 @@ function makePool(salesRows: unknown[], productRows: unknown[], meta: unknown[] 
       return [[...(keys.includes(1) ? [{ Company: 'Majaal' }] : []), ...(keys.includes(2) ? [{ Company: 'Tika' }] : [])]];
     }
     if (sql.includes('COUNT(DISTINCT d.OrderDate)')) return [orderDayRows];
+    if (sql.includes('SELECT DISTINCT d.ProductCompanyKey')) return [soldRows];
     if (sql.includes('FROM v_sales_product_daily')) return [salesRows];
     if (sql.includes('FROM v_sales_product_dashboard')) return [productRows];
     if (sql.includes('FROM etl_sales_product_dashboard_meta')) return [meta];
@@ -29,7 +30,8 @@ const product = (key: string, company: string, extra: Record<string, unknown> = 
   LifecycleSegment: 'Mature', ValueYTD: 0, QtyYTD: 0, ValueLYTD: 0, QtyLYTD: 0, ...extra,
 });
 const sale = (k: string, uom: string, value: number, qty: number, lines = 1, extra: Record<string, unknown> = {}) => ({
-  k, uom, value, qty, lineCount: lines, costValue: 0, uncostedQty: qty, valuePrior: 0, qtyPrior: 0, icValue: 0, ...extra,
+  k, uom, value, qty, lineCount: lines, costValue: 0, uncostedQty: qty, valuePrior: 0, qtyPrior: 0, icValue: 0,
+  linesPrior: 0, valueYTD: 0, qtyYTD: 0, valueLYTD: 0, qtyLYTD: 0, ...extra,
 });
 
 describe('resolvePeriod', () => {
@@ -47,7 +49,7 @@ describe('resolvePeriod', () => {
 });
 
 describe('computeProductDashboard', () => {
-  it('keeps zero-sales products, never sums quantities across UoMs, and totals straight from the sales rows', async () => {
+  it('keeps zero-sales products, adds quantities up across UoMs as "Unit", and totals straight from the sales rows', async () => {
     const { pool } = makePool(
       [
         sale('Majaal|101', 'UNIT', 1000, 100),
@@ -64,8 +66,8 @@ describe('computeProductDashboard', () => {
 
     expect(out.period.days).toBe(10);
     expect(byKey['Majaal|101']).toMatchObject({ value: 1000, volume: 100, uom: 'UNIT', velocity: 10 });
-    expect(byKey['Majaal|102'].volume).toBeNull(); // two units of measure: no single volume
-    expect(byKey['Majaal|102'].velocity).toBeNull();
+    // two units of measure: added up as "Unit" (2026-11-07), the split kept for reference
+    expect(byKey['Majaal|102']).toMatchObject({ volume: 15, uom: 'Unit', velocity: 1.5 });
     expect(byKey['Majaal|102'].volumeByUom).toEqual([{ uom: 'm2', qty: 10 }, { uom: 'UNIT', qty: 5 }]);
     expect(byKey['Majaal|103']).toMatchObject({ value: 0, volume: 0, lines: 0 });
     expect(byKey['Majaal|101']).toMatchObject({ productKey: '101', brand: 'Unassigned' }); // Odoo product id; empty Odoo brand
@@ -74,8 +76,12 @@ describe('computeProductDashboard', () => {
     expect(out.thresholds).not.toHaveProperty('intercompany_customers');
   });
 
-  it('applies the scope clause to the daily table and then hides products with no sales in scope', async () => {
-    const { pool, calls } = makePool([sale('Majaal|101', 'UNIT', 10, 1)], [product('Majaal|101', 'Majaal'), product('Majaal|102', 'Majaal')]);
+  it('applies the scope clause to the daily table and then hides products sold only outside the scope', async () => {
+    const { pool, calls } = makePool(
+      [sale('Majaal|101', 'UNIT', 10, 1)],
+      [product('Majaal|101', 'Majaal'), product('Majaal|102', 'Majaal')],
+      META, [], [{ k: 'Majaal|101' }, { k: 'Majaal|102' }], // 102 sold in the period, to someone else
+    );
 
     const out = await computeProductDashboard(pool, { fromDate: '2026-01-01', toDate: '2026-01-31', filters: { salespersonKeys: [42] } });
 
@@ -85,6 +91,67 @@ describe('computeProductDashboard', () => {
     expect(salesCall.sql).not.toMatch(/\bAS lines\b/i);
     expect(salesCall.params[salesCall.params.length - 2]).toBe(42); // then the excluded companies (Athena)
     expect(out.products.map((p) => p.productCompanyKey)).toEqual(['Majaal|101']);
+  });
+
+  describe('membership under a filter (2026-11-07)', () => {
+    const rows = [product('Majaal|1', 'Majaal'), product('Majaal|2', 'Majaal'), product('Majaal|3', 'Majaal', { StockQty: 50 }), product('Majaal|4', 'Majaal')];
+    const sales = [
+      sale('Majaal|1', 'Unit', 10, 1),                                                     // sold in scope this period
+      sale('Majaal|2', 'Unit', 0, 0, 0, { linesPrior: 2, valuePrior: 30, qtyPrior: 3 }),   // in scope last year only
+    ];
+    const soldAnywhere = [{ k: 'Majaal|1' }, { k: 'Majaal|2' }, { k: 'Majaal|4' }];        // 4 sold, but only to other groups
+    const filters = { segmentKeys: [1, 2] };
+
+    it('keeps products sold in scope this period OR the same period last year, and stock-only / never-sold ones', async () => {
+      const { pool } = makePool(sales, rows, META, [], soldAnywhere);
+      const out = await computeProductDashboard(pool, { filters });
+      expect(out.products.map((p) => p.productCompanyKey).sort()).toEqual(['Majaal|1', 'Majaal|2', 'Majaal|3']);
+    });
+
+    it('a salesperson-tier caller only sees products with sales in scope', async () => {
+      const { pool } = makePool(sales, rows, META, [], soldAnywhere);
+      const out = await computeProductDashboard(pool, { filters: { salespersonKeys: [7] }, salespersonTier: true });
+      expect(out.products.map((p) => p.productCompanyKey).sort()).toEqual(['Majaal|1', 'Majaal|2']);
+    });
+
+    it('no filter: every product, and the "sold anywhere" query is not run', async () => {
+      const { pool, calls } = makePool(sales, rows);
+      const out = await computeProductDashboard(pool, {});
+      expect(out.products).toHaveLength(4);
+      expect(calls.some((c) => c.sql.includes('SELECT DISTINCT d.ProductCompanyKey'))).toBe(false);
+    });
+  });
+
+  it('Volume / Revenue YTD and LYTD follow the filters (calendar windows); class and movement stay the ETL\'s', async () => {
+    const { pool, calls } = makePool(
+      [sale('Majaal|1', 'Unit', 10, 1, 1, { valueYTD: 900, qtyYTD: 90, valueLYTD: 400, qtyLYTD: 40 }),
+       sale('Majaal|1', 'm2', 0, 0, 0, { valueYTD: 100, qtyYTD: 10 })],
+      [product('Majaal|1', 'Majaal', { ValueYTD: 99999, QtyYTD: 9999, BcgClassYTD: 'Stars', BcgMovement: 'Improved' })],
+    );
+    const out = await computeProductDashboard(pool, { fromDate: '2026-03-01', toDate: '2026-03-31', filters: { segmentKeys: [1] } });
+    expect(out.products[0]).toMatchObject({ valueYTD: 1000, volumeYTD: 100, valueLYTD: 400, volumeLYTD: 40, bcgClassYTD: 'Stars', bcgMovement: 'Improved' });
+    const salesCall = calls.find((c) => c.sql.includes('SUM(CASE'))!;
+    const today = DateTime.now().setZone('Africa/Tripoli');
+    expect(salesCall.params).toContain(`${today.year}-01-01`);
+    expect(salesCall.params).toContain(`${today.year - 1}-01-01`);
+  });
+
+  it('every product links to its Odoo product.product form in its own company (ODOO_URL), never a guessed host', async () => {
+    const { pool } = makePool([], [product('Majaal|2163', 'Majaal', { CompanyKey: 1 }), product('Tika|-1', 'Tika', { ProductKey: -1, CompanyKey: 3 })]);
+    const prev = { url: process.env.ODOO_URL, web: process.env.ODOO_WEB_BASE_URL };
+    process.env.ODOO_URL = 'https://odoo.example.com/';
+    delete process.env.ODOO_WEB_BASE_URL;
+    try {
+      const out = await computeProductDashboard(pool, {});
+      const byKey = Object.fromEntries(out.products.map((p) => [p.productCompanyKey, p]));
+      expect(byKey['Majaal|2163'].odooUrl).toBe('https://odoo.example.com/web#id=2163&model=product.product&view_type=form&cids=1');
+      expect(byKey['Tika|-1'].odooUrl).toBeNull();
+      delete process.env.ODOO_URL;
+      expect((await computeProductDashboard(pool, {})).products[0].odooUrl).toBeNull();
+    } finally {
+      if (prev.url === undefined) delete process.env.ODOO_URL; else process.env.ODOO_URL = prev.url;
+      if (prev.web !== undefined) process.env.ODOO_WEB_BASE_URL = prev.web;
+    }
   });
 
   it('reports GP% only when every line in the period has a cost', async () => {

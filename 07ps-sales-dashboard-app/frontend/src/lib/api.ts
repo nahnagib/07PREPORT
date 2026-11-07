@@ -2460,7 +2460,7 @@ export interface UomQty {
 
 export type StockBand = 'Overstock' | 'Normal' | 'StockOutRisk' | 'NoMovement' | 'NoStockNoSales';
 export type LifecycleSegment = 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued' | 'Never sold';
-export type BcgMovement = 'New' | 'Stable' | 'Improved' | 'Declined' | 'Lost';
+export type BcgMovement = 'New' | 'Stable' | 'Improved' | 'Drop' | 'Discontinued';
 
 /** Per-company split of a row's period sales (BMH view: one entry per company selling the product). */
 export interface ProductCompanyPart {
@@ -2472,6 +2472,8 @@ export interface ProductCompanyPart {
 }
 
 export interface ProductDashboardRow {
+  /** The product's form in Odoo (product.product in its own company), opened with OdooLink; null = plain text. */
+  odooUrl: string | null;
   /** Company|Odoo product id (company view) or the Odoo template group 'T|<id>' (BMH view). */
   productCompanyKey: string;
   /** Odoo product.product id (null for sales lines without a product). */
@@ -2488,8 +2490,8 @@ export interface ProductDashboardRow {
   sku: string | null;
   isActive: number | null;
   value: number;
-  /** Null when the product was sold in more than one unit of measure in the period (see volumeByUom). */
-  volume: number | null;
+  /** Invoiced quantity of the period, added up across units of measure ("Unit"); volumeByUom keeps the split. */
+  volume: number;
   volumeByUom: UomQty[];
   uom: string | null;
   lines: number;
@@ -2497,7 +2499,7 @@ export interface ProductDashboardRow {
   orderDays: number;
   velocity: number | null;
   valuePrior: number;
-  volumePrior: number | null;
+  volumePrior: number;
   avgUnitPrice: number | null;
   grossProfitPct: number | null;
   stockQty: number;
@@ -2507,6 +2509,10 @@ export interface ProductDashboardRow {
   avgDailySales: number;
   daysOfInventory: number | null;
   stockBand: StockBand;
+  /** Units-weighted average days since the finished-goods stock on hand arrived (Odoo in_date); null = no stock. */
+  stockAgeDays: number | null;
+  /** Stock Aging bucket (config stock.aging_buckets), null = no stock on hand. */
+  stockAgeBucket: string | null;
   lifecycleSegment: LifecycleSegment;
   /** Companies in this row: one in a company view; both for a shared product in the BMH view. */
   companies: string[];
@@ -2555,11 +2561,12 @@ export interface ProductDashboardScope {
   toDate?: string;
 }
 
-function buildProductDashboardQuery(scope: ProductDashboardScope): string {
+/** One query param per selected key (segmentKeys=1&segmentKeys=2), like every other page: the backend parses each value
+ * as one key, so a comma-joined "1,2" was read as NaN and silently dropped -- any multi-value filter did nothing. */
+export function buildProductDashboardQuery(scope: ProductDashboardScope): string {
   const params = new URLSearchParams();
   for (const key of ['segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys'] as const) {
-    const values = scope[key];
-    if (values && values.length) params.set(key, values.join(','));
+    (scope[key] ?? []).forEach((v) => params.append(key, String(v)));
   }
   if (scope.fromDate) params.set('fromDate', scope.fromDate);
   if (scope.toDate) params.set('toDate', scope.toDate);

@@ -26,6 +26,8 @@ STOCK_QUANT_FIELDS = [
     "reserved_quantity",
     "value",
     "inventory_value",
+    # when the stock arrived (UTC): Stock Aging on the Stock Velocity page (2026-11-07)
+    "in_date",
 ]
 
 STOCK_LOCATION_FIELDS = [
@@ -65,6 +67,7 @@ FACT_INVENTORY_COLUMNS = [
     "Velocity_Class",
     "ProductCompanyKey",
     "StockClass",
+    "InDate",
 ]
 
 QA_INVENTORY_COLUMNS = ["CheckName", "MetricValue", "Status", "Notes"]
@@ -232,6 +235,7 @@ class InventoryModelBuilder:
                 "reserved_quantity",
                 "value",
                 "inventory_value",
+                "in_date",
             ],
         )
         out = pd.DataFrame(index=raw.index)
@@ -246,6 +250,8 @@ class InventoryModelBuilder:
         value = pd.to_numeric(raw["value"], errors="coerce")
         inventory_value = pd.to_numeric(raw["inventory_value"], errors="coerce")
         out["OdooTotalValue"] = value.combine_first(inventory_value)
+        # Odoo sends False for an empty datetime; kept naive UTC like every other Odoo datetime in the extract
+        out["InDate"] = pd.to_datetime(raw["in_date"].where(raw["in_date"].astype(str).ne("False")), errors="coerce", utc=True).dt.tz_localize(None)
         return out
 
     @staticmethod
@@ -410,6 +416,7 @@ class InventoryModelBuilder:
             "OdooTotalValue",
             "ProductCompanyKey",
             "StockClass",
+            "InDate",
         ]:
             out[column] = inventory[column] if column in inventory.columns else pd.NA
         out["InventoryValue"] = pd.to_numeric(out["OdooTotalValue"], errors="coerce")

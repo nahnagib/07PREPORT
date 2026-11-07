@@ -15,7 +15,7 @@ renamed by a product name. An empty Category / Brand / SubBrand / Family / Size 
 | `OdooProductName` | every product table | `product.product.display_name` (`[internal ref] name`) |
 | `SKU` / `default_code` | product tables / `dim_product` | `default_code` (empty stays empty) |
 | `Category` / `category` | product tables / `dim_product` | `categ_id`, full path (`complete_name`) |
-| `CategoryID` / `categ_id` | `dim_sales_product_dashboard` / `dim_product` | `categ_id` id; `bcg.excluded_category_ids` in `config/product_dashboard.json` lists the ids left out of the BCG matrix |
+| `CategoryID` / `categ_id` | `dim_sales_product_dashboard` / `dim_product` | `categ_id` id; the Categories sheet of input file `ProductExclusions.xlsx` lists the ids (and their sub-categories) left out of every Product page |
 | `Brand` / `brand` | product tables / `dim_product` | the main vendor (Purchase tab, `seller_ids` → `product.supplierinfo`): lowest sequence, then lowest minimum quantity, then oldest line; `raw_odoo_product_supplierinfo` |
 | `SubBrand` / `sub_brand` | product tables / `dim_product` | `sub_brand_id` |
 | `Family` / `family` | product tables / `dim_product` | `product_family_id` ("Product Family / Range") |

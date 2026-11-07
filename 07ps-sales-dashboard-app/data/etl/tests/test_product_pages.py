@@ -64,7 +64,7 @@ def test_shipped_config_lists_the_discount_products() -> None:
     assert odoo_products.discount_ids(cfg.section("discounts")) == {1068, 2881, 4691, 6009}
 
 
-def test_intercompany_flag_is_information_only() -> None:
+def test_intercompany_flag_marks_lines_and_never_drops_rows() -> None:
     flagger = IntercompanyFlagger({9641}, {"اصول المجموعة"})
     sales = pd.DataFrame([
         {"OdooPartnerID": 9641, "customer": "x"},
@@ -181,19 +181,17 @@ def test_bcg_zero_cost_is_unclassified_and_logged() -> None:
     assert out["QA_ProductDataQuality"].query("Check == 'NoCost'")["ProductCompanyKey"].tolist() == ["Tika|2"]
 
 
-def test_bcg_exclusion_is_by_odoo_category_id_and_the_shipped_list_is_empty(caplog) -> None:
+def test_without_the_exclusions_file_the_json_category_ids_are_the_fallback() -> None:
     shipped = ProductDashboardConfig.load(CONFIG)
-    assert shipped.section("bcg")["excluded_category_ids"] == []
+    assert "excluded_category_ids" not in shipped.section("bcg") and "product_pages_excluded_category_ids" not in shipped.raw
     dim = _dim({"id": 1, "name": "Bags", "categ_id": 77, "categ": "All / Paper Bags"}, {"id": 2, "name": "Tile", "categ_id": 5})
     lines = [_line("Majaal", 1, "2026-03-01", 1, 1), _line("Majaal", 2, "2026-03-01", 1, 1)]
-    with caplog.at_level("INFO"):
-        none_excluded = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductKey")
-    assert not none_excluded["BcgExcludedCategory"].any()
-    assert "no Odoo category is excluded" in caplog.text
-    raw = dict(shipped.raw)
-    raw["bcg"] = {**raw["bcg"], "excluded_category_ids": [77]}
-    p = _build(lines, dim, config=ProductDashboardConfig(raw))["Dim_ProductDashboard"].set_index("ProductKey")
-    assert p.loc["1", "BcgExcludedCategory"] and not p.loc["2", "BcgExcludedCategory"]
+    assert set(_build(lines, dim)["Dim_ProductDashboard"]["ProductKey"]) == {"1", "2"}
+    for raw in ({**shipped.raw, "product_pages_excluded_category_ids": [77]}, {**shipped.raw, "bcg": {**shipped.section("bcg"), "excluded_category_ids": [77]}}):
+        out = _build(lines, dim, config=ProductDashboardConfig(raw))
+        assert set(out["Dim_ProductDashboard"]["ProductKey"]) == {"2"}           # left out of every table, not only BCG
+        assert out["Fact_ProductSalesDaily"]["Lines"].sum() == 1
+        assert not out["Dim_ProductDashboard"]["BcgExcludedCategory"].any()
 
 
 def test_location_classification_from_config() -> None:
@@ -266,3 +264,96 @@ def test_meta_built_at_has_whole_seconds() -> None:
     SQL/DataFrame mirror validation of ProductDashboard_Meta in production (run 218)."""
     built = _build([_line("Majaal", 1, "2026-09-01", 1, 1)], _dim({"id": 1, "name": "A"}))["ProductDashboard_Meta"]["BuiltAtUtc"].iloc[0]
     assert built == built.floor("s")
+
+
+def test_backoffice_inter_company_and_intercompany_lines_are_left_out_of_every_product_table() -> None:
+    dim = _dim({"id": 1, "name": "A", "company": "Majaal"}, {"id": 2, "name": "B", "company": "Majaal"})
+    real = _line("Majaal", 1, "2026-09-01", 2, 20)
+    backoffice = {**_line("Majaal", 1, "2026-09-02", 100, 1000), "SegmentKey": 3}
+    inter_company = {**_line("Majaal", 1, "2026-01-05", 50, 500), "SegmentKey": 4}
+    flagged = {**_line("Majaal", 1, "2026-09-03", 7, 70), "IsIntercompany": True}
+    only_transfer = {**_line("Majaal", 2, "2026-03-01", 9, 90), "SegmentKey": 3}   # product 2: transfers only
+    out = _build([real, backoffice, inter_company, flagged, only_transfer], dim)
+    daily = out["Fact_ProductSalesDaily"]
+    assert daily["Value"].sum() == 20 and daily["Qty"].sum() == 2 and daily["Lines"].sum() == 1
+    assert set(daily["SegmentKey"]) == {1} and not daily["IsIntercompany"].any()
+    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    assert p.loc["Majaal|1", "QtyYTD"] == 2 and p.loc["Majaal|1", "ValueYTD"] == 20
+    assert str(p.loc["Majaal|1", "FirstSaleDate"].date()) == "2026-09-01"       # the January transfer is not a first sale
+    assert p.loc["Majaal|2", "QtyYTD"] == 0 and p.loc["Majaal|2", "LifecycleSegment"] == "Never sold"
+    assert out["ProductDashboard_Meta"]["SalesLinesValue"].iloc[0] == 20
+
+
+def test_non_sales_exclusion_follows_the_config() -> None:
+    raw = ProductDashboardConfig.load(CONFIG).raw
+    assert raw["product_pages_excluded_segment_keys"] == [3, 4] and raw["product_pages_exclude_intercompany"] is True
+    keep_flagged = ProductDashboardConfig({**raw, "product_pages_excluded_segment_keys": [], "product_pages_exclude_intercompany": False})
+    dim = _dim({"id": 1, "name": "A", "company": "Majaal"})
+    lines = [_line("Majaal", 1, "2026-09-01", 2, 20), {**_line("Majaal", 1, "2026-09-02", 1, 10), "SegmentKey": 3, "IsIntercompany": True}]
+    assert _build(lines, dim, config=keep_flagged)["Fact_ProductSalesDaily"]["Value"].sum() == 30
+
+
+def test_product_movement_is_on_volume_ytd_vs_lytd_with_the_configured_band() -> None:
+    cases = {  # id: (active, [(date, qty)], expected movement)
+        1: (True, [("2025-03-01", 100), ("2026-03-01", 111)], "Improved"),      # +11%
+        2: (True, [("2025-03-01", 100), ("2026-03-01", 110)], "Stable"),        # +10% exactly: inside the band
+        3: (True, [("2025-03-01", 100), ("2026-03-01", 90)], "Stable"),         # -10% exactly: inside the band
+        4: (True, [("2025-03-01", 100), ("2026-03-01", 89)], "Drop"),           # -11%
+        5: (True, [("2025-03-01", 100)], "Drop"),                               # sold last year, nothing this year, still active
+        6: (True, [("2024-05-01", 40), ("2026-03-01", 50)], "New"),             # zero LYTD (old product back on sale)
+        7: (True, [("2026-06-01", 5)], "New"),                                  # first sale within 180 days
+        8: (False, [("2025-03-01", 100), ("2026-03-01", 300)], "Discontinued"), # archived in Odoo, whatever it sells
+        9: (False, [("2026-06-01", 5)], "Discontinued"),                        # archived beats New
+        10: (True, [("2024-05-01", 40)], None),                                 # not sold in either period
+        11: (True, [("2025-03-01", 100), ("2026-03-01", 110.01)], "Improved"),  # just over +10%
+        12: (True, [("2025-03-01", 100), ("2026-03-01", 89.99)], "Drop"),       # just under -10%
+        13: (True, [("2025-03-01", 100), ("2025-12-01", 900), ("2026-03-01", 100)], "Stable"),  # after the LYTD end date: not LYTD
+    }
+    dim = _dim(*({"id": i, "name": f"P{i}", "company": "Majaal", "active": active} for i, (active, _, _) in cases.items()))
+    lines = [_line("Majaal", i, d, q, q * 10) for i, (_, sales, _) in cases.items() for d, q in sales]
+    p = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductKey")
+    for i, (_, _, expected) in cases.items():
+        got = p.loc[str(i), "BcgMovement"]
+        assert (got if isinstance(got, str) else None) == expected, (i, got)
+
+
+def test_movement_band_comes_from_the_config() -> None:
+    raw = ProductDashboardConfig.load(CONFIG).raw
+    assert raw["bcg"]["movement_stable_band_pct"] == 10
+    wide = ProductDashboardConfig({**raw, "bcg": {**raw["bcg"], "movement_stable_band_pct": 20}})
+    dim = _dim({"id": 1, "name": "A", "company": "Majaal"})
+    lines = [_line("Majaal", 1, "2025-03-01", 100, 1000), _line("Majaal", 1, "2026-03-01", 115, 1150)]
+    assert _build(lines, dim)["Dim_ProductDashboard"]["BcgMovement"].iloc[0] == "Improved"
+    assert _build(lines, dim, config=wide)["Dim_ProductDashboard"]["BcgMovement"].iloc[0] == "Stable"
+
+
+def test_stock_age_is_the_units_weighted_age_of_finished_goods_on_hand_and_buckets_follow_the_config() -> None:
+    dim = _dim(*({"id": i, "name": f"P{i}", "company": "Majaal"} for i in (1, 2, 3, 4)))
+    inv = pd.DataFrame([
+        {**_inv("Majaal", 1, 30, 300), "InDate": "2026-09-19"},          # 10 days
+        {**_inv("Majaal", 1, 10, 100), "InDate": "2026-05-02"},          # 150 days -> (30x10 + 10x150) / 40 = 45
+        {**_inv("Majaal", 1, 99, 99, stock_class="InTransit"), "InDate": "2020-01-01"},   # in transit: not aged
+        {**_inv("Majaal", 2, 5, 50), "InDate": "2025-09-29"},            # 365 days -> 181-365
+        {**_inv("Majaal", 3, 5, 50), "InDate": "2023-09-29"},            # > 2 years
+        {**_inv("Majaal", 4, -3, 0), "InDate": "2026-01-01"},            # negative quant: no stock, no age
+    ])
+    p = _build([_line("Majaal", 1, "2026-09-01", 1, 1)], dim, inventory=inv)["Dim_ProductDashboard"].set_index("ProductKey")
+    assert p.loc["1", "StockAgeDays"] == 45 and p.loc["1", "StockAgeBucket"] == "0–90 days"
+    assert p.loc["2", "StockAgeDays"] == 365 and p.loc["2", "StockAgeBucket"] == "181–365 days"
+    assert p.loc["3", "StockAgeBucket"] == "> 2 years"
+    assert pd.isna(p.loc["4", "StockAgeDays"]) and pd.isna(p.loc["4", "StockAgeBucket"])
+
+
+def test_aging_bucket_boundaries() -> None:
+    b = ProductDashboardBuilder(ProductDashboardConfig.load(CONFIG), "2026-09-29")
+    ages = pd.Series([0, 90, 91, 180, 181, 365, 366, 730, 731, None])
+    assert b.aging_bucket(ages).tolist() == ["0–90 days", "0–90 days", "91–180 days", "91–180 days", "181–365 days", "181–365 days",
+                                             "1–2 years", "1–2 years", "> 2 years", pd.NA]
+
+
+def test_shipped_stock_and_frequency_config() -> None:
+    raw = ProductDashboardConfig.load(CONFIG).raw
+    assert raw["stock"]["isr_target_pct"] == 15 and raw["stock"]["isr_red_pct"] == 25
+    assert [b["max_days"] for b in raw["stock"]["aging_buckets"]] == [90, 180, 365, 730, None]
+    assert [(b["key"], b["max_gap_days"]) for b in raw["sales_frequency"]["buckets"]] == [
+        ("Daily", 2), ("Weekly", 7), ("Monthly", 30), ("Quarterly", 90), ("Rarely", None)]

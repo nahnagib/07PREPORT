@@ -88,9 +88,9 @@ def mirror_sync(ctx: RunContext) -> TaskResult:
 
 
 # -- sales_build -----------------------------------------------------------------------------------------------------------
-# The workbooks the sales build reads. Products come from Odoo (PRODUCTS.xlsx is retired), so no product file is here:
-# a product changes through Odoo (the mirror), never through an input file.
-SALES_INPUT_FILES = ("SalesTeam.xlsx", "sales_targets.xlsx", "OffDays.xlsx", "BlockedCustomers.xlsx")
+# The workbooks the sales build reads. Products come from Odoo (PRODUCTS.xlsx is retired); ProductExclusions.xlsx only
+# says which customers / categories / products the Product pages leave out.
+SALES_INPUT_FILES = ("SalesTeam.xlsx", "sales_targets.xlsx", "OffDays.xlsx", "BlockedCustomers.xlsx", "ProductExclusions.xlsx")
 
 
 def _inputs_signature(input_dir: Path) -> str:

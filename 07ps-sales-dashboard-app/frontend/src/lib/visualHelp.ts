@@ -336,62 +336,91 @@ export const VISUAL_HELP = {
   },
 
   // ================================================ PRODUCT =========================================================
+  // App-wide rule: the "?" shows only where there is a formula (classes, ratios, Days on Hand, GP%, growth, the Stable
+  // band) -- one short line; self-explanatory charts only have their "i". Volume = invoiced quantity, added up as "Unit".
   'product.bcgMatrix.matrix': {
-    help: { definition: 'Products by BCG class: volume against gross profit, calendar YTD. One product = one Odoo product in one company (Majaal or Tika).', notes: 'Paper bags and raw materials are excluded; products without a standard cost are "Unclassified (no cost)".' },
-    interactions: ['Hover a product for its company, class and figures', 'Export each class, or the whole matrix, to CSV or PDF'],
+    // the page puts the config thresholds in the formula line (shared.ts bcgClassRule)
+    help: { definition: 'BCG class of each product, on volume and GP%.', formula: 'High volume = YTD qty ≥ company threshold; Stars / Strategic = GP% ≥ 35%' },
+    interactions: ['Click a product to open it in Odoo', 'Hover a product for its figures', 'Export each class, or the whole matrix, to CSV or PDF'],
   },
   'product.bcgMatrix.movement': {
-    help: { definition: 'How products moved between BCG classes vs the same period last year: New, Stable, Improved, Declined or Discontinued (sold last year, not this year).', },
+    // the page puts the config band and "new" window in the formula line (shared.ts movementRule)
+    help: { definition: 'Volume YTD vs the same dates last year, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or no LYTD · Discontinued = archived in Odoo' },
+    interactions: ['Click a slice to list its products', 'Click a product to open it in Odoo', 'Hover a product for its figures', 'Export the list to CSV or PDF'],
   },
   'product.bcgMatrix.productDetail': {
-    help: { definition: 'Each product with its revenue and volume YTD, volume growth vs LYTD, GP% and BCG class.', },
-    interactions: GRID,
+    help: { definition: 'Volume growth and gross profit per product.', formula: 'Vol Growth = (Volume YTD − LYTD) ÷ LYTD · GP% = (Value − Qty × standard cost) ÷ Value' },
+    interactions: ['Click a product to open it in Odoo', ...GRID],
+  },
+  // Stock Velocity: the page replaces the threshold lines (days on hand, ISR, buckets) with the ETL config values.
+  'product.stockVelocity.kpiDoh': {
+    help: { definition: 'Days on Hand.', formula: 'DOH = finished-goods units on hand ÷ average daily units sold (last 90 days)' },
+  },
+  'product.stockVelocity.kpiOverstock': {
+    help: { definition: 'SKUs above the company overstock DOH, plus stock with no sales.', formula: 'Tika > 60 days · Majaal > 180 days DOH; stock with no sales in 90 days counts as overstock' },
+  },
+  'product.stockVelocity.kpiStockOut': {
+    help: { definition: 'SKUs below the company minimum DOH.', formula: 'Tika < 30 days · Majaal < 60 days DOH' },
+  },
+  'product.stockVelocity.kpiFast': {
+    // the page puts the config values in the formula line (shared.ts moverRuleText)
+    help: { definition: 'Fast movers.', formula: 'Velocity = units sold ÷ days in period. Fast ≥ 150% of the category median · Slow ≤ 50%' },
+  },
+  'product.stockVelocity.kpiInStock': {
+    help: { definition: 'SKUs with stock on hand.', formula: 'Finished-goods stock > 0; in-transit and raw materials not included' },
+  },
+  'product.stockVelocity.kpiInventory': {
+    help: { definition: 'Finished-goods stock on hand, at cost (LYD).', formula: 'Finished goods only; in-transit (shown separately) and raw materials not included' },
+  },
+  'product.stockVelocity.isr': {
+    help: { definition: 'Inventory to Sales Ratio.', formula: 'ISR = inventory on hand (LYD at cost) ÷ net sales (LYD) in the period · target ≤ 15%' },
   },
   'product.stockVelocity.movers': {
-    help: {
-      definition: 'Products sold in the period, split at the median velocity into fast and slow movers. Bars show LYD because units differ between products.',
-    },
-    interactions: ['Click Fast or Slow to list its products'],
+    // the page puts the config values in the formula line (shared.ts moverRuleText)
+    help: { definition: 'SKUs sold in the period, against their category median.', formula: 'Velocity = units sold ÷ days in period. Fast ≥ 150% of the category median · Slow ≤ 50%' },
+    interactions: ['Hover a segment for its SKUs, units and LYD', 'Click a segment to list its products', 'Click a product to open it in Odoo', 'Export the list to CSV or PDF'],
+  },
+  'product.stockVelocity.aging': {
+    help: { definition: 'Finished-goods SKUs on hand by stock age.', formula: 'Age = days since the stock arrived (Odoo in_date), units-weighted per SKU' },
+    interactions: ['Hover a segment for its SKUs, units and LYD at cost', 'Click a segment to list its products', 'Click a product to open it in Odoo', 'Export the list to CSV or PDF'],
   },
   'product.stockVelocity.overstock': {
-    help: { definition: 'LYD tied up in overstocked or non-moving stock (at Odoo stock valuation), by BCG class.', },
-    interactions: ['Click a class to list its products, highest value first'],
+    help: { definition: 'Overstocked SKUs by BCG class.', formula: 'Tika > 60 days · Majaal > 180 days DOH; stock with no sales in 90 days counts as overstock' },
+    interactions: ['Hover a bar for its SKUs, units and LYD', 'Click a class to list its products', 'Click a product to open it in Odoo', 'Export to CSV or PDF'],
   },
   'product.stockVelocity.frequency': {
-    help: {
-      definition: 'How often each product sells: the number of different days in the period with at least one order line of the product, turned into an average gap between selling days. Products that sold in the period only.',
-      formula: ['Average gap = days in the period ÷ selling days', 'Daily: gap ≤ 2 days · Weekly: ≤ 7 days · Monthly: ≤ 31 days · Rarer: more than 31 days (e.g. one sale in a quarter)'],
-      notes: 'Revenue = the sales value (LYD) of the products in the period.',
-    },
-    interactions: ['Click a bucket to list its products', 'Sort, search and export the list to CSV or PDF'],
+    help: { definition: 'SKUs by how often they sell.', formula: 'Average gap = days in the period ÷ selling days (Daily ≤ 2 · Weekly 3–7 · Monthly 8–30 · Quarterly 31–90 · Rarely > 90)' },
+    interactions: ['Hover a bar for its SKUs, units and LYD', 'Click a bar to list its products', 'Click a product to open it in Odoo', ...GRID],
   },
   'product.stockVelocity.stockOutRisk': {
-    help: { definition: 'Above-median sellers whose stock may run out soon, by BCG class.', },
-    interactions: ['Click a class to list its products, most urgent first'],
+    help: { definition: 'Above-median sellers that may run out, by BCG class.', formula: 'Tika < 30 days · Majaal < 60 days DOH' },
+    interactions: ['Hover a bar for its SKUs, units and LYD', 'Click a class to list its products', 'Click a product to open it in Odoo', 'Export to CSV or PDF'],
   },
   'product.pimContribution.hierarchy': {
-    help: { definition: 'Sales value (LYD) of the period by category, then range / family, then product.', },
-    interactions: ['Click a slice to go one level down'],
+    help: { definition: 'Units (or LYD) by company, category, brand, family, size and product.' },
+    interactions: ['Click a slice to go one level down', 'Click a breadcrumb to go back up', 'Switch By Volume / By Value', 'At a single product, click its name to open it in Odoo'],
   },
   'product.pimContribution.categories': {
-    help: { definition: 'Share of each product category (Odoo category, full path) in the period: sales value (LYD) or volume in the selected unit. The 8 largest are shown; the rest are grouped as Other.' },
-    interactions: ['Switch By Value / By Volume'],
+    help: { definition: 'Units (or LYD) by Odoo category; the 8 largest, the rest as Other.' },
+    interactions: ['Switch By Volume / By Value'],
   },
   'product.pimContribution.brandProducts': {
-    help: { definition: 'Every product of the brand (its main vendor in Odoo) with its company, category, and the volume, revenue, GP%, ASP and last sale date of the period.' },
-    interactions: ['Sort by any column', 'Search by product name', 'Export the list as shown to CSV or PDF'],
+    help: { definition: 'Every product of the brand (its main vendor in Odoo).' },
+    interactions: ['Click a product to open it in Odoo', ...GRID],
   },
   'product.pimContribution.asp': {
-    help: { definition: 'Average selling price of the period at the level you are on, in the selected unit.', },
+    help: { definition: 'Average selling price at the level you are on.', formula: 'ASP = value ÷ units' },
   },
   'product.pimContribution.brands': {
-    help: { definition: 'Each brand\'s sales value and volume in the period, and how much of its catalog sold.' },
-    interactions: ['Click a brand to open its Brand Performance page'],
+    help: { definition: 'Units of each partner brand vs the same period last year.' },
+    interactions: ['Click a brand to open its page'],
   },
   'product.productLifecycle.pareto': {
-    help: {
-      definition: 'Sales value (LYD) by lifecycle segment with the cumulative share.',
-    },
+    help: { definition: 'Units sold per lifecycle segment, with the cumulative share.', formula: 'New = first sale ≤ 180 days · Growing / Declining = last 90 days vs the 90 before ±20% · Discontinued = archived or no sale in 365 days' },
+  },
+  'product.productLifecycle.productDetail': {
+    help: { definition: 'Every product with its lifecycle segment and volume.' },
+    interactions: ['Click a product to open it in Odoo', ...GRID],
   },
 
   // ================================================ PRICE ===========================================================

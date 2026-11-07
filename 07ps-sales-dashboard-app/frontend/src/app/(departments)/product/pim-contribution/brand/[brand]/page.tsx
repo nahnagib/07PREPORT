@@ -1,26 +1,26 @@
 'use client';
 import { vh } from '../../../../../../lib/visualHelp';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import { AppHeader } from '../../../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../../../components/BottomNavBar';
+import { FilterBar } from '../../../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../../../components/AuthGuard';
-import { useFilterState } from '../../../../../../components/FilterProvider';
+import { useProductFilters } from '../../../../../../components/product/useProductFilters';
 import { ValidationStatusBar } from '../../../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../../../lib/format';
 import { useAuth } from '../../../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../../../lib/hooks';
-import { Button, Card, KpiTile, LoadingSkeleton, ErrorState, VisualInfoIcons } from '@07ps/ui';
+import { Card, DataGrid, KpiTile, LoadingSkeleton, ErrorState, VisualInfoIcons, type DataGridColumn } from '@07ps/ui';
 import {
   toProductFacts,
   fmtDate,
   fmtLYD,
   fmtNum,
   fmtPct,
-  fmtUomQty,
-  fmtVolume,
+  fmtUnits,
   filterByPageFilters,
   computeBrandStats,
   findPartnerBrandBySlug,
@@ -28,88 +28,68 @@ import {
   BCG_COLOR,
   MOVEMENT_COLOR,
   MOVEMENT_LABEL,
-  type CompanyFilter,
   type ProductFact,
 } from '../../../../../../lib/materialsAnalogy/shared';
-import { Pill, ProductName, ProductTooltip, SortableProductTable, TooltipRow, type SortableColumn } from '../../../../../../components/product/ProductUi';
+import { ProductName } from '../../../../../../components/product/ProductUi';
 
 const gpText = (v: number | null) => (v === null ? 'no cost' : `${v.toFixed(1)}%`);
 
-/** The brand's product table: sortable on every column, CSV raw numbers / PDF formatted text. */
-const PRODUCT_COLUMNS: SortableColumn<ProductFact>[] = [
-  { key: 'product', header: 'Product', value: (r) => r.ProductName, sortValue: (r) => r.ProductName, render: (r) => <ProductName name={r.ProductName} /> },
-  { key: 'company', header: 'Company', value: (r) => r.Company, sortValue: (r) => r.Company, render: (r) => r.Company },
-  { key: 'category', header: 'Category', value: (r) => r.Category, sortValue: (r) => r.Category, render: (r) => <ProductName name={r.Category ?? '—'} /> },
-  { key: 'volume', header: 'Volume', align: 'right', value: (r) => r.volume, text: (r) => fmtVolume(r), sortValue: (r) => r.volume, render: (r) => fmtVolume(r) },
-  { key: 'unit', header: 'Unit', value: (r) => r.uom, sortValue: (r) => r.uom, render: (r) => r.uom ?? '—' },
-  { key: 'revenue', header: 'Revenue', align: 'right', value: (r) => r.value, text: (r) => fmtLYD(r.value), sortValue: (r) => r.value, render: (r) => <span style={{ fontWeight: 600 }}>{fmtLYD(r.value)}</span> },
-  { key: 'gp', header: 'GP%', align: 'right', value: (r) => (r.grossProfitPct === null ? null : Math.round(r.grossProfitPct * 10) / 10), text: (r) => gpText(r.grossProfitPct), sortValue: (r) => r.grossProfitPct, render: (r) => gpText(r.grossProfitPct) },
-  { key: 'asp', header: 'ASP', align: 'right', value: (r) => r.avgUnitPrice, text: (r) => (r.avgUnitPrice === null ? '—' : fmtLYD(r.avgUnitPrice)), sortValue: (r) => r.avgUnitPrice, render: (r) => (r.avgUnitPrice === null ? '—' : fmtLYD(r.avgUnitPrice)) },
-  { key: 'lastSale', header: 'Last sale', value: (r) => r.lastSaleDate, text: (r) => fmtDate(r.lastSaleDate), sortValue: (r) => r.lastSaleDate, render: (r) => fmtDate(r.lastSaleDate) },
+type BrandRow = ProductFact & Record<string, unknown>;
+
+/** The brand's products in the app's standard grid (sort, search, column filters, pinning, paging, CSV / Excel / PDF,
+ * copy), volume first; the name opens the product in Odoo. */
+const PRODUCT_COLUMNS: DataGridColumn<BrandRow>[] = [
+  { key: 'ProductName', header: 'Product', width: 260, render: (r) => <ProductName name={r.ProductName} href={r.odooUrl} />, rawValue: (r) => r.ProductName },
+  { key: 'volume', header: 'Volume (Unit)', align: 'right', render: (r) => <span style={{ fontWeight: 600 }}>{fmtNum(r.volume)}</span>, rawValue: (r) => r.volume },
+  { key: 'uom', header: 'UoM', rawValue: (r) => r.uom ?? '' },
+  // a card can group several Odoo vendors (Saquer Gulf & Lotus Tile): each product's own main vendor
+  { key: 'Brand', header: 'Brand', rawValue: (r) => r.Brand ?? '' },
+  { key: 'Company', header: 'Company', rawValue: (r) => r.Company },
+  { key: 'Category', header: 'Category', render: (r) => <ProductName name={r.Category ?? '—'} />, rawValue: (r) => r.Category ?? '' },
+  { key: 'bcg_class_YTD', header: 'BCG Class', render: (r) => (r.bcg_class_YTD ? <span style={{ color: BCG_COLOR[r.bcg_class_YTD] ?? 'var(--ps-color-muted-text)', fontWeight: 700 }}>{r.bcg_class_YTD}</span> : '—'), rawValue: (r) => r.bcg_class_YTD ?? '' },
+  { key: 'bcg_movement', header: 'Movement', render: (r) => (r.bcg_movement ? <span style={{ color: MOVEMENT_COLOR[r.bcg_movement], fontWeight: 700 }}>{MOVEMENT_LABEL[r.bcg_movement]}</span> : '—'), rawValue: (r) => (r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : '') },
+  { key: 'value', header: 'Revenue', align: 'right', render: (r) => fmtLYD(r.value), rawValue: (r) => r.value },
+  { key: 'grossProfitPct', header: 'GP%', align: 'right', render: (r) => gpText(r.grossProfitPct), rawValue: (r) => (r.grossProfitPct === null ? '' : Math.round(r.grossProfitPct * 10) / 10), sortValue: (r) => r.grossProfitPct ?? Number.NEGATIVE_INFINITY },
+  { key: 'avgUnitPrice', header: 'ASP', align: 'right', render: (r) => (r.avgUnitPrice === null ? '—' : fmtLYD(r.avgUnitPrice)), rawValue: (r) => r.avgUnitPrice ?? '', sortValue: (r) => r.avgUnitPrice ?? Number.NEGATIVE_INFINITY },
+  { key: 'SKU', header: 'SKU', rawValue: (r) => r.SKU ?? '' },
+  { key: 'lastSaleDate', header: 'Last sale', render: (r) => fmtDate(r.lastSaleDate), rawValue: (r) => r.lastSaleDate ?? '' },
 ];
 
-function productTooltip(r: ProductFact) {
-  return (
-    <ProductTooltip
-      name={r.ProductName}
-      company={r.Company}
-      badges={
-        <>
-          {r.bcg_class_YTD && <Pill color={BCG_COLOR[r.bcg_class_YTD] ?? 'var(--ps-color-muted-text)'} label={r.bcg_class_YTD} />}
-          {r.bcg_movement && <Pill color={MOVEMENT_COLOR[r.bcg_movement]} label={MOVEMENT_LABEL[r.bcg_movement]} />}
-        </>
-      }
-    >
-      <TooltipRow label="Revenue (period)" value={fmtLYD(r.value)} />
-      <TooltipRow label="Volume (period)" value={fmtVolume(r)} />
-      <TooltipRow label="ASP" value={r.avgUnitPrice === null ? '—' : fmtLYD(r.avgUnitPrice)} />
-      <TooltipRow label="GP%" value={gpText(r.grossProfitPct)} />
-      <TooltipRow label="SKU" value={r.SKU ?? '—'} />
-    </ProductTooltip>
-  );
-}
-
 /**
- * Brand page (/product/pim-contribution/brand/[brand]) -- one partner brand: a header with its KPI tiles (Revenue,
- * vs same period LY, Volume in Unit, GP%, SKUs in catalogue, SKUs sold), then every product of the brand in a
- * sortable, searchable table (sticky header, CSV + PDF export). The Brand is the product's main vendor in Odoo,
- * matched case-insensitively on the brand's Odoo names (PARTNER_BRANDS). Company / Category / BCG Class come from the
- * PIM Contribution page through the URL; a brand sold by both companies gets its own Majaal / Tika switch. One row is
- * one Odoo product in one company.
+ * Brand page (/product/pim-contribution/brand/[brand]) -- one partner brand: a header with its KPI tiles (Volume in
+ * Unit, volume vs same period LY, Revenue, GP%, SKUs in catalogue, SKUs sold), then every product of the brand in a
+ * sortable, searchable table (sticky header, CSV + PDF export), highest volume first. The Brand is the product's main
+ * vendor in Odoo, matched case-insensitively on the brand's Odoo names (PARTNER_BRANDS). The FilterBar is the Product
+ * pages' one (company, Customer Group, channel, branch, salesperson, date range -- shared with PIM Contribution);
+ * Category / BCG Class come from the PIM Contribution page through the URL. One row is one Odoo product in one company.
  */
 export default function BrandPage() {
   const params = useParams<{ brand: string }>();
   const searchParams = useSearchParams();
   const { user, logout, token, error: authError, retryAuth } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
-  const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate } = useFilterState();
-  const [companyFilter, setCompanyFilter] = useState<string>('All');
+  const refresh = useRefreshStatus(token, authError, retryAuth);
+  const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate, scope, companyLabel, filterBarProps } = useProductFilters(refresh.data);
 
   const brandSlug = Array.isArray(params?.brand) ? params.brand[0] : params?.brand ?? '';
   const partnerBrand = findPartnerBrandBySlug(brandSlug);
 
   const urlFilters = useMemo(
     () => ({
-      company: (searchParams.get('company') ?? 'All') as CompanyFilter,
+      company: 'All' as const, // the company is the FilterBar's (applied by the API)
       category: searchParams.getAll('category'),
       bcgClass: searchParams.get('bcgClass') ?? 'All',
     }),
     [searchParams],
   );
 
-  const overview = useProductDashboard(token, authError, retryAuth, 'pim-contribution', { fromDate: dateFromDate, toDate: dateToDate, company: urlFilters.company });
-  const refresh = useRefreshStatus(token, authError, retryAuth);
+  const overview = useProductDashboard(token, authError, retryAuth, 'pim-contribution', scope);
   const filtered = useMemo(() => filterByPageFilters(toProductFacts(overview.data), urlFilters), [overview.data, urlFilters]);
   const brandRows = useMemo(() => (partnerBrand ? filtered.filter((r) => isBrandOf(partnerBrand, r)) : []), [filtered, partnerBrand]);
-  const companies = useMemo(() => [...new Set(brandRows.map((r) => r.Company))].sort(), [brandRows]);
-  const rows = useMemo(() => (companyFilter === 'All' ? brandRows : brandRows.filter((r) => r.Company === companyFilter)), [brandRows, companyFilter]);
+  const rows = brandRows;
   const stats = useMemo(() => computeBrandStats(rows).found.find((b) => b.requested === partnerBrand?.requested) ?? null, [rows, partnerBrand]);
 
-  const unitQty = stats?.volumeByUom.find((u) => u.uom === 'Unit')?.qty ?? 0;
-  const otherUnits = (stats?.volumeByUom ?? []).filter((u) => u.uom !== 'Unit');
-  const scopeLabel = [companyFilter !== 'All' ? companyFilter : urlFilters.company !== 'All' ? urlFilters.company : 'Majaal + Tika', ...urlFilters.category, urlFilters.bcgClass !== 'All' ? urlFilters.bcgClass : null]
-    .filter(Boolean)
-    .join(' · ');
+  const scopeLabel = [companyLabel, ...urlFilters.category, urlFilters.bcgClass !== 'All' ? urlFilters.bcgClass : null].filter(Boolean).join(' · ');
 
   return (
     <PermissionGuard pageKey="pim_contribution">
@@ -122,6 +102,8 @@ export default function BrandPage() {
           onLogout={logout}
           showDateInput={false}
         />
+
+        <FilterBar {...filterBarProps} />
 
         <ValidationStatusBar
           isStale={refresh.data?.isStale}
@@ -151,28 +133,24 @@ export default function BrandPage() {
               <div data-testid="brand-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 4 }}>
                   <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--ps-color-text)', margin: 0 }}>{partnerBrand.requested}</h1>
-                  {companies.length > 1 && (
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {['All', ...companies].map((c) => (
-                        <Button key={c} variant={companyFilter === c ? 'primary' : 'secondary'} style={{ padding: '4px 12px', fontSize: 12 }} onClick={() => setCompanyFilter(c)}>
-                          {c}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 16 }}>
-                  {scopeLabel} · {dateFromDate} to {dateToDate} · brand = main vendor in Odoo ({partnerBrand.odooNames[0]})
+                  {scopeLabel} · {dateFromDate} to {dateToDate} · brand = main vendor in Odoo ({partnerBrand.odooNames.join(' + ')})
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
-                  <KpiTile label="Revenue (period)" value={fmtLYD(stats?.revenue ?? 0)} status="neutral" />
+                  <KpiTile label="Volume (period)" value={fmtUnits(stats?.volume ?? 0)} status="neutral" />
                   <KpiTile
-                    label="vs same period LY"
-                    value={stats?.deltaPct === null || stats?.deltaPct === undefined ? '—' : fmtPct(stats.deltaPct)}
-                    variance={stats ? `LY ${fmtLYD(stats.revenuePrior)}` : undefined}
-                    status={stats?.deltaPct === null || stats?.deltaPct === undefined ? 'neutral' : stats.deltaPct >= 0 ? 'success' : 'alert'}
+                    label="Volume vs same period LY"
+                    value={stats?.volumeDeltaPct === null || stats?.volumeDeltaPct === undefined ? '—' : fmtPct(stats.volumeDeltaPct)}
+                    variance={stats ? `LY ${fmtUnits(stats.volumePrior)}` : undefined}
+                    status={stats?.volumeDeltaPct === null || stats?.volumeDeltaPct === undefined ? 'neutral' : stats.volumeDeltaPct >= 0 ? 'success' : 'alert'}
                   />
-                  <KpiTile label="Volume (Unit)" value={fmtNum(unitQty)} variance={otherUnits.length ? `+ ${fmtUomQty(otherUnits)}` : undefined} status="neutral" />
+                  <KpiTile
+                    label="Revenue (period)"
+                    value={fmtLYD(stats?.revenue ?? 0)}
+                    variance={stats?.deltaPct === null || stats?.deltaPct === undefined ? undefined : `${fmtPct(stats.deltaPct)} vs same period LY`}
+                    status="neutral"
+                  />
                   <KpiTile label="GP%" value={stats?.gp === null || stats?.gp === undefined ? '—' : `${stats.gp.toFixed(1)}%`} variance="revenue-weighted, costed products" status="neutral" />
                   <KpiTile label="SKUs in catalogue" value={String(stats?.skuCount ?? 0)} status="neutral" />
                   <KpiTile label="SKUs sold (period)" value={String(stats?.skuSold ?? 0)} status="neutral" />
@@ -183,18 +161,15 @@ export default function BrandPage() {
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 8 }}>
                   Products <VisualInfoIcons title="Products" {...vh('product.pimContribution.brandProducts')} />
                 </div>
-                <SortableProductTable
-                  testId="brand-product-table"
-                  columns={PRODUCT_COLUMNS}
-                  rows={rows}
-                  getRowId={(r) => r.id}
-                  searchText={(r) => `${r.ProductName} ${r.SKU ?? ''}`}
-                  defaultSort={{ key: 'revenue', dir: 'desc' }}
-                  fileName={`brand-${brandSlug}-products`}
-                  pdfTitle={`Brand: ${partnerBrand.requested} — products`}
-                  pdfSubtitle={`${scopeLabel} · ${dateFromDate} to ${dateToDate}`}
-                  rowTooltip={productTooltip}
-                />
+                <div data-testid="brand-product-table">
+                  <DataGrid
+                    columns={PRODUCT_COLUMNS}
+                    rows={[...rows].sort((a, b) => b.volume - a.volume) as BrandRow[]}
+                    getRowId={(r) => r.id}
+                    fileName={`brand-${brandSlug}-products`}
+                    filtersSummary={`Brand: ${partnerBrand.requested} · ${scopeLabel} · ${dateFromDate} to ${dateToDate}`}
+                  />
+                </div>
               </Card>
             </>
           )}

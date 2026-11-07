@@ -52,6 +52,12 @@ export interface GaugeProps {
    * left edge, so the caller prints the real number. Omitted = the Target x0.5..x1.5 behaviour, unchanged.
    */
   bands?: { min: number; max: number; yellowFrom: number; greenFrom: number };
+  /**
+   * With `bands`: a measure where LOWER is better (e.g. ISR, Inventory to Sales Ratio). The two boundaries keep their
+   * place (yellowFrom = end of the first zone, greenFrom = start of the last zone) but the colours are reversed:
+   * min..yellowFrom green, yellowFrom..greenFrom yellow, greenFrom..max red. Default false (unchanged).
+   */
+  invertBands?: boolean;
 }
 
 const zoneColorVar: Record<'red' | 'yellow' | 'green', string> = {
@@ -138,6 +144,7 @@ export function Gauge({
   targetLabel,
   showValueLabel = true,
   bands,
+  invertBands = false,
 }: GaugeProps) {
   const cx = 100;
   const cy = 100;
@@ -210,7 +217,7 @@ export function Gauge({
           <path
             d={describeArc(cx, cy, r, 180, valueToAngle(yellowFloor, scaleMin, scaleMax))}
             fill="none"
-            stroke={zoneColorVar.red}
+            stroke={invertBands && bands ? zoneColorVar.green : zoneColorVar.red}
             strokeWidth={trackWidth}
             strokeLinecap="round"
           />
@@ -231,7 +238,7 @@ export function Gauge({
           <path
             d={describeArc(cx, cy, r, valueToAngle(greenFloor, scaleMin, scaleMax), 0)}
             fill="none"
-            stroke={zoneColorVar.green}
+            stroke={invertBands && bands ? zoneColorVar.red : zoneColorVar.green}
             strokeWidth={trackWidth}
             strokeLinecap="round"
           />

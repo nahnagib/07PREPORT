@@ -10,6 +10,7 @@
  *   - useHoverTooltip: a viewport-anchored hover tooltip (never clipped by a scrolling table).
  */
 import React, { useMemo, useState } from 'react';
+import { OdooLink } from '../OdooLink';
 import {
   TextInput,
   exportRowsAsCsv,
@@ -31,7 +32,9 @@ export function ltrLabel(name: string | null | undefined): string {
   return `${isolate}${text}\u2069`;
 }
 
-export function ProductName({ name, truncate = true, style }: { name: string; truncate?: boolean; style?: React.CSSProperties }) {
+/** A product name; with `href` (ProductFact.odooUrl) it opens the product in Odoo in a new tab (OdooLink, same as the
+ * Promotion / Debt pages). */
+export function ProductName({ name, truncate = true, style, href }: { name: string; truncate?: boolean; style?: React.CSSProperties; href?: string | null }) {
   return (
     <span
       dir="ltr"
@@ -45,7 +48,7 @@ export function ProductName({ name, truncate = true, style }: { name: string; tr
         ...style,
       }}
     >
-      {ltrLabel(name)}
+      {href ? <OdooLink href={href}>{ltrLabel(name)}</OdooLink> : ltrLabel(name)}
     </span>
   );
 }

@@ -79,6 +79,11 @@ class Settings:
     def blocked_customers_path(self) -> Path:
         return self.input_dir / "BlockedCustomers.xlsx"
 
+    @property
+    def product_exclusions_path(self) -> Path:
+        """Optional: customers / categories / products left out of the Product pages (sales_pipeline.product_exclusions)."""
+        return self.input_dir / "ProductExclusions.xlsx"
+
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
         load_dotenv(env_file)

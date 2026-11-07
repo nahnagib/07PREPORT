@@ -7,7 +7,7 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useAuth } from '../../../../lib/AuthProvider';
-import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
+import { useProductFilters } from '../../../../components/product/useProductFilters';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../lib/format';
@@ -30,14 +30,20 @@ import {
   fmtLYD,
   fmtNum,
   fmtPct,
+  fmtUnits,
   sum,
   BCG_COLOR,
+  MOVEMENTS,
   MOVEMENT_COLOR,
   MOVEMENT_LABEL,
   UNCLASSIFIED_NO_COST,
-  isProductPageCompany,
+  bcgThresholds,
+  bcgClassDefinition,
+  movementRule,
+  bcgClassRule,
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
+import type { BcgMovement } from '../../../../lib/api';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
 import {
   CompanyBadge,
@@ -58,11 +64,10 @@ const getDisplayName = (r: ProductFact) => r.ProductName;
 const fmtGp = (v: number | null) => (v === null ? 'no cost' : `${v.toFixed(1)}%`);
 
 const BCG_CLASSES = ['Stars', 'Cash Cows', 'Strategic', 'Dogs'] as const;
-const MOVEMENTS = ['New', 'Stable', 'Improved', 'Declined', 'Lost'] as const;
-/** How many top-by-revenue bubbles each matrix cell (Section 1) plots -- see ClassifiedBcgFact
+/** How many top-by-volume products each matrix cell (Section 1) lists -- see ClassifiedBcgFact
  * below for why this stays a fixed, small number instead of the full class. */
 const MATRIX_CELL_TOP_N = 10;
-/** Same top-N-preview/full-list-export split as MATRIX_CELL_TOP_N, for the Portfolio Movement
+/** Same top-N-preview/full-list-export split as MATRIX_CELL_TOP_N, for the Product Movement
  * drill-down (Section 3) -- a bit larger since the drilled-in view is one standalone wide panel,
  * not one of 4 small 2x2 grid cells. */
 const MOVEMENT_DRILL_TOP_N = 20;
@@ -96,9 +101,11 @@ interface TableRow extends BcgFact, Record<string, unknown> {
   displayName: string;
 }
 
+/** Volume growth YTD vs LYTD; no LYTD volume = "New" for a new product, "—" otherwise. */
+const growthText = (r: BcgFact) => (r.quantity_growth_pct !== null ? fmtPct(r.quantity_growth_pct) : r.bcg_movement === 'New' ? 'New' : '—');
 /** One export shape for every product list on this page (each class panel, the movement drill-down and the whole
- * matrix): the CSV gets raw numbers, the PDF the formatted text. Company is its own column (one company per product). */
-const growthText = (r: BcgFact) => (r.bcg_movement === 'Lost' ? '—' : r.quantity_growth_pct === null ? 'New' : fmtPct(r.quantity_growth_pct));
+ * matrix): the CSV gets raw numbers, the PDF the formatted text. Company is its own column (one company per product).
+ * Volume first: the page is based on volume; revenue is secondary. */
 const PRODUCT_EXPORT_COLUMNS: ExportColumn<BcgFact>[] = [
   { header: 'Product Name', value: (r) => getDisplayName(r) },
   { header: 'Company', value: (r) => r.Company },
@@ -106,12 +113,13 @@ const PRODUCT_EXPORT_COLUMNS: ExportColumn<BcgFact>[] = [
   { header: 'Category', value: (r) => r.Category },
   { header: 'BCG Class', value: (r) => r.bcg_class_YTD, text: (r) => r.bcg_class_YTD ?? '—' },
   { header: 'Movement', value: (r) => (r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : null), text: (r) => (r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : '—') },
+  { header: 'Volume YTD (Unit)', align: 'right', value: (r) => r.total_quantity_YTD, text: (r) => fmtNum(r.total_quantity_YTD) },
+  { header: 'Volume LYTD (Unit)', align: 'right', value: (r) => r.total_quantity_LYTD, text: (r) => fmtNum(r.total_quantity_LYTD) },
+  { header: 'Vol Growth %', align: 'right', value: (r) => r.quantity_growth_pct, text: growthText },
+  { header: 'GP%', align: 'right', value: (r) => r.perc_gross_profit_YTD, text: (r) => fmtGp(r.perc_gross_profit_YTD) },
   { header: 'Revenue YTD (LYD)', align: 'right', value: (r) => r.total_value_YTD, text: (r) => fmtLYD(r.total_value_YTD) },
   { header: 'Revenue LYTD (LYD)', align: 'right', value: (r) => r.total_value_LYTD, text: (r) => fmtLYD(r.total_value_LYTD) },
-  { header: 'Volume YTD', align: 'right', value: (r) => r.total_quantity_YTD, text: (r) => fmtNum(r.total_quantity_YTD) },
   { header: 'ASP (LYD)', align: 'right', value: (r) => r.avg_unit_price_YTD, text: (r) => fmtLYD(r.avg_unit_price_YTD) },
-  { header: 'GP%', align: 'right', value: (r) => r.perc_gross_profit_YTD, text: (r) => fmtGp(r.perc_gross_profit_YTD) },
-  { header: 'Vol Growth %', align: 'right', value: (r) => (r.bcg_movement === 'Lost' ? null : r.quantity_growth_pct), text: growthText },
 ];
 
 function exportProducts(kind: 'csv' | 'pdf', title: string, subtitle: string, fileName: string, rows: BcgFact[]) {
@@ -132,61 +140,28 @@ function exportProducts(kind: 'csv' | 'pdf', title: string, subtitle: string, fi
  * Contribution/Product Lifecycle are still on synthetic data, so this page is the one exception.
  */
 export default function BcgMatrixPage() {
-  const { user, isSalesperson, token, error: authError, retryAuth, logout } = useAuth();
+  const { user, token, error: authError, retryAuth, logout } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
-  // Section 4: Customer Group/Distribution Channel/Branch/Salesperson + date range now come from
-  // the same app-wide FilterProvider every other "full filter bar" report page already reads
-  // (Tachometer, Customer Growth, Pipeline Health, ...), not page-local state -- this is what
-  // "same component, same fields, same layout" actually means: the filter *state* is shared
-  // app-wide too, so a Salesperson selected on another page carries over here, same as it already
-  // does between any two of those other pages today. Company/Category/BCG Class stay this page's
-  // own local pills below (unaffected, unchanged) -- `effectiveFilters.companyKeys` is never read.
-  const { effectiveFilters, anchorDate, dateFromDate, dateToDate, onFiltersChange, onAnchorDateChange, onDateRangeChange } =
-    useFilterState();
-  const filterOptions = useScopedFilterOptions();
-
-  // Confirmed with the project owner (see BcgProductScope's header in
-  // backend/src/measures/productDashboard.ts): these 4 dimensions + the date range narrow WHICH
-  // already-classified products come back (Fact_SalesLines product-set membership), they never
-  // reclassify a product's quadrant against the filtered subset's own volume, and the date range
-  // never redefines what "YTD"/"LYTD" means -- every number stays real calendar YTD vs LYTD.
-  // Athena is not on the Product pages: never offered in the company filter, never a selected company here.
-  const productBusinessUnits = useMemo(() => (filterOptions.businessUnits.data ?? []).filter((u) => isProductPageCompany(String(u.company_name))), [filterOptions.businessUnits.data]);
-  const filterOptionsCompanies = productBusinessUnits;
-  const selectedCompanyNames = useMemo(() => {
-    const businessUnits = filterOptionsCompanies ?? [];
-    const keys = new Set((effectiveFilters.companyKeys ?? []).map(String));
-    return new Set(
-      businessUnits.filter((u) => keys.has(String(u.company_key))).map((u) => String(u.company_name)),
-    );
-  }, [filterOptionsCompanies, effectiveFilters.companyKeys]);
-  // One company selected = that company's view; none or both = every company's products side by side (one row per
-  // Odoo product per company -- never combined across companies).
-  const companyView = selectedCompanyNames.size === 1 ? [...selectedCompanyNames][0] : undefined;
-  const bcgScope = useMemo(
-    () => ({
-      company: companyView,
-      segmentKeys: effectiveFilters.segmentKeys,
-      channelKeys: effectiveFilters.channelKeys,
-      salesTeamKeys: effectiveFilters.salesTeamKeys,
-      salespersonKeys: effectiveFilters.salespersonKeys,
-      fromDate: dateFromDate,
-      toDate: dateToDate,
-    }),
-    [companyView, effectiveFilters, dateFromDate, dateToDate],
-  );
-  const overview = useProductDashboard(token, authError, retryAuth, 'bcg-matrix', bcgScope);
+  // The Product pages' FilterBar (useProductFilters): company, Customer Group (B2B + B2C default), channel, branch,
+  // salesperson and date range from the app-wide FilterProvider. They narrow which products come back and the
+  // Volume / Revenue YTD and LYTD figures; they never reclassify a product's quadrant or movement (company-wide), and
+  // the date range never redefines what "YTD"/"LYTD" means -- every BCG number stays calendar YTD vs LYTD.
   const refresh = useRefreshStatus(token, authError, retryAuth);
+  const { anchorDate, onAnchorDateChange, scope: bcgScope, companyLabel, filterBarProps } = useProductFilters(refresh.data);
+  const overview = useProductDashboard(token, authError, retryAuth, 'bcg-matrix', bcgScope);
   const allFacts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   // Narrowed to rows with a real YTD class right at the source -- see ClassifiedBcgFact's comment.
   // `discontinuedFacts` (real LYTD sales, zero YTD activity) stays a separate array: it has no
-  // meaningful YTD class to plot into a quadrant, but it's still a first-class part of Portfolio
+  // meaningful YTD class to plot into a quadrant, but it's still a first-class part of Product
   // Movement and the Product Detail table (see `discontinued`/`filteredDiscontinued` below).
   // Quadrant rows: one of the 4 classes and not a packaging/raw-material category. Products sold this
   // year without a standard cost are "Unclassified (no cost)" -- counted, never put in a quadrant.
   const facts = useMemo<ClassifiedBcgFact[]>(() => allFacts.filter((r) => isBcgClassified(r)) as ClassifiedBcgFact[], [allFacts]);
-  const discontinued = useMemo(() => allFacts.filter((r) => !r.bcgExcludedCategory && r.bcg_movement === 'Lost'), [allFacts]);
+  // Every product with a movement (sold YTD or LYTD), class or not: a Discontinued (archived) product may still have a
+  // YTD class, a Drop product that sold nothing this year has none.
+  const movementRows = useMemo(() => allFacts.filter((r) => !r.bcgExcludedCategory && r.bcg_movement !== null), [allFacts]);
   const noCostRows = useMemo(() => allFacts.filter((r) => !r.bcgExcludedCategory && r.bcg_class_YTD === UNCLASSIFIED_NO_COST), [allFacts]);
+  const thresholds = useMemo(() => bcgThresholds(overview.data?.thresholds), [overview.data?.thresholds]);
 
   // Company is now the FilterBar's own built-in dropdown (showCompanyDimension, below) instead of
   // this page's local pill toggle -- same numeric companyKeys/businessUnits dimension every other
@@ -194,97 +169,72 @@ export default function BcgMatrixPage() {
   // position (immediately after To Date, before Customer Group -- that's just where FilterBar's
   // own JSX already renders showCompanyDimension, no custom placement needed). fact_bcgmatrix's
   // `Company` column is a name string ('Majaal'/'Tika'), not the numeric key, so the selected
-  // keys are translated via businessUnits (selectedCompanyNames, above) and sent as the API's company
+  // keys are translated via businessUnits (useProductFilters) and sent as the API's company
   // view; the rows that come back are already that company's (or every company's, side by side).
   const filtered = facts;
-  const filteredDiscontinued = discontinued;
 
-  // ---- KPI row + Section 1 matrix cells: one entry per BCG class, count + Revenue YTD + delta vs
-  // LYTD + the cell's own top-10-by-revenue bubble points. A single computation feeds both the KPI
+  // ---- KPI row + Section 1 matrix cells: one entry per BCG class, count + Volume YTD + delta vs
+  // LYTD + the cell's own top-10-by-volume list. A single computation feeds both the KPI
   // card and its matching matrix cell so the two can never disagree about a class's total count. ----
   const classStats = useMemo(
     () =>
       CLASS_META.map((m) => {
         const rows = filtered.filter((r) => r.bcg_class_YTD === m.key);
+        const volumeYTD = sum(rows, (r) => r.total_quantity_YTD);
+        const volumeLYTD = sum(rows, (r) => r.total_quantity_LYTD);
         const valueYTD = sum(rows, (r) => r.total_value_YTD);
-        const valueLYTD = sum(rows, (r) => r.total_value_LYTD);
-        const deltaPct = valueLYTD > 0 ? ((valueYTD - valueLYTD) / valueLYTD) * 100 : 0;
+        const deltaPct = volumeLYTD > 0 ? ((volumeYTD - volumeLYTD) / volumeLYTD) * 100 : null;
 
-        // Top N by revenue -- a direct ranked list now (revision 5), not a scatter: at 10 points
-        // max, most cells (all but Strategic/Dogs) were mostly-empty axis space with a few tiny
-        // unlabeled dots, requiring a hover just to learn what anything was. `barPct` anchors each
-        // row's size indicator at 0 (bar width = revenue / this cell's own top-of-list revenue),
+        // Top N by volume (YTD quantity, added up as Unit) -- a direct ranked list (revision 5), not a scatter: at 10
+        // points max, most cells were mostly-empty axis space with a few tiny unlabeled dots, requiring a hover just
+        // to learn what anything was. `barPct` anchors each row's size indicator at 0 (bar width = volume / this
+        // cell's own top-of-list volume),
         // not a min-max stretch -- min-max would make even the smallest of the top 10 read as a
         // sizeable bar, misrepresenting how much smaller it actually is than #1 in the same cell.
         // `allSorted` is the FULL class list in the same order, kept around (not just the top-10
         // slice) so this panel's PDF export can ship every product in the class, not the 10-item
         // on-screen preview (see MatrixCell's onExportPdf).
-        const allSorted = [...rows].sort((a, b) => b.total_value_YTD - a.total_value_YTD);
+        const allSorted = byVolume(rows);
         const top = allSorted.slice(0, MATRIX_CELL_TOP_N);
-        const maxRev = Math.max(1, ...top.map((r) => r.total_value_YTD));
-        const listRows: MatrixListRow[] = top.map((r, i) => ({
-          id: `${r.id}-${i}`,
-          label: getDisplayName(r),
-          revenueYTD: r.total_value_YTD,
-          volumeYTD: r.total_quantity_YTD,
-          barPct: (r.total_value_YTD / maxRev) * 100,
-          fact: r,
-        }));
+        const listRows = toListRows(top);
 
-        return { ...m, count: rows.length, valueYTD, deltaPct, listRows, allSorted, moreCount: Math.max(0, rows.length - top.length) };
+        return { ...m, count: rows.length, volumeYTD, valueYTD, deltaPct, listRows, allSorted, moreCount: Math.max(0, rows.length - top.length) };
       }),
     [filtered],
   );
 
-  // ---- Portfolio Movement donut -- 5 categories now (New/Stable/Improved/Drop/Discontinued, see
-  // MOVEMENT_LABEL for the Drop/Discontinued rename). Every `filtered` row's own bcg_movement
-  // covers the first 4; the 5th (Discontinued) comes from filteredDiscontinued's *count*, not from
-  // filtering `filtered` for movement 'Lost' -- discontinued rows were never in `filtered` to begin
-  // with (they have no YTD class), so that filter would always read 0 otherwise. ----
+  // ---- Product Movement donut: New / Stable / Improved / Drop / Discontinued by SKU count, from the ETL's volume
+  // rule (QtyYTD vs QtyLYTD, company-wide; Discontinued = archived in Odoo). Every product with a movement counts,
+  // with or without a YTD class. ----
   const movementSegments: DonutSegment[] = MOVEMENTS.map((mv) => ({
     id: mv,
     label: MOVEMENT_LABEL[mv],
-    value: mv === 'Lost' ? filteredDiscontinued.length : filtered.filter((r) => r.bcg_movement === mv).length,
+    value: movementRows.filter((r) => r.bcg_movement === mv).length,
     color: MOVEMENT_COLOR[mv],
   })).filter((s) => s.value > 0);
 
-  // ---- Portfolio Movement drill-down (Section 3): clicking a slice shows that movement
-  // category's own ranked product list -- same top-N-on-screen/full-list-in-PDF-export pattern as
-  // the Section 1 matrix panels, same RankedProductList component. 'Lost' (Discontinued) draws
-  // from `filteredDiscontinued` directly, not from filtering `filtered` for movement==='Lost' --
-  // discontinued rows were never in `filtered` to begin with (see movementSegments' own comment
-  // above), so that filter would always return 0 rows for this drill-down too. This is exactly the
-  // data-scope question flagged earlier: confirmed live below (filteredDiscontinued has real rows
-  // whenever the dataset has discontinued products, which it does -- see the earlier investigation
-  // that found 385 of them via bcg_movement='Lost'). ----
-  const [movementDrill, setMovementDrill] = useState<(typeof MOVEMENTS)[number] | null>(null);
+  // ---- Product Movement drill-down: clicking a slice lists that movement's products, top N by Volume YTD on screen
+  // (Volume LYTD for Drop / Discontinued, where this year's volume can be 0), the full list in the CSV / PDF. ----
+  const [movementDrill, setMovementDrill] = useState<BcgMovement | null>(null);
   const movementDrillData = useMemo(() => {
     if (!movementDrill) return null;
-    const source = movementDrill === 'Lost' ? filteredDiscontinued : filtered.filter((r) => r.bcg_movement === movementDrill);
-    const allSorted = [...source].sort((a, b) => b.total_value_YTD - a.total_value_YTD);
+    const source = movementRows.filter((r) => r.bcg_movement === movementDrill);
+    const lastYear = movementDrill === 'Drop' || movementDrill === 'Discontinued';
+    const allSorted = lastYear ? [...source].sort((a, b) => b.total_quantity_LYTD - a.total_quantity_LYTD) : byVolume(source);
     const top = allSorted.slice(0, MOVEMENT_DRILL_TOP_N);
-    const maxRev = Math.max(1, ...top.map((r) => r.total_value_YTD));
-    const listRows: MatrixListRow[] = top.map((r, i) => ({
-      id: `${r.id}-${i}`,
-      label: getDisplayName(r),
-      revenueYTD: r.total_value_YTD,
-      volumeYTD: r.total_quantity_YTD,
-      barPct: (r.total_value_YTD / maxRev) * 100,
-      fact: r,
-    }));
-    return { listRows, allSorted, moreCount: Math.max(0, allSorted.length - top.length) };
-  }, [movementDrill, filtered, filteredDiscontinued]);
+    return { listRows: toListRows(top, lastYear), allSorted, moreCount: Math.max(0, allSorted.length - top.length), lastYear };
+  }, [movementDrill, movementRows]);
 
   const exportMovement = (kind: 'csv' | 'pdf') => {
     if (!movementDrill || !movementDrillData) return;
     const n = movementDrillData.allSorted.length;
-    return exportProducts(kind, 'Portfolio Movement', `${MOVEMENT_LABEL[movementDrill]} — ${n} product${n === 1 ? '' : 's'}`, `bcg-matrix-movement-${movementDrill.toLowerCase()}`, movementDrillData.allSorted);
+    return exportProducts(kind, 'Product Movement', `${MOVEMENT_LABEL[movementDrill]} — ${n} product${n === 1 ? '' : 's'}`, `bcg-matrix-product-movement-${movementDrill.toLowerCase()}`, movementDrillData.allSorted);
   };
 
-  // Whole matrix: every classified product, class by class (Stars, Cash Cows, Strategic, Dogs), highest revenue first.
+  // Whole matrix: every classified product, class by class (Stars, Cash Cows, Strategic, Dogs), highest volume first.
   const matrixRows = classStats.flatMap((s) => s.allSorted);
   const exportMatrix = (kind: 'csv' | 'pdf') =>
-    exportProducts(kind, 'BCG Matrix', `All classes — ${matrixRows.length} products · ${selectedCompanyNames.size ? [...selectedCompanyNames].join(', ') : 'Majaal + Tika'}`, 'bcg-matrix-all-classes', matrixRows);
+    exportProducts(kind, 'BCG Matrix', `All classes — ${matrixRows.length} products · ${companyLabel}`, 'bcg-matrix-all-classes', matrixRows);
 
   // ---- Product Detail table -- includes discontinued products now (their BCG Class column reads
   // "—", not a stale prior-year class; their Movement column reads "Discontinued" via
@@ -293,14 +243,41 @@ export default function BcgMatrixPage() {
   // here, so there's exactly one way to change what's displayed, not two that could drift out of
   // sync. ----
   const filteredNoCost = noCostRows;
-  const tableRows: TableRow[] = [...filtered, ...filteredNoCost, ...filteredDiscontinued].map((r, i) => ({
+  // Each product once: classified, no cost, or only a movement (sold last year, nothing this year).
+  const tableFacts = [...new Map([...filtered, ...filteredNoCost, ...movementRows].map((r) => [r.id, r])).values()];
+  const tableRows: TableRow[] = byVolume(tableFacts).map((r, i) => ({
     ...r,
     id: `${r.id}-${i}`,
     displayName: getDisplayName(r),
   }));
 
   const columns: DataGridColumn<TableRow>[] = [
-    { key: 'displayName', header: 'Product Name', width: 240, render: (row) => <ProductName name={row.displayName} />, rawValue: (row) => row.displayName },
+    // volume first (the page is based on volume), then the product's attributes, then GP% and revenue
+    { key: 'displayName', header: 'Product Name', width: 240, render: (row) => <ProductName name={row.displayName} href={row.odooUrl} />, rawValue: (row) => row.displayName },
+    { key: 'total_quantity_YTD', header: 'Volume YTD', align: 'right', render: (row) => <strong>{fmtNum(row.total_quantity_YTD)}</strong>, rawValue: (row) => row.total_quantity_YTD },
+    { key: 'total_quantity_LYTD', header: 'Volume LYTD', align: 'right', render: (row) => fmtNum(row.total_quantity_LYTD), rawValue: (row) => row.total_quantity_LYTD },
+    {
+      key: 'quantity_growth_pct',
+      header: 'Vol Growth',
+      align: 'right',
+      // Null means no LYTD baseline to compare against (a new product), not 0% -- see
+      // backend/src/measures/productDashboard.ts's header note. Sorts/exports as -Infinity so
+      // "no baseline" rows fall to one end instead of masquerading as the lowest real growth.
+      // A discontinued row is ALSO null here (no YTD volume to divide by either) -- that's a
+      // completely different situation from "New" (nothing to compare vs. nothing left to sell),
+      // so it's checked first and labeled distinctly rather than folding into the "New" branch.
+      rawValue: (row) => row.quantity_growth_pct ?? Number.NEGATIVE_INFINITY,
+      render: (row) =>
+        row.quantity_growth_pct === null ? (
+          <span title={`Volume YTD: ${fmtNum(row.total_quantity_YTD)} · No LYTD volume to compare against`} style={{ color: 'var(--ps-color-muted-text)', fontWeight: 700 }}>
+            {growthText(row)}
+          </span>
+        ) : (
+          <span title={`Volume YTD: ${fmtNum(row.total_quantity_YTD)} · Volume LYTD: ${fmtNum(row.total_quantity_LYTD)}`} style={{ color: row.quantity_growth_pct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)', fontWeight: 700 }}>
+            {fmtPct(row.quantity_growth_pct)}
+          </span>
+        ),
+    },
     { key: 'Company', header: 'Company', render: (row) => row.Company, rawValue: (row) => row.Company },
     // Category no longer has a global filter pill on this page (Section 2 simplification) -- kept
     // reachable via this column's own per-column filter instead (DataGrid supports this on every
@@ -326,35 +303,10 @@ export default function BcgMatrixPage() {
         </span>
       ),
     },
+    { key: 'perc_gross_profit_YTD', header: 'GP%', align: 'right', render: (row) => fmtGp(row.perc_gross_profit_YTD), rawValue: (row) => row.perc_gross_profit_YTD ?? Number.NEGATIVE_INFINITY },
     { key: 'total_value_YTD', header: 'Revenue YTD', align: 'right', render: (row) => fmtLYD(row.total_value_YTD), rawValue: (row) => row.total_value_YTD },
     { key: 'total_value_LYTD', header: 'Revenue LYTD', align: 'right', render: (row) => fmtLYD(row.total_value_LYTD), rawValue: (row) => row.total_value_LYTD },
-    { key: 'total_quantity_YTD', header: 'Volume YTD', align: 'right', render: (row) => fmtNum(row.total_quantity_YTD), rawValue: (row) => row.total_quantity_YTD },
     { key: 'avg_unit_price_YTD', header: 'ASP', align: 'right', render: (row) => fmtLYD(row.avg_unit_price_YTD), rawValue: (row) => row.avg_unit_price_YTD ?? Number.NEGATIVE_INFINITY },
-    { key: 'perc_gross_profit_YTD', header: 'GP%', align: 'right', render: (row) => fmtGp(row.perc_gross_profit_YTD), rawValue: (row) => row.perc_gross_profit_YTD ?? Number.NEGATIVE_INFINITY },
-    {
-      key: 'quantity_growth_pct',
-      header: 'Vol Growth',
-      align: 'right',
-      // Null means no LYTD baseline to compare against (a new product), not 0% -- see
-      // backend/src/measures/productDashboard.ts's header note. Sorts/exports as -Infinity so
-      // "no baseline" rows fall to one end instead of masquerading as the lowest real growth.
-      // A discontinued row is ALSO null here (no YTD volume to divide by either) -- that's a
-      // completely different situation from "New" (nothing to compare vs. nothing left to sell),
-      // so it's checked first and labeled distinctly rather than folding into the "New" branch.
-      rawValue: (row) => row.quantity_growth_pct ?? Number.NEGATIVE_INFINITY,
-      render: (row) =>
-        row.bcg_movement === 'Lost' ? (
-          <span title="Discontinued -- no YTD volume to compare against" style={{ color: 'var(--ps-color-muted-text)' }}>—</span>
-        ) : row.quantity_growth_pct === null ? (
-          <span title={`Volume YTD: ${fmtNum(row.total_quantity_YTD)} · No LYTD volume to compare against`} style={{ color: 'var(--ps-color-muted-text)', fontWeight: 700 }}>
-            New
-          </span>
-        ) : (
-          <span title={`Volume YTD: ${fmtNum(row.total_quantity_YTD)} · Volume LYTD: ${fmtNum(row.total_quantity_LYTD)}`} style={{ color: row.quantity_growth_pct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)', fontWeight: 700 }}>
-            {fmtPct(row.quantity_growth_pct)}
-          </span>
-        ),
-    },
   ];
 
   // ---- Row tooltip: full 7-field detail (Class, Revenue YTD, Volume YTD, ASP, GP%, Vol Growth,
@@ -375,15 +327,16 @@ export default function BcgMatrixPage() {
         </>
       }
     >
-      <TooltipRow label="Revenue YTD" value={fmtLYD(r.total_value_YTD)} />
-      <TooltipRow label="Volume YTD" value={fmtNum(r.total_quantity_YTD)} />
-      <TooltipRow label="ASP" value={fmtLYD(r.avg_unit_price_YTD)} />
-      <TooltipRow label="GP%" value={fmtGp(r.perc_gross_profit_YTD)} />
+      <TooltipRow label="Volume YTD" value={fmtUnits(r.total_quantity_YTD)} />
+      <TooltipRow label="Volume LYTD" value={fmtUnits(r.total_quantity_LYTD)} />
       <TooltipRow
         label="Vol Growth"
-        value={r.quantity_growth_pct === null ? 'New' : fmtPct(r.quantity_growth_pct)}
+        value={growthText(r)}
         valueColor={r.quantity_growth_pct === null ? 'var(--ps-color-muted-text)' : r.quantity_growth_pct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)'}
       />
+      <TooltipRow label="GP%" value={fmtGp(r.perc_gross_profit_YTD)} />
+      <TooltipRow label="Revenue YTD" value={fmtLYD(r.total_value_YTD)} />
+      <TooltipRow label="ASP" value={fmtLYD(r.avg_unit_price_YTD)} />
     </ProductTooltip>
   );
 
@@ -398,23 +351,7 @@ export default function BcgMatrixPage() {
           showDateInput={false}
         />
 
-        <FilterBar
-          filters={effectiveFilters}
-          onChange={onFiltersChange}
-          dateFromDate={dateFromDate}
-          dateToDate={dateToDate}
-          onDateRangeChange={onDateRangeChange}
-          businessUnits={productBusinessUnits}
-          customerGroups={filterOptions.customerGroups.data ?? []}
-          distributionChannels={filterOptions.distributionChannels.data ?? []}
-          branches={filterOptions.branches.data ?? []}
-          salespersons={filterOptions.salespersons.data ?? []}
-          isSalesperson={isSalesperson}
-          showDateRange
-          showCompanyDimension
-          showTransactionDimensions
-          showLastOrderInfo={false}
-        />
+        <FilterBar {...filterBarProps} />
 
         <ValidationStatusBar
           isStale={refresh.data?.isStale}
@@ -443,7 +380,7 @@ export default function BcgMatrixPage() {
                   key={s.key}
                   label="Products"
                   value={String(s.count)}
-                  variance={`${fmtLYD(s.valueYTD)} · ${fmtPct(s.deltaPct)} vs LYTD`}
+                  variance={`${fmtUnits(s.volumeYTD)} · ${s.deltaPct === null ? 'no LYTD volume' : `${fmtPct(s.deltaPct)} vs LYTD`} · ${fmtLYD(s.valueYTD)}`}
                   status={s.status}
                   icon={s.icon}
                   accentColor={BCG_COLOR[s.key]}
@@ -464,12 +401,14 @@ export default function BcgMatrixPage() {
               as the old bubble tooltip (see rowTooltipContent above). */}
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 2 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', flex: 1 }}>BCG Matrix <VisualInfoIcons title="BCG Matrix" {...vh('product.bcgMatrix.matrix')} /></div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)', flex: 1 }}>
+                BCG Matrix <VisualInfoIcons title="BCG Matrix" {...withFormula(vh('product.bcgMatrix.matrix'), bcgClassRule(thresholds))} />
+              </div>
               {!overview.loading && !overview.error && <ExportButtons label="the whole BCG matrix" onCsv={() => exportMatrix('csv')} onPdf={() => exportMatrix('pdf')} />}
             </div>
             <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
-              Top {MATRIX_CELL_TOP_N} products per class by Revenue YTD · bar length = revenue relative to that class&apos;s own top product · hover a row for Volume/ASP/GP%/Vol Growth/Movement · {filtered.length} products classified
-              {filteredNoCost.length > 0 ? ` · ${filteredNoCost.length} sold this year without a standard cost in Odoo are "${UNCLASSIFIED_NO_COST}" (listed in Product Detail and the data-quality log)` : ''}
+              Top {MATRIX_CELL_TOP_N} products per class by Volume YTD (Unit) · bar length = volume relative to that class&apos;s own top product · hover a row for Vol Growth/GP%/Revenue/Movement · {filtered.length} products classified
+              {filteredNoCost.length > 0 ? ` · ${filteredNoCost.length} sold this year are "${UNCLASSIFIED_NO_COST}": ${bcgClassDefinition(UNCLASSIFIED_NO_COST, thresholds)} (listed in Product Detail and the data-quality log)` : ''}
             </div>
             {overview.loading ? (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
@@ -480,7 +419,7 @@ export default function BcgMatrixPage() {
             ) : (
               <div data-layout="2x2 on a wide screen, one column on a phone" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(max(min(100%, 420px), calc((100% - 16px) / 2)), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
                 {classStats.map((s) => (
-                  <MatrixCell key={s.key} classKey={s.key} icon={s.icon} rows={s.listRows} allSorted={s.allSorted} moreCount={s.moreCount} tooltipContent={rowTooltipContent} />
+                  <MatrixCell key={s.key} classKey={s.key} icon={s.icon} definition={bcgClassDefinition(s.key, thresholds)} rows={s.listRows} allSorted={s.allSorted} moreCount={s.moreCount} tooltipContent={rowTooltipContent} />
                 ))}
               </div>
             )}
@@ -492,14 +431,14 @@ export default function BcgMatrixPage() {
             <Card>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>Portfolio Movement <VisualInfoIcons title="Portfolio Movement" {...vh('product.bcgMatrix.movement')} /></div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>Product Movement <VisualInfoIcons title="Product Movement" {...withFormula(vh('product.bcgMatrix.movement'), movementRule(thresholds))} /></div>
                 </div>
                 {movementDrill && <ExportButtons label={`${MOVEMENT_LABEL[movementDrill]} products`} onCsv={() => exportMovement('csv')} onPdf={() => exportMovement('pdf')} />}
               </div>
               <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
                 {movementDrill
-                  ? `${MOVEMENT_LABEL[movementDrill]} SKUs, top ${MOVEMENT_DRILL_TOP_N} by Revenue YTD · hover a row for full detail`
-                  : 'YTD vs LYTD classification change, by SKU count · click a slice to see its products'}
+                  ? `${MOVEMENT_LABEL[movementDrill]} SKUs, top ${MOVEMENT_DRILL_TOP_N} by Volume ${movementDrillData?.lastYear ? 'LYTD' : 'YTD'} · hover a row for full detail`
+                  : 'Volume YTD vs LYTD, by SKU count · click a slice to see its products'}
               </div>
               {overview.loading ? (
                 <LoadingSkeleton variant="chart" />
@@ -508,7 +447,7 @@ export default function BcgMatrixPage() {
               ) : movementDrill && movementDrillData ? (
                 <>
                   <DrillBreadcrumb active={MOVEMENT_LABEL[movementDrill]} rootLabel="All Movements" onReset={() => setMovementDrill(null)} />
-                  <RankedProductList rows={movementDrillData.listRows} barColor={MOVEMENT_COLOR[movementDrill]} tooltipContent={rowTooltipContent} />
+                  <RankedProductList rows={movementDrillData.listRows} barColor={MOVEMENT_COLOR[movementDrill]} tooltipContent={rowTooltipContent} volumeHeader={movementDrillData.lastYear ? 'Units LYTD' : 'Units YTD'} />
                   {movementDrillData.moreCount > 0 && (
                     <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
                       +{fmtNum(movementDrillData.moreCount)} more SKUs not shown -- export to CSV or PDF for the full list
@@ -521,7 +460,7 @@ export default function BcgMatrixPage() {
                   segments={movementSegments}
                   valueFormatter={(v) => `${v} SKU${v === 1 ? '' : 's'}`}
                   legendTitle="Number of SKUs"
-                  onSegmentClick={(id) => setMovementDrill(id as (typeof MOVEMENTS)[number])}
+                  onSegmentClick={(id) => setMovementDrill(id as BcgMovement)}
                 />
               )}
             </Card>
@@ -541,7 +480,7 @@ export default function BcgMatrixPage() {
                   rows={tableRows}
                   getRowId={(row) => row.id}
                   fileName="bcg-matrix-product-detail"
-                  filtersSummary={selectedCompanyNames.size ? [...selectedCompanyNames].join(', ') : 'Majaal + Tika'}
+                  filtersSummary={companyLabel}
                 />
               )}
             </Card>
@@ -570,9 +509,33 @@ interface MatrixListRow extends Record<string, unknown> {
   id: string;
   label: string;
   revenueYTD: number;
-  volumeYTD: number;
+  /** The ranking volume: YTD, or LYTD in the Drop / Discontinued drill-down. */
+  volume: number;
   barPct: number;
   fact: BcgFact;
+}
+
+/** Highest Volume YTD first (revenue breaks ties). */
+function byVolume<T extends BcgFact>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => b.total_quantity_YTD - a.total_quantity_YTD || b.total_value_YTD - a.total_value_YTD);
+}
+
+function toListRows(rows: BcgFact[], lastYear = false): MatrixListRow[] {
+  const vol = (r: BcgFact) => (lastYear ? r.total_quantity_LYTD : r.total_quantity_YTD);
+  const max = Math.max(1, ...rows.map(vol));
+  return rows.map((r, i) => ({
+    id: `${r.id}-${i}`,
+    label: getDisplayName(r),
+    revenueYTD: r.total_value_YTD,
+    volume: vol(r),
+    barPct: (Math.max(0, vol(r)) / max) * 100,
+    fact: r,
+  }));
+}
+
+/** A "?" whose one formula line comes from the config thresholds (not hard-coded in the registry). */
+function withFormula(entry: ReturnType<typeof vh>, formula: string): ReturnType<typeof vh> {
+  return entry.help ? { ...entry, help: { ...entry.help, formula } } : entry;
 }
 
 /** Ranked product list -- shared by the Section 1 matrix panels (one class's top N by Revenue
@@ -592,10 +555,12 @@ function RankedProductList({
   rows,
   barColor,
   tooltipContent,
+  volumeHeader = 'Units YTD',
 }: {
   rows: MatrixListRow[];
   barColor: string;
   tooltipContent: (fact: BcgFact, label: string) => React.ReactNode;
+  volumeHeader?: string;
 }) {
   const tip = useHoverTooltip(220, 200);
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -605,29 +570,28 @@ function RankedProductList({
       key: 'label',
       header: 'Product',
       render: (row) => (
-        <div dir="ltr" {...tip.bind(row.id)} style={{ ...LTR, display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+        // maxWidth: a long Odoo name (e.g. 57 characters) would otherwise set the column width and push Units / Revenue out.
+        <div dir="ltr" {...tip.bind(row.id)} style={{ ...LTR, display: 'flex', alignItems: 'center', gap: 8, width: '100%', maxWidth: 'min(280px, 42vw)' }}>
           <div style={{ width: 32, height: 6, borderRadius: 3, background: 'var(--ps-color-muted-bg)', flexShrink: 0, overflow: 'hidden' }}>
             <div style={{ width: `${row.barPct}%`, height: '100%', background: barColor, borderRadius: 3 }} />
           </div>
           {/* flex: 1 + minWidth: 0 so the name uses the cell's width and ellipsis-truncates; LTR, left-aligned. */}
-          <ProductName name={row.label} style={{ flex: 1 }} />
+          <ProductName name={row.label} href={row.fact.odooUrl} style={{ flex: 1 }} />
         </div>
       ),
     },
     {
-      key: 'volumeYTD',
-      header: 'Volume YTD',
+      // Volume is the sort key of the list (byVolume) and the number the bar reflects; revenue is secondary.
+      key: 'volume',
+      header: volumeHeader,
       align: 'right',
-      render: (row) => <span>{fmtNum(row.volumeYTD)}</span>,
+      render: (row) => <span style={{ fontWeight: 600 }}>{fmtNum(row.volume)}</span>,
     },
     {
-      // Revenue YTD stays the sort key for the whole list (see classStats/movementDrillData's own
-      // `.sort((a, b) => b.total_value_YTD - a.total_value_YTD)`) regardless of where it sits in
-      // the column order -- rightmost here since it's the number the bar indicator itself reflects.
       key: 'revenueYTD',
       header: 'Revenue YTD',
       align: 'right',
-      render: (row) => <span style={{ fontWeight: 600 }}>{fmtLYD(row.revenueYTD)}</span>,
+      render: (row) => <span style={{ color: 'var(--ps-color-muted-text)' }}>{fmtLYD(row.revenueYTD)}</span>,
     },
   ];
 
@@ -651,6 +615,7 @@ function RankedProductList({
 function MatrixCell({
   classKey,
   icon,
+  definition,
   rows,
   allSorted,
   moreCount,
@@ -658,8 +623,10 @@ function MatrixCell({
 }: {
   classKey: (typeof BCG_CLASSES)[number];
   icon: string;
+  /** The class rule with the config thresholds (bcgClassDefinition). */
+  definition: string;
   rows: MatrixListRow[];
-  /** Every product in this class, same Revenue-YTD-descending order as `rows` (the top-10 preview
+  /** Every product in this class, same Volume-YTD-descending order as `rows` (the top-10 preview
    * slice) -- the export button ships this full list, not the on-screen preview. */
   allSorted: ClassifiedBcgFact[];
   moreCount: number;
@@ -680,6 +647,9 @@ function MatrixCell({
           <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>+{fmtNum(moreCount)} more SKUs in this class</span>
         )}
         <ExportButtons label={`${classKey} products`} onCsv={() => exportClass('csv')} onPdf={() => exportClass('pdf')} />
+      </div>
+      <div data-testid={`bcg-class-definition-${classKey}`} style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', margin: '-4px 0 8px' }}>
+        {definition}
       </div>
       <RankedProductList rows={rows} barColor={color} tooltipContent={tooltipContent} />
     </Card>

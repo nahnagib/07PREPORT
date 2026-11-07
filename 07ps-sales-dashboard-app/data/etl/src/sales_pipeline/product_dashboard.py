@@ -8,13 +8,24 @@ company (ProductCompanyKey 'Majaal|2163'); name, SKU, category, brand, family, s
 Tables (all full-replaced each run):
   Fact_ProductSalesDaily   one row per Company + product (ProductCompanyKey) + order date + the filter/RBAC
                            keys + IsIntercompany + UoM. Value = untaxed line total, Qty = invoiced qty
-                           (same quantity as the Sales pages). Grand total == Fact_SalesLines total.
+                           (same quantity as the Sales pages). Grand total == Fact_SalesLines total minus the
+                           excluded companies and the not-real-sales lines (see below).
   Dim_ProductDashboard     one row per Company + product: every product sold or in stock in that company, plus the
                            active Odoo products of that company never sold, with today's stock, days of inventory,
                            stock band, lifecycle segment and BCG class. Always ONE company per row (2026-11-04: the
                            cross-company "BMH" grouping is removed); ThresholdCompany = that company.
 Companies listed in config `product_pages.excluded_companies` (Athena) are left out of every table here, so the Product
-pages' totals exclude them. Units of measure of the "unit" type (UNIT, Unit, Units, وحدة) are one label, "Unit"
+pages' totals exclude them. Lines that are not real sales -- Customer Group in `product_pages_excluded_segment_keys`
+(3 Backoffice, 4 Inter Company) or flagged IsIntercompany when `product_pages_exclude_intercompany` -- are dropped before
+any product calculation (BCG, movement, lifecycle, first sale, frequency, velocity, PIM), so the Product pages' totals are
+the Sales pages' totals minus those lines. On top of that, input file ProductExclusions.xlsx (product_exclusions.py):
+  Customers   Exclude drops the customer's lines; Keep counts them even when Backoffice / Inter Company / intercompany.
+  Categories  Exclude drops every product of the category AND of its sub-categories (lines, stock, catalog rows).
+  Products    Exclude drops one product; Keep keeps it even when its category is excluded.
+Every rule is per company (All, or the row's company), matched on Odoo ids only. Sub-categories are found by Odoo's full
+category path (complete_name, "Parent / Child", the same chain as parent_path). Without the file, the category ids in
+config `product_pages_excluded_category_ids` (or the old `bcg.excluded_category_ids`) are the only category rule.
+Units of measure of the "unit" type (UNIT, Unit, Units, وحدة) are one label, "Unit"
 (product_pages.unit_uom_names); every other UoM keeps its own name.
   QA_ProductOdooGaps       every product sold that has no Brand, Family, Size or SKU in Odoo, biggest sales first --
                            the list to fill in Odoo (also written to OUTPUT/product_odoo_gaps.csv on a full refresh).
@@ -37,11 +48,12 @@ import numpy as np
 import pandas as pd
 
 from sales_pipeline import odoo_products
+from sales_pipeline.product_exclusions import ProductExclusions, log_summary
 from sales_pipeline.product_matching import normalize_match_company
 
 UNCLASSIFIED_NO_COST = "Unclassified (no cost)"
 BCG_BY_CODE = {"HV/HP": "Stars", "HV/LP": "Cash Cows", "LV/HP": "Strategic", "LV/LP": "Dogs"}
-BCG_RANK = {"Dogs": 0, "Cash Cows": 1, "Strategic": 1, "Stars": 2}
+MOVEMENTS = ("New", "Stable", "Improved", "Drop", "Discontinued")
 GAP_ATTRIBUTES = ("Brand", "Family", "Size", "SKU")
 UNIT_LABEL = "Unit"
 GAP_COLUMNS = ["Company", "OdooProductID", "ProductName", "Category", "Missing", "SalesValue", "SalesValueLast12M",
@@ -74,7 +86,8 @@ class ProductDashboardConfig:
 
 
 class IntercompanyFlagger:
-    """Sets IsIntercompany on sales lines. Information only -- nothing is filtered on it."""
+    """Sets IsIntercompany on sales lines. Only the Product pages drop flagged lines
+    (product_pages_exclude_intercompany); every other page keeps them."""
 
     def __init__(self, partner_ids: set[int], names: set[str]) -> None:
         self.partner_ids = partner_ids
@@ -109,13 +122,24 @@ class ProductDashboardBuilder:
         "SubBrand", "Family", "Size", "SKU", "IsActive",
     ]
 
-    def __init__(self, config: ProductDashboardConfig, as_of: Any) -> None:
+    def __init__(self, config: ProductDashboardConfig, as_of: Any, exclusions: ProductExclusions | None = None) -> None:
         self.config = config
         self.as_of = pd.Timestamp(as_of).normalize()
         pages = config.section("product_pages")
         self.excluded_companies = {normalize_match_company(c) for c in pages.get("excluded_companies", [])}
         self.unit_names = {str(u).strip().casefold() for u in pages.get("unit_uom_names", [])}
         self.unit_label = str(pages.get("unit_label", UNIT_LABEL))
+        self.excluded_segment_keys = {int(k) for k in config.raw.get("product_pages_excluded_segment_keys", [])}
+        self.exclude_intercompany = bool(config.raw.get("product_pages_exclude_intercompany", False))
+        self.excluded_sales: pd.DataFrame = pd.DataFrame()
+        self.exclusions = exclusions if exclusions is not None else ProductExclusions.empty()
+        if self.exclusions.source is None:
+            # No ProductExclusions.xlsx: the category ids of the JSON config (old key as fallback) are the category rule.
+            fallback = config.raw.get("product_pages_excluded_category_ids", config.section("bcg").get("excluded_category_ids", []))
+            ids = [int(c) for c in fallback]
+            self.exclusions.categories = pd.DataFrame({"Company": ["All"] * len(ids), "OdooID": pd.Series(ids, dtype="int64"),
+                                                       "Action": ["Exclude"] * len(ids)})
+        self.excluded_product_keys: set[str] = set()
 
     def uom_label(self, uom: Any) -> str:
         """One label for every unit-type UoM ('UNIT', 'Unit', 'وحدة' -> 'Unit'); any other UoM is kept as named."""
@@ -130,13 +154,19 @@ class ProductDashboardBuilder:
         fact_inventory: pd.DataFrame,
         line_costs: pd.Series | None = None,
     ) -> dict[str, pd.DataFrame]:
+        log_summary(self.exclusions)
         lines = self._prepare_lines(sales_lines, line_costs)
         lines = lines[~lines["Company"].isin(self.excluded_companies)]
-        daily = self._daily(lines)
-        self.assert_totals_preserved(lines, daily)
+        lines = self._drop_non_sales(lines)
         stock = self._stock(fact_inventory)
         if not stock.empty:
             stock = stock[~stock["Company"].isin(self.excluded_companies)]
+        self.excluded_product_keys = self._excluded_products(lines, dim_product, stock)
+        lines = self._drop_products(lines)
+        if not stock.empty:
+            stock = stock[~stock["ProductCompanyKey"].isin(self.excluded_product_keys)]
+        daily = self._daily(lines)
+        self.assert_totals_preserved(lines, daily)
         products = self._products(lines, dim_product, stock)
         gaps = self.odoo_gaps(lines, products)
         inventory = fact_inventory
@@ -173,6 +203,9 @@ class ProductDashboardBuilder:
             out[key] = pd.to_numeric(self._col(s, key), errors="coerce").astype("Int64")
         out["SalesTeamKey"] = self._col(s, "SalesTeamKey").astype("string")
         out["IsIntercompany"] = self._col(s, "IsIntercompany", False).fillna(False).astype(bool)
+        # Customer ids for ProductExclusions.xlsx: the order's partner and its commercial partner (CustomerKey).
+        out["OdooPartnerID"] = pd.to_numeric(self._col(s, "OdooPartnerID"), errors="coerce").astype("Int64")
+        out["CustomerKey"] = pd.to_numeric(self._col(s, "CustomerKey"), errors="coerce").astype("Int64")
         out["UoM"] = self._col(s, "uom").map(self.uom_label).astype("string").fillna("")
         out["Value"] = pd.to_numeric(self._col(s, "untaxed_total"), errors="coerce").fillna(0.0)
         out["Qty"] = pd.to_numeric(self._col(s, "quantity"), errors="coerce").fillna(0.0)
@@ -185,6 +218,97 @@ class ProductDashboardBuilder:
         out["UncostedQty"] = out["Qty"].where(~has_cost, 0.0)
         out["Lines"] = 1
         return out
+
+    def _customer_rule(self, lines: pd.DataFrame, action: str) -> pd.Series:
+        """Lines whose customer (order partner or commercial partner) has an active `action` row for the line's company."""
+        hit = pd.Series(False, index=lines.index)
+        for company in lines["Company"].dropna().unique():
+            ids = list(self.exclusions.ids("Customers", action, str(company)))
+            if ids:
+                own = lines["Company"].eq(company)
+                hit |= own & (lines["OdooPartnerID"].isin(ids).fillna(False) | lines["CustomerKey"].isin(ids).fillna(False))
+        return hit
+
+    def non_sales_mask(self, lines: pd.DataFrame) -> pd.Series:
+        """Lines that are not real sales: an excluded Customer Group (stored SegmentKey) or, when configured, IsIntercompany
+        -- unless the customer is a Customers Keep row -- plus every Customers Exclude row."""
+        mask = lines["SegmentKey"].isin(list(self.excluded_segment_keys)).fillna(False).astype(bool)
+        if self.exclude_intercompany:
+            mask |= lines["IsIntercompany"].fillna(False).astype(bool)
+        return (mask & ~self._customer_rule(lines, "Keep")) | self._customer_rule(lines, "Exclude")
+
+    def _drop_non_sales(self, lines: pd.DataFrame) -> pd.DataFrame:
+        mask = self.non_sales_mask(lines)
+        self.excluded_sales = lines.loc[mask]
+        if mask.any():
+            by_company = self.excluded_sales.groupby("Company")[["Lines", "Qty", "Value"]].sum()
+            for company, r in by_company.iterrows():
+                log.info("Product pages: %s not-real-sales line(s) dropped for %s (qty %s, LYD %s; segments %s, intercompany=%s)",
+                         f"{int(r['Lines']):,}", company, f"{r['Qty']:,.2f}", f"{r['Value']:,.2f}",
+                         sorted(self.excluded_segment_keys), self.exclude_intercompany)
+        known = set(lines["OdooPartnerID"].dropna().astype(int)) | set(lines["CustomerKey"].dropna().astype(int))
+        unknown = sorted(set(self.exclusions.customers["OdooID"].astype(int)) - known)
+        if unknown:
+            log.warning("Product pages: ProductExclusions.xlsx Customers id(s) with no sales line in the data: %s", unknown)
+        return lines.loc[~mask]
+
+    # ------------------------------------------------------------------ product exclusions
+    def _excluded_products(self, lines: pd.DataFrame, dim_product: pd.DataFrame | None, stock: pd.DataFrame) -> set[str]:
+        """ProductCompanyKeys left out of every Product table: a Categories Exclude row (the category or any sub-category,
+        by Odoo's full category path) or a Products Exclude row, minus the Products Keep rows -- all per company."""
+        frames = [lines[["ProductCompanyKey", "Company", "ProductKey"]]]
+        if not stock.empty:
+            frames.append(stock[["ProductCompanyKey", "Company", "ProductKey"]])
+        catalog = dim_product if dim_product is not None else pd.DataFrame()
+        if not catalog.empty and "ProductCompany" in catalog.columns:
+            own = catalog[catalog["ProductCompany"].notna()].copy()
+            own["Company"] = own["ProductCompany"].map(normalize_match_company)
+            own["ProductKey"] = own["ProductKey"].astype("string")
+            own["ProductCompanyKey"] = odoo_products.product_company_keys(own["Company"], own["ProductKey"])
+            frames.append(own[["ProductCompanyKey", "Company", "ProductKey"]])
+        keys = pd.concat([f.astype(object) for f in frames], ignore_index=True)
+        keys = keys.dropna(subset=["ProductCompanyKey"]).drop_duplicates("ProductCompanyKey").reset_index(drop=True)
+        keys["pid"] = pd.to_numeric(keys["ProductKey"], errors="coerce")
+        path_of: dict[int, str] = {}
+        keys["Category"] = pd.NA
+        if not catalog.empty and {"CategoryID", "Category", "ProductKey"} <= set(catalog.columns):
+            by_product = catalog.drop_duplicates("ProductKey").assign(pid=lambda d: pd.to_numeric(d["ProductKey"], errors="coerce"))
+            by_product = by_product.dropna(subset=["pid"]).drop_duplicates("pid").set_index("pid")
+            keys["Category"] = keys["pid"].map(by_product["Category"])
+            cats = catalog[["CategoryID", "Category"]].dropna().drop_duplicates("CategoryID")
+            path_of = {int(c): str(p) for c, p in zip(cats["CategoryID"], cats["Category"])}
+        unknown_categories = sorted(set(self.exclusions.categories["OdooID"].astype(int)) - set(path_of))
+        if unknown_categories:
+            log.warning("Product pages: excluded category id(s) not found on any product: %s", unknown_categories)
+        unknown_products = sorted(set(self.exclusions.products["OdooID"].astype(int)) - set(keys["pid"].dropna().astype(int)))
+        if unknown_products:
+            log.warning("Product pages: ProductExclusions.xlsx Products id(s) not found: %s", unknown_products)
+
+        excluded = pd.Series(False, index=keys.index)
+        category = keys["Category"].astype("string")
+        for company in keys["Company"].dropna().unique():
+            hit = pd.Series(False, index=keys.index)
+            for cid in self.exclusions.ids("Categories", "Exclude", str(company)):
+                path = path_of.get(cid)
+                if path is not None:
+                    hit |= (category.eq(path) | category.str.startswith(path + " / ")).fillna(False).astype(bool)
+            hit |= keys["pid"].isin(list(self.exclusions.ids("Products", "Exclude", str(company))))
+            hit &= ~keys["pid"].isin(list(self.exclusions.ids("Products", "Keep", str(company))))
+            excluded |= keys["Company"].eq(company) & hit
+        out = set(keys.loc[excluded, "ProductCompanyKey"].astype(str))
+        if out:
+            log.info("Product pages: %s product(s) excluded by category / product rules: %s", f"{len(out):,}",
+                     keys.loc[excluded].groupby("Company").size().to_dict())
+        return out
+
+    def _drop_products(self, lines: pd.DataFrame) -> pd.DataFrame:
+        mask = lines["ProductCompanyKey"].isin(self.excluded_product_keys)
+        if mask.any():
+            r = lines.loc[mask].groupby("Company")[["Lines", "Qty", "Value"]].sum()
+            for company, v in r.iterrows():
+                log.info("Product pages: %s sales line(s) of excluded products dropped for %s (qty %s, LYD %s)",
+                         f"{int(v['Lines']):,}", company, f"{v['Qty']:,.2f}", f"{v['Value']:,.2f}")
+        return lines.loc[~mask]
 
     def _daily(self, lines: pd.DataFrame) -> pd.DataFrame:
         sums = ["Value", "Qty", "QtyOrdered", "QtyDelivered", "CostValue", "CostedQty", "UncostedQty", "Lines"]
@@ -202,7 +326,7 @@ class ProductDashboardBuilder:
 
     # ------------------------------------------------------------------ stock
     def _stock(self, fact_inventory: pd.DataFrame) -> pd.DataFrame:
-        cols = ["ProductCompanyKey", "StockQty", "StockValue", "InTransitQty", "InTransitValue", "NegativeStockRows", "NegativeStockQty"]
+        cols = ["ProductCompanyKey", "StockQty", "StockValue", "InTransitQty", "InTransitValue", "NegativeStockRows", "NegativeStockQty", "StockAgeDays"]
         if fact_inventory is None or fact_inventory.empty or "ProductCompanyKey" not in fact_inventory.columns:
             return pd.DataFrame(columns=cols + ["Company", "ProductKey", "ProductName", "OdooProductName"])
         inv = fact_inventory.copy()
@@ -226,6 +350,12 @@ class ProductDashboardBuilder:
             "NegativeStockRows": (~positive & qty.lt(0)).astype(int),
             "NegativeStockQty": qty.where(qty.lt(0), 0.0),
         })
+        # Stock Aging: days since the quant arrived (Odoo in_date), finished goods on hand only, weighted by its units
+        in_date = pd.to_datetime(inv["InDate"], errors="coerce") if "InDate" in inv.columns else pd.Series(pd.NaT, index=inv.index)
+        age = (self.as_of - in_date.dt.normalize()).dt.days.clip(lower=0)
+        aged = fg & positive & age.notna()
+        work["AgedQty"] = qty.where(aged, 0.0)
+        work["AgeQtyDays"] = (qty * age).where(aged, 0.0)
         work = work[stock_class.isin(["FinishedGoods", "InTransit"])]
         return work.groupby("ProductCompanyKey", as_index=False).agg(
             Company=("Company", "first"),
@@ -238,7 +368,9 @@ class ProductDashboardBuilder:
             InTransitValue=("InTransitValue", "sum"),
             NegativeStockRows=("NegativeStockRows", "sum"),
             NegativeStockQty=("NegativeStockQty", "sum"),
-        )
+            AgedQty=("AgedQty", "sum"),
+            AgeQtyDays=("AgeQtyDays", "sum"),
+        ).assign(StockAgeDays=lambda d: d["AgeQtyDays"].div(d["AgedQty"].where(d["AgedQty"] > 0))).drop(columns=["AgedQty", "AgeQtyDays"])
 
     # ------------------------------------------------------------------ product snapshot
     def _window_sum(self, lines: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp, column: str) -> pd.Series:
@@ -257,6 +389,7 @@ class ProductDashboardBuilder:
             own["ProductCompanyKey"] = odoo_products.product_company_keys(own["Company"], own["ProductKey"])
             seen = pd.concat([seen, own[cols]], ignore_index=True)
         base = seen.dropna(subset=["ProductCompanyKey"]).drop_duplicates("ProductCompanyKey").copy()
+        base = base[~base["ProductCompanyKey"].isin(self.excluded_product_keys)]
         # Odoo's attributes by product id; a product missing from the catalog keeps the name its lines carry
         attrs = [c for c in self.PRODUCT_ATTRS if c not in ("ProductKey",)]
         if not catalog.empty:
@@ -296,12 +429,14 @@ class ProductDashboardBuilder:
         base["AvgDailySales"] = base["QtyLookback"].fillna(0.0) / float(lookback)
 
         # Stock + days of inventory
-        base = base.join(stock.set_index("ProductCompanyKey")[["StockQty", "StockValue", "InTransitQty", "InTransitValue", "NegativeStockRows", "NegativeStockQty"]], how="left")
+        base = base.join(stock.set_index("ProductCompanyKey")[["StockQty", "StockValue", "InTransitQty", "InTransitValue", "NegativeStockRows", "NegativeStockQty", "StockAgeDays"]], how="left")
         for c in ["StockQty", "StockValue", "InTransitQty", "InTransitValue", "NegativeStockQty", "QtyLookback"]:
             base[c] = pd.to_numeric(base[c], errors="coerce").fillna(0.0)
         base["NegativeStockRows"] = pd.to_numeric(base["NegativeStockRows"], errors="coerce").fillna(0).astype(int)
         base["DaysOfInventory"] = base["StockQty"].div(base["AvgDailySales"].where(base["AvgDailySales"] > 0))
         base["StockBand"] = self._stock_band(base)
+        base["StockAgeDays"] = pd.to_numeric(base["StockAgeDays"], errors="coerce").where(base["StockQty"] > 0)
+        base["StockAgeBucket"] = self.aging_bucket(base["StockAgeDays"])
 
         # Lifecycle
         base["LifecycleSegment"] = self._lifecycle(base, lines)
@@ -313,6 +448,18 @@ class ProductDashboardBuilder:
         for c in ["FirstSaleDate", "LastSaleDate"]:
             base[c] = pd.to_datetime(base[c], errors="coerce")
         return base
+
+    def aging_bucket(self, age_days: pd.Series) -> pd.Series:
+        """Stock Aging bucket label of each age (config stock.aging_buckets: ages up to max_days; null = no limit)."""
+        buckets = self.config.section("stock").get("aging_buckets", [])
+        out = pd.Series(pd.NA, index=age_days.index, dtype="object")
+        free = age_days.notna()
+        for b in buckets:
+            limit = b.get("max_days")
+            hit = free & (age_days.le(float(limit)) if limit is not None else True)
+            out[hit] = b["label"]
+            free &= ~hit
+        return out
 
     def _stock_band(self, p: pd.DataFrame) -> pd.Series:
         over = self.config.per_company("days_of_inventory", "overstock_days")
@@ -370,9 +517,6 @@ class ProductDashboardBuilder:
         cfg = self.config.section("bcg")
         vol_t = self.config.per_company("bcg", "volume_threshold")
         profit_t = float(cfg.get("profit_threshold_pct", 35)) / 100.0
-        excluded = {int(c) for c in cfg.get("excluded_category_ids", [])}
-        if not excluded:
-            log.info("BCG: no Odoo category is excluded (bcg.excluded_category_ids is empty)")
         today = self.as_of
         ytd_start = pd.Timestamp(year=today.year, month=1, day=1)
         try:
@@ -397,29 +541,41 @@ class ProductDashboardBuilder:
             cls = cls.where(~no_cost, UNCLASSIFIED_NO_COST).where(has_sales, None)
             out[f"BcgClass{label}"] = cls
             out[f"NoCost{label}"] = no_cost
-        cat = pd.to_numeric(products["CategoryID"], errors="coerce") if "CategoryID" in products.columns else pd.Series(np.nan, index=products.index)
-        out["BcgExcludedCategory"] = cat.isin(list(excluded)).fillna(False)
+        # Excluded categories are dropped from every Product table before this (ProductExclusions.xlsx); the column stays
+        # for the table schema and the API, always False.
+        out["BcgExcludedCategory"] = False
         out["BcgMovement"] = self._movement(out, products)
         return out
 
     def _movement(self, b: pd.DataFrame, products: pd.DataFrame) -> pd.Series:
-        ytd, lytd = b["BcgClassYTD"], b["BcgClassLYTD"]
+        """Product Movement, on VOLUME: invoiced quantity YTD vs the same calendar period last year (QtyYTD vs QtyLYTD),
+        for every product sold in either period. In this order:
+          Discontinued  archived in Odoo (product.product active = False; archiving a template archives its variants)
+                        -- we stopped supplying it, whatever it sold
+          New           first sale within lifecycle.new_first_sale_within_days, or nothing sold last year (LYTD qty <= 0)
+          Improved      volume growth > +bcg.movement_stable_band_pct
+          Drop          volume growth < -band (a product that sold last year and nothing this year, still active, is -100%)
+          Stable        within +-band, or no positive volume in either period (returns only)
+        Not sold in either period -> no movement (None)."""
+        band = float(self.config.section("bcg").get("movement_stable_band_pct", 10))
         new_days = int(self.config.section("lifecycle").get("new_first_sale_within_days", 180))
+        qty_y = pd.to_numeric(b["QtyYTD"], errors="coerce").fillna(0.0)
+        qty_l = pd.to_numeric(b["QtyLYTD"], errors="coerce").fillna(0.0)
+        sold = b["BcgClassYTD"].notna() | b["BcgClassLYTD"].notna()
         first = pd.to_datetime(products["FirstSaleDate"], errors="coerce")
         is_new_product = first.notna() & first.ge(self.as_of - pd.Timedelta(days=new_days - 1))
-        rank_y = ytd.map(BCG_RANK)
-        rank_l = lytd.map(BCG_RANK)
+        archived = pd.to_numeric(products["IsActive"], errors="coerce").eq(0)
+        growth = (qty_y - qty_l).div(qty_l.where(qty_l > 0)) * 100
         return pd.Series(np.select(
             [
-                ytd.isna() & lytd.notna(),
-                ytd.notna() & (lytd.isna() | is_new_product),
-                rank_y.isna() | rank_l.isna() | (ytd == lytd),
-                rank_y > rank_l,
-                rank_y < rank_l,
+                archived,
+                is_new_product | (qty_l.le(0) & qty_y.gt(0)),
+                growth.gt(band),
+                growth.lt(-band),
             ],
-            ["Lost", "New", "Stable", "Improved", "Declined"],
+            ["Discontinued", "New", "Improved", "Drop"],
             default="Stable",
-        ), index=b.index).where(ytd.notna() | lytd.notna(), None)
+        ), index=b.index).where(sold, None)
 
     # ------------------------------------------------------------------ logs
     def odoo_gaps(self, lines: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:

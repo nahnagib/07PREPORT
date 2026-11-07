@@ -92,6 +92,18 @@ def _parse_blocked(path: Path) -> dict[str, int]:
     return {"rows": len(_loaders().BlockedCustomersLoader(_quiet_logger()).load(path))}
 
 
+def _parse_product_exclusions(path: Path) -> dict[str, int]:
+    from sales_pipeline.product_exclusions import SHEETS, ProductExclusionsLoader
+
+    ex = ProductExclusionsLoader().load(path)
+    if ex.issues:
+        # Invalid rows are never silently dropped: the upload is refused with every row that cannot be applied.
+        raise UploadRejected("ProductExclusions.xlsx has rows the ETL cannot apply.", problems=ex.issues)
+    counts = {f"{s.name.lower()}_active": len(ex.rules(s.name)) for s in SHEETS}
+    counts.update({f"{s.name.lower()}_ignored": ex.ignored.get(s.name, 0) for s in SHEETS})
+    return counts
+
+
 def _parse_offdays(path: Path) -> dict[str, int]:
     lt = _loaders()
     return {"rows": len(lt.OffDaysFactBuilder().build(path, lt.PipelineSettings().offdays_country))}
@@ -179,6 +191,23 @@ def _slots() -> dict[str, SlotSpec]:
             ),
             dry_parse=_parse_blocked,
             # An empty blocked-customers list is legitimate (the pipeline itself creates an empty template).
+        ),
+        SlotSpec(
+            name="ProductExclusions.xlsx",
+            feeds="every Product page (customers, categories and products left out; optional)",
+            sheets=tuple(
+                SheetSpec(
+                    label=f"{name} sheet",
+                    sheet_candidates=(name,),
+                    required=("Company", "OdooID", "Action", "Active"),
+                    strip_headers=True,
+                    # ProductExclusionsLoader's own rename (the hidden "Lists" sheet is never read).
+                    rename={id_header: "OdooID", "Odoo ID": "OdooID"},
+                )
+                for name, id_header in (("Customers", "Odoo Partner ID"), ("Categories", "Odoo Category ID"), ("Products", "Odoo Product ID"))
+            ),
+            dry_parse=_parse_product_exclusions,
+            # Empty sheets are legitimate: no extra exclusions.
         ),
     ]
     return {s.name: s for s in specs}

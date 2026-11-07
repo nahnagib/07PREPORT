@@ -11,8 +11,9 @@ import { computeProductDashboard, ProductScopeError } from '../measures/productD
  *   GET /product-dashboard/<page>/overview?fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD&company=Majaal&segmentKeys=...
  * Same middleware chain as every other page: resolveScopedFilters parses the Customer Group /
  * Channel / Branch / Salesperson filters and applies the salesperson RBAC lock / role data scope.
- * `company` (Majaal / Tika) selects the company view; without it the BMH view groups a product sold by
- * both companies into one row. companyKeys is forwarded only as the role's data scope.
+ * `company` (Majaal / Tika) selects the company view; without it every company's products are listed side by side
+ * (one company per row). companyKeys is forwarded only as the role's data scope. A SALESPERSON-tier caller only gets
+ * products with sales (stock-only / never-sold products are hidden for them).
  */
 export const PRODUCT_DASHBOARD_PAGES = {
   'bcg-matrix': 'bcg_matrix',
@@ -34,6 +35,7 @@ export function productDashboardRouter(pageKey: string): Router {
           toDate: typeof toDate === 'string' ? toDate : undefined,
           company: typeof company === 'string' ? company : undefined,
           filters: { companyKeys, segmentKeys, channelKeys, salesTeamKeys, salespersonKeys },
+          salespersonTier: req.userContext?.roleCode === 'SALESPERSON',
         }),
       );
     } catch (err) {

@@ -6,7 +6,7 @@ import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useFilterState } from '../../../../components/FilterProvider';
+import { useProductFilters } from '../../../../components/product/useProductFilters';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../lib/format';
@@ -21,24 +21,21 @@ import {
   GroupedBarChart,
   LoadingSkeleton,
   ErrorState,
+  VisualInfoIcons,
   type SelectOption,
   type DonutSegment,
 } from '@07ps/ui';
 import {
   toProductFacts,
   fmtLYD,
-  fmtNum,
   fmtPct,
-  fmtUomQty,
-  sumByUom,
+  fmtUnits,
   distinctSorted,
   filterByPageFilters,
   computeBrandStats,
   slugifyBrand,
   CATEGORY_PALETTE,
-  COMPANIES,
   UNCLASSIFIED_NO_COST,
-  type CompanyFilter,
   type ProductFact,
   type FoundBrandStats,
   type PartnerBrand,
@@ -47,16 +44,9 @@ import { ProductName, ltrLabel } from '../../../../components/product/ProductUi'
 
 type MaterialsAnalogyFact = ProductFact;
 
-/** Quantity of `r` in unit `uom` for the period (0 when the product sold in other units). */
-function qtyIn(r: ProductFact, uom: string): number {
-  return r.volumeByUom.find((u) => u.uom === uom)?.qty ?? 0;
-}
-/** Value of `r` attributable to unit `uom` -- only single-unit products, so ASP never mixes units. */
-function valueIn(r: ProductFact, uom: string): number {
-  return r.volume !== null && (r.uom ?? '') === uom ? r.value : 0;
-}
-
-type Metric = 'value' | 'volume';
+/** Volume first: every PIM visual is based on invoiced quantity, added up as "Unit" whatever the Odoo UoM
+ * (2026-11-07); "By Value" (LYD) is the secondary view. */
+type Metric = 'volume' | 'value';
 const BCG_CLASSES = ['Stars', 'Cash Cows', 'Strategic', 'Dogs', UNCLASSIFIED_NO_COST] as const;
 
 function groupSum(rows: MaterialsAnalogyFact[], keyFn: (r: MaterialsAnalogyFact) => string, valFn: (r: MaterialsAnalogyFact) => number) {
@@ -156,14 +146,11 @@ function resolveDrillLevel(universe: MaterialsAnalogyFact[], basePath: string[])
   }
 }
 
-/** Builds the URL for a brand's drill-down page, carrying this page's current Company/Category/
- * BCG Class filters along as query params (same "filters via URL query params" convention as
- * Tachometer's own summary -> detail-route navigation, see tachometer/page.tsx's
- * buildBreakdownHref) so the brand drill-down route can independently recompute the identical
- * filtered scope rather than needing React state/context shared across a real route boundary. */
-function buildBrandHref(requestedName: string, filters: { company: CompanyFilter; category: string[]; bcgClass: string }): string {
+/** Builds the URL for a brand's drill-down page, carrying this page's own Category / BCG Class filters along as query
+ * params; the company, Customer Group, channel, branch, salesperson and date range are the app-wide FilterProvider
+ * state, which the brand page reads too (useProductFilters), so both pages always show the same scope. */
+function buildBrandHref(requestedName: string, filters: { category: string[]; bcgClass: string }): string {
   const params = new URLSearchParams();
-  if (filters.company !== 'All') params.set('company', filters.company);
   filters.category.forEach((c) => params.append('category', c));
   if (filters.bcgClass !== 'All') params.set('bcgClass', filters.bcgClass);
   const qs = params.toString();
@@ -174,17 +161,16 @@ export default function PimContributionPage() {
   const { user, logout, token, error: authError, retryAuth } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
   const router = useRouter();
-  const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
   const refresh = useRefreshStatus(token, authError, retryAuth);
+  const { anchorDate, onAnchorDateChange, scope: productScope, filterBarProps, withLocalReset } = useProductFilters(refresh.data);
 
-  const [company, setCompany] = useState<CompanyFilter>('All');
   // Company view (one company) or all companies side by side; a product is always one Odoo product in one company.
-  const overview = useProductDashboard(token, authError, retryAuth, 'pim-contribution', { fromDate: dateFromDate, toDate: dateToDate, company });
+  const overview = useProductDashboard(token, authError, retryAuth, 'pim-contribution', productScope);
   const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const [category, setCategory] = useState<string[]>([]);
   const [bcgClass, setBcgClass] = useState<'All' | (typeof BCG_CLASSES)[number]>('All');
-  const [metric, setMetric] = useState<Metric>('value');
-  const [categoryMetric, setCategoryMetric] = useState<Metric>('value');
+  const [metric, setMetric] = useState<Metric>('volume');
+  const [categoryMetric, setCategoryMetric] = useState<Metric>('volume');
   // Full chosen-value path through HIERARCHY_LEVELS (Company -> Category -> Brand -> SubBrand ->
   // Family -> Size -> Product) -- replaces the old single `drillCategory` string now that the
   // donut drills 6+1 levels deep instead of 2. `metric` is deliberately a separate, untouched
@@ -192,25 +178,19 @@ export default function PimContributionPage() {
   // drill by construction, not by any special-casing here.
   const [drillPath, setDrillPath] = useState<string[]>([]);
 
-  const categoryOptions: SelectOption[] = useMemo(() => {
-    const pool = facts.filter((r) => company === 'All' || r.Company === company);
-    return distinctSorted(pool.map((r) => r.Category)).map((c) => ({ value: c, label: c }));
-  }, [facts, company]);
+  const categoryOptions: SelectOption[] = useMemo(
+    () => distinctSorted(facts.map((r) => r.Category)).map((c) => ({ value: c, label: c })),
+    [facts],
+  );
 
-  const filtered = useMemo(() => filterByPageFilters(facts, { company, category, bcgClass }), [facts, company, category, bcgClass]);
+  // The company is applied by the API (FilterBar company); Category / BCG Class here.
+  const filtered = useMemo(() => filterByPageFilters(facts, { company: 'All', category, bcgClass }), [facts, category, bcgClass]);
 
-  // Quantities are never added across units of measure: volume and ASP on this page are for one unit.
-  const unitTotals = useMemo(() => sumByUom(filtered), [filtered]);
-  const [unitChoice, setUnitChoice] = useState<string | null>(null);
-  // Every unit-type UoM arrives as one "Unit" (ETL); it is the default whenever it is sold in the view.
-  const unit = unitChoice && unitTotals.some((u) => u.uom === unitChoice) ? unitChoice : unitTotals.find((u) => u.uom === 'Unit')?.uom ?? unitTotals[0]?.uom ?? '';
-  const unitOptions: SelectOption[] = unitTotals.map((u) => ({ value: u.uom, label: `${u.uom || '(no unit)'} — ${fmtNum(u.qty)}` }));
+  const metricVal = (r: MaterialsAnalogyFact) => (metric === 'value' ? r.value : r.volume);
+  const metricFmt = (v: number) => (metric === 'value' ? fmtLYD(v) : fmtUnits(v));
 
-  const metricVal = (r: MaterialsAnalogyFact) => (metric === 'value' ? r.value : qtyIn(r, unit));
-  const metricFmt = (v: number) => (metric === 'value' ? fmtLYD(v) : `${fmtNum(v)} ${unit}`);
-
-  // ---- Categories donut (replaces the Top Category tiles): the 8 largest categories + Other, by value or volume ----
-  const categoryVal = (r: MaterialsAnalogyFact) => (categoryMetric === 'value' ? r.value : qtyIn(r, unit));
+  // ---- Categories donut: the 8 largest categories + Other, by volume (default) or value ----
+  const categoryVal = (r: MaterialsAnalogyFact) => (categoryMetric === 'value' ? r.value : r.volume);
   const categoryEntries = topNWithOther([...groupSum(filtered, (r) => normalizeHierarchyValue(r.Category), categoryVal).entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]));
   const categorySegments: DonutSegment[] = categoryEntries.map(([label, value], i) => ({
     id: label,
@@ -218,7 +198,7 @@ export default function PimContributionPage() {
     value,
     color: label.startsWith('Other (') ? 'var(--ps-color-neutral-text)' : CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
   }));
-  const categoryFmt = (v: number) => (categoryMetric === 'value' ? fmtLYD(v) : `${fmtNum(v)} ${unit}`);
+  const categoryFmt = (v: number) => (categoryMetric === 'value' ? fmtLYD(v) : fmtUnits(v));
 
   // ---- Donut (drill-down), full 6+1-level hierarchy ----
   // `resolved.path` is what actually gets rendered as the breadcrumb -- it can be longer than
@@ -241,13 +221,13 @@ export default function PimContributionPage() {
     color: label.startsWith('Other (') ? 'var(--ps-color-neutral-text)' : CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
   }));
 
-  // ---- ASP chart, synced to the same resolved drill scope/level ----
+  // ---- ASP chart, synced to the same resolved drill scope/level: Σ value ÷ Σ units (added up as Unit) ----
   const aspMap = new Map<string, { value: number; qty: number; n: number }>();
   scope.forEach((r) => {
     const k = groupKey(r);
     const o = aspMap.get(k) ?? { value: 0, qty: 0, n: 0 };
-    o.value += valueIn(r, unit);
-    o.qty += r.volume !== null && (r.uom ?? '') === unit ? r.volume : 0;
+    o.value += r.value;
+    o.qty += r.volume;
     o.n += 1;
     aspMap.set(k, o);
   });
@@ -290,33 +270,15 @@ export default function PimContributionPage() {
         />
 
         <FilterBar
-          onReset={() => {
-            setCompany('All');
+          {...filterBarProps}
+          {...withLocalReset(() => {
             setCategory([]);
             setBcgClass('All');
-          }}
-          isPristine={company === 'All' && category.length === 0 && bcgClass === 'All'}
-          showDateRange
-          dateFromDate={dateFromDate}
-          dateToDate={dateToDate}
-          onDateRangeChange={onDateRangeChange}
-          showCompanyDimension={false}
-          showTransactionDimensions={false}
-          showLastOrderInfo={false}
-          extraFields={
+          }, category.length === 0 && bcgClass === 'All')}
+          secondRow={
             <>
-              <PillField label="Company">
-                {COMPANIES.map((c) => (
-                  <Button key={c} variant={company === c ? 'primary' : 'secondary'} style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setCompany(c)}>
-                    {c}
-                  </Button>
-                ))}
-              </PillField>
               <div style={{ width: 200 }}>
                 <Select label="Category" options={categoryOptions} value={category} onChange={setCategory} multiSelect searchable placeholder="All Categories" />
-              </div>
-              <div style={{ width: 200 }}>
-                <Select label="Unit (volume & ASP)" options={unitOptions} value={unit ? [unit] : []} onChange={(v) => setUnitChoice(v[0] ?? null)} placeholder="Unit" />
               </div>
               <PillField label="BCG Class">
                 {(['All', ...BCG_CLASSES] as const).map((cls) => (
@@ -346,7 +308,7 @@ export default function PimContributionPage() {
             <BrandPerformanceSection
               found={foundBrandStats}
               notFound={notFoundBrands}
-              onSelectBrand={(b) => router.push(buildBrandHref(b.requested, { company, category, bcgClass }))}
+              onSelectBrand={(b) => router.push(buildBrandHref(b.requested, { category, bcgClass }))}
             />
 
           <ChartPanel {...vh('product.pimContribution.categories')}
@@ -354,11 +316,11 @@ export default function PimContributionPage() {
             wrapHeader
             headerActions={
               <div style={{ display: 'flex', gap: 6 }}>
+                <Button variant={categoryMetric === 'volume' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setCategoryMetric('volume')}>
+                  By Volume (Unit)
+                </Button>
                 <Button variant={categoryMetric === 'value' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setCategoryMetric('value')}>
                   By Value
-                </Button>
-                <Button variant={categoryMetric === 'volume' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setCategoryMetric('volume')}>
-                  By Volume ({unit || 'unit'})
                 </Button>
               </div>
             }
@@ -370,7 +332,7 @@ export default function PimContributionPage() {
                   showTitle={false}
                   segments={categorySegments}
                   valueFormatter={categoryFmt}
-                  legendTitle={`Top ${Math.min(8, categorySegments.length)} categories · ${categoryMetric === 'value' ? 'value (LYD)' : `volume (${unit || 'unit'})`}`}
+                  legendTitle={`Top ${Math.min(8, categorySegments.length)} categories · ${categoryMetric === 'value' ? 'value (LYD)' : 'volume (Unit)'}`}
                   labelDirection="ltr"
                 />
               ) : (
@@ -386,11 +348,11 @@ export default function PimContributionPage() {
               wrapHeader
               headerActions={
                 <div style={{ display: 'flex', gap: 6 }}>
+                  <Button variant={metric === 'volume' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setMetric('volume')}>
+                    By Volume (Unit)
+                  </Button>
                   <Button variant={metric === 'value' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setMetric('value')}>
                     By Value
-                  </Button>
-                  <Button variant={metric === 'volume' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setMetric('volume')}>
-                    By Volume ({unit || 'unit'})
                   </Button>
                 </div>
               }
@@ -399,7 +361,7 @@ export default function PimContributionPage() {
               {isLeaf ? (
                 leafRow ? (
                   <div style={{ padding: '8px 4px' }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 4 }}><ProductName name={leafRow.ProductName} truncate={false} /></div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 4 }}><ProductName name={leafRow.ProductName} href={leafRow.odooUrl} truncate={false} /></div>
                     <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>SKU {leafRow.SKU ?? '—'} · {leafRow.Company}</div>
                   </div>
                 ) : (
@@ -424,8 +386,8 @@ export default function PimContributionPage() {
               {isLeaf ? (
                 leafRow ? (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+                    <LeafStat label="Volume (period)" value={fmtUnits(leafRow.volume)} />
                     <LeafStat label="Revenue (period)" value={fmtLYD(leafRow.value)} />
-                    <LeafStat label="Volume (period)" value={fmtUomQty(leafRow.volumeByUom)} />
                     <LeafStat label="ASP" value={leafRow.avgUnitPrice === null ? '—' : fmtLYD(leafRow.avgUnitPrice)} />
                     <LeafStat label="GP%" value={leafRow.grossProfitPct === null ? 'no cost' : `${leafRow.grossProfitPct.toFixed(1)}%`} />
                   </div>
@@ -434,7 +396,7 @@ export default function PimContributionPage() {
                 <GroupedBarChart
                   showTitle={false}
                   points={aspPoints}
-                  bars={[{ key: 'asp', name: `ASP (LYD per ${unit || 'unit'})`, color: 'var(--ps-color-accent)' }]}
+                  bars={[{ key: 'asp', name: 'ASP (LYD per Unit)', color: 'var(--ps-color-accent)' }]}
                   valueFormatter={fmtLYD}
                   yAxisWidth={150}
                   height={Math.max(280, aspPoints.length * 30 + 60)}
@@ -541,12 +503,14 @@ function BrandPerformanceSection({
 }) {
   return (
     <div id="brand-performance">
-      <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 2 }}>Brand Performance</div>
+      <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 2 }}>
+        Brand Performance <VisualInfoIcons title="Brand Performance" {...vh('product.pimContribution.brands')} />
+      </div>
       <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 16 }}>
-        Named partner brands · selected period · sorted by revenue · synced to the Company/Category/BCG Class filters above
+        Named partner brands · selected period · sorted by volume · synced to the filters above
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
+      <div className="ps-brand-grid" data-testid="brand-grid">
         {found.map((b) => (
           <BrandCard key={b.requested} b={b} onClick={() => onSelectBrand(b)} />
         ))}
@@ -580,10 +544,17 @@ function BrandCard({ b, onClick }: { b: FoundBrandStats; onClick: () => void }) 
       className="ps-card-clickable"
       style={{ cursor: 'pointer' }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--ps-color-text)' }}>{b.requested}</span>
-        {b.companySplit.length > 1 &&
-          b.companySplit.map((cs) => (
+      {/* One line: the name truncates with "…" (full name on hover) so "View products" never wraps. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, minWidth: 0 }}>
+        <span data-testid="brand-card-title" title={b.requested}
+          style={{ fontSize: 15, fontWeight: 700, color: 'var(--ps-color-text)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {b.requested}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--ps-color-accent)', whiteSpace: 'nowrap', flexShrink: 0 }}>View products →</span>
+      </div>
+      {b.companySplit.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: -6, marginBottom: 10 }}>
+          {b.companySplit.map((cs) => (
             <span
               key={cs.company}
               style={{
@@ -595,18 +566,17 @@ function BrandCard({ b, onClick }: { b: FoundBrandStats; onClick: () => void }) 
               {cs.company} {cs.pct.toFixed(0)}%
             </span>
           ))}
-        <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--ps-color-accent)', whiteSpace: 'nowrap' }}>View products →</span>
-      </div>
+        </div>
+      )}
 
       <div style={{ borderTop: '1px solid var(--ps-color-border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div>
           <div style={{ fontSize: 30, fontWeight: 700, color: 'var(--ps-color-text)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
-            {fmtLYD(b.revenue)}
+            {fmtUnits(b.volume)}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>Revenue (period)</div>
-          <div style={{ fontSize: 12, fontWeight: 600, marginTop: 2, color: b.deltaPct === null ? 'var(--ps-color-muted-text)' : b.deltaPct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)' }}>
-            {b.deltaPct === null ? 'no sales same period LY' : `${fmtPct(b.deltaPct)} vs same period LY`}
+          <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>Volume (period)</div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginTop: 2, color: b.volumeDeltaPct === null ? 'var(--ps-color-muted-text)' : b.volumeDeltaPct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)' }}>
+            {b.volumeDeltaPct === null ? 'no sales same period LY' : `${fmtPct(b.volumeDeltaPct)} vs same period LY`}
           </div>
         </div>
         {/* Secondary metrics as a 2x2 grid (not an inline row) -- at 4-per-row card widths (~230px)
@@ -614,7 +584,7 @@ function BrandCard({ b, onClick }: { b: FoundBrandStats; onClick: () => void }) 
             shrinking text past a readable size or truncating values, so the secondary group stacks
             below Revenue instead, keeping every stat's own text at full size. */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-          <SecondaryStat label="Volume (period)" value={fmtUomQty(b.volumeByUom, 2)} />
+          <SecondaryStat label="Revenue (period)" value={fmtLYD(b.revenue)} />
           <SecondaryStat label="GP%" value={b.gp === null ? '—' : `${b.gp.toFixed(1)}%`} />
           <SecondaryStat label="SKUs in catalog" value={String(b.skuCount)} />
           <SecondaryStat label="SKUs sold in period" value={String(b.skuSold)} />
@@ -628,7 +598,10 @@ function BrandCard({ b, onClick }: { b: FoundBrandStats; onClick: () => void }) 
 function UnassignedBrandCard({ b }: { b: PartnerBrand }) {
   return (
     <Card data-testid="brand-unassigned" style={{ opacity: 0.8 }}>
-      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 12 }}>{b.requested}</div>
+      <div data-testid="brand-card-title" title={b.requested}
+        style={{ fontSize: 15, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {b.requested}
+      </div>
       <div style={{ borderTop: '1px solid var(--ps-color-border)', paddingTop: 12, fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
         Not currently assigned in Odoo
         <div style={{ fontSize: 11, marginTop: 6 }}>Shows here as soon as a product has {b.odooNames[0]} as its main vendor in Odoo.</div>
