@@ -26,7 +26,7 @@ function axisTop(max: number): { top: number; step: number } {
 }
 
 /**
- * "Resolution ageing": a vertical stacked bar per age bucket -- resolved cases by the time they took, open cases by
+ * "Resolved Ageing": a vertical stacked bar per age bucket -- resolved cases by the time they took, open cases by
  * their age today -- with the "Close SLA 5 d" line between 2–5 d and 5–10 d (left = within SLA, right = breached).
  * Plain SVG (no click: the detractor list has no chart filter to hand a bucket to).
  */
@@ -53,14 +53,14 @@ export function AgeingBars({ ageing }: { ageing: Ageing }) {
         style={{ overflowX: 'auto' }}
         tabIndex={0}
         role="region"
-        aria-label="Resolution ageing chart; scroll horizontally on small screens"
+        aria-label="Resolved Ageing chart; scroll horizontally on small screens"
       >
         <svg
           viewBox={`0 0 ${W} ${H}`}
           width="100%"
           role="img"
           style={{ display: 'block', minWidth: 520, maxHeight: 280 }}
-          aria-label={`Resolution ageing. ${describe}. Close SLA ${NPS_SLA.closeDays} days.`}
+          aria-label={`Resolved Ageing. ${describe}. Close SLA ${NPS_SLA.closeDays} days.`}
         >
           <defs>
             {[

@@ -6,7 +6,7 @@ No customer data or production writes were used.
 
 - [List column, light](list-light.png)
 - [Board card, light](board-card-light.png)
-- [Resolution ageing, dark](resolution-ageing-dark.png)
+- [Resolved Ageing, dark](resolution-ageing-dark.png)
 
 The case window was also checked to use the same amber state, and the chart was checked in light and dark themes
 and at a 390 px viewport (horizontal chart scrolling preserves readable bucket labels).

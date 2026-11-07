@@ -3059,13 +3059,13 @@ export interface NpsResponseRate {
   variancePts: number | null;
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
 }
-/** "Resolution ageing" buckets (backend config/npsSla.ts) */
+/** "Resolved Ageing" buckets (backend config/npsSla.ts) */
 export type NpsAgeingBucket = 'd1' | 'd2' | 'd5' | 'd10' | 'd30' | 'dmax';
 /** the follow-up workflow step (lib/nps/followup.ts) */
 export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'REJECTED';
 /** the outcome group, worked out from the stage */
 export type NpsFollowupStatus = 'OPEN' | 'CLOSE' | 'DISPUTED';
-/** the follow-up charts (reason, status, resolution ageing), live from nps_followup_case */
+/** the follow-up charts (reason, status, Resolved Ageing), live from nps_followup_case */
 export interface NpsFollowupSummary {
   dateFrom: string;
   dateTo: string;
@@ -3076,7 +3076,7 @@ export interface NpsFollowupSummary {
   rejected: number;
   historical: number;
   noCase: number;
-  /** "Resolution ageing": resolved by time to resolve, open by age today, and the two SLA lines; Rejected / Historical out */
+  /** "Resolved Ageing": resolved by time to resolve, open by age today, and the two SLA lines; Rejected / Historical out */
   ageing: {
     buckets: { key: NpsAgeingBucket; label: string; withinSla: boolean; resolved: number; open: number }[];
     closedInSla: { count: number; of: number };

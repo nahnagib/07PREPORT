@@ -12,7 +12,7 @@ export type FollowupState = { data: NpsFollowupSummary | null; loading: boolean;
 
 const NOTE = { fontSize: 12, color: 'var(--ps-color-neutral-text)', margin: '4px 0 0' } as const;
 
-/** Under each chart: what is not in it. "Resolution ageing" also names Rejected (no SLA, so not in its bars). */
+/** Under each chart: what is not in it. "Resolved Ageing" also names Rejected (no SLA, so not in its bars). */
 function LeftOut({ s, withRejected = false }: { s: NpsFollowupSummary; withRejected?: boolean }) {
   return (
     <p style={NOTE} data-testid="fu-left-out">
@@ -24,7 +24,7 @@ function LeftOut({ s, withRejected = false }: { s: NpsFollowupSummary; withRejec
 
 export type FollowupPart = 'reason' | 'status' | 'resolved';
 
-const TITLE: Record<FollowupPart, string> = { reason: 'Detractors by reason', status: 'Detractors by status', resolved: 'Resolution ageing' };
+const TITLE: Record<FollowupPart, string> = { reason: 'Detractors by reason', status: 'Detractors by status', resolved: 'Resolved Ageing' };
 const HELP: Record<FollowupPart, VisualHelpId> = {
   reason: 'process.npsScore.byReason', status: 'process.npsScore.byStatus', resolved: 'process.npsScore.resolvedByTime',
 };
@@ -34,7 +34,7 @@ const HELP: Record<FollowupPart, VisualHelpId> = {
  * and filters: an edit on the follow-up page shows here on the next load.
  *   reason    by reason category; a click drills into its sub-reasons ("← All reasons")
  *   status    by status (Open / Close / Disputed); a click drills into its stages ("← All statuses")
- *   resolved  "Resolution ageing" (AgeingBars): resolved by time taken, open by age, the Close SLA line, the SLA shares
+ *   resolved  "Resolved Ageing" (AgeingBars): resolved by time taken, open by age, the Close SLA line, the SLA shares
  * ONE total in the donut centres: the cases with a status (Rejected included). Historical has no status: left out of
  * all three, counted under them; the ageing bars also leave out Rejected (no SLA) and name it in the note.
  */

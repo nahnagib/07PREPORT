@@ -61,7 +61,7 @@ import {
  * Row 3 WhatsApp message reach: company/date only.
  * Row 4 the trend: Weekly (Saturday..Friday) / Monthly / Yearly from the first period with ratings; NPS and CSAT lines
  *       plus monthly stacked responders; periods below the minimum faded on the score chart.
- * Row 5 Errors by reason · Detractors by reason · Detractors by status · Resolution ageing (live from the follow-up cases;
+ * Row 5 Errors by reason · Detractors by reason · Detractors by status · Resolved Ageing (live from the follow-up cases;
  *       4 columns wide, 2 x 2 medium, 1 on phones).
  * Row 6 the detractor list with the follow-up case and the customers' comments: only with the nps_comments permission.
  * Every rating visual filters on the rating date (Tripoli time), the global filters and the role's data scope.

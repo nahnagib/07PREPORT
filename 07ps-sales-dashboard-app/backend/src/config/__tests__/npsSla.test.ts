@@ -108,7 +108,7 @@ describe('colour rule (every row of the SLA table)', () => {
   });
 });
 
-describe('Resolution ageing', () => {
+describe('Resolved Ageing', () => {
   it('six buckets; the Close SLA line sits between 2-5 d and 5-10 d', () => {
     expect(AGEING_BUCKETS.map((b) => [b.label, b.withinSla])).toEqual([
       ['≤ 1 d', true],

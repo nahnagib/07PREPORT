@@ -482,7 +482,7 @@ export interface NpsFollowupSummary {
   historical: number;
   /** detractors without a case yet (process_nps creates them on its next run); 0 normally */
   noCase: number;
-  /** "Resolution ageing" (config/npsSla.ts): resolved cases by time to resolve, open cases by age, and the two SLA
+  /** "Resolved Ageing" (config/npsSla.ts): resolved cases by time to resolve, open cases by age, and the two SLA
    *  lines; Rejected and Historical are left out (they have no SLA) */
   ageing: ResolutionAgeing;
   /** by STATUS (the generated column), with its stages for the drill-down (every stage listed, 0 included); sums to `charted` */
@@ -503,7 +503,7 @@ export interface NpsSubReasonCount {
 export const NOT_CLASSIFIED = 'Not yet classified';
 
 /**
- * The follow-up charts of the NPS page -- by reason category, by status (drill: its stages) and "Resolution ageing" --
+ * The follow-up charts of the NPS page -- by reason category, by status (drill: its stages) and "Resolved Ageing" --
  * from nps_followup_case at request time (an edit on the follow-up page shows on the next load), for the same
  * detractors as the Detractors box: rating date, global filters, role scope. The two donuts count cases with a status
  * (Rejected included); ageing excludes Rejected. Historical has no status and is counted separately below the charts.

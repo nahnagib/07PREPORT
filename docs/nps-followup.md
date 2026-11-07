@@ -52,13 +52,13 @@ Two cards in the same column always have the same badge. That is expected.
   `down/` files) still compares `status` with a stage value.
 
 **The follow-up charts on the NPS Score page** (one row: Errors by reason · Detractors by reason · Detractors by
-status · Resolution ageing; 2 × 2 on desktop so the six ageing buckets remain readable, 1 column on phones):
+status · Resolved Ageing; 2 × 2 on desktop so the six ageing buckets remain readable, 1 column on phones):
 
 | Chart | Slices | Click |
 |---|---|---|
 | Detractors by reason | the reason categories, "Not yet classified" | a category → its sub-reasons ("Not specified" included); "← All reasons" |
 | Detractors by status | Open, Close, Disputed (the generated `status`) | a status → its stages (Open → New / Contacted / In Progress, Close → Resolved, Disputed → Rejected; a stage with no case shows 0); "← All statuses" |
-| Resolution ageing | Six age buckets, stacked Resolved / Still open, with the Close SLA marker | No chart-to-table filtering exists on this page |
+| Resolved Ageing | Six age buckets, stacked Resolved / Still open, with the Close SLA marker | No chart-to-table filtering exists on this page |
 
 The reason and status donuts share the total of cases **with a status** (Open + Close + Disputed, including Rejected).
 Historical has no status and is shown in the note. The ageing chart excludes Rejected as well and shows
@@ -91,7 +91,7 @@ icon and a tooltip naming its rule; a late close shows how many days past the cl
 The palette validator checks the green/amber/red palette in both themes; automated WCAG checks require 4.5:1 text
 contrast on card and page surfaces. Icons, labels and chart hatching supplement colour.
 
-**Resolution ageing** replaces "Resolved by time" with vertical stacked bars: **≤ 1 d · 1–2 d · 2–5 d · 5–10 d ·
+**Resolved Ageing** replaces "Resolved by time" with vertical stacked bars: **≤ 1 d · 1–2 d · 2–5 d · 5–10 d ·
 10–30 d · > 30 d**. Resolved cases use creation-to-resolution duration (solid); Still open uses creation-to-now age
 (hatched). Buckets through 5 d are green; later buckets are red. A vertical **Close SLA 5 d** marker separates them.
 The two series have tooltips and labels; Rejected, Historical and missing cases are excluded and counted in the note.

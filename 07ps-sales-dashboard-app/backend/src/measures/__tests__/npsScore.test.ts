@@ -295,7 +295,7 @@ describe('follow-up summary (live from nps_followup_case)', () => {
       row(null, '2026-10-20 08:00:00', null, null), // rated after the last process_nps run: no case yet
     ]);
     const s = await fetchNpsFollowupSummary(p, parseNpsQuery({}, NOW), {}, NOW_LOCAL);
-    // Resolution ageing (from created_at): resolved 23 h / 48 h / 120 h+1 s; open 26 h (New) and 362 h (In progress); Rejected left out
+    // Resolved Ageing (from created_at): resolved 23 h / 48 h / 120 h+1 s; open 26 h (New) and 362 h (In progress); Rejected left out
     expect(Object.fromEntries(s.ageing.buckets.map((b) => [b.key, [b.resolved, b.open]]))).toEqual({
       d1: [1, 0], d2: [1, 1], d5: [0, 0], d10: [1, 0], d30: [0, 1], dmax: [0, 0] });
     expect(s.ageing.closedInSla).toEqual({ count: 2, of: 3 }); // 3 resolved (2 within 5 d)

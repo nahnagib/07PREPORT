@@ -152,7 +152,7 @@ export function caseSla(c: SlaInput, now: string): CaseSla {
   };
 }
 
-/** "Resolution ageing" buckets: hours up to maxHours (null = no upper limit); withinSla = left of the Close SLA line. */
+/** "Resolved Ageing" buckets: hours up to maxHours (null = no upper limit); withinSla = left of the Close SLA line. */
 export const AGEING_BUCKETS = [
   { key: 'd1', label: '≤ 1 d', maxHours: HOURS_PER_DAY },
   { key: 'd2', label: '1–2 d', maxHours: 2 * HOURS_PER_DAY },

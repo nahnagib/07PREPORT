@@ -141,7 +141,7 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
 // the local data: 15 cases with a status (Open 13 = New 11 + In progress 2, Close 1, Disputed 1), 28 Historical
 const SUMMARY: NpsFollowupSummary = {
   dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 15, rejected: 1, historical: 28, noCase: 0,
-  // Resolution ageing: 1 resolved in a day; 13 open (5 under a day, 2 at 1-2 d, 4 at 5-10 d, 2 over 30 d); Rejected out
+  // Resolved Ageing: 1 resolved in a day; 13 open (5 under a day, 2 at 1-2 d, 4 at 5-10 d, 2 over 30 d); Rejected out
   ageing: {
     buckets: [
       { key: 'd1', label: '≤ 1 d', withinSla: true, resolved: 1, open: 5 }, { key: 'd2', label: '1–2 d', withinSla: true, resolved: 0, open: 2 },
@@ -164,9 +164,9 @@ const SUMMARY: NpsFollowupSummary = {
 const fuState = (data: NpsFollowupSummary | null) => ({ data, loading: false, error: null, retry: () => undefined });
 
 describe('follow-up charts (live)', () => {
-  it('Resolution ageing: six stacked bars, the Close SLA line after 2–5 d, the SLA line under it, Rejected / Historical in the note', () => {
+  it('Resolved Ageing: six stacked bars, the Close SLA line after 2–5 d, the SLA line under it, Rejected / Historical in the note', () => {
     render(<FollowupCharts state={fuState(SUMMARY)} part="resolved" />);
-    expect(screen.getByText('Resolution ageing')).toBeTruthy();
+    expect(screen.getByText('Resolved Ageing')).toBeTruthy();
     expect(screen.queryByText('Resolved by time')).toBeNull();
     const bars = ['d1', 'd2', 'd5', 'd10', 'd30', 'dmax'].map((k) => screen.getByTestId(`fu-ageing-${k}`));
     // [resolved, still open, the total over the bar, the axis label]
