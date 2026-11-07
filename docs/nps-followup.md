@@ -164,7 +164,9 @@ A case whose old reason is not in the map stops 0067 before anything is moved (a
   - The usual company, customer group, channel, branch, salesperson and customer filters. Your role's data scope
     applies.
   - The follow-up's own: rating dates, stage, status, reason category and sub-reason, owner, search (customer, order,
-    delivery, #case), and "Source changed only".
+    delivery, #case).
+  - The "?" beside each board stage and status KPI gives a quick definition. Stage and Status filters and list headers
+    offer the full guides, including Historical. Help opens on hover, keyboard focus or tap.
   - The filters are kept in the address, so a link opens the same view.
 - **A case** (click a card or a row) shows:
   - the rating, read-only: rated at, company, customer, order, delivery, branch, salesperson; the order and the

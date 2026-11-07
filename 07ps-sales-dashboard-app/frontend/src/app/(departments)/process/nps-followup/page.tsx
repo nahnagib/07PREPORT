@@ -7,6 +7,7 @@ import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import { CaseDetail } from '../../../../components/nps-followup/CaseDetail';
+import { FollowupHelp } from '../../../../components/nps-followup/FollowupHelp';
 import { CaseCard, FollowupShell, SlaKpis, StagePill, StatusBadge, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
 import { KaizenKpi } from '../../../../components/kaizen/KaizenBits';
 import { useAuth } from '../../../../lib/AuthProvider';
@@ -180,7 +181,7 @@ function FollowupBody() {
             <section className="ps-fu-kpis" aria-label="Status" data-testid="fu-kpis-status">
               {/* by STATUS: every case of the filters (Historical has no status) */}
               {STATUSES.map((s) => (
-                <KaizenKpi key={s} label={STATUS_LABEL[s]} value={String(board.kpis[STATUS_KPI[s]])}
+                <KaizenKpi key={s} label={<span className="ps-fu-help-label"><span>{STATUS_LABEL[s]}</span><FollowupHelp kind="status" value={s} /></span>} value={String(board.kpis[STATUS_KPI[s]])}
                   sub={`${sharePct(board.kpis[STATUS_SHARE[s]])} of ${board.kpis.total} · ${STATUS_HINT[s]}`} accent={STATUS_COLOR[s]} />
               ))}
             </section>
@@ -194,7 +195,7 @@ function FollowupBody() {
               {BOARD_COLUMNS.map((s) => (
                 <div key={s} className="ps-fu-col" data-testid={`fu-col-${s}`}>
                   <div className="ps-fu-col-head" style={{ borderTopColor: STAGE_COLOR[s] }}>
-                    <span>{STAGE_LABEL[s]}{s === 'RESOLVED' ? ' (30 days)' : ''}</span>
+                    <span className="ps-fu-help-label"><span>{STAGE_LABEL[s]}{s === 'RESOLVED' ? ' (30 days)' : ''}</span><FollowupHelp kind="stage" value={s} /></span>
                     <span className="ps-fu-count">{columns[s].length}</span>
                   </div>
                   <div className="ps-fu-col-body">
@@ -223,7 +224,7 @@ const STATUS_SHARE = { OPEN: 'openShare', CLOSE: 'closeShare', DISPUTED: 'disput
 const STATUS_HINT: Record<FollowupStatus, string> = { OPEN: 'New, Contacted, In progress', CLOSE: 'Resolved', DISPUTED: 'Rejected' };
 const sharePct = (v: number | null) => (v === null ? '—' : `${Math.round(v)}%`);
 
-/** Rating dates, stage, status, reason category and sub-reason, owner, "source changed", search. */
+/** Rating dates, stage, status, reason category and sub-reason, owner and search. */
 function OwnFilters({ filters, options, onChange }: { filters: FollowupFilters; options: FollowupOptions | null; onChange: (f: FollowupFilters) => void }) {
   const [search, setSearch] = useState(filters.search ?? '');
   useEffect(() => setSearch(filters.search ?? ''), [filters.search]);
@@ -241,22 +242,22 @@ function OwnFilters({ filters, options, onChange }: { filters: FollowupFilters; 
         <span>Rated to</span>
         <input type="date" className="ps-kaizen-input" value={filters.dateTo ?? ''} onChange={(e) => onChange({ ...filters, dateTo: e.target.value || undefined })} />
       </label>
-      <label className="ps-kaizen-field">
-        <span>Stage</span>
-        <select className="ps-kaizen-input" data-testid="fu-filter-stage" value={filters.stages[0] ?? ''}
+      <div className="ps-kaizen-field">
+        <span className="ps-fu-help-label"><label htmlFor="fu-filter-stage">Stage</label><FollowupHelp kind="stage" /></span>
+        <select id="fu-filter-stage" className="ps-kaizen-input" data-testid="fu-filter-stage" value={filters.stages[0] ?? ''}
           onChange={(e) => onChange({ ...filters, stages: one(e.target.value, (s) => s as FollowupStage) })}>
           <option value="">All</option>
           {stages.map((s) => <option key={s} value={s}>{STAGE_LABEL[s]}</option>)}
         </select>
-      </label>
-      <label className="ps-kaizen-field">
-        <span>Status</span>
-        <select className="ps-kaizen-input" data-testid="fu-filter-status" value={filters.statuses[0] ?? ''}
+      </div>
+      <div className="ps-kaizen-field">
+        <span className="ps-fu-help-label"><label htmlFor="fu-filter-status">Status</label><FollowupHelp kind="status" /></span>
+        <select id="fu-filter-status" className="ps-kaizen-input" data-testid="fu-filter-status" value={filters.statuses[0] ?? ''}
           onChange={(e) => onChange({ ...filters, statuses: one(e.target.value, (s) => s as FollowupStatus) })}>
           <option value="">All</option>
           {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
         </select>
-      </label>
+      </div>
       <label className="ps-kaizen-field">
         <span>Reason category</span>
         <select className="ps-kaizen-input" value={filters.categories[0] ?? ''}
@@ -288,10 +289,6 @@ function OwnFilters({ filters, options, onChange }: { filters: FollowupFilters; 
         <input type="search" className="ps-kaizen-input" placeholder="Customer, order, delivery, #case" value={search}
           onChange={(e) => setSearch(e.target.value)} onBlur={() => (search.trim() || undefined) !== filters.search && onChange({ ...filters, search: search.trim() || undefined })} />
       </form>
-      <label className="ps-fu-check">
-        <input type="checkbox" checked={filters.sourceChanged === true} onChange={(e) => onChange({ ...filters, sourceChanged: e.target.checked ? true : undefined })} />
-        Source changed only
-      </label>
       {(filters.dateFrom || filters.dateTo || filters.stages.length || filters.statuses.length || filters.categories.length || filters.reasonIds.length
         || filters.owners.length || filters.search || filters.sourceChanged !== undefined) ? (
         <Button variant="secondary" onClick={() => onChange({ ...EMPTY_FILTERS, view: filters.view })}>Clear</Button>
@@ -309,7 +306,7 @@ function CaseList({ list, onOpen, onMore }: { list: Paged<FollowupCase>; onOpen:
         <table className="ps-fu-table" data-testid="fu-list">
           <thead>
             <tr>
-              <th>Case</th><th>Rated at</th><th>Stage</th><th>Status</th><th>Customer</th><th>Order</th><th>Company · Branch</th><th>Reason</th><th>Owner</th><th>Time open / Resolved in</th>
+              <th>Case</th><th>Rated at</th><th><span className="ps-fu-help-label">Stage<FollowupHelp kind="stage" /></span></th><th><span className="ps-fu-help-label">Status<FollowupHelp kind="status" /></span></th><th>Customer</th><th>Order</th><th>Company · Branch</th><th>Reason</th><th>Owner</th><th>Time open / Resolved in</th>
             </tr>
           </thead>
           <tbody>

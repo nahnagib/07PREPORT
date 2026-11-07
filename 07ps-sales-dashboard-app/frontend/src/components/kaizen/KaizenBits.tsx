@@ -48,7 +48,7 @@ export function KaizenKpi({
   onClick,
   accent,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: string;
   unit?: string;
   sub?: string;

@@ -660,7 +660,7 @@ textarea.ps-kaizen-input { min-height: 84px; resize: vertical; }
 .ps-fu-muted { color: var(--ps-color-muted-text); font-size: 12.5px; }
 .ps-fu-filters { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: flex-end; }
 .ps-fu-filters > .ps-kaizen-field { flex: 0 1 170px; }
-.ps-fu-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding-bottom: 8px; }
+.ps-fu-help-label { display: inline-flex; align-items: center; gap: 6px; }
 /* Full-width KPI rows: 3 status cards or 4 SLA cards, 1 column on phones and 2 from 640px. */
 .ps-fu-kpis { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 @media (min-width: 640px) { .ps-fu-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
