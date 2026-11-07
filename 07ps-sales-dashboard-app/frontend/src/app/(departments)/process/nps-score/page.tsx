@@ -61,7 +61,7 @@ import {
  * Row 3 WhatsApp message reach: company/date only.
  * Row 4 the trend: Weekly (Saturday..Friday) / Monthly / Yearly from the first period with ratings; NPS and CSAT lines
  *       plus monthly stacked responders; periods below the minimum faded on the score chart.
- * Row 5 Errors by reason · Detractors by reason · Detractors by status · Resolved by time (live from the follow-up cases;
+ * Row 5 Errors by reason · Detractors by reason · Detractors by status · Resolved Ageing (live from the follow-up cases;
  *       4 columns wide, 2 x 2 medium, 1 on phones).
  * Row 6 the detractor list with the follow-up case and the customers' comments: only with the nps_comments permission.
  * Every rating visual filters on the rating date (Tripoli time), the global filters and the role's data scope.
@@ -215,7 +215,7 @@ function DetractorList({ state, onMore }: { state: ListState; onMore: () => void
     { key: 'reason', header: 'Reason', render: (r) => <span title={r.reasonAr ?? undefined}>{r.reason ?? 'Not yet classified'}</span>, rawValue: (r) => r.reason ?? '' },
     { key: 'owner', header: 'Owner', render: (r) => r.owner ?? '—', rawValue: (r) => r.owner ?? '' },
     { key: 'hoursOpen', header: 'Time open / Resolved in', width: 150,
-      render: (r) => (r.stage && r.hoursOpen !== null && r.timeBand ? <TimeOpen c={{ stage: r.stage, hoursOpen: r.hoursOpen, timeBand: r.timeBand }} /> : '—'),
+      render: (r) => (r.stage && r.sla ? <TimeOpen c={{ stage: r.stage, hoursOpen: r.hoursOpen, sla: r.sla }} /> : '—'),
       rawValue: (r) => r.hoursOpen ?? '' },
     { key: 'comment', header: 'Comment', width: 280, render: (r) => <span dir="auto" style={{ whiteSpace: 'pre-line' }}>{r.comment ?? '—'}</span>,
       rawValue: (r) => r.comment ?? '' },

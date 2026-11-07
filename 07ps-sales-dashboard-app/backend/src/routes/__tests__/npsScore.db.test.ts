@@ -210,7 +210,7 @@ describe.skipIf(!RUN)('NPS page consistency, YTD, default B2B + B2C filter and a
     expect(fu.charted + fu.historical + fu.noCase).toBe(o.detractors);
     // by status: every case but Historical (and the detractors without a case yet)
     expect(sum(fu.byStatus, 'count')).toBe(fu.charted);
-    expect(sum(fu.byStage, 'count')).toBe(fu.charted);
+    expect(sum(fu.ageing.buckets, 'resolved') + sum(fu.ageing.buckets, 'open')).toBe(fu.charted - fu.rejected);
     expect(sum(fu.byReason, 'count')).toBe(fu.charted);
     const [hist] = await qa(`SELECT COUNT(*) AS n FROM nps_followup_case c JOIN fact_process_nps_response f ON f.response_id = c.response_id
       WHERE c.stage = 'HISTORICAL' AND f.nps_level = 1 AND f.RatingDateKey BETWEEN ? AND ?${filters ? ' AND f.SegmentKey IN (1, 2)' : ''}`,

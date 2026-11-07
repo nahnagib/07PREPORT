@@ -387,11 +387,11 @@ filter by `npx vitest run -c vitest.nps-db.config.ts` (backend, read-only).
 ## 9. Detractor follow-up
 
 Built on the Detractor Follow-up page (`docs/nps-followup.md`, migration 0052): one case per detractor, created by
-`process_nps`; people set status, reason, owner and times there. The NPS Score page reads the cases **live** at request
-time (not from the nightly ETL): the Detractors table (Status, Reason, Owner, Time open / Solved in), **Detractors by
-reason** ("Not yet classified" = a case without a reason) and **Detractors by status** (Solved < 48 h green, 48 h – 5
-days yellow, > 5 days red, Pending black). Historical (rated before `NPS_FOLLOWUP_START`) and Cancelled cases are left
-out of both charts and counted under them. A row opens its case card on the follow-up page.
+`process_nps`; people set stage, reason, owner and times there; status follows the stage. The NPS Score page reads
+the cases **live** at request time: the Detractors table (Stage, Status, Reason, Owner, Time open / Resolved in),
+**Detractors by reason**, **Detractors by status** and **Resolved Ageing**. Time colours and ageing use the contact
+and close SLAs from case creation; see the SLA section of `docs/nps-followup.md`. Historical is excluded from all
+charts, and Rejected is also excluded from ageing; both are counted in the notes. A row opens its follow-up case.
 
 ## 10. Continuation verification (2026-10-18)
 

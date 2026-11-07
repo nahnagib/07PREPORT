@@ -1,4 +1,5 @@
 import type { VisualHelpContent } from '@07ps/ui';
+import { NPS_SLA } from './nps/sla';
 
 /**
  * Every visual's "?" (what it shows: definition, formula, notes) and "i" (what you can do with it), in ONE reviewable
@@ -497,7 +498,8 @@ export const VISUAL_HELP = {
     interactions: ['Click a status to see its stages; "← All statuses" goes back'],
   },
   'process.npsScore.resolvedByTime': {
-    help: { definition: 'Detractor cases by how fast they were resolved (rating → Resolved): under 48 h, 48 h to 5 days, over 5 days; Not resolved yet = still New, Contacted or In progress; Rejected (not resolved). Same total as the other follow-up charts.' },
+    help: { definition: `Detractor cases by age from case creation: resolved cases by the time they took, open cases by their age today. Bars left of the "Close SLA ${NPS_SLA.closeDays} d" line are within SLA, right of it breached. Solid = resolved; hatched = still open. Rejected and Historical have no SLA and are left out.`,
+      formula: `Closed within SLA = resolved within ${NPS_SLA.closeDays} d ÷ all resolved · Contacted within ${NPS_SLA.contactHours} h = contacted within ${NPS_SLA.contactHours} h ÷ cases contacted, resolved or open beyond ${NPS_SLA.contactHours} h (each counted once)` },
   },
   'process.npsScore.detractors': {
     help: { definition: 'Every ★ rating of the period, newest first, with its follow-up case (stage, status, reason, owner, time open) and the customer\'s comment (phone numbers and e-mails masked).' },

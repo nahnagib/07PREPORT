@@ -2,23 +2,23 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { AlertTriangle, KanbanSquare, ListChecks, MessageSquare, Tags, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, KanbanSquare, ListChecks, MessageSquare, MinusCircle, Tags, type LucideIcon } from 'lucide-react';
 import { AppHeader } from '../AppHeader';
 import { BottomNavBar } from '../BottomNavBar';
 import { useAuth } from '../../lib/AuthProvider';
 import {
-  BAND_COLOR,
-  BAND_HINT,
   STAGE_COLOR,
   STAGE_LABEL,
   STATUS_COLOR,
   STATUS_LABEL,
   formatHoursOpen,
   type FollowupCase,
+  type FollowupKpis,
   type FollowupStage,
   type FollowupStatus,
-  type TimeBand,
 } from '../../lib/nps/followup';
+import { NPS_SLA, SLA_COLOR, slaHint, type CaseSla, type SlaBand } from '../../lib/nps/sla';
+import { KaizenKpi } from '../kaizen/KaizenBits';
 
 export const FOLLOWUP_BASE = '/process/nps-followup';
 
@@ -92,15 +92,25 @@ export function StatusBadge({ status }: { status: FollowupStatus | null }) {
   );
 }
 
-/** Time open with its colour; Resolved says "resolved in". */
-export function TimeOpen({ c }: { c: Pick<FollowupCase, 'hoursOpen' | 'timeBand' | 'stage'> }) {
-  if (c.hoursOpen === null || c.timeBand === null) return null;
-  const color = BAND_COLOR[c.timeBand as TimeBand];
+/** An icon per SLA band: the colour-blind-safe second cue next to the colour (lib/nps/sla.ts). */
+const SLA_ICON: Record<SlaBand, LucideIcon> = { green: CheckCircle2, amber: Clock, red: AlertTriangle, grey: MinusCircle };
+
+/**
+ * Time open with its SLA colour (lib/nps/sla.ts) and the rule in the tooltip; Resolved says "resolved in", Rejected /
+ * Historical have no SLA and read "rejected" / "historical" in grey.
+ */
+export function TimeOpen({ c }: { c: { stage: FollowupStage; hoursOpen: number | null; sla: CaseSla | null } }) {
+  if (!c.sla) return null;
+  const { band, rule } = c.sla;
+  const color = SLA_COLOR[band];
+  const Icon = SLA_ICON[band];
+  const hint = slaHint(c.sla);
+  const text = rule === 'rejected' || rule === 'historical' ? rule
+    : `${c.stage === 'RESOLVED' ? 'resolved in ' : 'open '}${formatHoursOpen(c.hoursOpen)}`;
   return (
-    <span className="ps-fu-time" title={BAND_HINT} data-band={c.timeBand} data-testid="fu-time" style={{ color }}>
-      <span className="ps-kaizen-dot" style={{ background: color }} aria-hidden="true" />
-      {c.stage === 'RESOLVED' ? 'resolved in ' : 'open '}
-      {formatHoursOpen(c.hoursOpen)}
+    <span className="ps-fu-time" title={hint} aria-label={`${text}. ${hint}`} data-band={band} data-rule={rule} data-testid="fu-time" style={{ color }}>
+      <Icon size={13} aria-hidden="true" style={{ flex: 'none' }} />
+      {text}
     </span>
   );
 }
@@ -108,8 +118,8 @@ export function TimeOpen({ c }: { c: Pick<FollowupCase, 'hoursOpen' | 'timeBand'
 /** One case on the board: order / delivery, the status badge, customer, company and branch, reason, owner, time open. */
 export function CaseCard({ c, onOpen }: { c: FollowupCase; onOpen: (id: number) => void }) {
   return (
-    <button type="button" className="ps-fu-card" data-testid="fu-card" data-band={c.timeBand ?? 'none'} onClick={() => onOpen(c.caseId)}
-      style={{ borderInlineStartColor: c.timeBand ? BAND_COLOR[c.timeBand] : 'var(--ps-color-border)' }}>
+    <button type="button" className="ps-fu-card" data-testid="fu-card" data-band={c.sla.band} onClick={() => onOpen(c.caseId)}
+      style={{ borderInlineStartColor: c.sla.band === 'grey' ? 'var(--ps-color-border)' : SLA_COLOR[c.sla.band] }}>
       <div className="ps-fu-card-top">
         <strong>{c.orderRef ?? c.deliveryCode ?? `Case #${c.caseId}`}</strong>
         <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
@@ -129,5 +139,19 @@ export function CaseCard({ c, onOpen }: { c: FollowupCase; onOpen: (id: number) 
         {c.sourceChanged && <span className="ps-fu-flag" title={c.sourceChangeReason ?? undefined}><AlertTriangle size={13} /> Source changed</span>}
       </div>
     </button>
+  );
+}
+
+/** The board's SLA row (the board's cases; lib/nps/sla.ts), full width: 4 across on wide screens. */
+export function SlaKpis({ kpis }: { kpis: FollowupKpis }) {
+  return (
+    <section className="ps-fu-kpis ps-fu-kpis--4" aria-label="SLA" data-testid="fu-kpis-stage">
+      <KaizenKpi label="Close SLA missed" value={String(kpis.closeSlaMissed)} sub={`open more than ${NPS_SLA.closeDays} days`} accent={SLA_COLOR.red} />
+      <KaizenKpi label="Contact SLA missed" value={String(kpis.contactSlaMissed)}
+        sub={`open more than ${NPS_SLA.contactHours} h, not contacted`} accent={SLA_COLOR.red} />
+      <KaizenKpi label="Resolved, last 30 days" value={String(kpis.resolved30Days)}
+        sub={`${kpis.resolvedInSla} within SLA (${NPS_SLA.closeDays} d)`} accent={SLA_COLOR.green} />
+      <KaizenKpi label="Not classified" value={String(kpis.noReason)} sub="no reason chosen yet" accent="var(--ps-color-watch)" />
+    </section>
   );
 }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { Gauge, RadialGauge } from '@07ps/ui';
 import type { NpsCounts, NpsFollowupSummary, NpsResponseRate } from '../../../lib/api';
 import { FollowupCharts } from '../FollowupCharts';
@@ -141,8 +141,16 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
 // the local data: 15 cases with a status (Open 13 = New 11 + In progress 2, Close 1, Disputed 1), 28 Historical
 const SUMMARY: NpsFollowupSummary = {
   dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 15, rejected: 1, historical: 28, noCase: 0,
-  byStage: [{ key: 'resolved_48h', count: 1 }, { key: 'resolved_5d', count: 0 }, { key: 'resolved_late', count: 0 }, { key: 'pending', count: 13 },
-    { key: 'rejected', count: 1 }],
+  // Resolved Ageing: 1 resolved in a day; 13 open (5 under a day, 2 at 1-2 d, 4 at 5-10 d, 2 over 30 d); Rejected out
+  ageing: {
+    buckets: [
+      { key: 'd1', label: '≤ 1 d', withinSla: true, resolved: 1, open: 5 }, { key: 'd2', label: '1–2 d', withinSla: true, resolved: 0, open: 2 },
+      { key: 'd5', label: '2–5 d', withinSla: true, resolved: 0, open: 0 }, { key: 'd10', label: '5–10 d', withinSla: false, resolved: 0, open: 4 },
+      { key: 'd30', label: '10–30 d', withinSla: false, resolved: 0, open: 0 }, { key: 'dmax', label: '> 30 d', withinSla: false, resolved: 0, open: 2 },
+    ],
+    closedInSla: { count: 1, of: 1 },
+    contactedInSla: { count: 0, of: 8 },
+  },
   byStatus: [
     { key: 'OPEN', count: 13, stages: [{ stage: 'NEW', count: 11 }, { stage: 'CONTACTED', count: 0 }, { stage: 'IN_PROGRESS', count: 2 }] },
     { key: 'CLOSE', count: 1, stages: [{ stage: 'RESOLVED', count: 1 }] },
@@ -156,17 +164,40 @@ const SUMMARY: NpsFollowupSummary = {
 const fuState = (data: NpsFollowupSummary | null) => ({ data, loading: false, error: null, retry: () => undefined });
 
 describe('follow-up charts (live)', () => {
-  it('resolved by time: the five slices (Not resolved yet, Rejected), no status line, Rejected / Historical in the note', () => {
+  it('Resolved Ageing: six stacked bars, the Close SLA line after 2–5 d, the SLA line under it, Rejected / Historical in the note', () => {
     render(<FollowupCharts state={fuState(SUMMARY)} part="resolved" />);
-    expect(screen.getByText('Resolved by time')).toBeTruthy();
-    expect(screen.queryByText('Detractors by stage')).toBeNull();
-    expect(screen.getByTestId('fu-resolved-resolved_48h').textContent).toContain('Resolved < 48 h');
-    expect(screen.getByTestId('fu-resolved-pending').textContent).toContain('Not resolved yet');
-    expect(screen.getByTestId('fu-resolved-pending').textContent).toContain('13');
-    expect(screen.getByTestId('fu-resolved-rejected').textContent).toContain('Rejected (not resolved)');
+    expect(screen.getByText('Resolved Ageing')).toBeTruthy();
+    expect(screen.queryByText('Resolved by time')).toBeNull();
+    const bars = ['d1', 'd2', 'd5', 'd10', 'd30', 'dmax'].map((k) => screen.getByTestId(`fu-ageing-${k}`));
+    // [resolved, still open, the total over the bar, the axis label]
+    expect(bars.map((b) => [b.getAttribute('data-resolved'), b.getAttribute('data-open'), ...[...b.querySelectorAll('text')].map((t) => t.textContent)])).toEqual([
+      ['1', '5', '6', '≤ 1 d'], ['0', '2', '2', '1–2 d'], ['0', '0', '2–5 d'], ['0', '4', '4', '5–10 d'], ['0', '0', '10–30 d'], ['0', '2', '2', '> 30 d']]);
+    expect(bars.map((b) => b.getAttribute('data-within-sla'))).toEqual(['true', 'true', 'true', 'false', 'false', 'false']);
+    expect(bars[0].querySelectorAll('rect')).toHaveLength(2); // resolved + still open, stacked
+    expect(bars[0].querySelector('title')?.textContent).toBe('≤ 1 d (within SLA): 1 resolved, 5 still open');
+    expect(bars[3].querySelector('title')?.textContent).toBe('5–10 d (SLA breached): 0 resolved, 4 still open');
+    // the line sits on the boundary between the 3rd and 4th bucket
+    const line = screen.getByTestId('fu-ageing-sla-line');
+    expect(line.textContent).toContain('Close SLA 5 d');
+    expect(Number(line.querySelector('line')?.getAttribute('x1'))).toBeCloseTo(34 + ((640 - 34 - 12) / 6) * 3);
+    expect(screen.getByTestId('fu-ageing-sla').textContent).toBe('Closed within SLA: 1 of 1 (100 %) · Contacted within 24 h: 0 of 8 (0 %)');
+    expect(bars[0].querySelector('[data-series="resolved"]')?.getAttribute('fill')).toBe('var(--ps-sla-green)');
+    expect(bars[3].querySelector('[data-series="open"]')?.getAttribute('style')).toContain('var(--ps-sla-red)');
+    expect(bars[0].querySelector('[data-series="open"]')?.getAttribute('fill')).toMatch(/^url\(#ageing-open-/);
+    const patterns = screen.getByTestId('fu-ageing').querySelectorAll('pattern');
+    expect([...patterns].map((p) => p.querySelector('rect:last-child')?.getAttribute('fill'))).toEqual(['var(--ps-sla-green)', 'var(--ps-sla-red)']);
+    expect(within(screen.getByTestId('fu-ageing')).queryByRole('button')).toBeNull(); // no click-to-filter: the detractor list has no chart filter
     expect(screen.queryByTestId('fu-by-status')).toBeNull();
     expect(screen.getByTestId('fu-left-out').textContent).toBe('Rejected: 1 · Historical: 28');
     expect(screen.queryByText(/Waiting for the follow-up data source|No follow-up data/)).toBeNull();
+  });
+
+  it('keeps the SLA shares and exclusion note visible when all cases are Rejected or Historical', () => {
+    render(<FollowupCharts state={fuState({ ...SUMMARY, charted: 1, rejected: 1,
+      ageing: { buckets: SUMMARY.ageing.buckets.map((b) => ({ ...b, resolved: 0, open: 0 })),
+        closedInSla: { count: 0, of: 0 }, contactedInSla: { count: 0, of: 0 } } })} part="resolved" />);
+    expect(screen.getByTestId('fu-ageing-sla').textContent).toContain('Closed within SLA: — (none due yet)');
+    expect(screen.getByTestId('fu-left-out').textContent).toBe('Rejected: 1 · Historical: 28');
   });
 
   it('status: Open / Close / Disputed; a click drills into the stages (0 kept as 0) and "← All statuses" goes back', () => {
@@ -186,14 +217,14 @@ describe('follow-up charts (live)', () => {
     expect(screen.queryByTestId('fu-status-stage-NEW')).toBeNull();
   });
 
-  it('the same filters give the same total in the centre of every follow-up chart', () => {
-    const centre = (part: 'reason' | 'status' | 'resolved') => {
+  it('the same filters give the same total in the centre of both follow-up donuts', () => {
+    const centre = (part: 'reason' | 'status') => {
       const { container, unmount } = render(<FollowupCharts state={fuState(SUMMARY)} part={part} />);
       const n = container.querySelector('.ps-nps-donut-center strong')?.textContent;
       unmount();
       return n;
     };
-    expect([centre('reason'), centre('status'), centre('resolved')]).toEqual(['15', '15', '15']);
+    expect([centre('reason'), centre('status')]).toEqual(['15', '15']);
   });
 
   it('reason: by category, "Not yet classified" for cases without a reason', () => {

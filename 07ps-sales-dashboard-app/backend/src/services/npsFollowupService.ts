@@ -4,6 +4,7 @@ import { ValidationError } from '../lib/errors';
 import { getAppTimezone } from '../lib/timezone';
 import { buildWhereClause, type Filters } from '../measures/filters';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
+import { NPS_SLA, caseSla, type CaseSla } from '../config/npsSla';
 
 /**
  * NPS Detractor Follow-up (Process department; routes/npsFollowup.ts; docs/nps-followup.md). Schema and rationale:
@@ -25,9 +26,8 @@ import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
  *
  * Times: rated_at_local, contacted_at, resolved_at, rejected_at are Africa/Tripoli wall-clock times
  * ("yyyy-mm-dd hh:mm:ss"); the UTC columns (updated_at, source_changed_at, the history's changed_at) are sent converted
- * to Tripoli time too. Time open = rating -> resolved (stage Resolved) or -> now (the open stages); none for Rejected /
- * Historical.
- *   < 48 h green, 48 h .. 5 days yellow, > 5 days red.
+ * to Tripoli time too. Time open = the case's created_at -> resolved (stage Resolved) or -> now (the open stages); none
+ * for Rejected / Historical. Its colour is the SLA state (config/npsSla.ts: contact within 24 h, close within 5 days).
  * Every edit carries the version it was made on; an older version is refused (FollowupConflictError, 409). Each
  * changed field is one nps_followup_audit row, in the same transaction as the update; the workflow step is recorded as
  * field `stage` only (never `status`, which follows the stage by itself).
@@ -57,8 +57,6 @@ export function statusOfStage(stage: FollowupStage): FollowupStatus | null {
 export const BOARD_RESOLVED_DAYS = 30;
 /** The note an "Other" reason requires (nps_followup_case.reason_note, migration 0067). */
 export const MAX_REASON_NOTE = 200;
-export const GREEN_HOURS = 48;
-export const YELLOW_HOURS = 120;
 export const MAX_TEXT = 2000;
 /** The free-text case owner (migration 0059). */
 export const MAX_OWNER = 120;
@@ -67,7 +65,6 @@ export const NO_OWNER = '__none__';
 const MAX_BOARD_CASES = 2000;
 export const MAX_PAGE_SIZE = 500;
 
-export type TimeBand = 'green' | 'yellow' | 'red';
 
 export class FollowupValidationError extends ValidationError {
   code: string;
@@ -136,9 +133,12 @@ export interface FollowupCase {
   /** Odoo form links (lib/odooLinks.ts) of the sale order and the matched picking; null without an id or an Odoo URL setting */
   orderUrl: string | null;
   deliveryUrl: string | null;
-  /** hours from the rating to resolved / now; null for Rejected and Historical */
+  /** when process_nps created the case (Tripoli wall-clock): the start of both SLAs */
+  createdAt: string | null;
+  /** hours from created_at to resolved / now (= sla.hours); null for Rejected and Historical */
   hoursOpen: number | null;
-  timeBand: TimeBand | null;
+  /** the SLA state (config/npsSla.ts): colour, rule, how far past the limit */
+  sla: CaseSla;
 }
 
 export interface FollowupHistoryRow {
@@ -187,19 +187,6 @@ export function hoursBetween(from: string, to: string): number {
   return (wall(to) - wall(from)) / 3_600_000;
 }
 
-export function timeBand(hours: number | null): TimeBand | null {
-  if (hours === null) return null;
-  if (hours < GREEN_HOURS) return 'green';
-  if (hours <= YELLOW_HOURS) return 'yellow';
-  return 'red';
-}
-
-/** Time in the follow-up, from the stage and its times: rating -> resolved, or -> now in an open stage. */
-export function hoursOpen(c: Pick<FollowupCase, 'stage' | 'ratedAt' | 'resolvedAt'>, now: string): number | null {
-  if (!c.ratedAt || c.stage === 'REJECTED' || c.stage === 'HISTORICAL') return null;
-  const end = c.stage === 'RESOLVED' ? c.resolvedAt : now;
-  return end ? Math.max(0, hoursBetween(c.ratedAt, end)) : null;
-}
 
 function asWall(v: unknown): string | null {
   if (v === null || v === undefined) return null;
@@ -297,7 +284,7 @@ const FROM = `
     LEFT JOIN dim_nps_reason r ON r.reason_id = c.reason_id`;
 
 const SELECT = `
-  SELECT c.case_id, c.response_id, c.rated_at_local, c.stage, c.status, c.reason_id, c.reason_note,
+  SELECT c.case_id, c.response_id, c.rated_at_local, c.created_at, c.stage, c.status, c.reason_id, c.reason_note,
          r.category_key, r.category_en, r.category_ar, r.sub_reason_en, r.sub_reason_ar, r.requires_note,
          c.owner_user_id, COALESCE(c.owner_name, o.display_name) AS owner_name, c.contacted_at, c.resolved_at, c.rejected_at,
          c.root_cause, c.action_taken, c.notes,
@@ -408,9 +395,10 @@ function toCase(r: Record<string, unknown>, now: string): FollowupCase {
     hasComment: Boolean(Number(r.has_comment ?? 0)),
     orderUrl: odooFormUrl(odoo, 'sale.order', idOrNull(r.SalesOrderKey), companyKey),
     deliveryUrl: odooFormUrl(odoo, 'stock.picking', idOrNull(r.PickingID), companyKey),
+    createdAt: utcToLocal(r.created_at),
   };
-  const hours = hoursOpen(base, now);
-  return { ...base, hoursOpen: hours === null ? null : Math.round(hours * 10) / 10, timeBand: timeBand(hours) };
+  const sla = caseSla(base, now);
+  return { ...base, hoursOpen: sla.hours, sla };
 }
 
 // -- reads -----------------------------------------------------------------------------------------------------------------
@@ -426,10 +414,14 @@ export interface FollowupKpis {
   openShare: number | null;
   closeShare: number | null;
   disputedShare: number | null;
-  /** from the STAGE and its times (the board's cases) */
-  openOver5Days: number;
+  /** from the STAGE and the SLA (config/npsSla.ts), the board's cases */
+  /** open more than closeDays (Close SLA missed) */
+  closeSlaMissed: number;
+  /** open more than contactHours without contacted_at (Contact SLA missed) */
+  contactSlaMissed: number;
   resolved30Days: number;
-  resolvedWithin48h: number;
+  /** of those, resolved within closeDays */
+  resolvedInSla: number;
   /** board cases (Rejected excepted) without a reason */
   noReason: number;
 }
@@ -477,9 +469,10 @@ export async function fetchBoard(pool: Pool, q: FollowupQuery, f: Filters, now: 
       openShare: share(counts.OPEN, total),
       closeShare: share(counts.CLOSE, total),
       disputedShare: share(counts.DISPUTED, total),
-      openOver5Days: open.filter((c) => c.timeBand === 'red').length,
+      closeSlaMissed: open.filter((c) => c.sla.rule === 'close_missed').length,
+      contactSlaMissed: open.filter((c) => !c.contactedAt && (c.sla.exactHours ?? 0) > NPS_SLA.contactHours).length,
       resolved30Days: resolved.length,
-      resolvedWithin48h: resolved.filter((c) => c.timeBand === 'green').length,
+      resolvedInSla: resolved.filter((c) => c.sla.rule === 'resolved_in_sla').length,
       noReason: cases.filter((c) => c.stage !== 'REJECTED' && c.reasonId === null).length,
     },
     now,
