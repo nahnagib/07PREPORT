@@ -6,6 +6,17 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Fixed (Credit policy nets unapplied credits, 2026-11-09)
+- Credit Policy Escalation, the Customers table "Aging bucket" and the Collections rate's start overdue now apply a
+  customer's open credit notes and unreconciled payments to its invoices first (FIFO by due date, per customer +
+  company + currency; "All currencies (≈ LYD)" in LYD), so a customer who owes nothing is no longer shown as overdue
+  (e.g. 27775: 1,045 "overdue" in RED, Odoo Due 0). One rule: `backend/src/measures/creditAllocation.ts`.
+- Chart tooltip: new "Unapplied credits" row; "Total open balance" is now the net balance. Clicking a dot lists the
+  customer's invoices AND credits.
+- New read-only check `data/etl/scripts/finance/reconcile_net_credits.py` (net balance vs Odoo, and the customers with
+  overdue invoices and open credits for finance to reconcile).
+- Not yet changed: the Debt Report Overdue / Not yet due cards, overdue bars and their drill-downs (still invoice-only).
+
 ### Changed (Product pages UI/UX, 2026-11-04)
 - Product pages (BCG Matrix, Stock Velocity, PIM Contribution + Brand page, Product Lifecycle): Athena is left out
   everywhere (ETL `product_pages.excluded_companies` + the API + the company filters), so totals exclude it. Promotion,

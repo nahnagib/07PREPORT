@@ -2851,15 +2851,20 @@ export interface CreditCustomer {
   company: string;
   paymentTermKey: number;
   paymentTerm: string;
-  /** every unpaid invoice, in the view's currency (LYD for all currencies) */
+  /** the NET balance (2026-11-09): every invoice, credit note and unreconciled payment line, in the view's currency
+   * (LYD for all currencies) */
   totalOutstanding: number;
   totalOutstandingCompany: number;
+  /** unapplied credits netted against the invoices (positive), in the view's currency and in LYD */
+  creditsApplied: number;
+  creditsAppliedCompany: number;
+  /** invoices with something left after the credits */
   unpaidInvoiceCount: number;
-  /** lines overdue on the snapshot date (line due date + 1 <= snapshot; negative lines included): dot size and zone
-   * totals, in the view's currency (LYD for all currencies) */
+  /** what is left, after the credits, of the lines overdue on the snapshot date (line due date + 1 <= snapshot): dot
+   * size and zone totals, in the view's currency (LYD for all currencies) */
   overdueAmount: number;
   overdueAmountCompany: number;
-  /** unpaid invoices with at least one open overdue line */
+  /** invoices with an overdue line left after the credits */
   overdueInvoiceCount: number;
   oldestInvoiceMoveId: number;
   oldestInvoiceNumber: string | null;

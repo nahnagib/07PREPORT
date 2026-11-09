@@ -14,7 +14,8 @@ import { weekStartIso, weekStartSql } from '../lib/businessWeek';
  * Payments retain their own date and currency. All-currencies amounts use the original payment
  * allocation's LYD/payment-currency ratio, applied only to the qualifying portion.
  * The collection rate remains cash applied to invoices overdue at the start of a period / that
- * starting overdue balance, using the snapshot of the day before the period.
+ * starting overdue balance, using the snapshot of the day before the period; since 2026-11-09 that balance is net of
+ * the unapplied credits (startOverdueRates).
  *
  * Scope = the Debt Report's: the view removes inter-company customers and the report exclusions; the caller's scoped
  * filters (role data scope, salesperson lock) and the page's company / salesperson / branch / segment / channel /
@@ -25,6 +26,7 @@ import { weekStartIso, weekStartSql } from '../lib/businessWeek';
 import type { Pool } from 'mysql2/promise';
 import { odooWebBaseUrl } from '../config/finance';
 import { customerCategoryCondition } from '../lib/customerCategory';
+import { allocateCredits, type AllocatableLine } from './creditAllocation';
 import { COMPANY_CURRENCY, DebtQueryError, linesSource, parseDebtQuery, type DebtQuery } from './debtReport';
 import type { Filters } from './filters';
 
@@ -271,7 +273,12 @@ export async function fetchCollectionsTrend(pool: Pool, cq: CollectionsQuery, f:
 
 /** Per period with a receivable snapshot on the day before it: the overdue open when the period starts (same filters)
  * and the money applied to those very invoice lines by payments dated in the period. currency null = every currency in
- * LYD (each applied amount at its invoice line's own LYD / invoice-currency ratio). */
+ * LYD (each applied amount at its invoice line's own LYD / invoice-currency ratio).
+ *
+ * 2026-11-09: the start overdue is NET of unapplied credits (measures/creditAllocation.ts, FIFO per customer + company
+ * [+ currency]): an invoice covered by an open credit note or unreconciled payment owes nothing, will never be "collected"
+ * in cash, and used to sit in the denominator (e.g. customer 27775: 1,045 "overdue", net 0), understating the rate. The
+ * money applied counts per line up to what was left of the line after the credits. */
 async function startOverdueRates(pool: Pool, cq: CollectionsQuery, f: Filters, currency: string | null, periods: Period[]): Promise<Map<string, { start: number; collected: number }>> {
   const snaps = new Set(
     (await rows(pool, "SELECT DISTINCT DATE_FORMAT(STR_TO_DATE(SnapshotDateKey, '%Y%m%d'), '%Y-%m-%d') AS d FROM fact_finance_receivable_snapshot", [])).map((x) => String(x.d)),
@@ -280,34 +287,46 @@ async function startOverdueRates(pool: Pool, cq: CollectionsQuery, f: Filters, c
   const q: DebtQuery = { ...cq.debt, overdueStatus: 'all', agingBucketKeys: [], deliveryStatuses: [], paymentTermKeys: [], invoiceTiers: [] };
   for (const p of periods.filter((x) => snaps.has(addDays(x.start, -1)))) {
     const s = linesSource(Number(addDays(p.start, -1).replace(/-/g, '')), q, f);
-    // aged as of the day before: due on or before it (days_past_due >= 0) = overdue on the period's first day
     const outerWhere = /\)\s*l\s*WHERE/.test(s.sql); // linesSource adds the outer WHERE only for page filters
-    const cond = `${outerWhere ? ' AND' : ' WHERE'} l.line_kind = 'invoice'${currency ? ' AND l.currency = ?' : ''} AND l.days_past_due >= 0`;
-    const [x] = currency
-      ? await rows(
-          pool,
-          `SELECT (SELECT SUM(l.residual_doc_ccy) ${s.sql}${cond}) AS start_overdue,
-                  (SELECT SUM(m.applied_invoice_ccy) FROM fact_finance_collection_invoice m
-                     JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
-                    WHERE c.payment_date BETWEEN ? AND ? AND c.is_intercompany = 0
-                      AND m.move_type IN ('out_invoice', 'out_receipt')
-                      AND EXISTS (SELECT 1 FROM dim_finance_collection_invoice_date i WHERE i.move_id = m.move_id AND i.invoice_date < c.payment_date)
-                      AND m.debit_line_id IN (SELECT l.line_id ${s.sql}${cond})) AS collected`,
-          [...s.params, currency, p.start, p.end, ...s.params, currency],
-        )
-      : await rows(
-          pool,
-          `SELECT (SELECT SUM(l.residual_company_ccy) ${s.sql}${cond}) AS start_overdue,
-                  (SELECT SUM(COALESCE(m.applied_invoice_ccy * o.residual_company_ccy / NULLIF(o.residual_doc_ccy, 0), 0))
-                     FROM fact_finance_collection_invoice m
-                     JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
-                     JOIN (SELECT l.line_id, l.residual_doc_ccy, l.residual_company_ccy ${s.sql}${cond}) o ON o.line_id = m.debit_line_id
-                    WHERE c.payment_date BETWEEN ? AND ? AND c.is_intercompany = 0
-                      AND m.move_type IN ('out_invoice', 'out_receipt')
-                      AND EXISTS (SELECT 1 FROM dim_finance_collection_invoice_date i WHERE i.move_id = m.move_id AND i.invoice_date < c.payment_date)) AS collected`,
-          [...s.params, ...s.params, p.start, p.end],
-        );
-    out.set(p.start, { start: num(x?.start_overdue), collected: num(x?.collected) });
+    const lines = (await rows(
+      pool,
+      `SELECT l.line_id, l.move_id, l.CustomerKey, l.CompanyKey, l.currency, l.line_kind, l.invoice_date, l.due_date, l.days_past_due,
+              l.residual_doc_ccy, l.residual_company_ccy
+       ${s.sql}${outerWhere ? ' AND' : ' WHERE'} l.line_kind IN ('invoice', 'credit_note', 'payment')${currency ? ' AND l.currency = ?' : ''}`,
+      [...s.params, ...(currency ? [currency] : [])],
+    )) as (AllocatableLine & { due_date: string | null; days_past_due: number })[];
+    // aged as of the day before: due on or before it (days_past_due >= 0) = overdue on the period's first day
+    const left = new Map<number, { left: number; ratio: number }>();
+    let start = 0;
+    for (const g of allocateCredits(lines, { allCurrencies: currency === null, dueDateOf: (l) => l.due_date ?? l.invoice_date }).values()) {
+      for (const x of g.invoices) {
+        if (num(x.line.days_past_due) < 0 || x.remaining <= 0) continue;
+        const doc = num(x.line.residual_doc_ccy);
+        left.set(Number(x.line.line_id), { left: x.remaining, ratio: currency || doc === 0 ? 1 : num(x.line.residual_company_ccy) / doc });
+        start += x.remaining;
+      }
+    }
+    let collected = 0;
+    if (left.size > 0) {
+      const ids = [...left.keys()];
+      const applied = await rows(
+        pool,
+        `SELECT m.debit_line_id AS line_id, SUM(m.applied_invoice_ccy) AS applied
+           FROM fact_finance_collection_invoice m
+           JOIN fact_finance_collection c ON c.payment_id = m.payment_id AND c.allocation_no = m.allocation_no
+          WHERE c.payment_date BETWEEN ? AND ? AND c.is_intercompany = 0
+            AND m.move_type IN ('out_invoice', 'out_receipt')
+            AND EXISTS (SELECT 1 FROM dim_finance_collection_invoice_date i WHERE i.move_id = m.move_id AND i.invoice_date < c.payment_date)
+            AND m.debit_line_id IN (${ids.map(() => '?').join(', ')})
+          GROUP BY m.debit_line_id`,
+        [p.start, p.end, ...ids],
+      );
+      for (const a of applied) {
+        const o = left.get(Number(a.line_id));
+        if (o) collected += Math.min(num(a.applied) * o.ratio, o.left);
+      }
+    }
+    out.set(p.start, { start, collected });
   }
   return out;
 }
