@@ -37,6 +37,7 @@ import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useCriticalNumberOverview, useRefreshStatus } from '../../../../lib/hooks';
 import { APP_TIMEZONE, formatCompactCurrency, formatCurrency, formatDate, formatVariance, formatTimestamp, toSemanticStatus } from '../../../../lib/format';
 import type { CriticalNumberOverview } from '../../../../lib/api';
+import { criticalNumberShareLabel } from '../../../../lib/criticalNumberShare';
 import { MissingTrendModal, type MissingTrendMetric } from '../../../../components/criticalNumber/MissingTrendModal';
 import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 
@@ -365,7 +366,7 @@ export default function CriticalNumberPage() {
             {/* Section 1 -- Hero Metrics: the Daily Critical Number (the baseline every counter is
                 measured against) as a full-width first row, then the Daily/Monthly/Yearly counters. */}
             <section style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
-              <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} source={data?.criticalNumberSource ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} isAdmin={user?.isAdmin === true} />
+              <DailyCriticalNumberCard value={data?.dailyCriticalNumber ?? null} shareLabel={data ? criticalNumberShareLabel(data) : null} source={data?.criticalNumberSource ?? null} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} isAdmin={user?.isAdmin === true} />
 
               <div
                 style={{
@@ -548,6 +549,7 @@ function FallbackDataNotice({ anchorDate, daysAgo }: { anchorDate: string; daysA
 
 function DailyCriticalNumberCard({
   value,
+  shareLabel,
   source,
   loading,
   error,
@@ -555,6 +557,8 @@ function DailyCriticalNumberCard({
   isAdmin,
 }: {
   value: number | null;
+  /** Which share of the group's base value the filters get, from sales_targets.xlsx (criticalNumberShareLabel). */
+  shareLabel: ReturnType<typeof criticalNumberShareLabel>;
   /** Admins only: who set the base value active on the shown day, and when. */
   source: CriticalNumberOverview['criticalNumberSource'];
   loading: boolean;
@@ -599,11 +603,17 @@ function DailyCriticalNumberCard({
         >
           {value != null ? formatCompactCurrency(value) : '—'}
         </div>
+        {shareLabel && (
+          <div data-testid="critical-number-share" style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
+            {shareLabel.text}
+            {shareLabel.note && <div style={{ fontStyle: 'italic' }}>{shareLabel.note}</div>}
+          </div>
+        )}
         {isAdmin && (
           <div className="ps-cn-hero-desc" style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--ps-color-muted-text)' }}>
             Baseline daily sales target -- the figure every Daily/Monthly/Yearly Counter below is measured against. Set on Admin
-            Panel &gt; Critical Number; scales with the active Company/Customer Group filters (Admin Panel &gt; Companies / Customer
-            Groups sets each one&apos;s share).
+            Panel &gt; Critical Number; every filter (company, customer group, branch, salesperson, channel) gets its share of the
+            year&apos;s revenue target in sales_targets.xlsx.
           </div>
         )}
         {isAdmin && source?.updatedAt ? (

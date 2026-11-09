@@ -31,7 +31,8 @@ import { criticalNumberRowOn, loadCriticalNumberHistory } from '../measures/crit
  * One /overview endpoint, not one per card: the page needs the daily critical number, all three
  * counters, and all six calendar/impact cards on a single load, and several of them share the same
  * underlying working-days computation -- fetching them together lets the Daily Critical Number schedule
- * (computeDailyCriticalNumberSchedule: the value active on each day, scaled by the Company/Customer Group shares) be
+ * (computeDailyCriticalNumberSchedule: the base value active on each day x the scope's share of that year's
+ * revenue target in sales_targets.xlsx) be
  * loaded once and reused instead of recomputed per card.
  */
 export const criticalNumberRouter = Router();
@@ -101,6 +102,8 @@ criticalNumberRouter.get('/overview', async (req, res, next) => {
       computeDailyCriticalNumberSchedule(pool, filters),
     ]);
     const dailyCriticalNumber = criticalNumberOn(anchor);
+    // The share behind the card: shareSource other than 'current' = the page shows a note (fallback year / factor 1).
+    const { share, shareYear, shareSource } = criticalNumberOn.shareFor(anchor);
 
     const [
       dailyCounter,
@@ -140,6 +143,9 @@ criticalNumberRouter.get('/overview', async (req, res, next) => {
       fallbackDaysAgo,
       requestedDate: requestedAnchor.toISOString().slice(0, 10),
       dailyCriticalNumber,
+      share,
+      shareYear,
+      shareSource,
       criticalNumberSource,
       dailyCounter,
       monthlyCounter,
