@@ -97,7 +97,10 @@ export function ResponseRateCard({ state }: { state: RateState }) {
   if (r.estimateStatus === 'no_basis') {
     notes.push(<span key="nobasis" data-testid="rate-no-basis">Not estimated before {longDate(r.reachStart)}: no complete measured week yet</span>);
   }
-  if (r.companyAndDateOnly) notes.push(<strong key="only" data-testid="rate-company-only">Company and date filters only</strong>);
+  if (r.companyAndDateOnly) {
+    notes.push(<strong key="only" data-testid="rate-company-only">Company and date filters only</strong>);
+    notes.push(<span key="numerator" data-testid="rate-numerator-note">Responders = every rating of the selected companies (other filters not applied)</span>);
+  }
   return (
     <CompactKpiCard {...vh("process.npsScore.responseRate")}
       title="Response Rate"

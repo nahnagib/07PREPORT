@@ -3074,6 +3074,10 @@ export interface NpsResponseRate {
     basisWeeks: number;
     basisFrom: string | null;
     basisTo: string | null;
+    /** complete measured weeks left out of the basis (the Meta outage) */
+    excludedWeeks: string[];
+    /** per company, each from its own first rating */
+    byCompany: { companyKey: number; company: string; from: string; to: string; weeks: number; perWeek: number; reached: number }[];
   } | null;
 }
 /** "Resolved Ageing" buckets (backend config/npsSla.ts) */
@@ -3119,9 +3123,19 @@ export interface NpsReach {
   loadedAt: string | null;
   /** first message date counted (the ETL's NPS_REACH_START), null = all history */
   reachStart: string | null;
-  totals: { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number } | null;
+  /** the official counts: measured + the gap 12 Jul – 02 Oct when isEstimated (backend measures/npsReachEstimate.ts) */
+  totals: NpsReachBoxes | null;
+  /** measured + the gap's real errors; they sum to totals.error */
   errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
+  /** Delivered, Read, Not Delivered of the gap are estimated; its Error is real */
+  isEstimated: boolean;
+  estimateStatus: 'not_needed' | 'applied' | 'disabled' | 'no_basis';
+  estimate: { from: string; to: string } | null;
+  /** the measured part (from reachStart) and the gap part of every box; null unless isEstimated */
+  measured: NpsReachBoxes | null;
+  gap: NpsReachBoxes | null;
 }
+export interface NpsReachBoxes { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number }
 export interface NpsPage<T> {
   rows: T[];
   total: number;
