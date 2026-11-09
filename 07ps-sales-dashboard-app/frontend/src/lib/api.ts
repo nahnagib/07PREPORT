@@ -3057,7 +3057,24 @@ export interface NpsResponseRate {
   band: NpsBand | null;
   target: number;
   variancePts: number | null;
+  /** measured weeks only (never estimated) */
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
+  /** the headline includes estimated reached messages before reachStart (backend config/npsReachEstimate.ts) */
+  isEstimated: boolean;
+  estimateStatus: 'not_needed' | 'applied' | 'disabled' | 'no_basis';
+  /** the real rate from reachStart; null when the period ends before it */
+  measured: { from: string; responders: number; reached: number; rate: number | null } | null;
+  estimate: {
+    from: string;
+    to: string;
+    weeks: number;
+    perWeek: number;
+    reached: number;
+    basis: 'auto' | 'fixed';
+    basisWeeks: number;
+    basisFrom: string | null;
+    basisTo: string | null;
+  } | null;
 }
 /** "Resolved Ageing" buckets (backend config/npsSla.ts) */
 export type NpsAgeingBucket = 'd1' | 'd2' | 'd5' | 'd10' | 'd30' | 'dmax';

@@ -86,6 +86,14 @@ const RATE: NpsResponseRate = {
   responders: 120, delivered: 300, read: 350, reached: 650, totalReach: 900, rate: (120 / 650) * 100, rateOfReach: (120 / 900) * 100,
   band: 'red', target: 30, variancePts: (120 / 650) * 100 - 30,
   weekly: [{ weekStart: '2026-09-27', responders: 10, reached: 80, rate: 12.5 }, { weekStart: '2026-10-04', responders: 110, reached: 570, rate: 19.3 }],
+  isEstimated: false, estimateStatus: 'not_needed', measured: { from: '2026-10-03', responders: 120, reached: 650, rate: (120 / 650) * 100 }, estimate: null,
+};
+// YTD on the local data: 801 responders / (1,222 measured + 2,841 estimated)
+const RATE_EST: NpsResponseRate = {
+  ...RATE, dateFrom: '2026-07-12', dateTo: '2026-11-09', responders: 801, delivered: 900, read: 322, reached: 4063, totalReach: 1500,
+  rate: (801 / 4063) * 100, rateOfReach: (269 / 1500) * 100, band: 'red', variancePts: (801 / 4063) * 100 - 30,
+  isEstimated: true, estimateStatus: 'applied', measured: { from: '2026-10-03', responders: 269, reached: 1222, rate: (269 / 1222) * 100 },
+  estimate: { from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 239.6, reached: 2841, basis: 'auto', basisWeeks: 5, basisFrom: '2026-10-03', basisTo: '2026-11-06' },
 };
 const rateState = (data: NpsResponseRate | null, extra: Partial<{ loading: boolean; error: string | null }> = {}) =>
   ({ data, loading: false, error: null, retry: () => undefined, ...extra });
@@ -123,7 +131,31 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
     expect(card.textContent).toContain('−11.54 pts');
     expect(screen.getByTestId('rate-since').textContent).toBe('since 03 Oct 2026');
     expect(screen.getByTestId('rate-company-only').textContent).toBe('Company and date filters only');
-    expect(screen.getByTitle(/Responders ÷ Total Reach = 120 ÷ 900 = 13.33%/)).toBeTruthy();
+    expect(screen.getAllByTitle(/Responders ÷ Total Reach = 120 ÷ 900 = 13.33%/).length).toBeGreaterThan(0);
+    // the numerator under the rate; no estimate badge after the reach start
+    expect(screen.getByTestId('rate-fraction').textContent).toBe('120 responders ÷ 650 reached');
+    expect(screen.queryByTestId('rate-estimate-badge')).toBeNull();
+    expect(screen.queryByTestId('rate-measured')).toBeNull();
+  });
+
+  it('response rate with the estimate: the badge with the gap, the measured-only line, the formula tooltip; sparkline unchanged', () => {
+    render(<ResponseRateCard state={rateState(RATE_EST)} />);
+    const card = screen.getByTestId('rate-card');
+    expect(card.textContent).toContain('19.71%');
+    expect(screen.getByTestId('rate-fraction').textContent).toBe('801 responders ÷ 4,063 reached');
+    expect(screen.getByTestId('rate-estimate-badge').textContent).toBe('incl. estimate · 12 Jul – 02 Oct');
+    expect(screen.getByTestId('rate-measured').textContent).toBe('Measured since 03 Oct: 22.01%');
+    expect(screen.queryByTestId('rate-since')).toBeNull();
+    const tip = screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')!;
+    expect(tip).toContain('801 ÷ (1,222 + 2,841) = 19.71%');
+    expect(tip).toContain('239.6 per week');
+    expect(tip).toContain('did not keep successful messages before 03 Oct');
+  });
+
+  it('response rate without a complete measured week: no estimate and says so', () => {
+    render(<ResponseRateCard state={rateState({ ...RATE, estimateStatus: 'no_basis' })} />);
+    expect(screen.getByTestId('rate-no-basis').textContent).toBe('Not estimated before 03 Oct 2026: no complete measured week yet');
+    expect(screen.queryByTestId('rate-estimate-badge')).toBeNull();
   });
 
   it('response rate without the filter note when only company / date filters are set; restricted and waiting say why', () => {

@@ -19,6 +19,8 @@ export interface CompactKpiCardProps {
   valueLabel: string;
   /** Hover text of the headline value (e.g. the formula with its counts). */
   valueTitle?: string;
+  /** A small line right under the headline value (e.g. its numerator and denominator). */
+  valueSub?: React.ReactNode;
   /** The stat row under the value (e.g. Target / Variance); hidden when empty. */
   referenceMetrics: ReferenceMetric[];
   /** Small caption lines under the stat row (e.g. "since 03 Oct 2026"). */
@@ -43,6 +45,7 @@ export function CompactKpiCard({
   status,
   valueLabel,
   valueTitle,
+  valueSub,
   referenceMetrics,
   notes,
   sparklineValues,
@@ -74,9 +77,14 @@ export function CompactKpiCard({
       </div>
 
       {/* Headline value */}
-      <div title={valueTitle} style={{ fontSize: 32, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: 'var(--ps-space-3, 16px)' }}>
+      <div title={valueTitle} style={{ fontSize: 32, fontWeight: 700, color: 'var(--ps-color-text)', marginBottom: valueSub ? 2 : 'var(--ps-space-3, 16px)' }}>
         {valueLabel}
       </div>
+      {valueSub && (
+        <div title={valueTitle} style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 'var(--ps-space-3, 16px)', fontVariantNumeric: 'tabular-nums' }}>
+          {valueSub}
+        </div>
+      )}
 
       {/* Stats row: Target + Variance */}
       {referenceMetrics.length > 0 && (

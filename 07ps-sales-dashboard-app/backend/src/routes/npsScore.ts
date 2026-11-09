@@ -29,8 +29,10 @@ import {
  *                               NPS, CSAT and responders per period for the active filters, from the first period
  *                               with ratings (weeks = Saturday..Friday, named by their Saturday)
  *   GET /nps-score/response-rate?dateFrom=&dateTo=
- *                               responders / (Delivered + Read): company and date only, from NPS_REACH_START, with a
- *                               weekly series; the same role restriction as /reach
+ *                               responders / (Delivered + Read): company and date only, with a weekly series (measured
+ *                               weeks only); the same role restriction as /reach. A period before NPS_REACH_START adds an
+ *                               estimate of the gap's reached messages (per-week basis x gap weeks; isEstimated, measured,
+ *                               estimate; config/npsReachEstimate.ts); from NPS_REACH_START on it is measured only
  *   GET /nps-score/followup-summary?dateFrom=&dateTo=
  *                               detractors by follow-up stage (with time), by status and by reason category, read LIVE from nps_followup_case
  *   GET /nps-score/reach?dateFrom=&dateTo=

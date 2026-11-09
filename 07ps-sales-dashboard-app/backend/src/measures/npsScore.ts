@@ -18,14 +18,19 @@
  * Saturday (lib/businessWeek.ts -- the Collections week).
  * Response rate = responders / (Delivered + Read) x 100: a customer can only answer a message that reached them. The
  * WhatsApp messages have no delivery / order / customer, so BOTH sides use the company and date filters only (ratings
- * by rating date, messages by message date, the same period, from NPS_REACH_START); the other filters are ignored for
- * it, never applied to one side only.
+ * by rating date, messages by message date, the same period); the other filters are ignored for it, never applied to
+ * one side only. Messages exist only from NPS_REACH_START: when the period reaches before it (but not before the first
+ * rating), the headline adds an ESTIMATE of the gap's reached messages = the average Delivered + Read of the complete
+ * measured weeks (or NPS_REACH_ESTIMATE_PER_WEEK) x gap days / 7, and counts every responder of the period; flagged
+ * isEstimated, with the measured-only rate beside it (fetchNpsResponseRate; config/npsReachEstimate.ts). A period from
+ * NPS_REACH_START on is measured only, exactly as before.
  * Follow-up: the detractor list and the follow-up charts read nps_followup_case LIVE (the follow-up page's edits show on
  * the next request; services/npsFollowupService.ts owns the time bands).
  * Filters: the global filters (company, customer group, channel, branch, salesperson, customer) through
  * buildWhereClause -- the same effective (admin-override aware) segment / branch / channel as the sales pages -- after
  * resolveScopedFilters applied the role's data scope and the salesperson lock. Parameterised SQL only.
  */
+import { DateTime } from 'luxon';
 import type { Pool } from 'mysql2/promise';
 import { buildWhereClause, type Filters, type UserContext } from './filters';
 import { fetchDepartmentFreshness, type DepartmentFreshness } from './departmentFreshness';
@@ -33,6 +38,8 @@ import {
   CSAT_SCALE, NPS_SCALE, RESPONSE_RATE_SCALE, csatBand, minResponders, npsBand, responseRateBand, type Band, type BandScale,
 } from '../config/npsThresholds';
 import { addDaysIso, weekStartIso, weekStartSql } from '../lib/businessWeek';
+import { reachEstimateConfig, type ReachEstimateConfig } from '../config/npsReachEstimate';
+import { getAppTimezone } from '../lib/timezone';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 import {
   FOLLOWUP_STAGES,
@@ -600,90 +607,215 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
 }
 
 // -- response rate ------------------------------------------------------------------------------------------------------
+/** not_needed: the period has no part before NPS_REACH_START (or before the first rating) -- today's measured rate.
+ *  applied: the period touches the gap and the estimate is in the headline. disabled: NPS_REACH_ESTIMATE_ENABLED=false.
+ *  no_basis: the period touches the gap but there is no complete measured week yet (and no fixed value): no estimate. */
+export type ReachEstimateStatus = 'not_needed' | 'applied' | 'disabled' | 'no_basis';
+
 export interface NpsResponseRate {
   status: 'waiting' | 'restricted' | 'ready';
-  /** the period counted: the page's range, starting no earlier than reachStart */
+  /** the period counted: the page's range, from the first rating (estimated) or from reachStart (measured only) */
   dateFrom: string;
   dateTo: string;
   /** NPS_REACH_START of the last message load: before it there are no delivered / read messages */
   reachStart: string | null;
   /** a team / salesperson / segment / customer filter is set and was ignored for this card */
   companyAndDateOnly: boolean;
+  /** the numerator used: every responder of the counted period (measured + gap) */
   responders: number;
+  /** actual messages only (never estimated) */
   delivered: number;
   read: number;
-  /** Delivered + Read: the messages that reached the customer (the denominator) */
+  /** the denominator used: measured Delivered + Read, plus the estimated reached when isEstimated */
   reached: number;
+  /** actual messages only */
   totalReach: number;
-  /** responders / reached x 100, unrounded; null when nothing reached anyone */
+  /** responders / reached x 100, unrounded (the headline); null when nothing reached anyone */
   rate: number | null;
-  /** responders / Total Reach x 100 (the tooltip's second view) */
+  /** measured responders / Total Reach x 100 (the tooltip's second view; actual messages only) */
   rateOfReach: number | null;
+  /** band and variance of the headline rate */
   band: Band | null;
   target: number;
   /** rate - target, in points */
   variancePts: number | null;
-  /** per business week (Saturday..Friday) of the period, for the sparkline */
+  /** per business week (Saturday..Friday) from reachStart, for the sparkline: measured weeks only */
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
+  /** the headline includes estimated reached messages */
+  isEstimated: boolean;
+  estimateStatus: ReachEstimateStatus;
+  /** the real rate over the part of the period from reachStart; null when the period ends before it */
+  measured: { from: string; responders: number; reached: number; rate: number | null } | null;
+  /** the gap estimate: Delivered + Read per week x gap days / 7; null unless applied */
+  estimate: {
+    from: string;
+    to: string;
+    /** gap days / 7 */
+    weeks: number;
+    perWeek: number;
+    /** rounded to a whole message; part of `reached` */
+    reached: number;
+    basis: 'auto' | 'fixed';
+    /** the complete measured weeks the automatic basis averages (0 with a fixed value) */
+    basisWeeks: number;
+    basisFrom: string | null;
+    basisTo: string | null;
+  } | null;
 }
 
 /** n / d x 100, unrounded; null when d is 0. */
 export const ratePct = (n: number, d: number): number | null => (d > 0 ? (n / d) * 100 : null);
 
+const daysBetweenIso = (from: string, to: string): number =>
+  Math.round((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86_400_000);
+
 /**
- * Response rate: ratings (rating date) / messages that reached the customer (message date), company and date only, over
- * the same period from NPS_REACH_START. The same role restriction as the reach panel: a scope on anything but the
- * company can't be applied to messages, so those roles get no figure (never filtered ratings over unfiltered messages).
+ * The part of the selected period with ratings but no kept messages: [max(dateFrom, firstRating), min(dateTo,
+ * reachStart - 1)], inclusive. null when empty (period after the reach start, or before the first rating).
  */
-export async function fetchNpsResponseRate(pool: Pool, q: NpsQuery, f: Filters, user: UserContext): Promise<NpsResponseRate> {
+export function reachGap(dateFrom: string, dateTo: string, firstRating: string | null, reachStart: string | null): { from: string; to: string; days: number } | null {
+  if (!firstRating || !reachStart) return null;
+  const from = dateFrom > firstRating ? dateFrom : firstRating;
+  const dayBefore = addDaysIso(reachStart, -1);
+  const to = dateTo < dayBefore ? dateTo : dayBefore;
+  return from > to ? null : { from, to, days: daysBetweenIso(from, to) + 1 };
+}
+
+/**
+ * The complete business weeks (Saturday..Friday, named by their Saturday) from reachStart to the day before the last
+ * message load (the load day itself is partial). A week that starts before reachStart is never complete.
+ */
+export function completeMeasuredWeeks(reachStart: string, loadedLocalDate: string): string[] {
+  let sat = weekStartIso(reachStart);
+  if (sat < reachStart) sat = addDaysIso(sat, 7);
+  const lastFullDay = addDaysIso(loadedLocalDate, -1);
+  const out: string[] = [];
+  for (; addDaysIso(sat, 6) <= lastFullDay; sat = addDaysIso(sat, 7)) out.push(sat);
+  return out;
+}
+
+/**
+ * Response rate: ratings (rating date) / messages that reached the customer (message date), company and date only. The
+ * same role restriction as the reach panel: a scope on anything but the company can't be applied to messages, so those
+ * roles get no figure (never filtered ratings over unfiltered messages).
+ *
+ * Messages exist only from NPS_REACH_START (the source never kept successful messages before), ratings from the first
+ * rating. When the period touches that gap, the headline estimates the gap's reached messages (option A,
+ * config/npsReachEstimate.ts):
+ *   per week   = the average Delivered + Read of the complete measured weeks (reachStart .. the last load) of the
+ *                selected companies -- recalculated on every request -- or NPS_REACH_ESTIMATE_PER_WEEK when set
+ *   gap        = [max(period start, first rating of the selected companies), min(period end, reachStart - 1)]
+ *   estimated  = per week x gap days / 7 (rounded to a whole message)
+ *   headline   = all responders of the period / (measured reached + estimated reached)
+ * Never derived from responders or from the rate. A period from reachStart on is exactly the measured rate (no
+ * estimate); so is a disabled estimate, and a gap without any complete measured week (status no_basis).
+ */
+export async function fetchNpsResponseRate(
+  pool: Pool, q: NpsQuery, f: Filters, user: UserContext, cfg: ReachEstimateConfig = reachEstimateConfig(),
+): Promise<NpsResponseRate> {
   const empty: NpsResponseRate = {
     status: 'waiting', dateFrom: q.dateFrom, dateTo: q.dateTo, reachStart: null,
     companyAndDateOnly: REACH_UNSUPPORTED.some((key) => (f[key]?.length ?? 0) > 0),
     responders: 0, delivered: 0, read: 0, reached: 0, totalReach: 0, rate: null, rateOfReach: null, band: null,
     target: RESPONSE_RATE_SCALE.target, variancePts: null, weekly: [],
+    isEstimated: false, estimateStatus: cfg.enabled ? 'not_needed' : 'disabled', measured: null, estimate: null,
   };
   if (user.roleCode === 'SALESPERSON' || user.dataScopeRules?.some((r) => r.dimension !== 'companyKeys')) return { ...empty, status: 'restricted' };
-  const [stateRows] = await pool.query('SELECT reach_start FROM process_nps_reach_state WHERE singleton_id = 1');
+  const [stateRows] = await pool.query(
+    `SELECT DATE_FORMAT(reach_start, '%Y-%m-%d') AS reach_start, DATE_FORMAT(loaded_at_utc, '%Y-%m-%d %H:%i:%s') AS loaded_at_utc
+       FROM process_nps_reach_state WHERE singleton_id = 1`);
   const state = (stateRows as Record<string, unknown>[])[0];
   if (!state) return empty;
   const reachStart = asDate(state.reach_start);
-  const dateFrom = reachStart && reachStart > q.dateFrom ? reachStart : q.dateFrom;
-  const ready: NpsResponseRate = { ...empty, status: 'ready', reachStart, dateFrom };
-  if (dateFrom > q.dateTo) return ready;
+  const measuredFrom = reachStart && reachStart > q.dateFrom ? reachStart : q.dateFrom;
 
   const company = f.companyKeys ?? [];
   const inCompany = (alias: string) => (company.length ? ` AND ${alias}.CompanyKey IN (${company.map(() => '?').join(', ')})` : '');
-  const range = [dateKeyOf(dateFrom), dateKeyOf(q.dateTo)];
   const messageDate = "STR_TO_DATE(CAST(m.MessageDateKey AS CHAR), '%Y%m%d')";
-  const [ratingRows] = await pool.query(
-    `SELECT DATE_FORMAT(${weekStartSql(ratingDate)}, '%Y-%m-%d') AS wk, COUNT(*) AS n
-       FROM v_process_nps_response f WHERE f.RatingDateKey BETWEEN ? AND ?${inCompany('f')} GROUP BY wk`, [...range, ...company]);
-  const [messageRows] = await pool.query(
-    `SELECT DATE_FORMAT(${weekStartSql(messageDate)}, '%Y-%m-%d') AS wk, SUM(m.delivered) AS delivered,
-            SUM(m.read_count) AS read_count, SUM(m.total_reach) AS total_reach
-       FROM v_process_nps_reach m WHERE m.MessageDateKey BETWEEN ? AND ?${inCompany('m')} GROUP BY wk`, [...range, ...company]);
-  const ratings = new Map((ratingRows as Record<string, unknown>[]).map((r) => [String(r.wk), Number(r.n)]));
-  const messages = new Map((messageRows as Record<string, unknown>[]).map((r) => [String(r.wk), r]));
+
+  // 1. measured: the part of the period from reachStart -- exactly the rate before the estimate existed
   let responders = 0;
   let delivered = 0;
   let read = 0;
   let totalReach = 0;
   const weekly: NpsResponseRate['weekly'] = [];
-  for (let wk = weekStartIso(dateFrom); wk <= q.dateTo; wk = addDaysIso(wk, 7)) {
-    const n = ratings.get(wk) ?? 0;
-    const m = messages.get(wk);
-    const d = Number(m?.delivered ?? 0);
-    const rd = Number(m?.read_count ?? 0);
-    responders += n;
-    delivered += d;
-    read += rd;
-    totalReach += Number(m?.total_reach ?? 0);
-    weekly.push({ weekStart: wk, responders: n, reached: d + rd, rate: ratePct(n, d + rd) });
+  if (measuredFrom <= q.dateTo) {
+    const range = [dateKeyOf(measuredFrom), dateKeyOf(q.dateTo)];
+    const [ratingRows] = await pool.query(
+      `SELECT DATE_FORMAT(${weekStartSql(ratingDate)}, '%Y-%m-%d') AS wk, COUNT(*) AS n
+         FROM v_process_nps_response f WHERE f.RatingDateKey BETWEEN ? AND ?${inCompany('f')} GROUP BY wk`, [...range, ...company]);
+    const [messageRows] = await pool.query(
+      `SELECT DATE_FORMAT(${weekStartSql(messageDate)}, '%Y-%m-%d') AS wk, SUM(m.delivered) AS delivered,
+              SUM(m.read_count) AS read_count, SUM(m.total_reach) AS total_reach
+         FROM v_process_nps_reach m WHERE m.MessageDateKey BETWEEN ? AND ?${inCompany('m')} GROUP BY wk`, [...range, ...company]);
+    const ratings = new Map((ratingRows as Record<string, unknown>[]).map((r) => [String(r.wk), Number(r.n)]));
+    const messages = new Map((messageRows as Record<string, unknown>[]).map((r) => [String(r.wk), r]));
+    for (let wk = weekStartIso(measuredFrom); wk <= q.dateTo; wk = addDaysIso(wk, 7)) {
+      const n = ratings.get(wk) ?? 0;
+      const m = messages.get(wk);
+      const d = Number(m?.delivered ?? 0);
+      const rd = Number(m?.read_count ?? 0);
+      responders += n;
+      delivered += d;
+      read += rd;
+      totalReach += Number(m?.total_reach ?? 0);
+      weekly.push({ weekStart: wk, responders: n, reached: d + rd, rate: ratePct(n, d + rd) });
+    }
   }
-  const reached = delivered + read;
-  const rate = ratePct(responders, reached);
-  return {
-    ...ready, responders, delivered, read, reached, totalReach, rate, rateOfReach: ratePct(responders, totalReach),
-    band: responseRateBand(rate), variancePts: rate === null ? null : rate - RESPONSE_RATE_SCALE.target, weekly,
-  };
+  const measuredReached = delivered + read;
+  const measured = measuredFrom <= q.dateTo
+    ? { from: measuredFrom, responders, reached: measuredReached, rate: ratePct(responders, measuredReached) }
+    : null;
+  const withRate = (out: Omit<NpsResponseRate, 'band' | 'variancePts'>): NpsResponseRate => ({
+    ...out, band: responseRateBand(out.rate), variancePts: out.rate === null ? null : out.rate - RESPONSE_RATE_SCALE.target,
+  });
+  const measuredOnly = (estimateStatus: ReachEstimateStatus): NpsResponseRate => withRate({
+    ...empty, status: 'ready', reachStart, dateFrom: measuredFrom, responders, delivered, read, reached: measuredReached, totalReach,
+    rate: ratePct(responders, measuredReached), rateOfReach: ratePct(responders, totalReach), weekly, estimateStatus, measured,
+  });
+  if (!cfg.enabled) return measuredOnly('disabled');
+
+  // 2. the gap: the period's days with ratings but no kept messages
+  const [firstRows] = await pool.query(
+    `SELECT MIN(f.RatingDateKey) AS first_key FROM v_process_nps_response f WHERE 1 = 1${inCompany('f')}`, company);
+  const firstKey = (firstRows as Record<string, unknown>[])[0]?.first_key;
+  const firstRating = firstKey ? String(firstKey).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3') : null;
+  const gap = reachGap(q.dateFrom, q.dateTo, firstRating, reachStart);
+  if (!gap || !reachStart) return measuredOnly('not_needed');
+
+  // 3. the per-week basis: fixed, or the complete measured weeks of the selected companies (never responders or the rate)
+  let perWeek: number;
+  let basisWeeks: string[] = [];
+  if (cfg.fixedPerWeek !== null) perWeek = cfg.fixedPerWeek;
+  else {
+    const loaded = state.loaded_at_utc ? String(state.loaded_at_utc) : null;
+    const loadedLocal = loaded ? DateTime.fromSQL(loaded, { zone: 'utc' }).setZone(getAppTimezone()).toISODate() : null;
+    basisWeeks = loadedLocal ? completeMeasuredWeeks(reachStart, loadedLocal) : [];
+    if (basisWeeks.length === 0) return measuredOnly('no_basis');
+    const [basisRows] = await pool.query(
+      `SELECT SUM(m.delivered) + SUM(m.read_count) AS reached FROM v_process_nps_reach m
+        WHERE m.MessageDateKey BETWEEN ? AND ?${inCompany('m')}`,
+      [dateKeyOf(basisWeeks[0]), dateKeyOf(addDaysIso(basisWeeks[basisWeeks.length - 1], 6)), ...company]);
+    perWeek = Number((basisRows as Record<string, unknown>[])[0]?.reached ?? 0) / basisWeeks.length;
+    if (!(perWeek > 0)) return measuredOnly('no_basis');
+  }
+  const weeks = gap.days / 7;
+  const estimated = Math.round(perWeek * weeks);
+
+  // 4. the gap's responders join the numerator: every responder of the counted period
+  const [gapRows] = await pool.query(
+    `SELECT COUNT(*) AS n FROM v_process_nps_response f WHERE f.RatingDateKey BETWEEN ? AND ?${inCompany('f')}`,
+    [dateKeyOf(gap.from), dateKeyOf(gap.to), ...company]);
+  const allResponders = responders + Number((gapRows as Record<string, unknown>[])[0]?.n ?? 0);
+  const reached = measuredReached + estimated;
+  return withRate({
+    ...empty, status: 'ready', reachStart, dateFrom: gap.from, responders: allResponders, delivered, read, reached, totalReach,
+    rate: ratePct(allResponders, reached), rateOfReach: ratePct(responders, totalReach), weekly,
+    isEstimated: true, estimateStatus: 'applied', measured,
+    estimate: {
+      from: gap.from, to: gap.to, weeks, perWeek, reached: estimated, basis: cfg.fixedPerWeek !== null ? 'fixed' : 'auto',
+      basisWeeks: basisWeeks.length, basisFrom: basisWeeks[0] ?? null,
+      basisTo: basisWeeks.length ? addDaysIso(basisWeeks[basisWeeks.length - 1], 6) : null,
+    },
+  });
 }

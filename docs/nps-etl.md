@@ -350,9 +350,32 @@ each run so disappeared rows still get `_deleted_at`.
 **Response rate** (`GET /nps-score/response-rate`, the narrow card of the top row) = responders ÷ (Delivered + Read)
 × 100: a customer can only answer a message that reached them; the tooltip also shows responders ÷ Total Reach. The
 messages have no delivery, order or customer, so **both** sides use the company and date filters only: ratings by
-rating date, messages by message date, the same period, starting no earlier than `NPS_REACH_START` (03 Oct 2026; the
-card says "since 03 Oct 2026"). Any team / salesperson / segment / customer filter is ignored for this card on both
-sides and the card says **Company and date filters only**; the same role restriction as the reach panel applies.
+rating date, messages by message date, the same period. Any team / salesperson / segment / customer filter is ignored
+for this card on both sides and the card says **Company and date filters only**; the same role restriction as the reach
+panel applies. Under the rate the card shows the fraction actually used ("N responders ÷ M reached").
+
+**Estimate before `NPS_REACH_START` (option A).** Ratings exist from the first rating (12 Jul 2026) but messages only
+from `NPS_REACH_START` (03 Oct 2026): the source never kept successful messages before it. A period that reaches before
+it would otherwise divide fewer responders by a partial denominator. So, in `fetchNpsResponseRate`
+(`backend/src/measures/npsScore.ts`, config `backend/src/config/npsReachEstimate.ts`):
+
+- **Measured basis:** average Delivered + Read per **complete** Saturday–Friday week from `NPS_REACH_START` to the day
+  before the last message load (`process_nps_reach_state.loaded_at_utc`, Tripoli), for the selected companies;
+  recalculated on every request. `NPS_REACH_ESTIMATE_PER_WEEK` replaces it with a fixed value.
+- **Gap:** the part of the selected period from max(period start, the selected companies' first rating) to
+  `NPS_REACH_START` − 1 day; never before the first rating. Estimated reached = per week × gap days ÷ 7 (rounded).
+- **Headline:** all responders of the period ÷ (measured reached + estimated reached); band and variance use it.
+  Never derived from responders or from the rate.
+- A period starting on or after `NPS_REACH_START` is exactly the measured rate (no estimate, no label). So is
+  `NPS_REACH_ESTIMATE_ENABLED=false`, and a gap without any complete measured week (`estimateStatus: no_basis`, the card
+  says so).
+- API: `isEstimated`, `estimateStatus`, `measured { from, responders, reached, rate }` (the real rate since
+  `NPS_REACH_START`), `estimate { from, to, weeks, perWeek, reached, basis, basisWeeks, basisFrom, basisTo }`;
+  `responders` / `reached` are the numerator / denominator used; `delivered`, `read`, `totalReach` stay actual only.
+- Card: badge **incl. estimate · 12 Jul – 02 Oct**, a second line **Measured since 03 Oct: x %**, a tooltip with the
+  formula, the per-week basis and the estimated reached. The sparkline and the Message reach panel stay actual-only.
+- Local check 2026-11-09 (YTD, all companies): 801 ÷ (1,222 measured + 2,841 estimated) = 19.71 %; measured since
+  03 Oct 22.01 %. `scripts/process/check_nps_totals.py` prints both (meas% / est%).
 Target 30 %: On Track from 30, Behind Target from 25, Critical below 25 (`backend/src/config/npsThresholds.ts`). The
 sparkline is the rate per business week (Sunday–Saturday).
 

@@ -226,22 +226,54 @@ describe.skipIf(!RUN)('NPS page consistency, YTD, default B2B + B2C filter and a
     }
   });
 
-  it('response rate = plain SQL: ratings by rating date / (delivered + read) by message date, company only, from NPS_REACH_START', async () => {
-    const [state] = await qa('SELECT reach_start FROM process_nps_reach_state WHERE singleton_id = 1');
+  it('response rate = plain SQL: measured since NPS_REACH_START, plus the gap estimate from the complete measured weeks', async () => {
+    const [state] = await qa(`SELECT DATE_FORMAT(reach_start, '%Y-%m-%d') AS reach_start, loaded_at_utc FROM process_nps_reach_state WHERE singleton_id = 1`);
     if (!state) return;
-    const start = new Date(state.reach_start).toISOString().slice(0, 10);
+    const start = String(state.reach_start);
+    const loadedLocal = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Tripoli', year: 'numeric', month: '2-digit', day: '2-digit' })
+      .format(new Date(`${String(state.loaded_at_utc instanceof Date ? state.loaded_at_utc.toISOString() : state.loaded_at_utc).replace(' ', 'T').replace(/Z?$/, 'Z')}`));
+    const plusDays = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:00Z`) + d * 86_400_000).toISOString().slice(0, 10);
+    // complete Saturday weeks from the reach start to the day before the load
+    let sat = start;
+    while (new Date(`${sat}T12:00:00Z`).getUTCDay() !== 6) sat = plusDays(sat, 1);
+    const weeks: string[] = [];
+    for (; plusDays(sat, 6) <= plusDays(loadedLocal, -1); sat = plusDays(sat, 7)) weeks.push(sat);
     for (const company of [null, 1, 3]) {
       const c = company ? ' AND CompanyKey = ?' : '';
       const p = company ? [company] : [];
       const [ratings] = await qa(`SELECT COUNT(*) AS n FROM fact_process_nps_response WHERE RatingDateKey BETWEEN ? AND ?${c}`, [key(start), key(today), ...p]);
       const [msgs] = await qa(`SELECT SUM(box IN ('delivered', 'read')) AS reached, COUNT(*) AS total FROM fact_process_nps_message
         WHERE in_reach_scope = 1 AND MessageDateKey BETWEEN ? AND ?${c}`, [key(start), key(today), ...p]);
-      // a segment filter is ignored (labelled), never applied to the ratings only
+      // measured only (From = the reach start): exactly the rate before the estimate existed
+      const measured = (await get(`/nps-score/response-rate?dateFrom=${start}&dateTo=${today}&segmentKeys=1${company ? `&companyKeys=${company}` : ''}`)).body;
+      expect(measured).toMatchObject({ status: 'ready', dateFrom: start, companyAndDateOnly: true, isEstimated: false, estimate: null,
+        responders: n(ratings.n), reached: n(msgs.reached), totalReach: n(msgs.total) });
+      expect(measured.rate).toBeCloseTo((100 * n(ratings.n)) / n(msgs.reached), 9);
+      expect(sum(measured.weekly, 'responders')).toBe(n(ratings.n));
+      expect(sum(measured.weekly, 'reached')).toBe(n(msgs.reached));
+      // YTD: + the gap [first rating, reach start - 1] x the average reached of the complete measured weeks
       const body = (await get(`/nps-score/response-rate?${ytd}&segmentKeys=1&segmentKeys=2${company ? `&companyKeys=${company}` : ''}`)).body;
-      expect(body).toMatchObject({ status: 'ready', dateFrom: start, companyAndDateOnly: true, responders: n(ratings.n), reached: n(msgs.reached), totalReach: n(msgs.total) });
-      expect(body.rate).toBeCloseTo((100 * n(ratings.n)) / n(msgs.reached), 9);
-      expect(sum(body.weekly, 'responders')).toBe(n(ratings.n));
-      expect(sum(body.weekly, 'reached')).toBe(n(msgs.reached));
+      expect(body.measured).toMatchObject({ from: start, responders: n(ratings.n), reached: n(msgs.reached) });
+      const [first] = await qa(`SELECT MIN(RatingDateKey) AS k FROM fact_process_nps_response WHERE 1 = 1${c}`, p);
+      if (!weeks.length || !first.k || String(first.k) >= String(key(start))) {
+        expect(body.isEstimated).toBe(false);
+        continue;
+      }
+      const [basis] = await qa(`SELECT SUM(box IN ('delivered', 'read')) AS reached FROM fact_process_nps_message
+        WHERE in_reach_scope = 1 AND MessageDateKey BETWEEN ? AND ?${c}`, [key(weeks[0]), key(plusDays(weeks[weeks.length - 1], 6)), ...p]);
+      const perWeek = n(basis.reached) / weeks.length;
+      const firstIso = String(first.k).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+      const gapFrom = firstIso > `${today.slice(0, 4)}-01-01` ? firstIso : `${today.slice(0, 4)}-01-01`;
+      const gapDays = Math.round((Date.parse(`${start}T12:00:00Z`) - Date.parse(`${gapFrom}T12:00:00Z`)) / 86_400_000);
+      const estimated = Math.round((perWeek * gapDays) / 7);
+      const [gapRatings] = await qa(`SELECT COUNT(*) AS n FROM fact_process_nps_response WHERE RatingDateKey BETWEEN ? AND ?${c}`,
+        [key(gapFrom), key(plusDays(start, -1)), ...p]);
+      expect(body).toMatchObject({ isEstimated: true, estimateStatus: 'applied', dateFrom: gapFrom,
+        responders: n(ratings.n) + n(gapRatings.n), reached: n(msgs.reached) + estimated,
+        estimate: { from: gapFrom, to: plusDays(start, -1), reached: estimated, basis: 'auto', basisWeeks: weeks.length } });
+      expect(body.estimate.perWeek).toBeCloseTo(perWeek, 9);
+      expect(body.rate).toBeCloseTo((100 * (n(ratings.n) + n(gapRatings.n))) / (n(msgs.reached) + estimated), 9);
+      expect(sum(body.weekly, 'reached')).toBe(n(msgs.reached)); // the sparkline stays measured-only
     }
   });
 });

@@ -617,6 +617,9 @@ error; Other; "-" not an error.
 
 ### process_nps_reach_state
 One row: `loaded_at_utc`, `messages_loaded`, `reach_start` (the `NPS_REACH_START` of the last load), `_run_id`.
+The Response Rate uses `reach_start` and `loaded_at_utc` for its estimate before the reach start: the average Delivered
++ Read of the complete weeks from `reach_start` to the day before `loaded_at_utc` (Tripoli) × the gap weeks back to the
+first rating (backend `config/npsReachEstimate.ts`; `docs/nps-etl.md` §8.5). Nothing is stored: computed per request.
 
 ### Views
 `v_process_nps_reach` (per date x company, in scope: total_reach, delivered, not_delivered, read_count, error_count,

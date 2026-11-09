@@ -206,8 +206,9 @@ describe('Response rate', () => {
   it('company and date only on both sides, from NPS_REACH_START; the other filters are labelled, never applied', async () => {
     reachLoaded = true;
     const body = await (await get('/nps-score/response-rate?dateFrom=2026-01-01&dateTo=2026-10-18&companyKeys=1&segmentKeys=1&salespersonKeys=49', 'viewer')).json();
-    expect(body).toMatchObject({ status: 'ready', dateFrom: '2026-10-03', reachStart: '2026-10-03', companyAndDateOnly: true, target: 30 });
-    const data = queries.filter((q) => /FROM v_process_nps_(response|reach) /.test(q.sql));
+    expect(body).toMatchObject({ status: 'ready', dateFrom: '2026-10-03', reachStart: '2026-10-03', companyAndDateOnly: true, target: 30,
+      isEstimated: false, estimateStatus: 'not_needed', estimate: null, measured: { from: '2026-10-03' } });
+    const data = queries.filter((q) => q.sql.includes('GROUP BY wk'));
     expect(data).toHaveLength(2);
     for (const q of data) {
       expect(q.params).toEqual([20261003, 20261018, 1]);

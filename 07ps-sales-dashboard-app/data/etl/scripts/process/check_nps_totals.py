@@ -193,6 +193,52 @@ def _fact_reach(conn, lo: int, hi: int, company: int | None) -> dict:
             "otherState": other, "groups": groups}
 
 
+def _estimated_rate(conn, start: _dt.date, today: _dt.date, reach_start: _dt.date | None, loaded_local: _dt.date | None,
+                    company: int | None, measured_resp: int, measured_reached: int) -> dict:
+    """The Response Rate estimate before NPS_REACH_START (backend config/npsReachEstimate.ts), in plain SQL: Delivered +
+    Read per complete measured week (or NPS_REACH_ESTIMATE_PER_WEEK) x the gap's days / 7, from the first rating; the
+    headline = every responder of the period / (measured + estimated reached). Never derived from responders."""
+    out = {"status": "not_needed", "rate": None, "responders": measured_resp, "reached": measured_reached, "estimated": 0,
+           "per_week": None, "weeks": 0}
+    if os.environ.get("NPS_REACH_ESTIMATE_ENABLED", "").strip().lower() in ("false", "0", "no", "off"):
+        out["status"] = "disabled"
+        return out
+    c_sql, params = ("", {}) if company is None else (" AND CompanyKey = :c", {"c": company})
+    first = conn.execute(text(f"SELECT MIN(RatingDateKey) FROM fact_process_nps_response WHERE 1 = 1{c_sql}"), params).scalar()
+    if not first or not reach_start:
+        return out
+    first_d = _dt.datetime.strptime(str(first), "%Y%m%d").date()
+    gap_from, gap_to = max(start, first_d), min(today, reach_start - _dt.timedelta(days=1))
+    if gap_from > gap_to:
+        return out
+    raw = os.environ.get("NPS_REACH_ESTIMATE_PER_WEEK", "").strip()
+    fixed = float(raw) if raw and float(raw) > 0 else None
+    if fixed is not None:
+        per_week = fixed
+    else:
+        sat = reach_start + _dt.timedelta(days=(5 - reach_start.weekday()) % 7)  # the first Saturday on or after it
+        weeks = []
+        while loaded_local and sat + _dt.timedelta(days=6) <= loaded_local - _dt.timedelta(days=1):
+            weeks.append(sat)
+            sat += _dt.timedelta(days=7)
+        if not weeks:
+            out["status"] = "no_basis"
+            return out
+        basis = _fact_reach(conn, int(weeks[0].strftime("%Y%m%d")), int((weeks[-1] + _dt.timedelta(days=6)).strftime("%Y%m%d")), company)
+        per_week = (basis["delivered"] + basis["read"]) / len(weeks)
+        out["weeks"] = len(weeks)
+        if per_week <= 0:
+            out["status"] = "no_basis"
+            return out
+    days = (gap_to - gap_from).days + 1
+    estimated = round(per_week * days / 7)
+    gap_resp = _fact_counts(conn, int(gap_from.strftime("%Y%m%d")), int(gap_to.strftime("%Y%m%d")), company, None)["responders"]
+    reached = measured_reached + estimated
+    out.update(status="applied", responders=measured_resp + gap_resp, reached=reached, estimated=estimated, per_week=per_week,
+               rate=None if reached == 0 else 100 * (measured_resp + gap_resp) / reached, gap=(gap_from, gap_to))
+    return out
+
+
 def _close(a, b) -> bool:
     return (a is None and b is None) or (a is not None and b is not None and abs(a - b) < 1e-9)
 
@@ -202,18 +248,23 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
     every filter cleared, the plain-SQL figures vs the API, plus the page's consistency rules on the API's own answers."""
     start = today.replace(month=1, day=1)
     lo, hi = int(start.strftime("%Y%m%d")), int(today.strftime("%Y%m%d"))
-    state = conn.execute(text("SELECT reach_start FROM process_nps_reach_state WHERE singleton_id = 1")).first()
+    state = conn.execute(text("SELECT reach_start, loaded_at_utc FROM process_nps_reach_state WHERE singleton_id = 1")).first()
     reach_start = state[0] if state and state[0] else None
+    loaded_local = None
+    if state and state[1]:
+        zone = ZoneInfo(os.environ.get("TIMEZONE") or os.environ.get("APP_TIMEZONE") or "Africa/Tripoli")
+        loaded_local = state[1].replace(tzinfo=_dt.timezone.utc).astimezone(zone).date()
     rr_from = max(start, reach_start) if reach_start else start
     rr_lo = int(rr_from.strftime("%Y%m%d"))
     print(f"\n8. YTD {start}..{today} (Tripoli) -- plain SQL on the fact tables vs the API"
           f"{'' if token and api_base else ' (API NOT CHECKED: set NPS_CHECK_API_TOKEN and --api)'}")
-    print(f"   response rate period {rr_from}..{today} (NPS_REACH_START {reach_start})")
+    print(f"   response rate: measured {rr_from}..{today} (NPS_REACH_START {reach_start}); est% = the YTD headline with the "
+          f"estimate before it (last message load {loaded_local}, Tripoli)")
     ok = True
     for label, segments in (("default B2B + B2C", B2B_B2C), ("all filters cleared", None)):
         print(f"\n   {label}")
         print(f"   {'company':<8}{'resp':>6}{'prom':>6}{'pass':>6}{'detr':>6}{'NPS':>9}{'CSAT':>9}{'reach':>7}{'deliv':>7}{'read':>6}"
-              f"{'notdel':>7}{'error':>6}{'rate':>8}  result")
+              f"{'notdel':>7}{'error':>6}{'meas%':>8}{'est%':>8}{'est.reach':>10}  result")
         for company in (None, 1, 3):
             want = _fact_counts(conn, lo, hi, company, segments)
             reach = _fact_reach(conn, lo, hi, company)
@@ -221,6 +272,7 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
             rr_reach = _fact_reach(conn, rr_lo, hi, company)
             reached = rr_reach["delivered"] + rr_reach["read"]
             rate = None if reached == 0 else 100 * rr_resp / reached
+            est = _estimated_rate(conn, start, today, reach_start, loaded_local, company, rr_resp, reached)
             checks: list[tuple[str, bool]] = []
             # rules that hold on the plain SQL itself
             checks.append(("P+Pa+D=R", want["promoters"] + want["passives"] + want["detractors"] == want["responders"]))
@@ -245,7 +297,11 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
                     checks.append(("reach", all(t[k] == reach[k] for k in ("totalReach", "delivered", "read", "notDelivered", "error", "otherState"))))
                     checks.append(("errors", {e["key"]: e["count"] for e in r["errors"]} == reach["groups"]))
                 rr = _api_get(api_base, token, "response-rate", params)
-                checks.append(("rate", rr["status"] == "ready" and rr["responders"] == rr_resp and rr["reached"] == reached and _close(rr["rate"], rate)))
+                measured = rr.get("measured") or {}
+                checks.append(("rate measured", rr["status"] == "ready" and measured.get("responders") == rr_resp
+                               and measured.get("reached") == reached and _close(measured.get("rate"), rate)))
+                checks.append(("rate estimate", rr.get("estimateStatus") == est["status"] and rr["responders"] == est["responders"]
+                               and rr["reached"] == est["reached"] and _close(rr["rate"], est["rate"] if est["status"] == "applied" else rate)))
                 fu = _api_get(api_base, token, "followup-summary", params)
                 checks.append(("followup", fu["detractors"] == want["detractors"]
                                and fu["charted"] + fu["historical"] + fu["noCase"] == fu["detractors"]))
@@ -259,7 +315,8 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
             fmt = lambda v: "—" if v is None else f"{v:.2f}"  # noqa: E731
             print(f"   {('all' if company is None else company):<8}{want['responders']:>6}{want['promoters']:>6}{want['passives']:>6}"
                   f"{want['detractors']:>6}{fmt(want['nps']):>9}{fmt(want['csat']):>9}{reach['totalReach']:>7}{reach['delivered']:>7}"
-                  f"{reach['read']:>6}{reach['notDelivered']:>7}{reach['error']:>6}{fmt(rate):>8}  "
+                  f"{reach['read']:>6}{reach['notDelivered']:>7}{reach['error']:>6}{fmt(rate):>8}"
+                  f"{fmt(est['rate']) if est['status'] == 'applied' else est['status']:>8}{est['estimated']:>10}  "
                   f"{'MATCH' if not bad else 'DIFFERENT: ' + ', '.join(bad)}")
     hidden = conn.execute(text(f"SELECT {EFFECTIVE_SEGMENT} AS seg, COUNT(*) FROM {FACT_WITH_OVERRIDE} WHERE f.RatingDateKey BETWEEN :lo AND :hi "
                                f"AND {EFFECTIVE_SEGMENT} NOT IN (1, 2) GROUP BY seg ORDER BY seg"), {"lo": lo, "hi": hi}).all()

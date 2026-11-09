@@ -16,6 +16,9 @@ import {
   pct,
   periodCaption,
   periodLabel,
+  estimateBadge,
+  measuredLine,
+  rateFraction,
   responseRateMetrics,
   responseRateTooltip,
   smallSample,
@@ -138,6 +141,27 @@ describe('the top row', () => {
       'Responders ÷ Total Reach = 120 ÷ 900 = 13.33%',
       'Customers can only answer a message that reached them.',
     ]);
+  });
+
+  it('response rate with the estimate: formula, per-week basis, measured-only rate, why; badge, fraction and measured line', () => {
+    const r = {
+      responders: 801, delivered: 900, read: 322, reached: 4063, totalReach: 1500, rate: (801 / 4063) * 100, rateOfReach: 17.9,
+      reachStart: '2026-10-03', isEstimated: true, measured: { from: '2026-10-03', responders: 269, reached: 1222, rate: (269 / 1222) * 100 },
+      estimate: { from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 239.6, reached: 2841, basis: 'auto' as const, basisWeeks: 5, basisFrom: '2026-10-03', basisTo: '2026-11-06' },
+    };
+    expect(responseRateTooltip(r).split('\n')).toEqual([
+      'Responders ÷ (Measured reached + Estimated reached) = 801 ÷ (1,222 + 2,841) = 19.71%',
+      'Estimated reached = 239.6 per week (average Delivered + Read of 5 complete weeks, 03 Oct – 06 Nov) × 11.86 weeks (12 Jul – 02 Oct) = 2,841',
+      'Measured since 03 Oct: 269 ÷ 1,222 = 22.01%',
+      'The WhatsApp source did not keep successful messages before 03 Oct, so that part is estimated.',
+    ]);
+    expect(responseRateTooltip({ ...r, estimate: { ...r.estimate, basis: 'fixed', perWeek: 250, basisWeeks: 0, basisFrom: null, basisTo: null } }).split('\n')[1])
+      .toBe('Estimated reached = 250.0 per week (fixed setting) × 11.86 weeks (12 Jul – 02 Oct) = 2,841');
+    expect(rateFraction(r)).toBe('801 responders ÷ 4,063 reached');
+    expect(estimateBadge(r)).toBe('incl. estimate · 12 Jul – 02 Oct');
+    expect(estimateBadge({ isEstimated: false, estimate: null })).toBeNull();
+    expect(measuredLine(r)).toBe('Measured since 03 Oct: 22.01%');
+    expect(measuredLine({ measured: null, reachStart: '2026-10-03' })).toBe('Measured since 03 Oct: —');
   });
 });
 

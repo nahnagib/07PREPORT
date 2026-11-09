@@ -12,7 +12,9 @@ import {
   fetchNpsFollowupSummary,
   fetchNpsOverview,
   fetchNpsReach,
+  completeMeasuredWeeks,
   fetchNpsResponseRate,
+  reachGap,
   fetchNpsTrend,
   ratePct,
   npsScore,
@@ -199,6 +201,30 @@ function pool(answer: (query: string) => unknown[]) {
 }
 const ADMIN = { roleCode: 'BI00_EXECUTIVE' };
 
+/** The gap queries: the first rating (null = none), the gap's responders, the measured basis' reached (per company key
+ *  when the query names one; key 0 = all companies), the load time (UTC). */
+interface GapData { firstRating?: string | null; gapResponders?: number; basis?: Record<number, number>; loadedAt?: string }
+function reachPool(reachStart: string | null, ratings: Record<string, number>, messages: Record<string, [number, number, number]>, gap: GapData = {}) {
+  const queries: { sql: string; params: unknown[] }[] = [];
+  const answer = (sql: string, params: unknown[]): unknown[] => {
+    if (sql.includes('process_nps_reach_state')) return [{ reach_start: reachStart, loaded_at_utc: gap.loadedAt ?? '2026-10-17 20:00:00' }];
+    if (sql.includes('MIN(f.RatingDateKey)')) return [{ first_key: gap.firstRating ? Number(gap.firstRating.replace(/-/g, '')) : null }];
+    if (sql.includes('AS reached FROM v_process_nps_reach')) {
+      const company = typeof params[2] === 'number' ? (params[2] as number) : 0;
+      return [{ reached: gap.basis?.[company] ?? 0 }];
+    }
+    if (sql.includes('COUNT(*) AS n FROM v_process_nps_response')) return [{ n: gap.gapResponders ?? 0 }];
+    if (sql.includes('FROM v_process_nps_response')) return Object.entries(ratings).map(([wk, n]) => ({ wk, n }));
+    if (sql.includes('FROM v_process_nps_reach')) {
+      return Object.entries(messages).map(([wk, [delivered, read, total]]) => ({ wk, delivered, read_count: read, total_reach: total }));
+    }
+    return [];
+  };
+  const p = { query: async (sql: string, params: unknown[] = []) => { queries.push({ sql, params }); return [answer(sql, params), []]; } };
+  return { pool: p as unknown as Pool, queries };
+}
+const weeklyData = (queries: { sql: string; params: unknown[] }[]) => queries.filter((q) => q.sql.includes('GROUP BY wk'));
+
 describe('response rate = responders / (Delivered + Read)', () => {
   it('the formula: unrounded, no value without a reached message', () => {
     expect(ratePct(30, 100)).toBe(30);
@@ -206,16 +232,6 @@ describe('response rate = responders / (Delivered + Read)', () => {
     expect(ratePct(5, 0)).toBeNull();
   });
 
-  function reachPool(reachStart: string | null, ratings: Record<string, number>, messages: Record<string, [number, number, number]>) {
-    return pool((sql) => {
-      if (sql.includes('process_nps_reach_state')) return [{ reach_start: reachStart }];
-      if (sql.includes('FROM v_process_nps_response')) return Object.entries(ratings).map(([wk, n]) => ({ wk, n }));
-      if (sql.includes('FROM v_process_nps_reach')) {
-        return Object.entries(messages).map(([wk, [delivered, read, total]]) => ({ wk, delivered, read_count: read, total_reach: total }));
-      }
-      return [];
-    });
-  }
 
   it('starts at NPS_REACH_START, sums both sides per Saturday week of the same period, band and variance from the target', async () => {
     const { pool: p, queries } = reachPool('2026-10-03', { '2026-10-03': 20, '2026-10-10': 10 }, { '2026-10-03': [40, 60, 140], '2026-10-10': [10, 10, 50] });
@@ -228,8 +244,10 @@ describe('response rate = responders / (Delivered + Read)', () => {
     expect(r.rateOfReach).toBeCloseTo((30 / 190) * 100, 9);
     expect(r.weekly.map((w) => [w.weekStart, w.responders, w.reached])).toEqual([['2026-10-03', 20, 100], ['2026-10-10', 10, 20], ['2026-10-17', 0, 0]]);
     expect(r.weekly[2].rate).toBeNull();
+    expect(r).toMatchObject({ isEstimated: false, estimateStatus: 'not_needed', estimate: null,
+      measured: { from: '2026-10-03', responders: 30, reached: 120 } });
     // both sides: the same clamped period and the company only -- never a segment / salesperson condition
-    const data = queries.filter((q) => /FROM v_process_nps_(response|reach) /.test(q.sql));
+    const data = weeklyData(queries);
     expect(data).toHaveLength(2);
     for (const q of data) {
       expect(q.params).toEqual([20261003, 20261018, 1]);
@@ -245,7 +263,7 @@ describe('response rate = responders / (Delivered + Read)', () => {
     for (const q of queries) expect(q.params).not.toContain(49);
   });
 
-  it('a range that ends before NPS_REACH_START has no figure; no message load = waiting; non-company role scopes = restricted', async () => {
+  it('without ratings before NPS_REACH_START a range that ends before it has no figure; no message load = waiting; non-company role scopes = restricted', async () => {
     const before = await fetchNpsResponseRate(reachPool('2026-10-03', {}, {}).pool, parseNpsQuery({ dateFrom: '2026-07-01', dateTo: '2026-09-30' }, NOW), {}, ADMIN);
     expect(before).toMatchObject({ status: 'ready', rate: null, responders: 0, weekly: [] });
     const none = pool(() => []);
@@ -257,7 +275,95 @@ describe('response rate = responders / (Delivered + Read)', () => {
     }
     const companyScoped = reachPool('2026-10-03', {}, {});
     await fetchNpsResponseRate(companyScoped.pool, parseNpsQuery({}, NOW), { companyKeys: [3] }, { roleCode: 'X', dataScopeRules: [{ dimension: 'companyKeys', value: '3' }] } as never);
-    expect(companyScoped.queries.filter((q) => q.params.includes(3))).toHaveLength(2);
+    expect(weeklyData(companyScoped.queries).filter((q) => q.params.includes(3))).toHaveLength(2);
+  });
+});
+
+describe('response rate: the estimate before NPS_REACH_START (option A)', () => {
+  const ON = { enabled: true, fixedPerWeek: null };
+  // NOW = 18 Oct (Tripoli); loaded 17 Oct 22:00 Tripoli -> complete weeks 3-9 Oct and 10-16 Oct
+  const RATINGS = { '2026-10-03': 20, '2026-10-10': 10 };
+  const MESSAGES: Record<string, [number, number, number]> = { '2026-10-03': [40, 60, 140], '2026-10-10': [10, 10, 50] };
+  const GAP = { firstRating: '2026-07-12', gapResponders: 400, basis: { 0: 300, 1: 300, 3: 100 } };
+  const ytd = parseNpsQuery({}, NOW); // 1 Jan .. 18 Oct
+
+  it('the gap and the complete measured weeks', () => {
+    expect(reachGap('2026-01-01', '2026-10-18', '2026-07-12', '2026-10-03')).toEqual({ from: '2026-07-12', to: '2026-10-02', days: 83 });
+    expect(reachGap('2026-09-01', '2026-09-30', '2026-07-12', '2026-10-03')).toEqual({ from: '2026-09-01', to: '2026-09-30', days: 30 });
+    expect(reachGap('2026-10-03', '2026-10-18', '2026-07-12', '2026-10-03')).toBeNull(); // after the reach start
+    expect(reachGap('2026-01-01', '2026-06-30', '2026-07-12', '2026-10-03')).toBeNull(); // before the first rating
+    expect(reachGap('2026-01-01', '2026-10-18', null, '2026-10-03')).toBeNull();
+    expect(completeMeasuredWeeks('2026-10-03', '2026-10-17')).toEqual(['2026-10-03', '2026-10-10']); // 17 Oct is the load day
+    expect(completeMeasuredWeeks('2026-10-03', '2026-10-10')).toEqual(['2026-10-03']); // 10 Oct load: 3-9 Oct complete
+    expect(completeMeasuredWeeks('2026-10-03', '2026-10-09')).toEqual([]); // the first week is not complete yet
+    expect(completeMeasuredWeeks('2026-10-05', '2026-10-25')).toEqual(['2026-10-10', '2026-10-17']); // a partial first week never counts
+  });
+
+  it('a period fully after the reach start: identical to before, no estimate', async () => {
+    const q = parseNpsQuery({ dateFrom: '2026-10-03', dateTo: '2026-10-18' }, NOW);
+    const on = await fetchNpsResponseRate(reachPool('2026-10-03', RATINGS, MESSAGES, GAP).pool, q, {}, ADMIN, ON);
+    const off = await fetchNpsResponseRate(reachPool('2026-10-03', RATINGS, MESSAGES, GAP).pool, q, {}, ADMIN, { enabled: false, fixedPerWeek: null });
+    expect(on).toMatchObject({ isEstimated: false, estimateStatus: 'not_needed', estimate: null, responders: 30, reached: 120, rate: 25 });
+    expect({ ...on, estimateStatus: 'x' }).toEqual({ ...off, estimateStatus: 'x' });
+  });
+
+  it('a period spanning both: measured + estimated; numerator = every responder of the period; band and variance on the headline', async () => {
+    const { pool: p, queries } = reachPool('2026-10-03', RATINGS, MESSAGES, GAP);
+    const r = await fetchNpsResponseRate(p, ytd, {}, ADMIN, ON);
+    // per week = 300 / 2 complete weeks = 150; gap 12 Jul .. 2 Oct = 83 days; 150 x 83 / 7 = 1778.6 -> 1779
+    expect(r).toMatchObject({ status: 'ready', isEstimated: true, estimateStatus: 'applied', dateFrom: '2026-07-12', responders: 430,
+      delivered: 50, read: 70, totalReach: 190, reached: 120 + 1779,
+      measured: { from: '2026-10-03', responders: 30, reached: 120, rate: 25 },
+      estimate: { from: '2026-07-12', to: '2026-10-02', perWeek: 150, reached: 1779, basis: 'auto', basisWeeks: 2, basisFrom: '2026-10-03', basisTo: '2026-10-16' } });
+    expect(r.estimate!.weeks).toBeCloseTo(83 / 7, 9);
+    expect(r.rate).toBeCloseTo((430 / 1899) * 100, 9);
+    expect(r.band).toBe('red');
+    expect(r.variancePts).toBeCloseTo(r.rate! - 30, 9);
+    expect(r.rateOfReach).toBeCloseTo((30 / 190) * 100, 9); // actual messages only
+    expect(r.weekly.map((w) => w.weekStart)).toEqual(['2026-10-03', '2026-10-10', '2026-10-17']); // the sparkline stays measured-only
+    // never circular: the basis reads messages only, over the complete measured weeks
+    const basis = queries.find((q) => q.sql.includes('AS reached FROM v_process_nps_reach'))!;
+    expect(basis.params).toEqual([20261003, 20261016]);
+    expect(basis.sql).not.toMatch(/v_process_nps_response|rating/i);
+    expect(queries.find((q) => q.sql.includes('COUNT(*) AS n FROM v_process_nps_response'))!.params).toEqual([20260712, 20261002]);
+  });
+
+  it('a period fully before the reach start: entirely estimated, clearly flagged, no measured part', async () => {
+    const q = parseNpsQuery({ dateFrom: '2026-09-01', dateTo: '2026-09-30' }, NOW);
+    const r = await fetchNpsResponseRate(reachPool('2026-10-03', RATINGS, MESSAGES, { ...GAP, gapResponders: 120 }).pool, q, {}, ADMIN, ON);
+    // 150 x 30 / 7 = 642.9 -> 643
+    expect(r).toMatchObject({ isEstimated: true, estimateStatus: 'applied', measured: null, dateFrom: '2026-09-01', responders: 120,
+      delivered: 0, read: 0, reached: 643, weekly: [], estimate: { from: '2026-09-01', to: '2026-09-30', reached: 643 } });
+    expect(r.rate).toBeCloseTo((120 / 643) * 100, 9);
+  });
+
+  it('the fixed override replaces the measured basis (and needs no complete week)', async () => {
+    const { pool: p, queries } = reachPool('2026-10-03', RATINGS, MESSAGES, { ...GAP, loadedAt: '2026-10-04 08:00:00' });
+    const r = await fetchNpsResponseRate(p, ytd, {}, ADMIN, { enabled: true, fixedPerWeek: 70 });
+    expect(r.estimate).toMatchObject({ perWeek: 70, reached: 830, basis: 'fixed', basisWeeks: 0, basisFrom: null }); // 70 x 83 / 7
+    expect(r.reached).toBe(120 + 830);
+    expect(queries.some((q) => q.sql.includes('AS reached FROM v_process_nps_reach'))).toBe(false);
+  });
+
+  it('the estimate disabled: exactly the measured rate, without even looking for the gap', async () => {
+    const { pool: p, queries } = reachPool('2026-10-03', RATINGS, MESSAGES, GAP);
+    const r = await fetchNpsResponseRate(p, ytd, {}, ADMIN, { enabled: false, fixedPerWeek: 70 });
+    expect(r).toMatchObject({ isEstimated: false, estimateStatus: 'disabled', estimate: null, dateFrom: '2026-10-03', responders: 30, reached: 120, rate: 25 });
+    expect(queries.some((q) => q.sql.includes('MIN(f.RatingDateKey)'))).toBe(false);
+  });
+
+  it('a company filter changes the per-week basis (and the first rating it is counted from)', async () => {
+    const one = await fetchNpsResponseRate(reachPool('2026-10-03', RATINGS, MESSAGES, GAP).pool, ytd, { companyKeys: [1] }, ADMIN, ON);
+    const three = reachPool('2026-10-03', RATINGS, MESSAGES, { ...GAP, firstRating: '2026-08-08' });
+    const r3 = await fetchNpsResponseRate(three.pool, ytd, { companyKeys: [3] }, ADMIN, ON);
+    expect(one.estimate).toMatchObject({ perWeek: 150, from: '2026-07-12' });
+    expect(r3.estimate).toMatchObject({ perWeek: 50, from: '2026-08-08', reached: Math.round((50 * 56) / 7) }); // 8 Aug .. 2 Oct = 56 days
+    for (const q of three.queries.filter((x) => /MIN\(f\.RatingDateKey\)|AS reached FROM|COUNT\(\*\) AS n/.test(x.sql))) expect(q.params).toContain(3);
+  });
+
+  it('no complete measured week yet: no estimate, status no_basis, the measured rate as before', async () => {
+    const r = await fetchNpsResponseRate(reachPool('2026-10-03', RATINGS, MESSAGES, { ...GAP, loadedAt: '2026-10-08 08:00:00' }).pool, ytd, {}, ADMIN, ON);
+    expect(r).toMatchObject({ isEstimated: false, estimateStatus: 'no_basis', estimate: null, dateFrom: '2026-10-03', responders: 30, reached: 120, rate: 25 });
   });
 });
 

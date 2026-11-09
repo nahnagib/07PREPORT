@@ -59,6 +59,7 @@
 | **Pipeline** | All open opportunities and quotations. |
 | **PIM** | Product Information Management: the product hierarchy (company, category, brand, family, size, product). |
 | **Quotation** | A price offer sent to a customer. |
+| **Response Rate (NPS)** | Responders ÷ messages that reached the customer (Delivered + Read). Messages were not kept before 03 Oct 2026, so a period that starts earlier adds an **estimate** for those weeks (the card says "incl. estimate" and shows the measured-only rate below it). Compare periods from 03 Oct onward on the measured rate. |
 | **Retention Rate** | Share of last year's customers who bought again this year. |
 | **ROI** | Return On Investment: revenue ÷ spend. |
 | **Stars** | High-volume, high-profit products. |
