@@ -7,9 +7,16 @@
  *   1. lines: the report's own source (linesSource) -- snapshot, report exclusions, scope toggles, the caller's
  *      scoped filters (role data scope, salesperson lock), customer search and customer category. The line-level page
  *      filters (overdue status, aging bucket, delivery status, payment term, invoice size) are NOT applied: they would
- *      change which invoice decides. Only customer invoices (line_kind 'invoice'), the base of the "Total debt" card,
- *      with future-due customers excluded from the chart.
- *   2. unpaid invoices: posted customer invoices whose open amount is above 0.
+ *      change which invoice decides. Customer invoices (line_kind 'invoice') AND, since 2026-11-09, the unapplied
+ *      credits (credit_note + payment), with future-due customers excluded from the chart.
+ *   1b. credits first (2026-11-09, measures/creditAllocation.ts): per customer + company + currency (all currencies:
+ *      per customer + company, in LYD) the open credit notes and unreconciled payments are applied FIFO to the open
+ *      invoice lines -- earliest due date first, then the older invoice date, then the lower move id; a partly
+ *      covered line keeps its remainder. Steps 2-6 see only what is LEFT of each line. Before, the chart was
+ *      invoice-only (decision of 2026-10-06) and a customer whose invoice was covered by open credit notes (Odoo
+ *      "Due" 0, e.g. 27775 INV/2026/10/00118 vs RINV/2026/10/0006 + 0007) sat in RED with 1,045 "overdue".
+ *   2. unpaid invoices: posted customer invoices with something left after the credits. A customer with none (every
+ *      invoice covered, or a net credit) is not on the chart and has no table bucket.
  *   3. each unpaid invoice's due date: the due date of its unpaid instalment (Odoo date_maturity of the open
  *      receivable line -- what Odoo's aged receivables uses; = invoice_date_due for a single-instalment invoice), else
  *      the invoice's invoice_date_due, else invoice date + the payment term's days (cfg_finance_payment_term_days).
@@ -20,8 +27,10 @@
  *      overdue date, in calendar days (as-of = the snapshot date, i.e. today for the latest snapshot). 0 = the first
  *      day overdue (due the day before); negative = "Not yet due", incl. due exactly on the as-of date (never GREEN).
  *   6. zone, owner and action: config/creditPolicy.ts. Dot size and zone totals = the customer's OVERDUE amount (2026-10-21):
- *      its lines whose own overdue date (line due_date, else the invoice's due date from step 3, + OVERDUE_OFFSET_DAYS) is on
- *      or before the as-of date, negative lines included. Total outstanding (every line) stays for reference.
+ *      what is left after the credits of its lines whose own overdue date (line due_date, else the invoice's due date
+ *      from step 3, + OVERDUE_OFFSET_DAYS) is on or before the as-of date. Total outstanding = the NET balance (every
+ *      invoice, credit note and payment line), for reference; creditsApplied = the credits used up by the invoices
+ *      (tooltip "Unapplied credits"). The dot's drill-down (customer_open) lists the raw invoices AND credits.
  *
  * The same placement feeds the Customers table's "Aging bucket" (attachCreditZones), so a customer's bucket there is
  * the same policy status (not-yet-due customers are omitted from the chart). The payment-term filter only chooses which
@@ -42,6 +51,7 @@ import {
   type CreditZoneKey,
 } from '../config/creditPolicy';
 import type { Filters } from './filters';
+import { allocateCredits, type AllocationGroup } from './creditAllocation';
 import { COMPANY_CURRENCY, DebtQueryError, isoOfKey, linesSource, parseDebtQuery, resolveSnapshot, withoutLineFilters, type DebtQuery } from './debtReport';
 
 // ---- query ----------------------------------------------------------------------------------------------------------
@@ -69,7 +79,8 @@ export function parseAgingQuery(q: Record<string, unknown>): AgingQuery {
   };
 }
 
-/** One customer-invoice line with what the placement needs (fetchCreditLines; literal rows in the tests). */
+/** One receivable line (invoice, credit note or unreconciled payment) with what the placement needs (fetchCreditLines;
+ * literal rows in the tests). */
 export interface CreditLine {
   currency: string;
   CustomerKey: number;
@@ -80,6 +91,8 @@ export interface CreditLine {
   PaymentTermKey: number;
   payment_term: string | null;
   term_days?: number | null;
+  /** 'invoice' | 'credit_note' | 'payment' (LINE_KIND_SQL); missing = 'invoice' (tests) */
+  line_kind?: string | null;
   move_id: number;
   line_id: number;
   document: string | null;
@@ -93,18 +106,18 @@ export interface CreditLine {
   residual_company_ccy: number;
 }
 
-/** The customer-invoice lines of one snapshot, line-level page filters cleared. */
+/** The invoice and unapplied-credit lines of one snapshot, line-level page filters cleared. */
 export async function fetchCreditLines(pool: Pool, snapshotKey: number, debt: DebtQuery, f: Filters): Promise<CreditLine[]> {
   const s = linesSource(snapshotKey, withoutLineFilters(debt), f);
   const [rows] = await pool.query(
     `SELECT x.currency, x.CustomerKey, x.customer, cu.ref AS customer_ref, x.CompanyKey, x.company, x.PaymentTermKey, x.payment_term,
-            td.term_days, x.move_id, x.line_id, x.document, x.invoice_date, x.due_date,
+            td.term_days, x.line_kind, x.move_id, x.line_id, x.document, x.invoice_date, x.due_date,
             DATE_FORMAT(i.invoice_final_due_date, '%Y-%m-%d') AS invoice_due_date, x.residual_doc_ccy, x.residual_company_ccy
      FROM (SELECT l.* ${s.sql}) x
      JOIN dim_finance_invoice i ON i.move_id = x.move_id
      JOIN dim_customer cu ON cu.CustomerKey = x.CustomerKey
      LEFT JOIN cfg_finance_payment_term_days td ON td.PaymentTermKey = x.PaymentTermKey
-     WHERE x.line_kind = 'invoice'`,
+     WHERE x.line_kind IN ('invoice', 'credit_note', 'payment')`,
     s.params,
   );
   return rows as CreditLine[];
@@ -135,17 +148,24 @@ export interface CreditCustomer {
   /** payment term of the deciding invoice */
   paymentTermKey: number;
   paymentTerm: string;
-  /** every invoice line of the customer (the tooltip's "Total open balance"), in the view's currency (LYD for all currencies) */
+  /** the customer's NET balance (2026-11-09): every invoice, credit note and unreconciled payment line (the tooltip's
+   * "Total open balance"), in the view's currency (LYD for all currencies) */
   totalOutstanding: number;
   /** the same in LYD (Odoo's own amount_residual) */
   totalOutstandingCompany: number;
+  /** unapplied credits (credit notes + unreconciled payments) applied to the invoices, positive, in the view's currency
+   * (the tooltip's "Unapplied credits") */
+  creditsApplied: number;
+  /** the same in LYD */
+  creditsAppliedCompany: number;
+  /** invoices with something left after the credits */
   unpaidInvoiceCount: number;
-  /** the lines overdue on the as-of date (line overdue date <= as-of; negative lines included): the dot's size and the
-   * zone totals, in the view's currency */
+  /** what is left, after the credits, of the lines overdue on the as-of date (line overdue date <= as-of): the dot's
+   * size and the zone totals, in the view's currency */
   overdueAmount: number;
   /** the same in LYD */
   overdueAmountCompany: number;
-  /** unpaid invoices with at least one open overdue line */
+  /** invoices with an overdue line left after the credits */
   overdueInvoiceCount: number;
   oldestInvoiceMoveId: number;
   oldestInvoiceNumber: string | null;
@@ -192,58 +212,70 @@ export function invoiceDueDate(inv: Pick<InvoiceAcc, 'openDue' | 'invoiceDue' | 
   return null;
 }
 
+/** A line's own due date: Odoo date_maturity, else its invoice's (invoice_date_due, else invoice date + term days). */
+export function lineDueDate(l: Pick<CreditLine, 'due_date' | 'invoice_due_date' | 'invoice_date' | 'term_days'>): string | null {
+  return (
+    l.due_date ??
+    invoiceDueDate({
+      openDue: null, invoiceDue: l.invoice_due_date ?? null, invoiceDate: l.invoice_date ?? null,
+      termDays: l.term_days === null || l.term_days === undefined ? null : Number(l.term_days),
+    })?.date ??
+    null
+  );
+}
+
 export type PlacedCustomer = CreditCustomer & { currency: string };
 
 /**
  * Every customer's placement, one entry per group: per customer + currency (amounts in the invoice currency), or with
- * `allCurrencies` per customer over every currency (amounts in LYD). Customers without an unpaid invoice are left out.
- * Map key: "<CustomerKey>|<currency>" or "<CustomerKey>|*".
+ * `allCurrencies` per customer over every currency (amounts in LYD). The unapplied credits are applied first
+ * (creditAllocation.ts, per customer + company [+ currency]); only what is left of each invoice counts. Customers
+ * without an invoice left after the credits are left out. Map key: "<CustomerKey>|<currency>" or "<CustomerKey>|*".
  */
 export function placeCustomers(lines: CreditLine[], asOf: string, allCurrencies: boolean): Map<string, PlacedCustomer> {
-  const groups = new Map<string, { currency: string; lines: CreditLine[] }>();
+  const allocation = allocateCredits(lines, { allCurrencies, dueDateOf: lineDueDate });
+  const groups = new Map<string, { currency: string; first: CreditLine; allocs: AllocationGroup<CreditLine>[]; total: number; totalCompany: number }>();
   for (const l of lines) {
     const key = `${l.CustomerKey}|${allCurrencies ? '*' : l.currency}`;
-    const g = groups.get(key) ?? { currency: allCurrencies ? COMPANY_CURRENCY : String(l.currency), lines: [] };
-    g.lines.push(l);
+    const g = groups.get(key) ?? { currency: allCurrencies ? COMPANY_CURRENCY : String(l.currency), first: l, allocs: [], total: 0, totalCompany: 0 };
+    g.total += micro(allCurrencies ? l.residual_company_ccy : l.residual_doc_ccy);
+    g.totalCompany += micro(l.residual_company_ccy);
     groups.set(key, g);
   }
+  for (const a of allocation.values()) groups.get(`${a.customerKey}|${allCurrencies ? '*' : a.currency}`)?.allocs.push(a);
   const base = odooWebBaseUrl();
   const out = new Map<string, PlacedCustomer>();
   for (const [key, g] of groups) {
-    let total = 0;
-    let totalCompany = 0;
     const invoices = new Map<number, InvoiceAcc>();
-    for (const l of g.lines) {
-      const amount = micro(allCurrencies ? l.residual_company_ccy : l.residual_doc_ccy);
-      total += amount;
-      totalCompany += micro(l.residual_company_ccy);
-      const inv = invoices.get(Number(l.move_id)) ?? {
-        moveId: Number(l.move_id), residual: 0, openDue: null, invoiceDue: l.invoice_due_date ?? null, invoiceDate: l.invoice_date ?? null,
-        document: l.document ?? null, termDays: l.term_days === null || l.term_days === undefined ? null : Number(l.term_days),
-        companyKey: Number(l.CompanyKey), company: String(l.company), paymentTermKey: Number(l.PaymentTermKey), paymentTerm: l.payment_term ?? null,
-      };
-      inv.residual += amount;
-      // the unpaid instalment's own due date: the earliest among the invoice's lines still open
-      if (amount > 0 && l.due_date && (inv.openDue === null || l.due_date < inv.openDue)) inv.openDue = l.due_date;
-      invoices.set(inv.moveId, inv);
-    }
-    // overdue part: lines whose own overdue date (line due_date, else the invoice's resolved due date, + the offset) is on
-    // or before the as-of date; negative lines lower it like they lower the total. Second pass: the fallback needs the
-    // whole invoice.
+    let applied = 0;
+    let appliedCompany = 0;
     let overdue = 0;
     let overdueCompany = 0;
     const overdueMoves = new Set<number>();
-    for (const l of g.lines) {
-      const inv = invoices.get(Number(l.move_id)) as InvoiceAcc;
-      const lineDue = l.due_date ?? invoiceDueDate(inv)?.date ?? null;
-      if (lineDue === null || addDays(lineDue, OVERDUE_OFFSET_DAYS) > asOf) continue;
-      const amount = micro(allCurrencies ? l.residual_company_ccy : l.residual_doc_ccy);
-      overdue += amount;
-      overdueCompany += micro(l.residual_company_ccy);
-      if (amount > 0 && inv.residual > 0) overdueMoves.add(inv.moveId);
+    for (const a of g.allocs) {
+      applied += micro(a.applied);
+      for (const x of a.invoices) {
+        const l = x.line;
+        appliedCompany += micro(l.residual_company_ccy) - micro(x.remainingCompany);
+        if (x.remaining <= 0) continue;
+        const inv = invoices.get(Number(l.move_id)) ?? {
+          moveId: Number(l.move_id), residual: 0, openDue: null, invoiceDue: l.invoice_due_date ?? null, invoiceDate: l.invoice_date ?? null,
+          document: l.document ?? null, termDays: l.term_days === null || l.term_days === undefined ? null : Number(l.term_days),
+          companyKey: Number(l.CompanyKey), company: String(l.company), paymentTermKey: Number(l.PaymentTermKey), paymentTerm: l.payment_term ?? null,
+        };
+        inv.residual += micro(x.remaining);
+        // the unpaid instalment's own due date: the earliest among the invoice's lines still open after the credits
+        if (l.due_date && (inv.openDue === null || l.due_date < inv.openDue)) inv.openDue = l.due_date;
+        invoices.set(inv.moveId, inv);
+        // overdue part: what is left of the lines whose own overdue date is on or before the as-of date
+        const lineDue = lineDueDate(l);
+        if (lineDue === null || addDays(lineDue, OVERDUE_OFFSET_DAYS) > asOf) continue;
+        overdue += micro(x.remaining);
+        overdueCompany += micro(x.remainingCompany);
+        overdueMoves.add(inv.moveId);
+      }
     }
     const unpaid = [...invoices.values()]
-      .filter((i) => i.residual > 0)
       .map((i) => ({ inv: i, due: invoiceDueDate(i) }))
       .filter((x): x is { inv: InvoiceAcc; due: { date: string; source: DueDateSource } } => x.due !== null);
     if (unpaid.length === 0) continue;
@@ -255,10 +287,10 @@ export function placeCustomers(lines: CreditLine[], asOf: string, allCurrencies:
     const { inv, due } = unpaid[0];
     const overdueDate = addDays(due.date, OVERDUE_OFFSET_DAYS);
     const days = daysBetween(overdueDate, asOf);
-    const notYetDue = days < 0;
+    const notYetDue = days < 0 || overdue <= 0;
     const zone = notYetDue ? null : creditZoneForDays(days);
     const next = notYetDue ? null : nextCreditZone(days);
-    const first = g.lines[0];
+    const first = g.first;
     out.set(key, {
       currency: g.currency,
       customerKey: Number(first.CustomerKey),
@@ -268,8 +300,10 @@ export function placeCustomers(lines: CreditLine[], asOf: string, allCurrencies:
       company: inv.company,
       paymentTermKey: inv.paymentTermKey,
       paymentTerm: inv.paymentTermKey === -1 || !inv.paymentTerm ? 'No payment term' : inv.paymentTerm,
-      totalOutstanding: fromMicro(total),
-      totalOutstandingCompany: fromMicro(totalCompany),
+      totalOutstanding: fromMicro(g.total),
+      totalOutstandingCompany: fromMicro(g.totalCompany),
+      creditsApplied: fromMicro(applied),
+      creditsAppliedCompany: fromMicro(appliedCompany),
       unpaidInvoiceCount: unpaid.length,
       overdueAmount: fromMicro(overdue),
       overdueAmountCompany: fromMicro(overdueCompany),

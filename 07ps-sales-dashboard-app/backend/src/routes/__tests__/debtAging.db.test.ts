@@ -10,6 +10,7 @@ import type { AddressInfo } from 'node:net';
  *   DEBT_TEST_DB=1 DB_HOST=... DB_USER=... DB_PASSWORD=... DB_NAME=powerBI_Data npx vitest run -c vitest.debt-db.config.ts
  *
  *   1. GET /debt-report/aging on the real snapshot, every expectation computed with its own SQL on the fact table:
+ *      unapplied credits netted FIFO per customer + company + currency first (2026-11-09, its own SQL window sums);
  *      the unpaid invoice with the earliest due date decides, days overdue = snapshot date - (that due date + 1 day), zones as in
  *      config/creditPolicy.ts; the Customers table's bucket = the chart's zone for every customer.
  *   2. The Debt Report invariants, per currency and for All currencies (LYD), with the defaults, one company (Majaal)
@@ -94,31 +95,60 @@ describe.skipIf(!RUN)('Credit Policy Escalation on the real warehouse (read-only
   });
   afterAll(() => server?.close());
 
-  /** Independently, per customer + currency: customer invoices only (out_invoice, customer debt, no inter-company, no
-   * excluded team); every invoice line's residual adds to the outstanding; the unpaid invoices' due date = the
-   * earliest due date of their open lines; the earliest of those decides. */
+  /** Independently, per customer + currency, in SQL (2026-11-09: net of unapplied credits): customer debt, no
+   * inter-company, no excluded team (an invoice-only rule keeps that team's credits). Per customer + company + currency
+   * the credit pool (credit notes, unreconciled payments, negative invoice lines) is applied FIFO to the open invoice lines
+   * (due date -- the line's, else the invoice's --, then invoice date, move id, line id): what is left of a line =
+   * LEAST(line, GREATEST(0, running total - pool)). The outstanding is the net balance (every line); the unpaid
+   * invoices' due date = the earliest due date of their lines with something left; the earliest of those decides. */
   const independent = async (extra = '', params: unknown[] = []) => {
     const invoices = await qa(
-      `SELECT cur.currency, f.CustomerKey, f.move_id, SUM(f.residual_doc_ccy) AS residual, SUM(f.residual_company_ccy) AS residual_company,
+      `WITH b AS (
+         SELECT cur.currency, f.CustomerKey, f.CompanyKey, f.move_id, f.line_id, i.invoice_date, f.due_date,
+                COALESCE(f.due_date, i.invoice_final_due_date) AS eff_due, f.residual_doc_ccy AS amt, f.residual_company_ccy AS amt_co,
+                (f.PaymentKey = -1 AND i.move_type = 'out_invoice' AND f.residual_doc_ccy > 0) AS is_open
+         FROM fact_finance_receivable_snapshot f
+         JOIN dim_currency cur ON cur.CurrencyKey = f.CurrencyKey
+         JOIN dim_finance_invoice i ON i.move_id = f.move_id
+         WHERE f.SnapshotDateKey = ? AND f.receivable_scope = 'customer_debt' AND f.is_intercompany = 0
+           AND (f.PaymentKey <> -1 OR i.move_type IN ('out_invoice', 'out_refund'))
+           AND NOT EXISTS (SELECT 1 FROM v_finance_excluded_sales_team x WHERE x.SalesTeamKey = f.SalesTeamKey
+                             AND (x.invoices_only = 0 OR (f.PaymentKey = -1 AND i.move_type = 'out_invoice'))) ${extra}
+       ),
+       pool AS (SELECT currency, CustomerKey, CompanyKey, GREATEST(0, -SUM(CASE WHEN is_open THEN 0 ELSE amt END)) AS credit FROM b GROUP BY currency, CustomerKey, CompanyKey),
+       fifo AS (
+         SELECT b.*, LEAST(b.amt, GREATEST(0, SUM(b.amt) OVER (PARTITION BY b.currency, b.CustomerKey, b.CompanyKey
+                  ORDER BY b.eff_due IS NULL, b.eff_due, b.invoice_date, b.move_id, b.line_id ROWS UNBOUNDED PRECEDING) - p.credit)) AS left_amt
+         FROM b JOIN pool p USING (currency, CustomerKey, CompanyKey) WHERE b.is_open
+       )
+       SELECT currency, CustomerKey, move_id, SUM(left_amt) AS residual,
+              SUM(left_amt * amt_co / amt) AS residual_company,
               -- overdue: the line's due date (else the invoice's) + 1 day on or before the snapshot date
-              SUM(CASE WHEN COALESCE(f.due_date, i.invoice_final_due_date) < STR_TO_DATE(f.SnapshotDateKey, '%Y%m%d') THEN f.residual_doc_ccy ELSE 0 END) AS overdue,
-              SUM(CASE WHEN COALESCE(f.due_date, i.invoice_final_due_date) < STR_TO_DATE(f.SnapshotDateKey, '%Y%m%d') THEN f.residual_company_ccy ELSE 0 END) AS overdue_company,
-              DATE_FORMAT(MIN(CASE WHEN f.residual_doc_ccy > 0 THEN f.due_date END), '%Y-%m-%d') AS due
+              SUM(CASE WHEN eff_due < STR_TO_DATE(?, '%Y%m%d') THEN left_amt ELSE 0 END) AS overdue,
+              SUM(CASE WHEN eff_due < STR_TO_DATE(?, '%Y%m%d') THEN left_amt * amt_co / amt ELSE 0 END) AS overdue_company,
+              DATE_FORMAT(MIN(CASE WHEN left_amt > 0 THEN due_date END), '%Y-%m-%d') AS due
+       FROM fifo GROUP BY currency, CustomerKey, move_id`,
+      [snap, ...params, snap, snap],
+    );
+    const nets = await qa(
+      `SELECT cur.currency, f.CustomerKey, SUM(f.residual_doc_ccy) AS net, SUM(f.residual_company_ccy) AS net_company
        FROM fact_finance_receivable_snapshot f
        JOIN dim_currency cur ON cur.CurrencyKey = f.CurrencyKey
        JOIN dim_finance_invoice i ON i.move_id = f.move_id
-       WHERE f.SnapshotDateKey = ? AND f.receivable_scope = 'customer_debt' AND f.is_intercompany = 0 AND f.PaymentKey = -1
-         AND i.move_type = 'out_invoice'
-         AND NOT EXISTS (SELECT 1 FROM v_finance_excluded_sales_team x WHERE x.SalesTeamKey = f.SalesTeamKey) ${extra}
-       GROUP BY cur.currency, f.CustomerKey, f.move_id`,
+       WHERE f.SnapshotDateKey = ? AND f.receivable_scope = 'customer_debt' AND f.is_intercompany = 0
+         AND (f.PaymentKey <> -1 OR i.move_type IN ('out_invoice', 'out_refund'))
+         AND NOT EXISTS (SELECT 1 FROM v_finance_excluded_sales_team x WHERE x.SalesTeamKey = f.SalesTeamKey
+                           AND (x.invoices_only = 0 OR (f.PaymentKey = -1 AND i.move_type = 'out_invoice'))) ${extra}
+       GROUP BY cur.currency, f.CustomerKey`,
       [snap, ...params],
     );
+    const net = new Map(nets.map((r) => [`${r.CustomerKey}|${r.currency}`, r]));
     const by = new Map<string, { currency: string; customer: number; total: number; totalCompany: number; overdue: number; overdueCompany: number; due: string | null; unpaid: number }>();
     for (const r of invoices) {
       const k = `${r.CustomerKey}|${r.currency}`;
-      const g = by.get(k) ?? { currency: String(r.currency), customer: n(r.CustomerKey), total: 0, totalCompany: 0, overdue: 0, overdueCompany: 0, due: null, unpaid: 0 };
-      g.total += n(r.residual);
-      g.totalCompany += n(r.residual_company);
+      const g = by.get(k) ?? {
+        currency: String(r.currency), customer: n(r.CustomerKey), total: n(net.get(k)?.net), totalCompany: n(net.get(k)?.net_company), overdue: 0, overdueCompany: 0, due: null, unpaid: 0,
+      };
       g.overdue += n(r.overdue);
       g.overdueCompany += n(r.overdue_company);
       if (n(r.residual) > 0 && r.due) {

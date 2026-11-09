@@ -63,7 +63,8 @@ describe('collectionSource', () => {
 });
 
 /** Answers the trend queries: currencies, the per-period sums, the snapshot dates and the rate query. */
-function fakePool(o: { periods?: Record<string, unknown>[]; snapshots?: string[]; rate?: { start_overdue: number; collected: number } }): Pool & { sqls: string[] } {
+const LINE_SQL = "l.line_kind IN ('invoice', 'credit_note', 'payment')";
+function fakePool(o: { periods?: Record<string, unknown>[]; snapshots?: string[]; lines?: Record<string, unknown>[]; applied?: Record<string, unknown>[] }): Pool & { sqls: string[] } {
   const sqls: string[] = [];
   return {
     sqls,
@@ -73,7 +74,8 @@ function fakePool(o: { periods?: Record<string, unknown>[]; snapshots?: string[]
       if (sql.includes('MIN(payment_date)')) return [[{ first: '2021-01-03', loaded: '2026-10-10T15:00:00Z' }], []];
       if (sql.includes('GROUP BY p')) return [o.periods ?? [], []];
       if (sql.includes('SELECT DISTINCT DATE_FORMAT(STR_TO_DATE(SnapshotDateKey')) return [(o.snapshots ?? []).map((d) => ({ d })), []];
-      if (sql.includes('AS start_overdue')) return [[o.rate ?? { start_overdue: 0, collected: 0 }], []];
+      if (sql.includes(LINE_SQL)) return [o.lines ?? [], []];
+      if (sql.includes('GROUP BY m.debit_line_id')) return [o.applied ?? [], []];
       if (sql.includes('ORDER BY v.payment_date')) {
         return [[{ payment_id: 1, allocation_no: 1, payment_name: 'BNK1/1', payment_date: '2026-10-05', company: 'Majaal', customer: 'A', salesperson: 'S1',
           sales_team: 'T1', attribution: 'invoice', amount_doc_ccy: 600, applied_overdue_doc_ccy: 600, applied_not_due_doc_ccy: 0, applied_other_doc_ccy: 0, unapplied_doc_ccy: 0 }], []];
@@ -97,18 +99,34 @@ describe('fetchCollectionsTrend', () => {
     expect(t.firstPaymentDate).toBe('2021-01-03');
   });
 
+  const ln = (p: Record<string, unknown>) => ({ CustomerKey: 1, CompanyKey: 1, currency: 'LYD', line_kind: 'invoice', invoice_date: '2026-08-01', due_date: '2026-09-01',
+    days_past_due: 30, ...p, residual_company_ccy: p.residual_doc_ccy });
+
   it('collection rate = applied to the start overdue / start overdue, only where a snapshot exists the day before', async () => {
-    const pool = fakePool({ snapshots: ['2026-10-02', '2026-10-08'], rate: { start_overdue: 2000, collected: 500 } });
+    const pool = fakePool({ snapshots: ['2026-10-02', '2026-10-08'], lines: [ln({ line_id: 1, move_id: 1, residual_doc_ccy: 2000 })], applied: [{ line_id: 1, applied: 500 }] });
     const t = await fetchCollectionsTrend(pool, q, {});
-    const rateSql = pool.sqls.find((s) => s.includes('AS start_overdue')) ?? '';
-    expect(rateSql).toContain('l.days_past_due >= 0');
-    expect(rateSql).toContain('f.SnapshotDateKey = ?');
+    const lineSql = pool.sqls.find((s) => s.includes(LINE_SQL)) ?? '';
+    expect(lineSql).toContain('f.SnapshotDateKey = ?');
+    expect(lineSql).toContain('l.currency = ?');
     expect(t.points.map((p) => p.collectionRate)).toEqual([null, 0.25, null]);
     expect(t.points[1]).toMatchObject({ startOverdue: 2000, collectedOnStartOverdue: 500 });
   });
 
+  it('the start overdue is net of unapplied credits (2026-11-09): a covered invoice is not in it; applied money is capped at what is left', async () => {
+    const lines = [
+      ln({ line_id: 1, move_id: 1, residual_doc_ccy: 1045 }), // covered by the two credit notes
+      ln({ line_id: 2, move_id: 6, line_kind: 'credit_note', residual_doc_ccy: -416.44 }),
+      ln({ line_id: 3, move_id: 7, line_kind: 'credit_note', residual_doc_ccy: -628.56 }),
+      ln({ CustomerKey: 2, line_id: 4, move_id: 8, residual_doc_ccy: 1000 }),
+      ln({ CustomerKey: 2, line_id: 5, move_id: 9, line_kind: 'payment', residual_doc_ccy: -200 }),
+      ln({ CustomerKey: 2, line_id: 6, move_id: 10, days_past_due: -5, due_date: '2026-11-01', residual_doc_ccy: 300 }), // not yet due
+    ];
+    const t = await fetchCollectionsTrend(fakePool({ snapshots: ['2026-10-02'], lines, applied: [{ line_id: 1, applied: 1045 }, { line_id: 4, applied: 900 }] }), q, {});
+    expect(t.points[1]).toMatchObject({ startOverdue: 800, collectedOnStartOverdue: 800, collectionRate: 1 });
+  });
+
   it('a start overdue of 0 gives no rate', async () => {
-    const t = await fetchCollectionsTrend(fakePool({ snapshots: ['2026-10-02'], rate: { start_overdue: 0, collected: 0 } }), q, {});
+    const t = await fetchCollectionsTrend(fakePool({ snapshots: ['2026-10-02'] }), q, {});
     expect(t.points[1].collectionRate).toBeNull();
   });
 });
