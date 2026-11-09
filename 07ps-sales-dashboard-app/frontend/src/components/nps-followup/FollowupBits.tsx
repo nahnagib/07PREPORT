@@ -105,7 +105,7 @@ export function TimeOpen({ c }: { c: { stage: FollowupStage; hoursOpen: number |
   const color = SLA_COLOR[band];
   const Icon = SLA_ICON[band];
   const hint = slaHint(c.sla);
-  const text = rule === 'rejected' || rule === 'historical' ? rule
+  const text = rule === 'unresolved' || rule === 'rejected' || rule === 'historical' ? rule
     : `${c.stage === 'RESOLVED' ? 'resolved in ' : 'open '}${formatHoursOpen(c.hoursOpen)}`;
   return (
     <span className="ps-fu-time" title={hint} aria-label={`${text}. ${hint}`} data-band={band} data-rule={rule} data-testid="fu-time" style={{ color }}>

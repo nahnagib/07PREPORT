@@ -34,10 +34,10 @@ import { NPS_SLA, caseSla, type CaseSla } from '../config/npsSla';
  */
 
 /** The workflow steps (column `stage`). */
-export const FOLLOWUP_STAGES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'] as const;
+export const FOLLOWUP_STAGES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED'] as const;
 export type FollowupStage = (typeof FOLLOWUP_STAGES)[number];
 /** What a person may set (HISTORICAL is only ever set by the ETL's cut-over). */
-export const EDITABLE_STAGES: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'];
+export const EDITABLE_STAGES: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED'];
 /** The stages whose status is OPEN (time open runs to now). */
 export const OPEN_STAGES: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS'];
 
@@ -662,7 +662,7 @@ export function applyEdit(existing: FollowupCase, input: CaseInput, now: string,
   if (has(input, 'stage')) {
     const s = String(input.stage ?? '').toUpperCase() as FollowupStage;
     if (!EDITABLE_STAGES.includes(s)) {
-      throw new FollowupValidationError('case.stage', 'Stage must be New, Contacted, In progress, Resolved or Rejected.', 'stage');
+      throw new FollowupValidationError('case.stage', 'Stage must be New, Contacted, In progress, Resolved, Unresolved or Rejected.', 'stage');
     }
     next.stage = s;
   }

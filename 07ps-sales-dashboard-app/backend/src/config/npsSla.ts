@@ -21,6 +21,7 @@ export type SlaRule =
   | 'close_missed' // open, age > closeDays
   | 'resolved_in_sla' // resolved within closeDays
   | 'resolved_late' // resolved after closeDays
+  | 'unresolved'
   | 'rejected'
   | 'historical';
 
@@ -57,10 +58,10 @@ export function caseSla(c: SlaInput, now: string): CaseSla {
     c.contactedAt && c.createdAt
       ? hoursBetween(c.createdAt, c.contactedAt) <= NPS_SLA.contactHours
       : null;
-  if (c.stage === 'REJECTED')
+  if (c.stage === 'UNRESOLVED' || c.stage === 'REJECTED')
     return {
       band: 'grey',
-      rule: 'rejected',
+      rule: c.stage === 'UNRESOLVED' ? 'unresolved' : 'rejected',
       hours: null,
       exactHours: null,
       overByHours: null,

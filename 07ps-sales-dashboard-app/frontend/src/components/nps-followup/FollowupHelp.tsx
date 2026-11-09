@@ -17,13 +17,14 @@ export const STAGE_DEFINITION: Record<FollowupStage, string> = {
   CONTACTED: 'Customer service has contacted the customer; the case is still open.',
   IN_PROGRESS: 'The issue is being investigated or action is underway; it is not yet resolved.',
   RESOLVED: "The customer's issue has been resolved and the case is closed.",
+  UNRESOLVED: 'The issue remains unresolved and the case is disputed. It is excluded from SLA tracking.',
   REJECTED: 'The case was rejected rather than resolved. The reason is recorded in its notes.',
 };
 
 export const STATUS_DEFINITION: Record<FollowupStatus, string> = {
   OPEN: 'Cases still being followed up: New, Contacted or In progress.',
   CLOSE: 'Resolved cases. This status follows the Resolved stage automatically.',
-  DISPUTED: 'Rejected cases. This status follows the Rejected stage automatically.',
+  DISPUTED: 'Unresolved and Rejected cases. This status follows either stage automatically.',
 };
 
 type Props = { kind: 'stage'; value?: FollowupStage } | { kind: 'status'; value?: FollowupStatus };

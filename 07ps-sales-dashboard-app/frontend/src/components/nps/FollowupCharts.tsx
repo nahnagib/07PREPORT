@@ -16,7 +16,7 @@ const NOTE = { fontSize: 12, color: 'var(--ps-color-neutral-text)', margin: '4px
 function LeftOut({ s, withRejected = false }: { s: NpsFollowupSummary; withRejected?: boolean }) {
   return (
     <p style={NOTE} data-testid="fu-left-out">
-      {withRejected ? `Rejected: ${formatNumber(s.rejected)} · ` : ''}Historical: {formatNumber(s.historical)}
+      {withRejected ? `${s.unresolved ? `Unresolved: ${formatNumber(s.unresolved)} · ` : ''}Rejected: ${formatNumber(s.rejected)} · ` : ''}Historical: {formatNumber(s.historical)}
       {s.noCase > 0 ? ` · Not yet a case: ${formatNumber(s.noCase)}` : ''}
     </p>
   );

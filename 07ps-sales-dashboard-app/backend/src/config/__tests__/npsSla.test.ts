@@ -188,3 +188,7 @@ describe('Resolved Ageing', () => {
     expect(out.contactedInSla).toEqual({ count: 0, of: 0 });
   });
 });
+
+it('Unresolved is a disputed outcome with no open or resolution SLA', () => {
+  expect(caseSla({ stage: 'UNRESOLVED', createdAt: '2026-10-01 09:00:00', contactedAt: null, resolvedAt: null }, '2026-11-09 12:00:00')).toMatchObject({ rule: 'unresolved', band: 'grey', hours: null });
+});

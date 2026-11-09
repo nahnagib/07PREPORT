@@ -178,7 +178,6 @@ export function responseRateTooltip(r: RateTip): string {
   if (!r.isEstimated || !r.estimate) {
     return [
       `Responders ÷ (Delivered + Read) = ${r.responders} ÷ (${r.delivered} + ${r.read}) = ${pct(r.rate)}`,
-      `Responders ÷ Total Reach = ${r.responders} ÷ ${r.totalReach} = ${pct(r.rateOfReach)}`,
       'Customers can only answer a message that reached them.',
     ].join('\n');
   }
@@ -230,12 +229,12 @@ export const measuredLine = (r: Pick<NpsResponseRate, 'measured' | 'reachStart'>
 /** "Detractors by status", level 1 (the generated status). */
 export const FOLLOWUP_STATUS_SLICES: Record<NpsFollowupStatus, { label: string; color: string }> = {
   OPEN: { label: 'Open', color: 'var(--ps-fu-open)' },
-  CLOSE: { label: 'Close', color: 'var(--ps-fu-close)' },
+  CLOSE: { label: 'Closed', color: 'var(--ps-fu-close)' },
   DISPUTED: { label: 'Disputed', color: 'var(--ps-fu-disputed)' },
 };
 
 export const FOLLOWUP_STAGE_LABEL: Record<NpsFollowupStage, string> = {
-  HISTORICAL: 'Historical', NEW: 'New', CONTACTED: 'Contacted', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', REJECTED: 'Rejected',
+  HISTORICAL: 'Historical', NEW: 'New', CONTACTED: 'Contacted', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', UNRESOLVED: 'Unresolved', REJECTED: 'Rejected',
 };
 
 /** The stages in the status drill-down: a single-stage status keeps its status colour; Open's three are validated apart. */
@@ -245,6 +244,7 @@ export const FOLLOWUP_STAGE_COLOR: Record<NpsFollowupStage, string> = {
   CONTACTED: 'var(--ps-fu-mid)',
   IN_PROGRESS: 'var(--ps-fu-plum)',
   RESOLVED: 'var(--ps-fu-close)',
+  UNRESOLVED: 'var(--ps-fu-disputed)',
   REJECTED: 'var(--ps-fu-disputed)',
 };
 

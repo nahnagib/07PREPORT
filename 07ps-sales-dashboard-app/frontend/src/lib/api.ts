@@ -3088,7 +3088,7 @@ export interface NpsResponseRate {
 /** "Resolved Ageing" buckets (backend config/npsSla.ts) */
 export type NpsAgeingBucket = 'd1' | 'd2' | 'd5' | 'd10' | 'd30' | 'dmax';
 /** the follow-up workflow step (lib/nps/followup.ts) */
-export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'REJECTED';
+export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'UNRESOLVED' | 'REJECTED';
 /** the outcome group, worked out from the stage */
 export type NpsFollowupStatus = 'OPEN' | 'CLOSE' | 'DISPUTED';
 /** the follow-up charts (reason, status, Resolved Ageing), live from nps_followup_case */
@@ -3100,6 +3100,7 @@ export interface NpsFollowupSummary {
   charted: number;
   /** stage Rejected (inside charted) */
   rejected: number;
+  unresolved?: number;
   historical: number;
   noCase: number;
   /** "Resolved Ageing": resolved by time to resolve, open by age today, and the two SLA lines; Rejected / Historical out */

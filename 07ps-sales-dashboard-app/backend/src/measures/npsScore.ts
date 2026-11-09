@@ -529,6 +529,7 @@ export interface NpsFollowupSummary {
   charted: number;
   /** stage Rejected (= status Disputed), inside `charted`; shown in the note too */
   rejected: number;
+  unresolved: number;
   historical: number;
   /** detractors without a case yet (process_nps creates them on its next run); 0 normally */
   noCase: number;
@@ -575,6 +576,7 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
   const reasons = new Map<string | null, { categoryKey: string | null; label: string; labelAr: string | null; count: number; sort: number;
     noSubs: boolean; subs: Map<number, Sub> }>();
   let rejected = 0;
+  let unresolved = 0;
   let historical = 0;
   let noCase = 0;
   for (const r of list) {
@@ -587,6 +589,7 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
       statuses[status] += 1;
       stages.set(stage, (stages.get(stage) ?? 0) + 1);
       if (stage === 'REJECTED') rejected += 1;
+      else if (stage === 'UNRESOLVED') unresolved += 1;
       else {
         const contactedAt = asDateTime(r.contacted_at);
         slaCases.push({
@@ -629,6 +632,7 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
     detractors: list.length,
     charted,
     rejected,
+    unresolved,
     historical,
     noCase,
     ageing: resolutionAgeing(slaCases),

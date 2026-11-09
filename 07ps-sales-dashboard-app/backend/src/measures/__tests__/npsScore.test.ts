@@ -453,6 +453,14 @@ describe('follow-up summary (live from nps_followup_case)', () => {
     sort_order: reasonId, requires_note: 0,
   });
 
+  it('Unresolved is counted as Disputed, appears in its stage drill-down, and is excluded from SLA ageing', async () => {
+    const { pool: p } = pool(() => [{ ...row('REJECTED', '2026-10-05 10:00:00', null, null), stage: 'UNRESOLVED', status: 'DISPUTED' }]);
+    const s = await fetchNpsFollowupSummary(p, parseNpsQuery({}, NOW), {}, NOW_LOCAL);
+    expect(s).toMatchObject({ charted: 1, unresolved: 1, rejected: 0 });
+    expect(s.byStatus.find(x => x.key === 'DISPUTED')).toMatchObject({ count: 1, stages: [{ stage: 'UNRESOLVED', count: 1 }, { stage: 'REJECTED', count: 0 }] });
+    expect(s.ageing.buckets.every(b => b.resolved === 0 && b.open === 0)).toBe(true);
+  });
+
   it('one total for every chart (cases with a status, Rejected included); resolved by time; status with its stages; Historical apart', async () => {
     const { pool: p, queries } = pool(() => [
       row('RESOLVED', '2026-10-01 10:00:00', '2026-10-02 09:00:00', 1),   // 23 h
@@ -475,7 +483,7 @@ describe('follow-up summary (live from nps_followup_case)', () => {
     expect(s.byStatus).toEqual([
       { key: 'OPEN', count: 2, stages: [{ stage: 'NEW', count: 1 }, { stage: 'CONTACTED', count: 0 }, { stage: 'IN_PROGRESS', count: 1 }] },
       { key: 'CLOSE', count: 3, stages: [{ stage: 'RESOLVED', count: 3 }] },
-      { key: 'DISPUTED', count: 1, stages: [{ stage: 'REJECTED', count: 1 }] },
+      { key: 'DISPUTED', count: 1, stages: [{ stage: 'UNRESOLVED', count: 0 }, { stage: 'REJECTED', count: 1 }] },
     ]);
     expect(s).toMatchObject({ detractors: 9, charted: 6, rejected: 1, historical: 2, noCase: 1 });
     expect(s.charted + s.historical + s.noCase).toBe(s.detractors);

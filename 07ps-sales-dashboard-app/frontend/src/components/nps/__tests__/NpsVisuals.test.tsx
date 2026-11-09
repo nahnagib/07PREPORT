@@ -135,7 +135,7 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
     expect(screen.getByTestId('rate-since').textContent).toBe('since 03 Oct 2026');
     expect(screen.getByTestId('rate-company-only').textContent).toBe('Company and date filters only');
     expect(screen.getByTestId('rate-numerator-note').textContent).toBe('Responders = every rating of the selected companies (other filters not applied)');
-    expect(screen.getAllByTitle(/Responders ÷ Total Reach = 120 ÷ 900 = 13.33%/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByTitle(/Responders ÷ Total Reach/)).toHaveLength(0);
     // the numerator under the rate; no estimate badge after the reach start
     expect(screen.getByTestId('rate-fraction').textContent).toBe('120 responders ÷ 650 reached');
     expect(screen.queryByTestId('rate-estimate-badge')).toBeNull();

@@ -221,7 +221,7 @@ function FollowupBody() {
 
 const STATUS_KPI = { OPEN: 'open', CLOSE: 'close', DISPUTED: 'disputed' } as const;
 const STATUS_SHARE = { OPEN: 'openShare', CLOSE: 'closeShare', DISPUTED: 'disputedShare' } as const;
-const STATUS_HINT: Record<FollowupStatus, string> = { OPEN: 'New, Contacted, In progress', CLOSE: 'Resolved', DISPUTED: 'Rejected' };
+const STATUS_HINT: Record<FollowupStatus, string> = { OPEN: 'New, Contacted, In progress', CLOSE: 'Resolved', DISPUTED: 'Unresolved, Rejected' };
 const sharePct = (v: number | null) => (v === null ? '—' : `${Math.round(v)}%`);
 
 /** Rating dates, stage, status, reason category and sub-reason, owner and search. */
