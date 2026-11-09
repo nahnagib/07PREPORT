@@ -472,7 +472,7 @@ export const VISUAL_HELP = {
   'process.npsScore.responseRate': {
     help: {
       definition: 'Share of the feedback messages that reached the customer and got a rating.',
-      formula: ['Response Rate = Responders ÷ (Delivered + Read)', 'Rate of reach = Responders ÷ Total reach', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
+      formula: ['Response Rate = Responders ÷ (Delivered + Read)', '12 Jul – 02 Oct: Delivered + Read estimated per company (the same figure as the Survey Reach cards)', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
     },
   },
   'process.npsScore.satisfactionTrend': {
@@ -498,7 +498,7 @@ export const VISUAL_HELP = {
     interactions: ['Click a status to see its stages; "← All statuses" goes back'],
   },
   'process.npsScore.resolvedByTime': {
-    help: { definition: `Detractor cases by age from case creation: resolved cases by the time they took, open cases by their age today. Bars left of the "Close SLA ${NPS_SLA.closeDays} d" line are within SLA, right of it breached. Solid = resolved; hatched = still open. Rejected and Historical have no SLA and are left out.`,
+    help: { definition: `Detractor cases by age from case creation: resolved cases by the time they took, open cases by their age today. Bars left of the "Close SLA ${NPS_SLA.closeDays} d" line are within SLA, right of it breached. Solid = resolved; hatched = still open. Unresolved, Rejected and Historical have no SLA and are left out.`,
       formula: `Closed within SLA = resolved within ${NPS_SLA.closeDays} d ÷ all resolved · Contacted within ${NPS_SLA.contactHours} h = contacted within ${NPS_SLA.contactHours} h ÷ cases contacted, resolved or open beyond ${NPS_SLA.contactHours} h (each counted once)` },
   },
   'process.npsScore.detractors': {

@@ -3,6 +3,7 @@ import {
   EMPTY_FILTERS,
   STAGES,
   STATUSES,
+  STATUS_LABEL,
   apiQuery,
   byColumn,
   filtersFromSearch,
@@ -36,9 +37,9 @@ describe('Detractor Follow-up view helpers', () => {
   });
 
   it('stage and status are separate lists, and the status follows the stage', () => {
-    expect([...STAGES]).toEqual(['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED']);
+    expect([...STAGES]).toEqual(['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED']);
     expect([...STATUSES]).toEqual(['OPEN', 'CLOSE', 'DISPUTED']);
-    expect(STAGES.map(statusOfStage)).toEqual([null, 'OPEN', 'OPEN', 'OPEN', 'CLOSE', 'DISPUTED']);
+    expect(STAGES.map(statusOfStage)).toEqual([null, 'OPEN', 'OPEN', 'OPEN', 'CLOSE', 'DISPUTED', 'DISPUTED']);
   });
 
   it('filters round-trip through the URL; stage and status apart; defaults are left out', () => {
@@ -107,4 +108,10 @@ describe('Detractor Follow-up view helpers', () => {
     expect(editOf({ ...base, ownerName: 'Ali' }, emptyForm)).toEqual({ version: 4, owner: null });
     expect(editOf({ ...base, ownerName: 'Ali' }, { ...emptyForm, owner: 'Ali ' })).toEqual({ version: 4 });
   });
+});
+
+it('Unresolved is a separate board column with Disputed status; resolved status is displayed as Closed', () => {
+  expect(statusOfStage('UNRESOLVED')).toBe('DISPUTED');
+  expect(STATUS_LABEL.CLOSE).toBe('Closed');
+  expect(byColumn([{ ...base, stage: 'UNRESOLVED' } as FollowupCase]).UNRESOLVED).toHaveLength(1);
 });

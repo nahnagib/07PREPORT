@@ -350,9 +350,39 @@ each run so disappeared rows still get `_deleted_at`.
 **Response rate** (`GET /nps-score/response-rate`, the narrow card of the top row) = responders ÷ (Delivered + Read)
 × 100: a customer can only answer a message that reached them; the tooltip also shows responders ÷ Total Reach. The
 messages have no delivery, order or customer, so **both** sides use the company and date filters only: ratings by
-rating date, messages by message date, the same period, starting no earlier than `NPS_REACH_START` (03 Oct 2026; the
-card says "since 03 Oct 2026"). Any team / salesperson / segment / customer filter is ignored for this card on both
-sides and the card says **Company and date filters only**; the same role restriction as the reach panel applies.
+rating date, messages by message date, the same period. Any team / salesperson / segment / customer filter is ignored
+for this card on both sides and the card says **Company and date filters only**; the same role restriction as the reach
+panel applies. Under the rate the card shows the fraction actually used ("N responders ÷ M reached").
+
+**The gap 12 Jul – 02 Oct is an official estimate (option A).** Ratings exist from the first rating (12 Jul 2026) but
+the WhatsApp source kept successful (Delivered / Read) and still-"sent" (Not Delivered) messages only from
+`NPS_REACH_START` (03 Oct 2026); it did keep the failed ones (Error). One backend function,
+`estimateGapReach` (`backend/src/measures/npsReachEstimate.ts`, config `backend/src/config/npsReachEstimate.ts`), feeds
+**both** the Message reach cards and the Response Rate, so Delivered + Read on the cards = the rate's denominator:
+
+- **Per company**, each from its **own** first rating (Majaal 12 Jul, Tika 08 Aug); the selection = the sum.
+- **Basis:** the company's Delivered + Read per **complete** Saturday–Friday week from `NPS_REACH_START` to the day
+  before the last message load, **minus `NPS_REACH_ESTIMATE_EXCLUDE_WEEKS`** (default 31 Oct and 07 Nov: the Meta
+  outage, below); recalculated per request. `NPS_REACH_ESTIMATE_PER_WEEK` replaces it (split by measured share).
+- **Gap:** max(period start, first rating) .. min(period end, `NPS_REACH_START` − 1). Reached = round(per week × days ÷ 7).
+- **Delivered / Read:** reached split by the company's measured Delivered : Read over the basis weeks (Read = reached −
+  Delivered, exact). **Not Delivered:** reached × its measured Not Delivered ÷ (Delivered + Read) — the source holds 0
+  "sent" messages in every gap week, so it is estimated. **Error:** the gap's REAL failed messages (feedback template,
+  not a test number), by failure group — 23–88 a week, in line with October's 37–59, back to the first message.
+  **Total Reach** = the four boxes.
+- **Response Rate** = every responder of the period ÷ (cards' Delivered + Read). Never derived from responders.
+- A period from `NPS_REACH_START` on shows exactly the measured numbers (no estimate, no marks). So does
+  `NPS_REACH_ESTIMATE_ENABLED=false`, and a gap without a basis week (`estimateStatus: no_basis`).
+- **Cards:** subtitle "Measured from 03 Oct 2026 · 12 Jul – 02 Oct estimated", a mark "incl. est." (Error: "incl.
+  gap", its gap part is actual), tooltip measured + gap; "% of reach" on the new totals. **Rate card:** "N responders ÷
+  M reached", badge "incl. estimate · 12 Jul – 02 Oct", "Measured since 03 Oct: x %", one tooltip line per company. The
+  sparkline stays measured-only.
+- **Week of 31 Oct (investigated 2026-11-09):** 262 messages were sent, as in a normal week, but from 1 Nov the failure
+  group `meta_temporary` took over (117 errors that week, 73 in the first 3 days of the next; none before). The messages
+  are in the source and failed — not a load gap, nothing to reload — so the outage weeks are left out of the basis.
+- Local check 2026-11-09 (YTD, all companies): 801 ÷ (1,222 measured + 2,557 estimated) = **21.20 %**; cards Total
+  Reach 4,923 · Delivered 1,129 · Read 2,650 · Not Delivered 190 · Error 954. `scripts/process/check_nps_totals.py`
+  prints the measured rate, the estimated rate and the cards, and checks cards Delivered + Read = the rate's denominator.
 Target 30 %: On Track from 30, Behind Target from 25, Critical below 25 (`backend/src/config/npsThresholds.ts`). The
 sparkline is the rate per business week (Sunday–Saturday).
 

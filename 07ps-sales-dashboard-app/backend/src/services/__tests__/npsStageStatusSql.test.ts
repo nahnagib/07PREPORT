@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
  * the down/ files (which go back to it) may.
  */
 const APP_ROOT = path.resolve(__dirname, '../../../..');
-const STAGE_VALUES = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'SOLVED', 'RESOLVED', 'CANCELLED', 'REJECTED', 'HISTORICAL'];
+const STAGE_VALUES = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'SOLVED', 'RESOLVED', 'UNRESOLVED', 'CANCELLED', 'REJECTED', 'HISTORICAL'];
 const EXTENSIONS = new Set(['.sql', '.ts', '.tsx', '.js', '.py']);
 const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'coverage', '__pycache__', '.venv', 'venv', '.pytest_cache']);
 const ALLOWED = [/data[\\/]warehouse[\\/]migrations[\\/]0052_[^\\/]*\.sql$/, /data[\\/]warehouse[\\/]down[\\/]/, /npsStageStatusSql\.test\.ts$/];

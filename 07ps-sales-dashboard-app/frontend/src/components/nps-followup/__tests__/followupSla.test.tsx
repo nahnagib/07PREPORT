@@ -86,6 +86,7 @@ describe('time column: one row per rule of the SLA table', () => {
       'resolved in 7.0 d',
       'Close SLA missed by 2.0 d',
     ],
+    ['UNRESOLVED', sla('unresolved', 'grey', null), 'grey', 'unresolved', 'Unresolved: no SLA'],
     ['REJECTED', sla('rejected', 'grey', null), 'grey', 'rejected', 'Rejected: no SLA'],
     [
       'HISTORICAL',

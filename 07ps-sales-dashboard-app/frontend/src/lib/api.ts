@@ -3048,6 +3048,8 @@ export interface NpsTrend {
 /** responders / (Delivered + Read): company and date only, from NPS_REACH_START (backend measures/npsScore.ts) */
 export interface NpsResponseRate {
   status: 'waiting' | 'restricted' | 'ready';
+  /** Original requested start; dateFrom can be the later effective start of available data. */
+  requestedDateFrom?: string;
   dateFrom: string;
   dateTo: string;
   reachStart: string | null;
@@ -3062,12 +3064,33 @@ export interface NpsResponseRate {
   band: NpsBand | null;
   target: number;
   variancePts: number | null;
+  /** measured weeks only (never estimated) */
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
+  /** the headline includes estimated reached messages before reachStart (backend config/npsReachEstimate.ts) */
+  isEstimated: boolean;
+  estimateStatus: 'not_needed' | 'applied' | 'disabled' | 'no_basis';
+  /** the real rate from reachStart; null when the period ends before it */
+  measured: { from: string; responders: number; reached: number; rate: number | null } | null;
+  estimate: {
+    from: string;
+    to: string;
+    weeks: number;
+    perWeek: number;
+    reached: number;
+    basis: 'auto' | 'fixed';
+    basisWeeks: number;
+    basisFrom: string | null;
+    basisTo: string | null;
+    /** complete measured weeks left out of the basis (the Meta outage) */
+    excludedWeeks: string[];
+    /** per company, each from its own first rating */
+    byCompany: { companyKey: number; company: string; from: string; to: string; weeks: number; perWeek: number; reached: number }[];
+  } | null;
 }
 /** "Resolved Ageing" buckets (backend config/npsSla.ts) */
 export type NpsAgeingBucket = 'd1' | 'd2' | 'd5' | 'd10' | 'd30' | 'dmax';
 /** the follow-up workflow step (lib/nps/followup.ts) */
-export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'REJECTED';
+export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'UNRESOLVED' | 'REJECTED';
 /** the outcome group, worked out from the stage */
 export type NpsFollowupStatus = 'OPEN' | 'CLOSE' | 'DISPUTED';
 /** the follow-up charts (reason, status, Resolved Ageing), live from nps_followup_case */
@@ -3079,6 +3102,7 @@ export interface NpsFollowupSummary {
   charted: number;
   /** stage Rejected (inside charted) */
   rejected: number;
+  unresolved?: number;
   historical: number;
   noCase: number;
   /** "Resolved Ageing": resolved by time to resolve, open by age today, and the two SLA lines; Rejected / Historical out */
@@ -3107,9 +3131,19 @@ export interface NpsReach {
   loadedAt: string | null;
   /** first message date counted (the ETL's NPS_REACH_START), null = all history */
   reachStart: string | null;
-  totals: { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number } | null;
+  /** the official counts: measured + the gap 12 Jul – 02 Oct when isEstimated (backend measures/npsReachEstimate.ts) */
+  totals: NpsReachBoxes | null;
+  /** measured + the gap's real errors; they sum to totals.error */
   errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
+  /** Delivered, Read, Not Delivered of the gap are estimated; its Error is real */
+  isEstimated: boolean;
+  estimateStatus: 'not_needed' | 'applied' | 'disabled' | 'no_basis';
+  estimate: { from: string; to: string } | null;
+  /** the measured part (from reachStart) and the gap part of every box; null unless isEstimated */
+  measured: NpsReachBoxes | null;
+  gap: NpsReachBoxes | null;
 }
+export interface NpsReachBoxes { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number }
 export interface NpsPage<T> {
   rows: T[];
   total: number;

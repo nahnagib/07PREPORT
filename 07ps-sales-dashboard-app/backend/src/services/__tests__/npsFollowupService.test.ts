@@ -83,6 +83,7 @@ describe('stage and status', () => {
     expect((['NEW', 'CONTACTED', 'IN_PROGRESS'] as const).map((s) => statusOfStage(s))).toEqual(['OPEN', 'OPEN', 'OPEN']);
     expect(statusOfStage('RESOLVED')).toBe('CLOSE');
     expect(statusOfStage('REJECTED')).toBe('DISPUTED');
+    expect(statusOfStage('UNRESOLVED')).toBe('DISPUTED');
     expect(statusOfStage('HISTORICAL')).toBeNull();
   });
 
@@ -107,6 +108,13 @@ describe('stage and status', () => {
 });
 
 describe('editing a case', () => {
+  it('Unresolved can be saved, filters as a stage, and clears terminal timestamps when moving from another outcome', () => {
+    expect(parseFollowupQuery({ stages: 'UNRESOLVED', statuses: 'DISPUTED' })).toMatchObject({ stages: ['UNRESOLVED'], statuses: ['DISPUTED'] });
+    expect(applyEdit(aCase({ stage: 'RESOLVED', resolvedAt: NOW }), { stage: 'UNRESOLVED' }, NOW))
+      .toMatchObject({ stage: 'UNRESOLVED', resolvedAt: null, rejectedAt: null });
+    expect(applyEdit(aCase({ stage: 'REJECTED', rejectedAt: NOW }), { stage: 'UNRESOLVED' }, NOW))
+      .toMatchObject({ stage: 'UNRESOLVED', resolvedAt: null, rejectedAt: null });
+  });
   it('Contacted fills the contact time with now when empty', () => {
     expect(applyEdit(aCase(), { stage: 'CONTACTED' }, NOW)).toMatchObject({ stage: 'CONTACTED', contactedAt: NOW, resolvedAt: null });
   });

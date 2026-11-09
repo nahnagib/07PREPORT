@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { reachEstimateConfig } from '../../config/npsReachEstimate';
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -175,10 +176,13 @@ describe.skipIf(!RUN)('NPS Score on the real warehouse (read-only)', () => {
         const { status, body } = await get(`/nps-score/reach?dateFrom=${from}&dateTo=${to}${company ? `&companyKeys=${company}` : ''}`);
         expect(status).toBe(200);
         expect(body.reachStart).toBe(loaded[0].reach_start ? new Date(loaded[0].reach_start).toISOString().slice(0, 10) : null);
-        expect(body.totals, `${company} ${from}..${to}`).toEqual({ totalReach: n(want.total), delivered: n(want.delivered),
+        // the measured part = the fact in scope; a range reaching into the gap adds it on top (checked in the response-rate test)
+        expect(body.measured ?? body.totals, `${company} ${from}..${to}`).toEqual({ totalReach: n(want.total), delivered: n(want.delivered),
           read: n(want.read_count), notDelivered: n(want.not_delivered), error: n(want.error_count), otherState: n(want.other_state) });
-        expect(Object.fromEntries(body.errors.map((e: Json) => [e.key, e.count])))
-          .toEqual(Object.fromEntries(groups.map((g: Json) => [g.failure_group, n(g.c)])));
+        if (!body.isEstimated) {
+          expect(Object.fromEntries(body.errors.map((e: Json) => [e.key, e.count])))
+            .toEqual(Object.fromEntries(groups.map((g: Json) => [g.failure_group, n(g.c)])));
+        } else expect(sum(body.errors, 'count')).toBe(body.totals.error);
       }
     }
   });
@@ -226,22 +230,76 @@ describe.skipIf(!RUN)('NPS page consistency, YTD, default B2B + B2C filter and a
     }
   });
 
-  it('response rate = plain SQL: ratings by rating date / (delivered + read) by message date, company only, from NPS_REACH_START', async () => {
-    const [state] = await qa('SELECT reach_start FROM process_nps_reach_state WHERE singleton_id = 1');
+  it('response rate and Message reach = plain SQL: measured since NPS_REACH_START + the gap, per company; cards Delivered + Read = the rate denominator', async () => {
+    const [state] = await qa(`SELECT DATE_FORMAT(reach_start, '%Y-%m-%d') AS reach_start, DATE_FORMAT(loaded_at_utc, '%Y-%m-%dT%H:%i:%sZ') AS loaded FROM process_nps_reach_state WHERE singleton_id = 1`);
     if (!state) return;
-    const start = new Date(state.reach_start).toISOString().slice(0, 10);
+    const start = String(state.reach_start);
+    const loadedLocal = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Tripoli', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(String(state.loaded)));
+    const plusDays = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:00Z`) + d * 86_400_000).toISOString().slice(0, 10);
+    const { excludeWeeks } = reachEstimateConfig();
+    let sat = start;
+    while (new Date(`${sat}T12:00:00Z`).getUTCDay() !== 6) sat = plusDays(sat, 1);
+    const weeks: string[] = [];
+    for (; plusDays(sat, 6) <= plusDays(loadedLocal, -1); sat = plusDays(sat, 7)) if (!excludeWeeks.includes(sat)) weeks.push(sat);
+    const inWeeks = weeks.map((w) => `MessageDateKey BETWEEN ${key(w)} AND ${key(plusDays(w, 6))}`).join(' OR ') || '1 = 0';
+    const ytdFrom = `${today.slice(0, 4)}-01-01`;
     for (const company of [null, 1, 3]) {
       const c = company ? ' AND CompanyKey = ?' : '';
       const p = company ? [company] : [];
+      // measured (from the reach start): exactly the figures before the estimate existed
       const [ratings] = await qa(`SELECT COUNT(*) AS n FROM fact_process_nps_response WHERE RatingDateKey BETWEEN ? AND ?${c}`, [key(start), key(today), ...p]);
-      const [msgs] = await qa(`SELECT SUM(box IN ('delivered', 'read')) AS reached, COUNT(*) AS total FROM fact_process_nps_message
+      const [msgs] = await qa(`SELECT SUM(box IN ('delivered', 'read')) AS reached, SUM(box = 'delivered') AS d, SUM(box = 'read') AS r,
+          SUM(box = 'not_delivered') AS nd, SUM(box = 'error') AS e, COUNT(*) AS total FROM fact_process_nps_message
         WHERE in_reach_scope = 1 AND MessageDateKey BETWEEN ? AND ?${c}`, [key(start), key(today), ...p]);
-      // a segment filter is ignored (labelled), never applied to the ratings only
-      const body = (await get(`/nps-score/response-rate?${ytd}&segmentKeys=1&segmentKeys=2${company ? `&companyKeys=${company}` : ''}`)).body;
-      expect(body).toMatchObject({ status: 'ready', dateFrom: start, companyAndDateOnly: true, responders: n(ratings.n), reached: n(msgs.reached), totalReach: n(msgs.total) });
-      expect(body.rate).toBeCloseTo((100 * n(ratings.n)) / n(msgs.reached), 9);
-      expect(sum(body.weekly, 'responders')).toBe(n(ratings.n));
-      expect(sum(body.weekly, 'reached')).toBe(n(msgs.reached));
+      const measured = (await get(`/nps-score/response-rate?dateFrom=${start}&dateTo=${today}&segmentKeys=1${company ? `&companyKeys=${company}` : ''}`)).body;
+      expect(measured).toMatchObject({ status: 'ready', dateFrom: start, companyAndDateOnly: true, isEstimated: false, estimate: null,
+        responders: n(ratings.n), reached: n(msgs.reached), totalReach: n(msgs.total) });
+      expect(measured.rate).toBeCloseTo((100 * n(ratings.n)) / n(msgs.reached), 9);
+      // the gap, per company from its own first rating, in plain SQL
+      const firsts = await qa(`SELECT CompanyKey AS k, MIN(RatingDateKey) AS f FROM fact_process_nps_response WHERE 1 = 1${c} GROUP BY CompanyKey`, p);
+      const gap = { reached: 0, d: 0, r: 0, nd: 0, e: 0, responders: 0 };
+      let applied = false;
+      for (const row of firsts) {
+        const k = n(row.k);
+        const first = String(row.f).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+        const from = first > ytdFrom ? first : ytdFrom;
+        const to = plusDays(start, -1) < today ? plusDays(start, -1) : today;
+        if (from > to || !weeks.length) continue;
+        applied = true;
+        const days = Math.round((Date.parse(`${to}T12:00:00Z`) - Date.parse(`${from}T12:00:00Z`)) / 86_400_000) + 1;
+        const [mix] = await qa(`SELECT SUM(box = 'delivered') AS d, SUM(box = 'read') AS r, SUM(box = 'not_delivered') AS nd FROM fact_process_nps_message
+          WHERE in_reach_scope = 1 AND CompanyKey = ? AND (${inWeeks})`, [k]);
+        const mixReached = n(mix.d) + n(mix.r);
+        const reached = Math.round(((mixReached / weeks.length) * days) / 7);
+        const d = Math.round(reached * (mixReached ? n(mix.d) / mixReached : 0));
+        const [err] = await qa(`SELECT COUNT(*) AS e FROM fact_process_nps_message WHERE box = 'error' AND is_feedback_template = 1 AND is_test_number = 0
+          AND CompanyKey = ? AND MessageDateKey BETWEEN ? AND ?`, [k, key(from), key(to)]);
+        const [rt] = await qa(`SELECT COUNT(*) AS n FROM fact_process_nps_response WHERE CompanyKey = ? AND RatingDateKey BETWEEN ? AND ?`, [k, key(from), key(to)]);
+        gap.reached += reached;
+        gap.d += d;
+        gap.r += reached - d;
+        gap.nd += Math.round(reached * (mixReached ? n(mix.nd) / mixReached : 0));
+        gap.e += n(err.e);
+        gap.responders += n(rt.n);
+      }
+      const q = `${ytd}&segmentKeys=1&segmentKeys=2${company ? `&companyKeys=${company}` : ''}`;
+      const body = (await get(`/nps-score/response-rate?${q}`)).body;
+      const reach = (await get(`/nps-score/reach?${q}`)).body;
+      expect(body.measured).toMatchObject({ from: start, responders: n(ratings.n), reached: n(msgs.reached) });
+      if (!applied) {
+        expect(body.isEstimated).toBe(false);
+        continue;
+      }
+      expect(body).toMatchObject({ isEstimated: true, estimateStatus: 'applied', responders: n(ratings.n) + gap.responders,
+        reached: n(msgs.reached) + gap.reached, estimate: { reached: gap.reached, basis: 'auto', basisWeeks: weeks.length } });
+      expect(body.rate).toBeCloseTo((100 * (n(ratings.n) + gap.responders)) / (n(msgs.reached) + gap.reached), 9);
+      expect(sum(body.weekly, 'reached')).toBe(n(msgs.reached)); // the sparkline stays measured-only
+      // the cards: measured + gap, Error real; Delivered + Read = the rate denominator; the error groups sum to Error
+      expect(reach).toMatchObject({ isEstimated: true, estimateStatus: 'applied',
+        totals: { delivered: n(msgs.d) + gap.d, read: n(msgs.r) + gap.r, notDelivered: n(msgs.nd) + gap.nd, error: n(msgs.e) + gap.e } });
+      expect(reach.totals.delivered + reach.totals.read).toBe(body.reached);
+      expect(reach.totals.totalReach).toBe(body.totalReach);
+      expect(sum(reach.errors, 'count')).toBe(reach.totals.error);
     }
   });
 });

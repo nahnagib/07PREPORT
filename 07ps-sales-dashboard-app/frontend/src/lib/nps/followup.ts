@@ -11,10 +11,10 @@ import { HOURS_PER_DAY, type CaseSla } from './sla';
  */
 
 /** The workflow steps. */
-export const STAGES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'] as const;
+export const STAGES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED'] as const;
 export type FollowupStage = (typeof STAGES)[number];
 /** The board's columns (stages), left to right (Historical cases appear only in the List view). */
-export const BOARD_COLUMNS: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'];
+export const BOARD_COLUMNS: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED'];
 export const EDITABLE_STAGES: readonly FollowupStage[] = BOARD_COLUMNS;
 
 /** The outcome groups. */
@@ -27,6 +27,7 @@ export const STAGE_LABEL: Record<FollowupStage, string> = {
   CONTACTED: 'Contacted',
   IN_PROGRESS: 'In progress',
   RESOLVED: 'Resolved',
+  UNRESOLVED: 'Unresolved',
   REJECTED: 'Rejected',
 };
 
@@ -36,12 +37,13 @@ export const STAGE_COLOR: Record<FollowupStage, string> = {
   CONTACTED: 'var(--ps-color-watch)',
   IN_PROGRESS: 'var(--ps-color-gold)',
   RESOLVED: 'var(--ps-color-success)',
+  UNRESOLVED: 'var(--ps-color-alert)',
   REJECTED: 'var(--ps-color-muted-text)',
 };
 
 export const STATUS_LABEL: Record<FollowupStatus, string> = {
   OPEN: 'Open',
-  CLOSE: 'Close',
+  CLOSE: 'Closed',
   DISPUTED: 'Disputed',
 };
 
