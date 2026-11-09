@@ -50,7 +50,7 @@ it('each box shows its share of Total Reach and a tooltip saying reach uses the 
 });
 
 it('the gap in the period: official totals, "incl. est." on the estimated cards, "incl. gap" on Error, tooltips measured + gap, the subtitle', () => {
-  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ status: 'ready', responders: 801, dateFrom: estimated.dateFrom, dateTo: estimated.dateTo }} />);
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
   expect(screen.getByText('Survey Reach')).toBeTruthy();
   expect(screen.getByText('Rate of reach: 16.27%')).toBeTruthy();
   expect(screen.queryByText('100% of reach')).toBeNull();
@@ -129,8 +129,13 @@ it('does not show an old snapshot while reloading filters and supports retry on 
 });
 
 it('does not show a stale-period rate or divide by zero', () => {
-  const { rerender } = render(<NpsReach part="boxes" state={state(ready)} responseRate={{ status: 'ready', responders: 801, dateFrom: estimated.dateFrom, dateTo: estimated.dateTo }} />);
+  const { rerender } = render(<NpsReach part="boxes" state={state(ready)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
   expect(screen.getByText('Rate of reach: —')).toBeTruthy();
   rerender(<NpsReach part="boxes" state={state({ ...ready, totals: { ...ready.totals!, totalReach: 0 } })} responseRate={{ status: 'ready', responders: 0, dateFrom: ready.dateFrom, dateTo: ready.dateTo }} />);
+  expect(screen.getByText('Rate of reach: —')).toBeTruthy();
+});
+
+it('rejects a stale requested start even when the end date and effective start match', () => {
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: '2026-07-01', dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
   expect(screen.getByText('Rate of reach: —')).toBeTruthy();
 });

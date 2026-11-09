@@ -347,7 +347,7 @@ describe('the gap estimate 12 Jul – 02 Oct: Response Rate and Message reach fr
     const { pool: p, queries } = pools();
     const r = await fetchNpsResponseRate(p, ytd, {}, ADMIN, ON);
     // Majaal 12 Jul .. 2 Oct = 83 days: 100 x 83 / 7 = 1185.7 -> 1186; Tika 8 Aug .. 2 Oct = 56 days: 50 x 8 = 400
-    expect(r).toMatchObject({ status: 'ready', isEstimated: true, estimateStatus: 'applied', dateFrom: '2026-07-12', responders: 430,
+    expect(r).toMatchObject({ status: 'ready', isEstimated: true, estimateStatus: 'applied', requestedDateFrom: '2026-01-01', dateFrom: '2026-07-12', responders: 430,
       reached: 120 + 1586, delivered: 50 + 356 + 120, read: 70 + 830 + 280,
       measured: { from: '2026-10-03', responders: 30, reached: 120, rate: 25 },
       estimate: { from: '2026-07-12', to: '2026-10-02', perWeek: 150, reached: 1586, basis: 'auto', basisWeeks: 2, basisFrom: '2026-10-03',

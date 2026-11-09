@@ -3048,6 +3048,8 @@ export interface NpsTrend {
 /** responders / (Delivered + Read): company and date only, from NPS_REACH_START (backend measures/npsScore.ts) */
 export interface NpsResponseRate {
   status: 'waiting' | 'restricted' | 'ready';
+  /** Original requested start; dateFrom can be the later effective start of available data. */
+  requestedDateFrom?: string;
   dateFrom: string;
   dateTo: string;
   reachStart: string | null;

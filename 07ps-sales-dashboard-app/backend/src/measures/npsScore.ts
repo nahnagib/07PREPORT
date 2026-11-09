@@ -656,6 +656,8 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
 // -- response rate ------------------------------------------------------------------------------------------------------
 export interface NpsResponseRate {
   status: 'waiting' | 'restricted' | 'ready';
+  /** Original request boundary; dateFrom below may be clamped to the first available rating/message. */
+  requestedDateFrom: string;
   /** the period counted: the page's range, from the first gap day (estimated) or from reachStart (measured only) */
   dateFrom: string;
   dateTo: string;
@@ -728,7 +730,7 @@ export async function fetchNpsResponseRate(
   pool: Pool, q: NpsQuery, f: Filters, user: UserContext, cfg: ReachEstimateConfig = reachEstimateConfig(),
 ): Promise<NpsResponseRate> {
   const empty: NpsResponseRate = {
-    status: 'waiting', dateFrom: q.dateFrom, dateTo: q.dateTo, reachStart: null,
+    status: 'waiting', requestedDateFrom: q.dateFrom, dateFrom: q.dateFrom, dateTo: q.dateTo, reachStart: null,
     companyAndDateOnly: REACH_UNSUPPORTED.some((key) => (f[key]?.length ?? 0) > 0),
     responders: 0, delivered: 0, read: 0, reached: 0, totalReach: 0, rate: null, rateOfReach: null, band: null,
     target: RESPONSE_RATE_SCALE.target, variancePts: null, weekly: [],

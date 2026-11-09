@@ -32,7 +32,7 @@ const BOX_KEY = {
  * the gap 12 Jul – 02 Oct shows the official totals: measured + the gap (Delivered, Read, Not Delivered estimated;
  * Error real), each card marked, its tooltip split measured / gap; the subtitle says so. Otherwise exactly as measured.
  */
-export function NpsReach({ state, part, responseRate }: { state: ReachState; part: 'boxes' | 'errors'; responseRate?: Pick<NpsResponseRate, 'status' | 'responders' | 'dateFrom' | 'dateTo'> | null }) {
+export function NpsReach({ state, part, responseRate }: { state: ReachState; part: 'boxes' | 'errors'; responseRate?: Pick<NpsResponseRate, 'status' | 'responders' | 'dateFrom' | 'dateTo' | 'requestedDateFrom'> | null }) {
   const data = state.data;
   let body: React.ReactNode;
   if (state.error) body = <ErrorState message={state.error} onRetry={state.retry} />;
@@ -41,7 +41,7 @@ export function NpsReach({ state, part, responseRate }: { state: ReachState; par
   else if (data.status === 'waiting' || !data.totals) body = <Waiting message="Waiting for the WhatsApp message data" />;
   else if (part === 'boxes') {
     const totals = data.totals;
-    const responders = responseRate?.status === 'ready' && responseRate.dateFrom === data.dateFrom && responseRate.dateTo === data.dateTo ? responseRate.responders : null;
+    const responders = responseRate?.status === 'ready' && (responseRate.requestedDateFrom ?? responseRate.dateFrom) === data.dateFrom && responseRate.dateTo === data.dateTo ? responseRate.responders : null;
     const rateOfReach = responders !== null && totals.totalReach > 0 ? pct(100 * responders / totals.totalReach) : '—';
     const rateTip = `Rate of reach = Responders ÷ Total reach${responders !== null ? ` = ${formatNumber(responders)} ÷ ${formatNumber(totals.totalReach)} = ${rateOfReach}` : ''}`;
     body = (
