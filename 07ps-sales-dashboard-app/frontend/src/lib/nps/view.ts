@@ -1,3 +1,4 @@
+import { periodAxisLabel } from '../periods';
 import type { NpsBand, NpsCounts, NpsFollowupStage, NpsFollowupStatus, NpsResponseRate, NpsTrend } from '../api';
 
 /**
@@ -61,25 +62,18 @@ export function npsBreakdown(counts: Pick<NpsCounts, 'promotersPct' | 'detractor
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/** "2026-10-03" (a week, named by its Saturday) -> "04 Oct", "2026-10" -> "Oct 2026", "2026" -> "2026" (fixed names: browsers disagree on "Sep"). */
-export function periodLabel(period: string): string {
-  const [y, m, d] = period.split('-');
-  if (d) return `${d} ${MONTHS[Number(m) - 1]}`;
-  if (m) return `${MONTHS[Number(m) - 1]} ${y}`;
-  return y;
-}
-
 const round2 = (v: number | null) => (v === null ? null : Math.round(v * 100) / 100);
 
 /**
  * Trend points for ComboChart: responders (bars), NPS and CSAT (lines), the same values faded where the period is below
- * the minimum number of responders (separate, muted series).
+ * the minimum number of responders (separate, muted series). A period before the first rating (not measured) is a gap:
+ * no bar and no line point, never a 0.
  */
-export function trendPoints(trend: Pick<NpsTrend, 'points'>) {
+export function trendPoints(trend: Pick<NpsTrend, 'points' | 'granularity'>) {
   return trend.points.map((p) => ({
-    label: periodLabel(p.period),
+    label: periodAxisLabel(p.period, trend.granularity),
     period: p.period,
-    responders: p.responders,
+    responders: p.measured ? p.responders : null,
     nps: p.belowMinimum ? null : round2(p.nps),
     npsSmall: p.belowMinimum ? round2(p.nps) : null,
     csat: p.belowMinimum ? null : round2(p.csat),
