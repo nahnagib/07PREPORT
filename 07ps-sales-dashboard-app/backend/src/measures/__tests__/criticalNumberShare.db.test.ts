@@ -58,13 +58,12 @@ const ROWS: Row[] = [
 ];
 
 /** Scopes the salesperson admin overrides (salesperson_admin_profile.segment_key_override) move on the local warehouse,
- * 2026-11-09: the scope's 2026 target (LYD) the page really uses. Hussian Makey (Tika, 6,781,050) and Mohamed Abdulhady
- * (Tika, 2,934,000) are moved B2B -> B2C, Islam Katch (Majaal, 892,500) B2C -> B2B; no branch or salesperson row of the
- * table is moved. */
+ * 2026-11-09: the scope's 2026 target (LYD) the page really uses. Islam Katch (Majaal, 892,500) is moved B2C -> B2B; no
+ * branch, channel or salesperson row of the table is moved. (Hussian Makey and Mohamed Abdulhady are B2B: their wrong
+ * B2B -> B2C overrides were cleared on 2026-11-09.) */
 const OVERRIDE_MOVED: Record<string, number> = {
-  B2B: 106_506_923 - 6_781_050 - 2_934_000 + 892_500,
-  B2C: 62_657_610 + 6_781_050 + 2_934_000 - 892_500,
-  'Tika + B2B': 73_430_891 - 6_781_050 - 2_934_000,
+  B2B: 106_506_923 + 892_500,
+  B2C: 62_657_610 - 892_500,
   'Majaal + B2C': 47_070_620 - 892_500,
 };
 
