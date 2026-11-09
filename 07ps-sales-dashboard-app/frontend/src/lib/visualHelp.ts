@@ -472,7 +472,7 @@ export const VISUAL_HELP = {
   'process.npsScore.responseRate': {
     help: {
       definition: 'Share of the feedback messages that reached the customer and got a rating.',
-      formula: ['Response Rate = Responders ÷ (Delivered + Read)', 'Before 03 Oct (no message data): Delivered + Read estimated = average per measured week × gap weeks', 'Rate of reach = Responders ÷ Total reach', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
+      formula: ['Response Rate = Responders ÷ (Delivered + Read)', '12 Jul – 02 Oct: Delivered + Read estimated per company (the same figure as the Message reach cards)', 'Rate of reach = Responders ÷ Total reach', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
     },
   },
   'process.npsScore.satisfactionTrend': {

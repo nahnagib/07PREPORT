@@ -178,8 +178,10 @@ describe('WhatsApp reach', () => {
     expect(body).toMatchObject({ status: 'ready', companyAndDateOnly: true, reachStart: '2026-10-03',
       totals: { totalReach: 12, delivered: 3, notDelivered: 2, read: 4, error: 2, otherState: 1 },
       errors: [{ key: 'phone_format', fixable: true, count: 2 }] });
-    const aggregates = queries.filter((q) => /FROM v_process_nps_/.test(q.sql));
+    // the two aggregates of the panel (the gap estimate's own queries are tested in measures/__tests__/npsScore.test.ts)
+    const aggregates = queries.filter((q) => /FROM v_process_nps_(reach|message_error) /.test(q.sql));
     expect(aggregates).toHaveLength(2);
+    expect(body).toMatchObject({ isEstimated: false, estimateStatus: 'not_needed', gap: null }); // 1 Oct: the mock has no rating in the gap
     for (const q of aggregates) {
       expect(q.params).toEqual([20261001, 20261018, 1]);
       expect(q.sql).toContain('f.CompanyKey IN (?)');

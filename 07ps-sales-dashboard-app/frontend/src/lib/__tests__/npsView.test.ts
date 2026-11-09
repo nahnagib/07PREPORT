@@ -19,6 +19,8 @@ import {
   estimateBadge,
   measuredLine,
   rateFraction,
+  reachBoxTooltip,
+  reachSubtitle,
   responseRateMetrics,
   responseRateTooltip,
   smallSample,
@@ -143,25 +145,37 @@ describe('the top row', () => {
     ]);
   });
 
-  it('response rate with the estimate: formula, per-week basis, measured-only rate, why; badge, fraction and measured line', () => {
+  it('response rate with the estimate: formula, one line per company, the basis (outage week left out), measured-only rate, why', () => {
     const r = {
-      responders: 801, delivered: 900, read: 322, reached: 4063, totalReach: 1500, rate: (801 / 4063) * 100, rateOfReach: 17.9,
+      responders: 801, delivered: 1129, read: 2650, reached: 3779, totalReach: 4923, rate: (801 / 3779) * 100, rateOfReach: 16.3,
       reachStart: '2026-10-03', isEstimated: true, measured: { from: '2026-10-03', responders: 269, reached: 1222, rate: (269 / 1222) * 100 },
-      estimate: { from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 239.6, reached: 2841, basis: 'auto' as const, basisWeeks: 5, basisFrom: '2026-10-03', basisTo: '2026-11-06' },
+      estimate: { from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 278, reached: 2557, basis: 'auto' as const, basisWeeks: 4, basisFrom: '2026-10-03',
+        basisTo: '2026-10-30', excludedWeeks: ['2026-10-31'],
+        byCompany: [{ companyKey: 1, company: 'MAJAAL', from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 86.25, reached: 1023 },
+          { companyKey: 3, company: 'TIKA', from: '2026-08-08', to: '2026-10-02', weeks: 8, perWeek: 191.75, reached: 1534 }] },
     };
     expect(responseRateTooltip(r).split('\n')).toEqual([
-      'Responders ÷ (Measured reached + Estimated reached) = 801 ÷ (1,222 + 2,841) = 19.71%',
-      'Estimated reached = 239.6 per week (average Delivered + Read of 5 complete weeks, 03 Oct – 06 Nov) × 11.86 weeks (12 Jul – 02 Oct) = 2,841',
+      'Responders ÷ (Delivered + Read) = 801 ÷ (1,222 measured + 2,557 estimated) = 21.20%',
+      'MAJAAL: 86.3 per week × 11.86 weeks (12 Jul – 02 Oct) = 1,023',
+      'TIKA: 191.8 per week × 8.00 weeks (08 Aug – 02 Oct) = 1,534',
+      'Per week = average Delivered + Read of 4 complete weeks, 03 Oct – 30 Oct; left out: week of 31 Oct (Meta outage)',
       'Measured since 03 Oct: 269 ÷ 1,222 = 22.01%',
       'The WhatsApp source did not keep successful messages before 03 Oct, so that part is estimated.',
     ]);
-    expect(responseRateTooltip({ ...r, estimate: { ...r.estimate, basis: 'fixed', perWeek: 250, basisWeeks: 0, basisFrom: null, basisTo: null } }).split('\n')[1])
-      .toBe('Estimated reached = 250.0 per week (fixed setting) × 11.86 weeks (12 Jul – 02 Oct) = 2,841');
-    expect(rateFraction(r)).toBe('801 responders ÷ 4,063 reached');
+    expect(responseRateTooltip({ ...r, estimate: { ...r.estimate, basis: 'fixed' as const, basisWeeks: 0, basisFrom: null, basisTo: null, excludedWeeks: [] } }).split('\n')[3])
+      .toBe("Per week: fixed setting, split by the companies' measured share");
+    expect(rateFraction(r)).toBe('801 responders ÷ 3,779 reached');
     expect(estimateBadge(r)).toBe('incl. estimate · 12 Jul – 02 Oct');
     expect(estimateBadge({ isEstimated: false, estimate: null })).toBeNull();
     expect(measuredLine(r)).toBe('Measured since 03 Oct: 22.01%');
     expect(measuredLine({ measured: null, reachStart: '2026-10-03' })).toBe('Measured since 03 Oct: —');
+  });
+
+  it('Message reach: the card tooltip (measured + gap; Error actual) and the subtitle', () => {
+    const est = { from: '2026-07-12', to: '2026-10-02' };
+    expect(reachBoxTooltip('delivered', 365, 764, '2026-10-03', est)).toBe('Measured from 03 Oct: 365\n12 Jul – 02 Oct (estimated): 764\nTotal: 1,129');
+    expect(reachBoxTooltip('error', 433, 521, '2026-10-03', est)).toBe('Measured from 03 Oct: 433\n12 Jul – 02 Oct (actual, kept by the source): 521\nTotal: 954');
+    expect(reachSubtitle('2026-10-03', est)).toBe('Measured from 03 Oct 2026 · 12 Jul – 02 Oct estimated');
   });
 });
 
