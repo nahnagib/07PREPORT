@@ -571,9 +571,11 @@ export interface CustomerGroupRow extends ReferenceDataRow {
   customer_group_id: number;
   etl_segment_key: number | null;
   etl_segment_name: string | null;
-  /** Share of the Daily Critical Number (0-100) this group contributes -- see
-   * backend/src/measures/criticalNumber.ts's computeDailyCriticalNumber. */
+  /** Retired 2026-11-09: still returned, no longer used (see target_share_pct). */
   critical_number_pct: number;
+  /** Read-only share (0-100) of the current year's revenue target in sales_targets.xlsx -- the Critical Number split
+   * (backend measures/criticalNumber.ts computeTargetShare). null = no ETL link, or no targets. */
+  target_share_pct: number | null;
 }
 
 export interface DistributionChannelRow extends ReferenceDataRow {
@@ -586,9 +588,11 @@ export interface CompanyRow extends ReferenceDataRow {
   company_id: number;
   etl_company_key: number | null;
   etl_company_name: string | null;
-  /** Share of the Daily Critical Number (0-100) this company contributes -- see
-   * backend/src/measures/criticalNumber.ts's computeDailyCriticalNumber. */
+  /** Retired 2026-11-09: still returned, no longer used (see target_share_pct). */
   critical_number_pct: number;
+  /** Read-only share (0-100) of the current year's revenue target in sales_targets.xlsx -- the Critical Number split
+   * (backend measures/criticalNumber.ts computeTargetShare). null = no ETL link, or no targets. */
+  target_share_pct: number | null;
 }
 
 export interface ReferenceDataPatch {
@@ -1075,13 +1079,13 @@ export const adminApi = {
     request('/admin/customer-groups/etl-options', token),
   createCustomerGroup: (
     token: string,
-    input: ReferenceDataPatch & { name: string; etlSegmentKey?: number | null; criticalNumberPct?: number },
+    input: ReferenceDataPatch & { name: string; etlSegmentKey?: number | null },
   ): Promise<{ row: CustomerGroupRow }> =>
     request('/admin/customer-groups', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
   updateCustomerGroup: (
     token: string,
     id: number,
-    input: ReferenceDataPatch & { etlSegmentKey?: number | null; criticalNumberPct?: number },
+    input: ReferenceDataPatch & { etlSegmentKey?: number | null },
   ): Promise<{ row: CustomerGroupRow }> =>
     request(`/admin/customer-groups/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
   deleteCustomerGroup: (token: string, id: number): Promise<{ success: boolean }> =>
@@ -1129,13 +1133,13 @@ export const adminApi = {
     request('/admin/companies/etl-options', token),
   createCompany: (
     token: string,
-    input: ReferenceDataPatch & { name: string; etlCompanyKey?: number | null; criticalNumberPct?: number },
+    input: ReferenceDataPatch & { name: string; etlCompanyKey?: number | null },
   ): Promise<{ row: CompanyRow }> =>
     request('/admin/companies', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
   updateCompany: (
     token: string,
     id: number,
-    input: ReferenceDataPatch & { etlCompanyKey?: number | null; criticalNumberPct?: number },
+    input: ReferenceDataPatch & { etlCompanyKey?: number | null },
   ): Promise<{ row: CompanyRow }> =>
     request(`/admin/companies/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
   deleteCompany: (token: string, id: number): Promise<{ success: boolean }> =>
@@ -1715,6 +1719,14 @@ export interface CriticalNumberOverview {
   /** The date actually requested (normally "today") before any fallback was applied. */
   requestedDate: string;
   dailyCriticalNumber: number;
+  /** The filters' share (0-1) of the base value: their part of the year's revenue target in Input/sales_targets.xlsx
+   * (backend measures/criticalNumber.ts computeTargetShare). dailyCriticalNumber = base x share. */
+  share?: number;
+  /** The sales_targets.xlsx year the share comes from; null when shareSource is 'missing' / 'error'. */
+  shareYear?: number | null;
+  /** current = the anchor year's targets; fallback = the latest earlier year (no targets for this one); missing / error
+   * = no targets / the query failed, factor 1. */
+  shareSource?: 'current' | 'fallback' | 'missing' | 'error';
   /** Admins only (null for everyone else): the unscaled base value active on the anchor date and who set it. */
   criticalNumberSource?: { baseValue: number; effectiveFrom: string; updatedAt: string; updatedBy: string | null } | null;
   dailyCounter: CriticalNumberDailyCounter;

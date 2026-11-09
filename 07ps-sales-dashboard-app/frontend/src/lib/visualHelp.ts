@@ -83,7 +83,8 @@ export const VISUAL_HELP = {
   'promotion.criticalNumber.daily': {
     help: {
       definition: 'The sales value (LYD) the company must invoice every working day to stay on its annual pace.',
-      notes: 'Set by an admin (Admin › Critical Number); changes apply on the next dashboard load.',
+      notes: 'The group value is set by an admin (Admin › Critical Number). With filters, the page shows their share of it: '
+        + 'their part of the year\'s revenue target in sales_targets.xlsx. Changes apply on the next dashboard load.',
     },
   },
   'promotion.criticalNumber.dailyCounter': {
