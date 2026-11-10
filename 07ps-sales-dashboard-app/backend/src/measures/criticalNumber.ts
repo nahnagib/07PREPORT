@@ -11,8 +11,9 @@
  *
  *   Metric                    | Source table(s)                        | How
  *   ---------------------------|------------------------------------------|---------------------------
- *   Daily Critical Number      | critical_number_history (Admin > Critical | value active on each day,
- *                               | Number), see criticalNumberHistory.ts      | no relation to v_sales_targets
+ *   Daily Critical Number      | critical_number_history (Admin > Critical | base value active on each day
+ *                               | Number), see criticalNumberHistory.ts,     | x the scope's share of that
+ *                               | x v_sales_targets (sales_targets.xlsx)     | year's revenue target
  *   Daily/Monthly/Yearly       | v_sales_lines (value)                    | actual value for the day /
  *   Counter actuals            |                                            | MTD / YTD window
  *   Working Days / Weekly Rest | dim_date.IsWeeklyRestDay + calendar        | see computeWorkingDays below
@@ -314,17 +315,19 @@ function sumTarget(days: Date[], target: DailyTarget): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Company-wide daily sales target -- not derived from v_sales_targets. Confirmed with the business owner (2026-09-14
+ * The group-wide base value is not derived from v_sales_targets. Confirmed with the business owner (2026-09-14
  * revision pass): "560 is a critical number, it has no relation with the target." Previously this was computed as
  * Full-Year Target Revenue / working days in the year; that read as "wrong" because the two numbers were never meant
  * to be the same thing -- the Critical Number is a flat operational pace goal, the FY Target a separate planning figure.
+ * The targets only split that base between scopes (below): their size never changes the group's number.
  *
  * Admin-editable since 2026-10-21: the base value is dated (critical_number_history, migration 0055; read through
  * criticalNumberHistory.ts's getCriticalNumber / criticalNumberLookup), so every day uses the value that was active on
  * it. A change never rewrites a past day, and the Monthly / Yearly targets are the SUM of each working day's own value,
  * not today's value x the number of days.
  *
- * The Company / Customer Group scaling below (computeDailyCriticalNumber) applies on top of the base value of each day.
+ * Since 2026-11-09 every scope gets its own share of that base: its part of the year's revenue target in
+ * Input/sales_targets.xlsx (computeTargetShare / computeDailyCriticalNumberSchedule below, docs/critical-number-split.md).
  */
 export type DailyTarget = number | ((date: Date) => number);
 
@@ -333,104 +336,125 @@ export function dailyTargetOn(target: DailyTarget, date: Date): number {
   return typeof target === 'function' ? target(date) : target;
 }
 
-/** Sum of admin_company.critical_number_pct for the given etl_company_keys (active rows only).
- * Returns 100 (i.e. "no scaling") when companyKeys is empty -- no Company filter means the full
- * base applies, same as selecting every company whose percentages sum to 100.
- *
- * A company_id present in companyKeys but absent from the query result (deactivated, or simply no
- * admin_company row for that etl_company_key) contributes 0 to the sum by construction -- that's
- * the intended "default 0% until an admin sets a real percentage" behavior, not an error, so it
- * needs no special handling here.
- *
- * The try/catch below is a *different* case: the query itself failing (e.g. critical_number_pct
- * not existing yet on this DB -- see migration 0021_critical_number_allocation.sql, which this
- * column shipped in but that was applied to the warehouse separately from this code going live,
- * so there was a window where every filtered Critical Number request 500'd). Every widget on the
- * Critical Number page shares this one dailyCriticalNumber computation (see
- * routes/criticalNumber.ts's single /overview endpoint), so an uncaught error here previously took
- * the entire page down instead of just this scaling factor -- degrade to unscaled (100, "ignore
- * the Company dimension") and log loudly instead.
- */
-async function sumCompanyPct(pool: Pool, companyKeys: number[]): Promise<number> {
-  if (companyKeys.length === 0) return 100;
-  const placeholders = companyKeys.map(() => '?').join(',');
-  try {
-    const [rows] = await pool.query(
-      `SELECT critical_number_pct AS pct FROM admin_company WHERE is_active = 1 AND etl_company_key IN (${placeholders})`,
-      companyKeys,
-    );
-    return (rows as { pct: number }[]).reduce((sum, r) => sum + Number(r.pct), 0);
-  } catch (err) {
-    console.error(
-      `[criticalNumber] sumCompanyPct failed for companyKeys=${JSON.stringify(companyKeys)}; ` +
-        'falling back to unscaled (100%) rather than failing the whole Critical Number page.',
-      err,
-    );
-    return 100;
-  }
+/** Where the share of a day's year came from (shown on the Critical Number page next to the Daily Critical Number):
+ *   current   -- the targets of that year;
+ *   fallback  -- that year has no targets (or they total 0): the latest earlier year that has them;
+ *   missing   -- no year up to that one has targets: factor 1 (the base unchanged), logged;
+ *   error     -- the v_sales_targets query failed: factor 1, logged loudly, the page stays up. */
+export type TargetShareSource = 'current' | 'fallback' | 'missing' | 'error';
+
+export interface TargetShare {
+  /** 0-1: the scope's part of the year's revenue target (1 = the whole group, or the factor-1 cases above). */
+  share: number;
+  /** The year whose targets gave the share, null for missing / error. */
+  shareYear: number | null;
+  shareSource: TargetShareSource;
 }
 
-/** Sum of admin_customer_group.critical_number_pct for the given etl_segment_keys (active rows
- * only). Returns 100 (i.e. "no scaling") when segmentKeys is empty. Same "missing row = 0
- * contribution by construction, query failure = caught and degraded" split as sumCompanyPct
- * above. */
-async function sumSegmentPct(pool: Pool, segmentKeys: number[]): Promise<number> {
-  if (segmentKeys.length === 0) return 100;
-  const placeholders = segmentKeys.map(() => '?').join(',');
-  try {
-    const [rows] = await pool.query(
-      `SELECT critical_number_pct AS pct FROM admin_customer_group WHERE is_active = 1 AND etl_segment_key IN (${placeholders})`,
-      segmentKeys,
-    );
-    return (rows as { pct: number }[]).reduce((sum, r) => sum + Number(r.pct), 0);
-  } catch (err) {
-    console.error(
-      `[criticalNumber] sumSegmentPct failed for segmentKeys=${JSON.stringify(segmentKeys)}; ` +
-        'falling back to unscaled (100%) rather than failing the whole Critical Number page.',
-      err,
-    );
-    return 100;
-  }
+interface TargetTotals {
+  scoped: number;
+  total: number;
 }
 
-/** The Company / Customer Group scaling factor of the active filter selection, admin-configured percentage breakdowns
- * (Admin Panel > Companies / Customer Groups, critical_number_pct column -- see
- * data/warehouse/migrations/0021_critical_number_allocation.sql):
- *
- *   No Company filter and no Customer Group filter -> 1 (the base unchanged).
- *   Company filter only                             -> sum of selected companies' pct / 100.
- *   Customer Group filter only                       -> sum of selected groups' pct / 100.
- *   Both                                              -> companyFactor x groupFactor (the two factors cascade/multiply,
- *                                                        they don't add).
- *
- * Multi-select within one dimension sums that dimension's percentages (e.g. selecting both Majaal and Tika => 47.44 +
- * 52.56 = 100%, i.e. the same as not filtering by Company at all). A selected company/group with no admin-configured
- * percentage yet (or none found, e.g. deactivated) contributes 0 to that sum, per this feature's "default 0% until an
- * admin sets a real percentage" design -- so filtering to only such a company/group correctly yields a 0 Daily Critical
- * Number rather than silently falling back to the full base. The shares are not dated: today's shares scale every day.
- */
-async function computeScopeFactor(pool: Pool, filters: Filters): Promise<number> {
-  const [companyPct, segmentPct] = await Promise.all([
-    sumCompanyPct(pool, filters.companyKeys ?? []),
-    sumSegmentPct(pool, filters.segmentKeys ?? []),
-  ]);
-  return (companyPct / 100) * (segmentPct / 100);
+/** buildWhereClause returns a bare condition ('1=1' with no filters, never a leading WHERE / AND); this keeps the
+ * CASE WHEN below valid SQL even if that ever changes. */
+export function asSqlCondition(clause: string): string {
+  const cond = clause.replace(/^\s*(WHERE|AND)\s+/i, '').trim();
+  return cond === '' ? '1=1' : cond;
+}
+
+/** The scope's and the whole group's revenue target of every year in v_sales_targets (Input/sales_targets.xlsx), in
+ * one query: the scoped sum uses the page's filters (buildWhereClause, so the salesperson admin overrides move a
+ * person's target exactly as they move their actual sales), the denominator none. customerKeys are ignored: targets
+ * have no customer. */
+async function loadTargetTotalsByYear(pool: Pool, filters: Filters): Promise<Map<number, TargetTotals>> {
+  const { clause, params } = buildWhereClause({ ...filters, customerKeys: undefined }, 't');
+  const [rows] = await pool.query(
+    `SELECT t.Year AS year,
+            SUM(CASE WHEN ${asSqlCondition(clause)} THEN t.Target_Revenue ELSE 0 END) AS scoped,
+            SUM(t.Target_Revenue) AS total
+     FROM v_sales_targets t
+     GROUP BY t.Year`,
+    params,
+  );
+  const totals = new Map<number, TargetTotals>();
+  for (const r of rows as { year: number; scoped: number | string | null; total: number | string | null }[]) {
+    totals.set(Number(r.year), { scoped: Number(r.scoped ?? 0), total: Number(r.total ?? 0) });
+  }
+  return totals;
+}
+
+/** The share of `year` from the per-year totals: that year, else the latest earlier year whose total is > 0. A scope
+ * whose target is 0 (e.g. a person with no target) gets 0 -- correct, never 100%. */
+function shareFromTotals(totals: Map<number, TargetTotals>, year: number): TargetShare {
+  const usable = [...totals.entries()].filter(([y, t]) => y <= year && t.total > 0).sort((a, b) => b[0] - a[0]);
+  if (usable.length === 0) return { share: 1, shareYear: null, shareSource: 'missing' };
+  const [shareYear, t] = usable[0];
+  return { share: t.scoped / t.total, shareYear, shareSource: shareYear === year ? 'current' : 'fallback' };
+}
+
+/** share(scope, year) = SUM(Target_Revenue in the scope, Year = year) / SUM(Target_Revenue, Year = year), from
+ * Input/sales_targets.xlsx (v_sales_targets). The year has no targets -> the latest earlier year that has them
+ * (shareSource 'fallback'); none at all -> 1 ('missing'). A failing query throws: callers decide how to degrade. Also
+ * what Admin > Companies / Customer Groups show as "Share of FY target". */
+export async function computeTargetShare(pool: Pool, filters: Filters, year: number): Promise<TargetShare> {
+  return shareFromTotals(await loadTargetTotalsByYear(pool, filters), year);
+}
+
+/** The Daily Critical Number schedule: the value of any day, plus the share behind it. */
+export interface CriticalNumberSchedule {
+  (date: Date): number;
+  /** The share used for `date`'s year (what the page shows next to the Daily Critical Number card). */
+  shareFor(date: Date): TargetShare;
 }
 
 /**
- * The scaled Daily Critical Number of every day for the active filter selection: the base value active on that day
- * (criticalNumberHistory.ts) x the Company / Customer Group factor (computeScopeFactor). This is the single source
- * computeDailyCounter/computeMonthlyCounter/computeYearlyCounter/computeMissingSummary/computeMissingTrend all take
- * their target from (see routes/criticalNumber.ts), so the scaled, dated figure flows through to every Daily/Monthly/
- * Yearly Counter, Missing Value/Days YTD, and their variance calculations -- not just the display card.
+ * The Daily Critical Number of every day for the active filter selection:
+ *
+ *   Daily Critical Number(scope, D) = base(D) x share(scope, year of D)
+ *
+ * base(D) is the value active on D (criticalNumberHistory.ts, Admin > Critical Number); share is computeTargetShare's.
+ * This is the single source computeDailyCounter/computeMonthlyCounter/computeYearlyCounter/computeMissingSummary/
+ * computeMissingTrend all take their target from (see routes/criticalNumber.ts), so the scaled, dated figure flows
+ * through to every Daily/Monthly/Yearly Counter, Missing Value/Days YTD and their variances -- not just the card.
+ *
+ * The targets of every year are read in one query when the schedule is built, and each year's share is resolved once
+ * (memoised), so a YTD or full-year walk never queries per day. A failing query keeps the page up: logged loudly,
+ * factor 1 (the base unchanged), shareSource 'error'.
  */
-export async function computeDailyCriticalNumberSchedule(pool: Pool, filters: Filters): Promise<(date: Date) => number> {
-  const [history, factor] = await Promise.all([loadCriticalNumberHistory(pool), computeScopeFactor(pool, filters)]);
+export async function computeDailyCriticalNumberSchedule(pool: Pool, filters: Filters): Promise<CriticalNumberSchedule> {
+  const [history, totals] = await Promise.all([
+    loadCriticalNumberHistory(pool),
+    loadTargetTotalsByYear(pool, filters).catch((err) => {
+      console.error(
+        `[criticalNumber] v_sales_targets share query failed for filters=${JSON.stringify(filters)}; ` +
+          'using factor 1 (the unscaled base) rather than failing the whole Critical Number page.',
+        err,
+      );
+      return null;
+    }),
+  ]);
   const base = criticalNumberLookup(history);
-  return (date: Date) => base(date) * factor;
+  const byYear = new Map<number, TargetShare>();
+  const shareForYear = (year: number): TargetShare => {
+    let s = byYear.get(year);
+    if (!s) {
+      s = totals === null ? { share: 1, shareYear: null, shareSource: 'error' } : shareFromTotals(totals, year);
+      if (s.shareSource === 'fallback') {
+        console.warn(`[criticalNumber] sales_targets.xlsx has no targets for ${year}; using the ${s.shareYear} shares.`);
+      } else if (s.shareSource === 'missing') {
+        console.warn(`[criticalNumber] sales_targets.xlsx has no targets for ${year} or earlier; using factor 1.`);
+      }
+      byYear.set(year, s);
+    }
+    return s;
+  };
+  const schedule = ((date: Date) => base(date) * shareForYear(date.getUTCFullYear()).share) as CriticalNumberSchedule;
+  schedule.shareFor = (date: Date) => shareForYear(date.getUTCFullYear());
+  return schedule;
 }
 
-/** The scaled Daily Critical Number on `anchor` -- what the Daily Critical Number card shows. */
+/** The scope's Daily Critical Number on `anchor` -- what the Daily Critical Number card shows. */
 export async function computeDailyCriticalNumber(
   pool: Pool,
   anchor: Date,

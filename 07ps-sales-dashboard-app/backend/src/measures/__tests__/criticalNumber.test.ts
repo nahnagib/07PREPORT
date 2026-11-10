@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'mysql2/promise';
 import {
+  asSqlCondition,
   bucketPaceDays,
   computeDailyCriticalNumber,
+  computeTargetShare,
   computeDailyCriticalNumberSchedule,
   computeMissingSummary,
   type PaceDay,
@@ -12,7 +14,7 @@ import {
   computeYearlyCounter,
   computeMonthlyCounter,
 } from '../criticalNumber';
-import { dateOnlyUTC } from '../filters';
+import { dateOnlyUTC, type Filters } from '../filters';
 
 /**
  * Covers the highest-risk new logic from the 2026-09 admin-panel revision pass:
@@ -123,87 +125,157 @@ describe('forced_closures -- multi-day duration expansion', () => {
 });
 
 /**
- * Regression coverage for the Critical Number page crash: applying a Company or Customer Group
- * filter used to 500 the entire page because sumCompanyPct/sumSegmentPct's query against
- * admin_company/admin_customer_group.critical_number_pct threw (the column didn't exist on the
- * connected DB yet -- migration 0021_critical_number_allocation.sql shipped in code before it was
- * applied to the warehouse) and nothing caught it. These tests pin: (a) the scaling math itself,
- * and (b) that a failing percentage lookup degrades to unscaled (100%) instead of throwing, since
- * every widget on the page shares this one computation (routes/criticalNumber.ts's /overview).
+ * Daily Critical Number(scope, D) = base(D) x share(scope, year of D), share = the scope's part of that year's revenue
+ * target in v_sales_targets (Input/sales_targets.xlsx), 2026-11-09. The mock answers the one v_sales_targets query with
+ * per-year { scoped, total } rows and records its SQL and parameters, so each test pins both the clause the filters
+ * produce and the arithmetic. 2026 figures from the real file: total 169,164,533; Tika + B2B 73,430,891 (43.408%).
  */
-function makePctMockPool(opts: {
-  companyRows?: { pct: number }[];
-  segmentRows?: { pct: number }[];
-  throwOnCompany?: boolean;
-  throwOnSegment?: boolean;
-}): Pool {
-  const query = vi.fn(async (sql: string) => {
-    if (sql.includes('FROM critical_number_history')) return [SEED_HISTORY];
-    if (sql.includes('FROM admin_company')) {
-      if (opts.throwOnCompany) throw Object.assign(new Error("Unknown column 'critical_number_pct' in 'field list'"), { code: 'ER_BAD_FIELD_ERROR' });
-      return [opts.companyRows ?? []];
+const BASE = 556_462.28;
+const TOTAL_2026 = 169_164_533;
+type TargetRow = { year: number; scoped: number; total: number };
+
+function makeTargetsPool(targets: TargetRow[] | 'throw', history = [{ id: 1, valueLyd: BASE, effectiveFrom: '2026-01-01' }]) {
+  const calls: { sql: string; params: unknown[] }[] = [];
+  const newestFirst = [...history].reverse().map((r) => ({ ...r, createdBy: null, createdAt: new Date(), note: null }));
+  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
+    if (sql.includes('FROM critical_number_history')) return [newestFirst];
+    if (sql.includes('FROM v_sales_targets')) {
+      calls.push({ sql, params });
+      if (targets === 'throw') throw Object.assign(new Error("Table 'powerBI_Data.v_sales_targets' doesn't exist"), { code: 'ER_NO_SUCH_TABLE' });
+      return [targets];
     }
-    if (sql.includes('FROM admin_customer_group')) {
-      if (opts.throwOnSegment) throw Object.assign(new Error("Unknown column 'critical_number_pct' in 'field list'"), { code: 'ER_BAD_FIELD_ERROR' });
-      return [opts.segmentRows ?? []];
-    }
+    if (sql.includes('FROM official_holidays')) return [[]];
+    if (sql.includes('FROM v_sales_lines')) return [sql.includes('GROUP BY') ? [] : [{ value: 0, volume: 0 }]];
     throw new Error(`Unexpected SQL in test mock: ${sql.slice(0, 120)}`);
   });
-  return { query } as unknown as Pool;
+  return { pool: { query } as unknown as Pool, calls };
 }
 
-const DAILY_CRITICAL_NUMBER = 560_000;
-const SEED_HISTORY = [{ id: 1, valueLyd: DAILY_CRITICAL_NUMBER, effectiveFrom: '2026-01-01', createdBy: null, createdAt: new Date(), note: null }];
+/** The condition inside SUM(CASE WHEN ... THEN): what the filters select. */
+function scopedCondition(sql: string): string {
+  const m = /SUM\(CASE WHEN ([\s\S]*?) THEN t\.Target_Revenue ELSE 0 END\) AS scoped/.exec(sql);
+  if (!m) throw new Error(`no scoped CASE WHEN in: ${sql}`);
+  return m[1];
+}
 
-describe('computeDailyCriticalNumber -- Company/Customer Group percentage scaling', () => {
+const D = dateOnlyUTC(2026, 11, 9);
+
+describe('Daily Critical Number share from sales_targets.xlsx', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('no Company or Customer Group filter leaves the base figure unscaled', async () => {
-    const pool = makePctMockPool({});
-    const result = await computeDailyCriticalNumber(pool, dateOnlyUTC(2026, 3, 10), {}, new Map());
-    expect(result).toBe(DAILY_CRITICAL_NUMBER);
+  it('no filter: CASE WHEN 1=1, no parameters, share = 1, the base unchanged', async () => {
+    const { pool, calls } = makeTargetsPool([{ year: 2026, scoped: TOTAL_2026, total: TOTAL_2026 }]);
+    const schedule = await computeDailyCriticalNumberSchedule(pool, {});
+    expect(scopedCondition(calls[0].sql)).toBe('1=1');
+    expect(calls[0].params).toEqual([]);
+    expect(calls[0].sql).not.toMatch(/\bWHERE\b/); // the denominator has no filter
+    expect(schedule.shareFor(D)).toEqual({ share: 1, shareYear: 2026, shareSource: 'current' });
+    expect(schedule(D)).toBe(BASE);
+    await expect(computeTargetShare(pool, {}, 2026)).resolves.toEqual({ share: 1, shareYear: 2026, shareSource: 'current' });
   });
 
-  it('a Company filter alone scales by that company\'s pct (Majaal 47.44%)', async () => {
-    const pool = makePctMockPool({ companyRows: [{ pct: 47.44 }] });
-    const result = await computeDailyCriticalNumber(pool, dateOnlyUTC(2026, 3, 10), { companyKeys: [1] }, new Map());
-    expect(result).toBeCloseTo(DAILY_CRITICAL_NUMBER * 0.4744, 6);
+  it('asSqlCondition: an empty clause is 1=1, a leading WHERE / AND is dropped', () => {
+    expect(asSqlCondition('')).toBe('1=1');
+    expect(asSqlCondition('  ')).toBe('1=1');
+    expect(asSqlCondition('1=1')).toBe('1=1');
+    expect(asSqlCondition('WHERE t.CompanyKey IN (?)')).toBe('t.CompanyKey IN (?)');
+    expect(asSqlCondition(' and t.CompanyKey IN (?)')).toBe('t.CompanyKey IN (?)');
   });
 
-  it('a Customer Group filter alone scales by that group\'s pct (B2B 62.88%)', async () => {
-    const pool = makePctMockPool({ segmentRows: [{ pct: 62.88 }] });
-    const result = await computeDailyCriticalNumber(pool, dateOnlyUTC(2026, 3, 10), { segmentKeys: [1] }, new Map());
-    expect(result).toBeCloseTo(DAILY_CRITICAL_NUMBER * 0.6288, 6);
+  it.each([
+    ['Company', { companyKeys: [3] }, /^t\.CompanyKey IN \(\?\)$/, [3]],
+    ['Customer Group (override-aware)', { segmentKeys: [1] }, /segment_key_override[\s\S]*t\.SegmentKey[\s\S]*IN \(\?\)$/, [1]],
+    ['Distribution Channel (override-aware)', { channelKeys: [2] }, /channel_key_override[\s\S]*t\.ChannelKey[\s\S]*IN \(\?\)$/, [2]],
+    ['Branch (override-aware)', { salesTeamKeys: ['TK-EST-BB'] }, /sales_team_key_override[\s\S]*t\.SalesTeamKey[\s\S]*IN \(\?\)$/, ['TK-EST-BB']],
+    ['Salesperson', { salespersonKeys: [37] }, /^t\.SalespersonKey IN \(\?\)$/, [37]],
+  ] as const)('%s filter: one condition on the targets, share = scoped / total', async (_label, filters, condition, params) => {
+    const scoped = 38_039_885;
+    const { pool, calls } = makeTargetsPool([{ year: 2026, scoped, total: TOTAL_2026 }]);
+    const schedule = await computeDailyCriticalNumberSchedule(pool, filters as unknown as Filters);
+    expect(scopedCondition(calls[0].sql)).toMatch(condition);
+    expect(calls[0].params).toEqual(params);
+    expect(schedule(D)).toBeCloseTo(BASE * (scoped / TOTAL_2026), 6);
   });
 
-  it('Company + Customer Group filters cascade (multiply), not add', async () => {
-    const pool = makePctMockPool({ companyRows: [{ pct: 47.44 }], segmentRows: [{ pct: 62.88 }] });
-    const result = await computeDailyCriticalNumber(
-      pool,
-      dateOnlyUTC(2026, 3, 10),
-      { companyKeys: [1], segmentKeys: [1] },
-      new Map(),
-    );
-    expect(result).toBeCloseTo(DAILY_CRITICAL_NUMBER * 0.4744 * 0.6288, 6);
+  it('a Customer filter is ignored: targets have no customer', async () => {
+    const { pool, calls } = makeTargetsPool([{ year: 2026, scoped: TOTAL_2026, total: TOTAL_2026 }]);
+    await computeDailyCriticalNumberSchedule(pool, { customerKeys: [42] });
+    expect(scopedCondition(calls[0].sql)).toBe('1=1');
+    expect(calls[0].params).toEqual([]);
   });
 
-  it('a selected group with no percentage-config row (e.g. Backoffice/Inter Company) contributes 0, not an error', async () => {
-    // Backoffice/Inter Company aren't seeded by migration 0021 -- the query legitimately returns no
-    // rows for their etl_segment_key, which is the designed "default 0% until an admin sets a real
-    // percentage" behavior, not a failure.
-    const pool = makePctMockPool({ segmentRows: [] });
-    const result = await computeDailyCriticalNumber(pool, dateOnlyUTC(2026, 3, 10), { segmentKeys: [3] }, new Map());
-    expect(result).toBe(0);
+  it('Company x Customer Group is one joint share from the targets, not the product of two shares (Tika + B2B = 0.43408)', async () => {
+    const { pool, calls } = makeTargetsPool([{ year: 2026, scoped: 73_430_891, total: TOTAL_2026 }]);
+    const share = await computeTargetShare(pool, { companyKeys: [3], segmentKeys: [1] }, 2026);
+    const cond = scopedCondition(calls[0].sql);
+    expect(cond).toMatch(/^t\.CompanyKey IN \(\?\) AND [\s\S]*segment_key_override[\s\S]*IN \(\?\)$/);
+    expect(calls[0].params).toEqual([3, 1]);
+    expect(calls).toHaveLength(1);
+    expect(share.share).toBeCloseTo(0.43408, 5);
+    expect(share.share).not.toBeCloseTo(0.52622 * 0.62961, 3);
   });
 
-  it('a failing percentage lookup (e.g. critical_number_pct column missing) degrades to unscaled instead of throwing', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const pool = makePctMockPool({ throwOnCompany: true, throwOnSegment: true });
-    await expect(
-      computeDailyCriticalNumber(pool, dateOnlyUTC(2026, 3, 10), { companyKeys: [1], segmentKeys: [1] }, new Map()),
-    ).resolves.toBe(DAILY_CRITICAL_NUMBER);
+  it('multi-select sums the selected members (IN with one parameter each)', async () => {
+    const { pool, calls } = makeTargetsPool([{ year: 2026, scoped: 80_000_000, total: TOTAL_2026 }]);
+    const schedule = await computeDailyCriticalNumberSchedule(pool, { salespersonKeys: [37, 19, 1] });
+    expect(scopedCondition(calls[0].sql)).toBe('t.SalespersonKey IN (?, ?, ?)');
+    expect(calls[0].params).toEqual([37, 19, 1]);
+    expect(schedule(D)).toBeCloseTo(BASE * (80_000_000 / TOTAL_2026), 6);
+  });
+
+  it('a person whose target is 0 gets 0 -- not the full base', async () => {
+    const { pool } = makeTargetsPool([{ year: 2026, scoped: 0, total: TOTAL_2026 }]);
+    const schedule = await computeDailyCriticalNumberSchedule(pool, { salespersonKeys: [32] });
+    expect(schedule(D)).toBe(0);
+    expect(schedule.shareFor(D)).toEqual({ share: 0, shareYear: 2026, shareSource: 'current' });
+  });
+
+  it('a year with no targets (or a total of 0) uses the latest earlier year that has them, with a warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { pool } = makeTargetsPool([
+      { year: 2024, scoped: 10, total: 100 },
+      { year: 2025, scoped: 25, total: 100 },
+      { year: 2027, scoped: 0, total: 0 },
+    ]);
+    const schedule = await computeDailyCriticalNumberSchedule(pool, { companyKeys: [1] });
+    expect(schedule.shareFor(D)).toEqual({ share: 0.25, shareYear: 2025, shareSource: 'fallback' });
+    expect(schedule(D)).toBeCloseTo(BASE * 0.25, 6);
+    expect(schedule.shareFor(dateOnlyUTC(2027, 3, 1))).toEqual({ share: 0.25, shareYear: 2025, shareSource: 'fallback' });
+    expect(schedule.shareFor(dateOnlyUTC(2025, 3, 1)).shareSource).toBe('current');
+    expect(warn).toHaveBeenCalledTimes(2); // once per fallback year, not once per day
+    expect(String(warn.mock.calls[0][0])).toContain('no targets for 2026');
+  });
+
+  it('no targets in any year up to the date: factor 1, flagged missing', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { pool } = makeTargetsPool([{ year: 2027, scoped: 10, total: 100 }]);
+    const schedule = await computeDailyCriticalNumberSchedule(pool, { companyKeys: [1] });
+    expect(schedule(D)).toBe(BASE);
+    expect(schedule.shareFor(D)).toEqual({ share: 1, shareYear: null, shareSource: 'missing' });
+  });
+
+  it('a failing targets query keeps the page up: logged, factor 1, flagged error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { pool } = makeTargetsPool('throw');
+    const schedule = await computeDailyCriticalNumberSchedule(pool, { companyKeys: [1], segmentKeys: [1] });
+    expect(schedule(D)).toBe(BASE);
+    expect(schedule.shareFor(D)).toEqual({ share: 1, shareYear: null, shareSource: 'error' });
+    expect(error).toHaveBeenCalledTimes(1);
+    await expect(computeDailyCriticalNumber(pool, D, { companyKeys: [1] }, new Map())).resolves.toBe(BASE);
+    await expect(computeTargetShare(pool, { companyKeys: [1] }, 2026)).rejects.toThrow(/v_sales_targets/);
+  });
+
+  it('a YTD / full-year walk queries the targets once, not once per day', async () => {
+    const { pool, calls } = makeTargetsPool([{ year: 2026, scoped: 50, total: 100 }]);
+    const schedule = await computeDailyCriticalNumberSchedule(pool, { companyKeys: [1] });
+    const yearly = await computeYearlyCounter(pool, D, { companyKeys: [1] }, new Map(), schedule);
+    await computeMonthlyCounter(pool, D, { companyKeys: [1] }, new Map(), schedule);
+    await computeMissingSummary(pool, D, { companyKeys: [1] }, new Map(), schedule, null);
+    expect(calls).toHaveLength(1);
+    // 2026: 313 working days, every one at base x 0.5
+    expect(yearly.periodTarget).toBeCloseTo(313 * BASE * 0.5, 4);
   });
 });
 
@@ -301,14 +373,14 @@ describe('bucketPaceDays', () => {
 // Dated Daily Critical Number (critical_number_history, 2026-10-21)
 // ---------------------------------------------------------------------------
 
-/** No holidays, no shares, the given history; every period sales query returns `value`, the daily query nothing. */
+/** No holidays, no filters (share 1), the given history; every period sales query returns `value`, the daily query nothing. */
 function makeHistoryMockPool(history: { id: number; valueLyd: number; effectiveFrom: string }[], value = 0): Pool {
   const newestFirst = [...history]
     .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom) || b.id - a.id)
     .map((r) => ({ ...r, createdBy: null, createdAt: new Date(), note: null }));
   const query = vi.fn(async (sql: string) => {
     if (sql.includes('FROM critical_number_history')) return [newestFirst];
-    if (sql.includes('FROM admin_company') || sql.includes('FROM admin_customer_group')) return [[]];
+    if (sql.includes('FROM v_sales_targets')) return [[{ year: 2026, scoped: 100, total: 100 }]];
     if (sql.includes('FROM official_holidays')) return [[]];
     if (sql.includes('FROM v_sales_lines')) return [sql.includes('GROUP BY') ? [] : [{ value, volume: 0 }]];
     throw new Error(`Unexpected SQL in test mock: ${sql.slice(0, 120)}`);
@@ -354,14 +426,14 @@ describe('dated Daily Critical Number', () => {
     expect(jan.periodTarget).toBe(12 * 560_000 + 14 * 600_000);
   });
 
-  it("Company / Customer Group shares scale every day's own base value", async () => {
+  it("the scope's target share scales every day's own base value", async () => {
     const newestFirst = [
       { id: 2, valueLyd: 600_000, effectiveFrom: '2026-06-01' },
       { ...seed },
     ].map((r) => ({ ...r, createdBy: null, createdAt: new Date(), note: null }));
     const query = vi.fn(async (sql: string) => {
       if (sql.includes('FROM critical_number_history')) return [newestFirst];
-      if (sql.includes('FROM admin_company')) return [[{ pct: 50 }]];
+      if (sql.includes('FROM v_sales_targets')) return [[{ year: 2026, scoped: 50, total: 100 }]];
       throw new Error(`Unexpected SQL in test mock: ${sql.slice(0, 120)}`);
     });
     const schedule = await computeDailyCriticalNumberSchedule({ query } as unknown as Pool, { companyKeys: [1] });

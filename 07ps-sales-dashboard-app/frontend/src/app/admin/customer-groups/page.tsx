@@ -16,8 +16,8 @@ const SCOPE_NOTE =
   'Controls the Customer Group filter dropdown on report pages. Does not change how any report ' +
   'measure computes or groups data -- that still comes from the live ETL segment. A group with ' +
   "no ETL link below won't appear as a report filter option, since there's no live data for it to filter. " +
-  "The Critical Number % column sets each group's share of the Daily Critical Number when it's the only " +
-  'Customer Group filter selected (Admin Panel > Customer Groups) -- see Critical Number page.';
+  "The share column is read-only: each group's part of this year's revenue target in sales_targets.xlsx, the " +
+  'share of the Daily Critical Number the Critical Number page gives it. Edit the targets file to change it.';
 
 const selectStyle: React.CSSProperties = {
   width: '100%',
@@ -113,7 +113,7 @@ function CustomerGroupsPageBody() {
     { key: 'definition', header: 'Definition', render: (r) => r.definition ?? '—' },
     { key: 'etl_segment_name', header: 'ETL Relation', render: (r) => (r.etl_segment_key !== null ? `${r.etl_segment_name} (ETL)` : '—') },
     { key: 'display_order', header: 'Order', align: 'right' },
-    { key: 'critical_number_pct', header: 'Critical Number %', align: 'right', render: (r) => `${r.critical_number_pct.toFixed(2)}%` },
+    { key: 'target_share_pct', header: 'Share of FY target (from sales_targets.xlsx)', align: 'right', render: (r) => formatTargetShare(r.target_share_pct) },
     { key: 'is_active', header: 'Status', render: (r) => (r.is_active ? 'Active' : 'Inactive') },
     {
       key: 'customer_group_id',
@@ -145,24 +145,11 @@ function CustomerGroupsPageBody() {
 
   const editingRow = rows.find((r) => r.customer_group_id === editingId) ?? null;
 
-  const activePctTotal = rows.filter((r) => r.is_active).reduce((sum, r) => sum + r.critical_number_pct, 0);
-  const pctTotalOffBy100 = Math.abs(activePctTotal - 100) > 0.01;
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
       <div style={{ padding: 12, borderRadius: 8, background: 'var(--ps-color-watch-bg, var(--ps-color-surface))', border: '1px solid var(--ps-color-watch-border, var(--ps-color-border))', fontSize: 13 }}>
         {SCOPE_NOTE}
       </div>
-
-      {!loading && !error && pctTotalOffBy100 && (
-        <div
-          role="alert"
-          style={{ padding: 12, borderRadius: 8, background: 'var(--ps-color-alert-bg, var(--ps-color-surface))', border: '1px solid var(--ps-color-alert)', fontSize: 13, color: 'var(--ps-color-alert)' }}
-        >
-          Active customer groups&apos; Critical Number % sums to {activePctTotal.toFixed(2)}%, not 100%. This is allowed, but
-          filtering by every active customer group won&apos;t reproduce the full base Daily Critical Number until it&apos;s corrected.
-        </div>
-      )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -223,7 +210,6 @@ function CreatePanel({ etlOptions, onCreated }: { etlOptions: { segment_key: num
   const [definition, setDefinition] = useState('');
   const [etlSegmentKey, setEtlSegmentKey] = useState('');
   const [displayOrder, setDisplayOrder] = useState('0');
-  const [criticalNumberPct, setCriticalNumberPct] = useState('0');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -238,7 +224,6 @@ function CreatePanel({ etlOptions, onCreated }: { etlOptions: { segment_key: num
         definition: definition === '' ? null : definition,
         etlSegmentKey: etlSegmentKey === '' ? null : Number(etlSegmentKey),
         displayOrder: displayOrder === '' ? 0 : Number(displayOrder),
-        criticalNumberPct: criticalNumberPct === '' ? 0 : Number(criticalNumberPct),
       });
       onCreated();
     } catch (err) {
@@ -266,16 +251,6 @@ function CreatePanel({ etlOptions, onCreated }: { etlOptions: { segment_key: num
           </select>
         </div>
         <TextInput label="Display Order" type="number" value={displayOrder} onChange={(e) => setDisplayOrder(e.target.value)} disabled={submitting} />
-        <TextInput
-          label="Critical Number %"
-          type="number"
-          min={0}
-          max={100}
-          step="0.01"
-          value={criticalNumberPct}
-          onChange={(e) => setCriticalNumberPct(e.target.value)}
-          disabled={submitting}
-        />
         <div style={{ display: 'flex', alignItems: 'flex-end' }}>
           <Button type="submit" disabled={submitting}>
             {submitting ? 'Creating...' : 'Create'}
@@ -303,7 +278,6 @@ function EditPanel({
   const [definition, setDefinition] = useState(row.definition ?? '');
   const [etlSegmentKey, setEtlSegmentKey] = useState<string>(row.etl_segment_key === null ? '' : String(row.etl_segment_key));
   const [displayOrder, setDisplayOrder] = useState(String(row.display_order));
-  const [criticalNumberPct, setCriticalNumberPct] = useState(String(row.critical_number_pct));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -321,7 +295,6 @@ function EditPanel({
         definition: definition === '' ? null : definition,
         etlSegmentKey: etlSegmentKey === '' ? null : Number(etlSegmentKey),
         displayOrder: Number(displayOrder),
-        criticalNumberPct: criticalNumberPct === '' ? 0 : Number(criticalNumberPct),
       });
       onSaved();
     } catch (err) {
@@ -349,16 +322,7 @@ function EditPanel({
           </select>
         </div>
         <TextInput label="Display Order" type="number" value={displayOrder} onChange={(e) => setDisplayOrder(e.target.value)} disabled={submitting} />
-        <TextInput
-          label="Critical Number %"
-          type="number"
-          min={0}
-          max={100}
-          step="0.01"
-          value={criticalNumberPct}
-          onChange={(e) => setCriticalNumberPct(e.target.value)}
-          disabled={submitting}
-        />
+        <TextInput label="Share of FY target (from sales_targets.xlsx)" value={formatTargetShare(row.target_share_pct)} readOnly disabled />
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
         <Button onClick={handleSave} disabled={submitting}>
@@ -371,4 +335,10 @@ function EditPanel({
       {error && <p style={{ fontSize: 13, color: 'var(--ps-color-alert)', marginTop: 8 }}>{error}</p>}
     </Card>
   );
+}
+
+/** Read-only share of the current year's revenue target in sales_targets.xlsx (backend computeTargetShare): the
+ * Critical Number split. '—' = no ETL link, or no targets. */
+function formatTargetShare(pct: number | null): string {
+  return pct === null ? '—' : `${pct.toFixed(2)}%`;
 }

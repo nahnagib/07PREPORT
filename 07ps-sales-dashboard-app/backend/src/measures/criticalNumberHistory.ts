@@ -6,7 +6,9 @@
  *   value on day D = the row with the latest effective_from <= D; several rows on one date -> the newest (highest id);
  *   a day before the earliest row -> the earliest row (the seed carries the old LYD 560,000 constant).
  *
- * This is the base, company-wide value. measures/criticalNumber.ts scales it by the Company / Customer Group shares.
+ * This is the base, group-wide value. measures/criticalNumber.ts gives every scope (company, customer group, branch,
+ * salesperson, channel, any combination) its share of it: the scope's part of that year's revenue target in
+ * Input/sales_targets.xlsx (computeTargetShare; docs/critical-number-split.md). The base itself never depends on it.
  * Read fresh on every request (one tiny table, no cache), so an admin change shows on the very next page load.
  */
 

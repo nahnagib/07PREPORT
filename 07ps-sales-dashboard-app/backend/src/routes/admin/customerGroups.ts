@@ -43,16 +43,17 @@ adminCustomerGroupsRouter.get('/', async (req, res, next) => {
   }
 });
 
+// criticalNumberPct in the body (older clients) is ignored since 2026-11-09: the Critical Number split comes from
+// sales_targets.xlsx (rows carry a read-only target_share_pct).
 adminCustomerGroupsRouter.post('/', requirePermission('admin_customer_groups', 'create'), async (req, res, next) => {
   try {
-    const { name, definition, etlSegmentKey, displayOrder, criticalNumberPct } = req.body ?? {};
+    const { name, definition, etlSegmentKey, displayOrder } = req.body ?? {};
     const row = await createCustomerGroup(
       {
         name,
         definition: definition === undefined ? undefined : definition,
         etlSegmentKey: etlSegmentKey === undefined || etlSegmentKey === null ? null : Number(etlSegmentKey),
         displayOrder: displayOrder === undefined ? undefined : Number(displayOrder),
-        criticalNumberPct: criticalNumberPct === undefined ? undefined : Number(criticalNumberPct),
       },
       req.user!.id,
     );
@@ -81,7 +82,7 @@ adminCustomerGroupsRouter.get('/:id', async (req, res, next) => {
 
 adminCustomerGroupsRouter.patch('/:id', requirePermission('admin_customer_groups', 'edit'), async (req, res, next) => {
   try {
-    const { name, definition, etlSegmentKey, displayOrder, criticalNumberPct, isActive } = req.body ?? {};
+    const { name, definition, etlSegmentKey, displayOrder, isActive } = req.body ?? {};
     const row = await updateCustomerGroup(
       Number(req.params.id),
       {
@@ -89,7 +90,6 @@ adminCustomerGroupsRouter.patch('/:id', requirePermission('admin_customer_groups
         definition: definition === undefined ? undefined : definition,
         etlSegmentKey: etlSegmentKey === undefined ? undefined : etlSegmentKey === null ? null : Number(etlSegmentKey),
         displayOrder: displayOrder === undefined ? undefined : Number(displayOrder),
-        criticalNumberPct: criticalNumberPct === undefined ? undefined : Number(criticalNumberPct),
         isActive: isActive === undefined ? undefined : Boolean(isActive),
       },
       req.user!.id,

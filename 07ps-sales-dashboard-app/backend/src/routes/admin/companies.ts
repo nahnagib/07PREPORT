@@ -43,16 +43,17 @@ adminCompaniesRouter.get('/', async (req, res, next) => {
   }
 });
 
+// criticalNumberPct in the body (older clients) is ignored since 2026-11-09: the Critical Number split comes from
+// sales_targets.xlsx (rows carry a read-only target_share_pct).
 adminCompaniesRouter.post('/', requirePermission('admin_companies', 'create'), async (req, res, next) => {
   try {
-    const { name, definition, etlCompanyKey, displayOrder, criticalNumberPct } = req.body ?? {};
+    const { name, definition, etlCompanyKey, displayOrder } = req.body ?? {};
     const row = await createCompany(
       {
         name,
         definition: definition === undefined ? undefined : definition,
         etlCompanyKey: etlCompanyKey === undefined || etlCompanyKey === null ? null : Number(etlCompanyKey),
         displayOrder: displayOrder === undefined ? undefined : Number(displayOrder),
-        criticalNumberPct: criticalNumberPct === undefined ? undefined : Number(criticalNumberPct),
       },
       req.user!.id,
     );
@@ -81,7 +82,7 @@ adminCompaniesRouter.get('/:id', async (req, res, next) => {
 
 adminCompaniesRouter.patch('/:id', requirePermission('admin_companies', 'edit'), async (req, res, next) => {
   try {
-    const { name, definition, etlCompanyKey, displayOrder, criticalNumberPct, isActive } = req.body ?? {};
+    const { name, definition, etlCompanyKey, displayOrder, isActive } = req.body ?? {};
     const row = await updateCompany(
       Number(req.params.id),
       {
@@ -89,7 +90,6 @@ adminCompaniesRouter.patch('/:id', requirePermission('admin_companies', 'edit'),
         definition: definition === undefined ? undefined : definition,
         etlCompanyKey: etlCompanyKey === undefined ? undefined : etlCompanyKey === null ? null : Number(etlCompanyKey),
         displayOrder: displayOrder === undefined ? undefined : Number(displayOrder),
-        criticalNumberPct: criticalNumberPct === undefined ? undefined : Number(criticalNumberPct),
         isActive: isActive === undefined ? undefined : Boolean(isActive),
       },
       req.user!.id,

@@ -1,5 +1,6 @@
 import { pool } from '../db/pool';
 import { ValidationError } from '../lib/errors';
+import { targetSharePct } from './targetShareAdmin';
 
 /**
  * Admin-controlled reference data for Company -- same overlay pattern as
@@ -22,11 +23,13 @@ export interface CompanyRow {
   etl_company_key: number | null;
   etl_company_name: string | null;
   display_order: number;
-  /** Share of the Daily Critical Number this company contributes when it's the only Company filter
-   * selected (0-100) -- see data/warehouse/migrations/0021_critical_number_allocation.sql and
-   * criticalNumber.ts's computeDailyCriticalNumber. Defaults to 0 for a newly created company until
-   * an admin sets a real value. */
+  /** Retired 2026-11-09 (data/warehouse/migrations/0021_critical_number_allocation.sql): no longer read or written by
+   * the app, still returned so older clients keep working. The Critical Number split comes from target_share_pct. */
   critical_number_pct: number;
+  /** Read-only: this company's share (0-100) of the current year's revenue target in Input/sales_targets.xlsx -- the
+   * share the Critical Number page uses (measures/criticalNumber.ts computeTargetShare). null = not linked to an ETL
+   * key, or no targets / the query failed. */
+  target_share_pct: number | null;
   is_active: boolean;
   created_at: string;
   created_by_email: string | null;
@@ -46,14 +49,9 @@ const BASE_SELECT = `
   LEFT JOIN app_user uu ON uu.user_id = co.updated_by
 `;
 
-function withBool(row: CompanyRow): CompanyRow {
-  return { ...row, is_active: Boolean(row.is_active), critical_number_pct: Number(row.critical_number_pct), usage_count: 0 };
-}
-
-function validatePct(pct: number): void {
-  if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
-    throw new ValidationError('Critical Number percentage must be a number between 0 and 100.');
-  }
+async function toApiRow(row: CompanyRow): Promise<CompanyRow> {
+  const target_share_pct = await targetSharePct(row.etl_company_key === null ? null : { companyKeys: [Number(row.etl_company_key)] });
+  return { ...row, is_active: Boolean(row.is_active), critical_number_pct: Number(row.critical_number_pct), usage_count: 0, target_share_pct };
 }
 
 export interface ListCompaniesFilters {
@@ -84,13 +82,13 @@ export async function listCompanies(filters: ListCompaniesFilters): Promise<{ ro
     `${BASE_SELECT} ${where} ORDER BY co.display_order, co.name LIMIT ? OFFSET ?`,
     [...params, filters.pageSize, offset],
   );
-  return { rows: (rows as CompanyRow[]).map(withBool), total };
+  return { rows: await Promise.all((rows as CompanyRow[]).map(toApiRow)), total };
 }
 
 export async function getCompanyById(id: number): Promise<CompanyRow | null> {
   const [rows] = await pool.query(`${BASE_SELECT} WHERE co.company_id = ?`, [id]);
   const row = (rows as CompanyRow[])[0];
-  return row ? withBool(row) : null;
+  return row ? await toApiRow(row) : null;
 }
 
 async function nameTakenByAnother(name: string, excludeId?: number): Promise<boolean> {
@@ -127,7 +125,6 @@ export interface CreateCompanyInput {
   definition?: string | null;
   etlCompanyKey?: number | null;
   displayOrder?: number;
-  criticalNumberPct?: number;
 }
 
 export async function createCompany(input: CreateCompanyInput, actorUserId: number): Promise<CompanyRow> {
@@ -148,8 +145,7 @@ export async function createCompany(input: CreateCompanyInput, actorUserId: numb
   const definition = input.definition ?? null;
   const etlCompanyKey = input.etlCompanyKey ?? null;
   const displayOrder = input.displayOrder ?? 0;
-  const criticalNumberPct = input.criticalNumberPct ?? 0;
-  validatePct(criticalNumberPct);
+  const criticalNumberPct = 0; // retired column (target_share_pct replaces it), kept NOT NULL in the table
 
   const [result] = await pool.query(
     `INSERT INTO admin_company (name, definition, etl_company_key, etl_company_name, display_order, critical_number_pct, created_by, updated_by)
@@ -169,7 +165,6 @@ export interface UpdateCompanyInput {
   definition?: string | null;
   etlCompanyKey?: number | null;
   displayOrder?: number;
-  criticalNumberPct?: number;
   isActive?: boolean;
 }
 
@@ -204,11 +199,7 @@ export async function updateCompany(id: number, input: UpdateCompanyInput, actor
   const definition = input.definition !== undefined ? input.definition : existing.definition;
   const displayOrder = input.displayOrder !== undefined ? input.displayOrder : existing.display_order;
 
-  let criticalNumberPct = existing.critical_number_pct;
-  if (input.criticalNumberPct !== undefined) {
-    validatePct(input.criticalNumberPct);
-    criticalNumberPct = input.criticalNumberPct;
-  }
+  const criticalNumberPct = existing.critical_number_pct; // retired column: never changed any more
 
   let isActive = existing.is_active;
   let action: 'UPDATE' | 'DEACTIVATE' | 'REACTIVATE' = 'UPDATE';
