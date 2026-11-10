@@ -41,3 +41,4 @@ export * from './TextInput';
 export * from './ConfirmDialog';
 export * from './CompactKpiCard';
 export * from './VisualHelp';
+export * from './inProgressSegment';

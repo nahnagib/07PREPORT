@@ -27,8 +27,10 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useActivityMomentumOverview, useRefreshStatus } from '../../../../lib/hooks';
-import type { ActivityOpportunityRow, LostReasonSlice, NewOpportunitiesMonthPoint, OpportunityActivityCounts, ActivityRates } from '../../../../lib/api';
+import { useActivityMomentumOverview, usePeriodTrend, useRefreshStatus } from '../../../../lib/hooks';
+import type { ActivityOpportunityRow, LostReasonSlice, NewOpportunitiesPeriodPoint, NewOpportunitiesTrend, OpportunityActivityCounts, ActivityRates, PeriodGranularity } from '../../../../lib/api';
+import { DEFAULT_GRANULARITY, formatChange, usePeriodWindow, type PeriodWindowView } from '../../../../lib/periods';
+import { PeriodTrendSelector } from '../../../../components/PeriodTrendSelector';
 import { formatCurrency, formatPercent, formatTimestamp, DISPLAY_LOCALE } from '../../../../lib/format';
 import { stageFilterOptions } from '../../../../lib/pipelineStages';
 
@@ -114,15 +116,24 @@ function toReasonTableRows(rows?: LostReasonSlice[]): ReasonTableRow[] {
 
 interface NewOppTableRow extends Record<string, unknown> {
   id: string;
-  month: string;
-  countYtd: number;
+  period: string;
+  count: number;
+  change: string;
 }
-const newOppTableColumns: Column<NewOppTableRow>[] = [
-  { key: 'month', header: 'Month' },
-  { key: 'countYtd', header: '#YTD', align: 'right' },
-];
-function toNewOppTableRows(rows?: NewOpportunitiesMonthPoint[]): NewOppTableRow[] {
-  return (rows ?? []).map((p) => ({ id: p.label, month: p.label, countYtd: p.countYtd }));
+function newOppTableColumns(changeLabel: string): Column<NewOppTableRow>[] {
+  return [
+    { key: 'period', header: 'Period' },
+    { key: 'count', header: 'New opportunities', align: 'right' },
+    { key: 'change', header: `Change ${changeLabel}`, align: 'right' },
+  ];
+}
+function toNewOppTableRows(rows: NewOpportunitiesPeriodPoint[], win: PeriodWindowView): NewOppTableRow[] {
+  return rows.map((p) => ({
+    id: p.start,
+    period: `${win.title(p.start)}${p.inProgress ? ' (in progress)' : ''}`,
+    count: p.count,
+    change: formatChange(p.changePct, win.granularity) ?? '—',
+  }));
 }
 
 /** Resolves each column's formatted string, falling back to the render function -- same convention
@@ -245,6 +256,12 @@ export default function ActivityMomentumPage() {
 
   const filterOptions = useScopedFilterOptions();
   const overview = useActivityMomentumOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
+  // New Opportunities follows the period selector (Weekly on every load); only that chart reloads when it changes.
+  const [granularity, setGranularity] = useState<PeriodGranularity>(DEFAULT_GRANULARITY);
+  const win = usePeriodWindow(granularity);
+  const trend = usePeriodTrend<NewOpportunitiesTrend>(token, 'activity-momentum', anchorDate, effectiveFilters, granularity, authError, retryAuth);
+  const trendData = trend.data?.granularity === granularity ? trend.data : null;
+  const trendLoading = trend.loading || (trend.data !== null && !trendData);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
@@ -279,11 +296,13 @@ export default function ActivityMomentumPage() {
     color: CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
   }));
 
-  const newOpportunitiesPoints = (data?.newOpportunitiesByMonth ?? []).map((p) => ({
-    label: p.label,
-    actual: p.countYtd,
+  const newOppSeries = trendData?.points ?? [];
+  const newOpportunitiesPoints = newOppSeries.map((p) => ({
+    label: win.label(p.start),
+    actual: p.count,
     target: null,
   }));
+  const newOppColumns = newOppTableColumns(win.changeLabel);
 
   const activityFilterOptions = [
     { value: 'active', label: 'Active' },
@@ -300,7 +319,7 @@ export default function ActivityMomentumPage() {
   // including #Won/#Lost) rather than a separate button for the two floating Rate InsightCards.
   const countsAndRatesTableRows = [...toCountsTableRows(data?.counts), ...toRatesTableRows(data?.rates)];
   const reasonTableRows = toReasonTableRows(data?.lostByReason);
-  const newOppTableRows = toNewOppTableRows(data?.newOpportunitiesByMonth);
+  const newOppTableRows = toNewOppTableRows(newOppSeries, win);
 
   return (
     <PermissionGuard pageKey="activity_momentum">
@@ -412,30 +431,36 @@ export default function ActivityMomentumPage() {
                 <ChartPanel<NewOppTableRow> {...vh("promotion.activityMomentum.newOpportunities")}
                   title="New Opportunities"
                   style={{ minHeight: 360 }}
-                  tableColumns={overview.error ? undefined : newOppTableColumns}
-                  tableRows={overview.error ? undefined : newOppTableRows}
+                  tableColumns={trend.error ? undefined : newOppColumns}
+                  tableRows={trend.error ? undefined : newOppTableRows}
                   getRowId={(row) => row.id}
+                  wrapHeader
                   headerActions={
-                    !overview.error && (
-                      <ExportPdfButton
-                        downloading={downloadingPdf === 'newOpp'}
-                        disabled={newOppTableRows.length === 0}
-                        onClick={() => handleDownloadTablePdf('newOpp', 'New Opportunities', newOppTableColumns, newOppTableRows)}
-                      />
-                    )
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <PeriodTrendSelector value={granularity} onChange={setGranularity} label="New Opportunities period" />
+                      {!trend.error && (
+                        <ExportPdfButton
+                          downloading={downloadingPdf === 'newOpp'}
+                          disabled={newOppTableRows.length === 0}
+                          onClick={() => handleDownloadTablePdf('newOpp', `New Opportunities · ${win.name}`, newOppColumns, newOppTableRows)}
+                        />
+                      )}
+                    </div>
                   }
                 >
-                  {overview.loading ? (
+                  {trendLoading ? (
                     <LoadingSkeleton variant="chart" />
-                  ) : overview.error ? (
-                    <ErrorState message={overview.error} onRetry={overview.retry} />
+                  ) : trend.error ? (
+                    <ErrorState message={trend.error} onRetry={trend.retry} />
                   ) : (
                     <TrendChart
                       title="New Opportunities"
                       showTitle={false}
                       points={newOpportunitiesPoints}
-                      actualLabel="YTD"
+                      actualLabel="New opportunities"
                       valueFormatter={(v) => v.toLocaleString(DISPLAY_LOCALE)}
+                      inProgressLabel={win.inProgressLabel(newOppSeries)}
+                      tooltipLabelFormatter={win.tooltipTitle(newOppSeries)}
                     />
                   )}
                 </ChartPanel>

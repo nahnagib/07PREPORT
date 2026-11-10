@@ -28,6 +28,7 @@
 
 import type { Pool } from 'mysql2/promise';
 import { buildWhereClause, dateOnlyUTC, lmtdWindow, lytdWindow, mtdWindow, ytdWindow, type DateWindow, type Filters } from './filters';
+import { anchorToday, byPeriod, changePct, fillPeriods, periodBucketSql, periodRangeSql, periodWindow, type PeriodGranularity } from '../lib/periods';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -161,49 +162,26 @@ export async function computeInvoicesEngineKpis(
 }
 
 // ---------------------------------------------------------------------------
-// Sales Trend (Zone B chart): Invoice Sales Value + # of Invoices by Year, drillable to
-// Year -> Invoice Class, or (when drill-down is off) itself the source of the Year page-filter.
+// Sales Trend (Zone B chart) and Invoices Trend (Zone C chart), per Daily / Weekly / Monthly / Yearly period of the
+// page's period selector (lib/periods.ts: the last 30 days / 12 weeks / 12 months / 5 years, ending with the anchor's
+// period). The Sales Trend drills period -> Invoice Class at every granularity; on Yearly a click is still the Year
+// page-filter (scope.year). Same self-exclusion as before: the Sales Trend ignores scope.year (it produces it), the
+// Invoices Trend honors both scope fields.
 // ---------------------------------------------------------------------------
 
-export interface InvoiceYearPoint {
-  year: number;
-  label: string;
+export interface InvoicePeriodPoint {
+  start: string;
+  end: string;
+  inProgress: boolean;
   invoiceSalesValue: number;
   invoiceCount: number;
+  /** against the previous period of the same granularity */
+  invoiceSalesValueChangePct: number | null;
 }
 
-/** Year-by-year Invoice Sales Value (bars) / # of Invoices (line) -- every year present in the
- * data up through `anchor`'s year, not just the current year, so the chart shows real history.
- *
- * Deliberately ignores `scope.year`: this chart is what *produces* the Year page-filter, so it
- * always keeps showing the full multi-year series (the frontend highlights/dims the selected
- * year's bar itself instead) -- only `scope.invoiceClass` (someone else's selection) narrows it. */
-export async function fetchSalesTrendByYear(
-  pool: Pool,
-  anchor: Date,
-  filters: Filters,
-  scope: InvoicesEngineScope = {},
-): Promise<InvoiceYearPoint[]> {
-  const { clause, params } = buildWhereClause(filters, 'fsl', true);
-  const cls = buildInvoiceClassSqlClause(scope.invoiceClass, 'fsl');
-  const sql = `
-    SELECT
-      dd.Year                              AS year,
-      COALESCE(SUM(fsl.Value), 0)          AS invoiceSalesValue,
-      COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount
-    FROM v_sales_lines fsl
-    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
-    WHERE dd.Date <= ? AND ${clause} AND ${cls.clause}
-    GROUP BY dd.Year
-    ORDER BY dd.Year
-  `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(anchor), ...params, ...cls.params]);
-  return (rows as any[]).map((r) => ({
-    year: Number(r.year),
-    label: String(r.year),
-    invoiceSalesValue: Number(r.invoiceSalesValue),
-    invoiceCount: Number(r.invoiceCount),
-  }));
+export interface InvoicePeriodClassBreakdown {
+  start: string;
+  classes: InvoiceYearClassSlice[];
 }
 
 export interface InvoiceYearClassSlice {
@@ -212,134 +190,135 @@ export interface InvoiceYearClassSlice {
   invoiceCount: number;
 }
 
-export interface InvoiceYearClassBreakdown {
-  year: number;
-  label: string;
-  classes: InvoiceYearClassSlice[];
-}
-
-const INVOICE_CLASS_ORDER = ['A', 'B', 'C', 'D'];
-
-/** Same Sales Trend figures, broken down by Invoice Class within each year -- backs the Sales
- * Trend chart's Year -> Invoice Class drill-down. Computed alongside the by-year series (not
- * behind a separate lazy-loaded endpoint) since the data volume is small (a handful of years x 4
- * classes) and it keeps the drill-down instant with no extra round trip.
- *
- * Same self-exclusion as fetchSalesTrendByYear: ignores `scope.year` (this chart produces that
- * filter), honors `scope.invoiceClass`. */
-export async function fetchSalesTrendByYearClass(
-  pool: Pool,
-  anchor: Date,
-  filters: Filters,
-  scope: InvoicesEngineScope = {},
-): Promise<InvoiceYearClassBreakdown[]> {
-  const { clause, params } = buildWhereClause(filters, 'fsl', true);
-  const cls = buildInvoiceClassSqlClause(scope.invoiceClass, 'fsl');
-  const sql = `
-    SELECT
-      dd.Year                              AS year,
-      fsl.\`Invoice Class\`                AS invoiceClass,
-      COALESCE(SUM(fsl.Value), 0)          AS invoiceSalesValue,
-      COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount
-    FROM v_sales_lines fsl
-    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
-    WHERE dd.Date <= ? AND ${clause} AND ${cls.clause}
-    GROUP BY dd.Year, fsl.\`Invoice Class\`
-  `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(anchor), ...params, ...cls.params]);
-
-  const byYear = new Map<number, InvoiceYearClassBreakdown>();
-  for (const r of rows as any[]) {
-    const year = Number(r.year);
-    const invoiceClass = normalizeInvoiceClass(r.invoiceClass);
-    let entry = byYear.get(year);
-    if (!entry) {
-      entry = { year, label: String(year), classes: [] };
-      byYear.set(year, entry);
-    }
-    // Merge rather than push -- the source GROUP BY is on the raw (unnormalized) column, so two
-    // distinct raw values could in principle normalize to the same class within one year.
-    const existing = entry.classes.find((c) => c.invoiceClass === invoiceClass);
-    if (existing) {
-      existing.invoiceSalesValue += Number(r.invoiceSalesValue);
-      existing.invoiceCount += Number(r.invoiceCount);
-    } else {
-      entry.classes.push({
-        invoiceClass,
-        invoiceSalesValue: Number(r.invoiceSalesValue),
-        invoiceCount: Number(r.invoiceCount),
-      });
-    }
-  }
-
-  return Array.from(byYear.values())
-    .sort((a, b) => a.year - b.year)
-    .map((entry) => ({
-      ...entry,
-      classes: entry.classes.sort((a, b) => {
-        const ai = INVOICE_CLASS_ORDER.indexOf(a.invoiceClass);
-        const bi = INVOICE_CLASS_ORDER.indexOf(b.invoiceClass);
-        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-      }),
-    }));
-}
-
-// ---------------------------------------------------------------------------
-// Invoices Trend (Zone C chart): Avg Sales/Lines/Volume per Invoice, by Year. Read-only -- no
-// drill-down, no selection of its own; always fully scoped by whatever the other two charts
-// selected.
-// ---------------------------------------------------------------------------
-
-export interface InvoiceYearEfficiencyPoint {
-  year: number;
-  label: string;
+export interface InvoicePeriodEfficiencyPoint {
+  start: string;
+  end: string;
+  inProgress: boolean;
   invoiceCount: number;
   avgSalesPerInvoice: number | null;
   avgLinesPerInvoice: number | null;
   avgVolumePerInvoice: number | null;
 }
 
-/** Honors both scope fields -- this chart never produces a selection of its own, so it's always
- * fully scoped by whichever of Sales Trend (year) / Invoices Classification (class) the user has
- * selected. With `scope.year` set the GROUP BY naturally collapses to that one year's single bar,
- * same as any other by-year breakdown filtered down to one category. */
-export async function fetchInvoicesTrendByYear(
+export interface InvoicesEngineTrend {
+  granularity: PeriodGranularity;
+  from: string;
+  to: string;
+  salesTrend: { byPeriod: InvoicePeriodPoint[]; byPeriodClass: InvoicePeriodClassBreakdown[] };
+  invoicesTrend: InvoicePeriodEfficiencyPoint[];
+  /** the window's Invoice Sales Value (the same rows as the Sales Trend bars, which add up to it) */
+  totals: { invoiceSalesValue: number };
+}
+
+const INVOICE_CLASS_ORDER = ['A', 'B', 'C', 'D'];
+
+export async function fetchInvoicesEngineTrend(
   pool: Pool,
   anchor: Date,
+  g: PeriodGranularity,
   filters: Filters,
   scope: InvoicesEngineScope = {},
-): Promise<InvoiceYearEfficiencyPoint[]> {
+): Promise<InvoicesEngineTrend> {
+  const w = periodWindow(g, anchorToday(anchor));
   const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cls = buildInvoiceClassSqlClause(scope.invoiceClass, 'fsl');
   const yr = buildYearSqlClause(scope.year, 'dd');
-  const sql = `
-    SELECT
-      dd.Year                              AS year,
-      COUNT(*)                             AS lineCount,
-      COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1))       AS invoiceCount,
-      COALESCE(SUM(fsl.Value), 0)          AS totalValue,
-      COALESCE(SUM(fsl.Volume), 0)         AS totalVolume
-    FROM v_sales_lines fsl
-    JOIN dim_date dd ON fsl.DateKey = dd.DateKey
-    WHERE dd.Date <= ? AND ${clause} AND ${cls.clause} AND ${yr.clause}
-    GROUP BY dd.Year
-    ORDER BY dd.Year
-  `;
-  const [rows] = await pool.query(sql, [toDateOnlyString(anchor), ...params, ...cls.params, ...yr.params]);
-  return (rows as any[]).map((r) => {
-    const invoiceCount = Number(r.invoiceCount);
-    const lineCount = Number(r.lineCount);
-    const totalValue = Number(r.totalValue);
-    const totalVolume = Number(r.totalVolume);
+  const bucket = periodBucketSql(g, 'dd.Date');
+  const range = periodRangeSql('dd.Date', w.previous.start, w.to);
+  const windowRange = periodRangeSql('dd.Date', w.from, w.to);
+  const [[salesRows], [classRows], [effRows], [totalRows]] = await Promise.all([
+    pool.query(
+      `SELECT ${bucket} AS p, COALESCE(SUM(fsl.Value), 0) AS invoiceSalesValue, COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1)) AS invoiceCount
+       FROM v_sales_lines fsl JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+       WHERE ${range.sql} AND ${clause} AND ${cls.clause}
+       GROUP BY p`,
+      [...range.params, ...params, ...cls.params],
+    ),
+    pool.query(
+      `SELECT ${bucket} AS p, fsl.\`Invoice Class\` AS invoiceClass, COALESCE(SUM(fsl.Value), 0) AS invoiceSalesValue,
+              COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1)) AS invoiceCount
+       FROM v_sales_lines fsl JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+       WHERE ${windowRange.sql} AND ${clause} AND ${cls.clause}
+       GROUP BY p, fsl.\`Invoice Class\``,
+      [...windowRange.params, ...params, ...cls.params],
+    ),
+    pool.query(
+      `SELECT ${bucket} AS p, COUNT(*) AS lineCount, COUNT(DISTINCT NULLIF(fsl.SalesOrderKey, -1)) AS invoiceCount,
+              COALESCE(SUM(fsl.Value), 0) AS totalValue, COALESCE(SUM(fsl.Volume), 0) AS totalVolume
+       FROM v_sales_lines fsl JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+       WHERE ${windowRange.sql} AND ${clause} AND ${cls.clause} AND ${yr.clause}
+       GROUP BY p`,
+      [...windowRange.params, ...params, ...cls.params, ...yr.params],
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(fsl.Value), 0) AS v
+       FROM v_sales_lines fsl JOIN dim_date dd ON fsl.DateKey = dd.DateKey
+       WHERE ${windowRange.sql} AND ${clause} AND ${cls.clause}`,
+      [...windowRange.params, ...params, ...cls.params],
+    ),
+  ]);
+
+  const sales = byPeriod(salesRows as Record<string, unknown>[]);
+  let prevValue = Number(sales.get(w.previous.start)?.invoiceSalesValue ?? 0);
+  const salesByPeriod = fillPeriods(w, sales, (p, r): InvoicePeriodPoint => {
+    const value = Number(r?.invoiceSalesValue ?? 0);
+    const point = {
+      start: p.start,
+      end: p.end,
+      inProgress: p.inProgress,
+      invoiceSalesValue: value,
+      invoiceCount: Number(r?.invoiceCount ?? 0),
+      invoiceSalesValueChangePct: changePct(value, prevValue),
+    };
+    prevValue = value;
+    return point;
+  });
+
+  // Merge rather than push -- the source GROUP BY is on the raw (unnormalized) column, so two distinct raw values could
+  // in principle normalize to the same class within one period.
+  const classes = new Map<string, InvoiceYearClassSlice[]>();
+  for (const r of classRows as Record<string, unknown>[]) {
+    const list = classes.get(String(r.p)) ?? [];
+    const invoiceClass = normalizeInvoiceClass(r.invoiceClass);
+    const existing = list.find((c) => c.invoiceClass === invoiceClass);
+    if (existing) {
+      existing.invoiceSalesValue += Number(r.invoiceSalesValue);
+      existing.invoiceCount += Number(r.invoiceCount);
+    } else {
+      list.push({ invoiceClass, invoiceSalesValue: Number(r.invoiceSalesValue), invoiceCount: Number(r.invoiceCount) });
+    }
+    classes.set(String(r.p), list);
+  }
+  const order = (c: string) => {
+    const i = INVOICE_CLASS_ORDER.indexOf(c);
+    return i === -1 ? 99 : i;
+  };
+  const byPeriodClass = fillPeriods(w, classes, (p, list) => ({
+    start: p.start,
+    classes: (list ?? []).sort((x, y) => order(x.invoiceClass) - order(y.invoiceClass)),
+  }));
+
+  const invoicesTrend = fillPeriods(w, byPeriod(effRows as Record<string, unknown>[]), (p, r): InvoicePeriodEfficiencyPoint => {
+    const invoiceCount = Number(r?.invoiceCount ?? 0);
     return {
-      year: Number(r.year),
-      label: String(r.year),
+      start: p.start,
+      end: p.end,
+      inProgress: p.inProgress,
       invoiceCount,
-      avgSalesPerInvoice: invoiceCount > 0 ? totalValue / invoiceCount : null,
-      avgLinesPerInvoice: invoiceCount > 0 ? lineCount / invoiceCount : null,
-      avgVolumePerInvoice: invoiceCount > 0 ? totalVolume / invoiceCount : null,
+      avgSalesPerInvoice: invoiceCount > 0 ? Number(r?.totalValue) / invoiceCount : null,
+      avgLinesPerInvoice: invoiceCount > 0 ? Number(r?.lineCount) / invoiceCount : null,
+      avgVolumePerInvoice: invoiceCount > 0 ? Number(r?.totalVolume) / invoiceCount : null,
     };
   });
+
+  return {
+    granularity: g,
+    from: w.from,
+    to: w.to,
+    salesTrend: { byPeriod: salesByPeriod, byPeriodClass },
+    invoicesTrend,
+    totals: { invoiceSalesValue: Number((totalRows as Record<string, unknown>[])[0]?.v ?? 0) },
+  };
 }
 
 // ---------------------------------------------------------------------------

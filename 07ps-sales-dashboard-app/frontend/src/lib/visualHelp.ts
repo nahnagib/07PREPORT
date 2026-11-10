@@ -20,6 +20,8 @@ const PERF_DETAILS = (what: string): VisualHelpEntry => ({
 });
 const ODOO = 'Click a name / number to open it in Odoo (new tab)';
 const GRID = ['Search all columns with the search box', 'Filter any column using the boxes under the headers', 'Sort by clicking a column header (Shift-click to add a second sort)', 'Pin a column so it stays visible', 'Export the rows to CSV / Excel or PDF, or copy them', 'Move between pages with Previous / Next'];
+/** Every trend with the shared Daily / Weekly / Monthly / Yearly selector (lib/periods.ts). */
+const PERIOD_TREND_NOTE = 'Daily = last 30 days, Weekly = last 12 weeks (Saturday to Friday), Monthly = last 12 months, Yearly = last 5 years. The last period is still in progress (lighter bar / dashed line). Data refreshes every 30 minutes.';
 const NPS_LEVELS = '★★★ = Promoter (NPS 9–10) · ★★ = Passive (7–8) · ★ = Detractor (0–6)';
 const NPS = 'NPS = % Promoters − % Detractors, % = count ÷ Responders × 100';
 const CSAT = 'CSAT = (Passives + Promoters) ÷ Responders × 100';
@@ -132,14 +134,23 @@ export const VISUAL_HELP = {
   },
   'promotion.criticalNumber.details': PERF_DETAILS('daily, monthly and yearly counters, working days and missing value'),
   // ---- Revenue Trend --------------------------------------------------------------------------------------------------
-  'promotion.revenueTrend.momValue': {
-    help: { definition: 'Sales value (LYD) per month this year, with the same month last year and the month target.', },
+  'promotion.revenueTrend.valueTrend': {
+    help: {
+      definition: 'Sales value (LYD) per day / week / month / year, with the same period last year and, on Monthly and Yearly, the target.',
+      notes: PERIOD_TREND_NOTE,
+    },
   },
-  'promotion.revenueTrend.momVolume': {
-    help: { definition: 'Invoiced quantity per month this year, with the same month last year and the month target.', },
+  'promotion.revenueTrend.volumeTrend': {
+    help: {
+      definition: 'Invoiced quantity per day / week / month / year, with the same period last year and, on Monthly and Yearly, the target.',
+      notes: PERIOD_TREND_NOTE,
+    },
   },
-  'promotion.revenueTrend.momAsp': {
-    help: { definition: 'Average selling price per month this year, with last year and the target ASP.', },
+  'promotion.revenueTrend.aspTrend': {
+    help: {
+      definition: 'Average selling price per period, with the same period last year and, on Monthly and Yearly, the target ASP.',
+      notes: `ASP = the period's sales value / its quantity (never an average of daily ASPs); no sales = a gap. ${PERIOD_TREND_NOTE}`,
+    },
   },
   'promotion.revenueTrend.varianceCard': {
     help: {

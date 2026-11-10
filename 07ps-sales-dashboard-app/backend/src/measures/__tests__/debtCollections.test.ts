@@ -28,18 +28,21 @@ describe('collection periods', () => {
     expect(periodsBetween('2026-09-29', '2026-10-01', 'day')).toHaveLength(3);
   });
 
-  it('defaults: week grain, the last 12 weeks ending with the current one', () => {
+  it('defaults: week grain, the shared window (lib/periods.ts) ending today', () => {
     const q = parseCollectionsQuery({}, '2026-10-14');
-    expect([q.grain, q.from, q.to, q.currency]).toEqual(['week', '2026-07-25', '2026-10-16', null]);
+    expect([q.grain, q.from, q.to, q.currency, q.today]).toEqual(['week', '2026-07-25', '2026-10-14', null, '2026-10-14']);
     expect(periodsBetween(q.from, q.to, q.grain)).toHaveLength(12);
     const m = parseCollectionsQuery({ grain: 'month' }, '2026-10-14');
-    expect([m.from, m.to]).toEqual(['2025-11-01', '2026-10-31']);
+    expect([m.from, m.to]).toEqual(['2025-11-01', '2026-10-14']);
+    const y = parseCollectionsQuery({ grain: 'year' }, '2026-10-14');
+    expect([y.from, y.to]).toEqual(['2022-01-01', '2026-10-14']);
+    expect(periodsBetween(y.from, y.to, y.grain)).toHaveLength(5);
     const d = parseCollectionsQuery({ grain: 'day' }, '2026-10-14');
     expect([d.from, d.to]).toEqual(['2026-09-15', '2026-10-14']);
   });
 
   it('rejects bad parameters', () => {
-    expect(() => parseCollectionsQuery({ grain: 'year' })).toThrow(DebtQueryError);
+    expect(() => parseCollectionsQuery({ grain: 'quarter' })).toThrow(DebtQueryError);
     expect(() => parseCollectionsQuery({ from: '11/10/2026' })).toThrow(DebtQueryError);
     expect(() => parseCollectionsQuery({ from: '2026-10-02', to: '2026-10-01' })).toThrow(DebtQueryError);
     expect(() => parseCollectionsQuery({ currency: 'lyd;' })).toThrow(DebtQueryError);
