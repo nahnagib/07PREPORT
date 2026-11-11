@@ -16,7 +16,7 @@ Africa/Tripoli (UTC+2): a rating between 22:00 and 24:00 UTC is on the NEXT day 
 edges. Those ratings are listed. A run of the job after the source changed shows up as a difference: re-run the job first.
 8 YTD (the NPS page's default period, 1 January -> today, Tripoli): per company (all, Majaal, Tika), with the default
 B2B + B2C filter and with every filter cleared, plain SQL on the fact tables (responders, groups, NPS, CSAT, reach
-boxes, error groups, response rate = responders from the first reach day / (Delivered + Read)) vs the API (overview,
+boxes, error groups, response rate and rate of reach) vs the API (overview,
 weekly and monthly trend, reach with its split by source, response-rate, followup-summary, detractor list), plus the page's
 consistency rules. Reach before NPS_REACH_START = process_nps_reach_manual (migration 0071), spread evenly over its days
 here in Python, independently of the views; section 6 compares the ETL rows (source 'etl') only. 9 the manual table:
@@ -110,9 +110,9 @@ def reconcile_reach(conn, messages: list[dict], config: wa.ReachConfig, timezone
     params = {"lo": lo, "hi": hi}
     actual = {tuple(int(v) for v in row[:2]): {key: int(value or 0) for key, value in zip(columns, row[2:])}
               for row in conn.execute(text("SELECT MessageDateKey, CompanyKey, total_reach, delivered, not_delivered, read_count, error_count, other_state "
-                                           "FROM v_process_nps_reach WHERE source = 'etl' AND MessageDateKey BETWEEN :lo AND :hi"), params)}
+                                           "FROM v_process_nps_reach WHERE CAST(source AS BINARY) = 'etl' AND MessageDateKey BETWEEN :lo AND :hi"), params)}
     actual_errors = {(int(day), int(company), group): int(count) for day, company, group, count in conn.execute(text(
-        "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE source = 'etl' "
+        "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE CAST(source AS BINARY) = 'etl' "
         "AND MessageDateKey BETWEEN :lo AND :hi"), params)}
     normalized = {key: {column: counts[column] for column in columns} for key, counts in expected.items()}
     boxes_ok, errors_ok = normalized == actual, dict(errors) == actual_errors
@@ -266,7 +266,7 @@ def reconcile_manual(conn) -> bool:
         if a["CompanyKey"] == b["CompanyKey"] and b["date_from"] <= a["date_to"]:
             print(f"   overlapping periods: {a['CompanyKey']} {a['date_from']}..{a['date_to']} and {b['date_from']}..{b['date_to']}")
             ok = False
-    under = conn.execute(text(f"SELECT COUNT(*) FROM v_process_nps_reach m WHERE m.source = 'etl' AND {_COVERED}")).scalar()
+    under = conn.execute(text(f"SELECT COUNT(*) FROM v_process_nps_reach m WHERE CAST(m.source AS BINARY) = 'etl' AND {_COVERED}")).scalar()
     if int(under or 0):
         print(f"   {under} ETL row(s) of v_process_nps_reach fall on a manual day (double counting)")
         ok = False
