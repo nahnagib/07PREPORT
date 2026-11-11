@@ -534,13 +534,18 @@ export async function fetchCase(pool: Pool, caseId: number, f: Filters, canSeeCo
   return {
     ...c,
     comment,
-    history: (hist as Record<string, unknown>[]).map((h) => ({
-      changedAt: utcToLocal(h.changed_at) ?? '',
-      changedBy: h.changed_by === null ? 'NPS refresh (process_nps)' : ((h.display_name as string) ?? `user #${h.changed_by}`),
-      field: String(h.field),
-      oldValue: (h.old_value as string) ?? null,
-      newValue: (h.new_value as string) ?? null,
-    })),
+    history: (hist as Record<string, unknown>[]).map((h) => {
+      const migrated = (h.field === 'stage' && h.old_value === 'REJECTED' && h.new_value === 'UNRESOLVED')
+        || (h.field === 'rejected_at' && h.new_value === null);
+      const systemActor = migrated ? 'Migration 0072' : 'NPS refresh (process_nps)';
+      return {
+        changedAt: utcToLocal(h.changed_at) ?? '',
+        changedBy: h.changed_by === null ? systemActor : ((h.display_name as string) ?? `user #${h.changed_by}`),
+        field: String(h.field),
+        oldValue: (h.old_value as string) ?? null,
+        newValue: (h.new_value as string) ?? null,
+      };
+    }),
   };
 }
 
