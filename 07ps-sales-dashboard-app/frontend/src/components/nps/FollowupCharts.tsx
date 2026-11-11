@@ -12,11 +12,11 @@ export type FollowupState = { data: NpsFollowupSummary | null; loading: boolean;
 
 const NOTE = { fontSize: 12, color: 'var(--ps-color-neutral-text)', margin: '4px 0 0' } as const;
 
-/** Under each chart: what is not in it. "Resolved Ageing" also names Rejected (no SLA, so not in its bars). */
-function LeftOut({ s, withRejected = false }: { s: NpsFollowupSummary; withRejected?: boolean }) {
+/** Under each chart: what is not in it. "Resolved Ageing" also counts Unresolved cases in its note. */
+function LeftOut({ s, withUnresolved = false }: { s: NpsFollowupSummary; withUnresolved?: boolean }) {
   return (
     <p style={NOTE} data-testid="fu-left-out">
-      {withRejected ? `${s.unresolved ? `Unresolved: ${formatNumber(s.unresolved)} · ` : ''}Rejected: ${formatNumber(s.rejected)} · ` : ''}Historical: {formatNumber(s.historical)}
+      {withUnresolved ? `Unresolved: ${formatNumber(s.unresolved)} · ` : ''}Historical: {formatNumber(s.historical)}
       {s.noCase > 0 ? ` · Not yet a case: ${formatNumber(s.noCase)}` : ''}
     </p>
   );
@@ -33,10 +33,10 @@ const HELP: Record<FollowupPart, VisualHelpId> = {
  * The follow-up charts of the NPS page, read live from the follow-up cases (nps_followup_case) for the page's period
  * and filters: an edit on the follow-up page shows here on the next load.
  *   reason    by reason category; a click drills into its sub-reasons ("← All reasons")
- *   status    by status (Open / Close / Disputed); a click drills into its stages ("← All statuses")
+ *   status    by status (Open / Closed / Disputed); a click drills into its stages ("← All statuses")
  *   resolved  "Resolved Ageing" (AgeingBars): resolved by time taken, open by age, the Close SLA line, the SLA shares
- * ONE total in the donut centres: the cases with a status (Rejected included). Historical has no status: left out of
- * all three, counted under them; the ageing bars also leave out Rejected (no SLA) and name it in the note.
+ * ONE total in the donut centres: the cases with a status. Historical has no status: left out of
+ * all three, counted under them; the ageing bars also leave out Unresolved (no SLA) and name it in the note.
  */
 const REASON_COLORS = ['var(--ps-nps-blue)', 'var(--ps-nps-teal)', 'var(--ps-nps-cyan)', 'var(--ps-nps-lilac)', 'var(--ps-nps-amber)'];
 
@@ -50,7 +50,7 @@ export function FollowupCharts({ state, part }: { state: FollowupState; part: Fo
   let body: React.ReactNode;
   if (state.error) body = <ErrorState message={state.error} onRetry={state.retry} />;
   else if (!s || state.loading) body = <LoadingSkeleton variant="chart" />;
-  else if (s.charted === 0) body = <><EmptyState message="No followed-up detractors for these filters and dates." /><LeftOut s={s} withRejected={part === 'resolved'} /></>;
+  else if (s.charted === 0) body = <><EmptyState message="No followed-up detractors for these filters and dates." /><LeftOut s={s} withUnresolved={part === 'resolved'} /></>;
   else if (part === 'reason' && drilled) {
     // step 2: the sub-reasons of one category
     body = (
@@ -87,7 +87,7 @@ export function FollowupCharts({ state, part }: { state: FollowupState; part: Fo
     body = (
       <>
         <AgeingBars ageing={s.ageing} />
-        <LeftOut s={s} withRejected />
+        <LeftOut s={s} withUnresolved />
       </>
     );
   }

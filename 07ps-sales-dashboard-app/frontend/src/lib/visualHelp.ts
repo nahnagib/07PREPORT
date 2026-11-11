@@ -495,11 +495,11 @@ export const VISUAL_HELP = {
     interactions: ['Click a category to see its sub-reasons; "← All reasons" goes back'],
   },
   'process.npsScore.byStatus': {
-    help: { definition: 'Detractor cases by status (Open, Close, Disputed), worked out from the follow-up stage, live. Click a status to see its stages. Historical cases have no status and are left out. Same total as the other follow-up charts.' },
+    help: { definition: 'Detractor cases by status (Open, Closed, Disputed), worked out from the follow-up stage, live. Click a status to see its stages. Historical cases have no status and are left out. Same total as the other follow-up charts.' },
     interactions: ['Click a status to see its stages; "← All statuses" goes back'],
   },
   'process.npsScore.resolvedByTime': {
-    help: { definition: `Detractor cases by age from case creation: resolved cases by the time they took, open cases by their age today. Bars left of the "Close SLA ${NPS_SLA.closeDays} d" line are within SLA, right of it breached. Solid = resolved; hatched = still open. Unresolved, Rejected and Historical have no SLA and are left out.`,
+    help: { definition: `Detractor cases by age from case creation: resolved cases by the time they took, open cases by their age today. Bars left of the "Close SLA ${NPS_SLA.closeDays} d" line are within SLA, right of it breached. Solid = resolved; hatched = still open. Unresolved and Historical have no SLA and are left out.`,
       formula: `Closed within SLA = resolved within ${NPS_SLA.closeDays} d ÷ all resolved · Contacted within ${NPS_SLA.contactHours} h = contacted within ${NPS_SLA.contactHours} h ÷ cases contacted, resolved or open beyond ${NPS_SLA.contactHours} h (each counted once)` },
   },
   'process.npsScore.detractors': {

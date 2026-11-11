@@ -286,7 +286,7 @@ export interface NpsDetractor {
   reason: string | null;
   reasonAr: string | null;
   owner: string | null;
-  /** hours from the case's created_at to resolved (Resolved) or to now (open stages); null for Rejected / Historical */
+  /** hours from the case's created_at to resolved (Resolved) or to now (open stages); null for Unresolved / Historical */
   hoursOpen: number | null;
   /** the follow-up SLA state (config/npsSla.ts); null before the case exists */
   sla: CaseSla | null;
@@ -524,17 +524,16 @@ export interface NpsFollowupSummary {
   detractors: number;
   /**
    * THE total of the follow-up charts (Reason, Status): the detractor cases WITH a status (Open,
-   * Close, Disputed -- Rejected included). Historical (no status) and the detractors without a case yet are left out.
+   * Closed, Disputed = Unresolved). Historical (no status) and the detractors without a case yet are left out.
    */
   charted: number;
-  /** stage Rejected (= status Disputed), inside `charted`; shown in the note too */
-  rejected: number;
+  /** stage Unresolved (= status Disputed), inside `charted`; no SLA, so named under "Resolved Ageing" */
   unresolved: number;
   historical: number;
   /** detractors without a case yet (process_nps creates them on its next run); 0 normally */
   noCase: number;
   /** "Resolved Ageing" (config/npsSla.ts): resolved cases by time to resolve, open cases by age, and the two SLA
-   *  lines; Rejected and Historical are left out (they have no SLA) */
+   *  lines; Unresolved and Historical are left out (they have no SLA) */
   ageing: ResolutionAgeing;
   /** by STATUS (the generated column), with its stages for the drill-down (every stage listed, 0 included); sums to `charted` */
   byStatus: { key: FollowupStatus; count: number; stages: { stage: FollowupStage; count: number }[] }[];
@@ -557,7 +556,7 @@ export const NOT_CLASSIFIED = 'Not yet classified';
  * The follow-up charts of the NPS page -- by reason category, by status (drill: its stages) and "Resolved Ageing" --
  * from nps_followup_case at request time (an edit on the follow-up page shows on the next load), for the same
  * detractors as the Detractors box: rating date, global filters, role scope. The two donuts count cases with a status
- * (Rejected included); ageing excludes Rejected. Historical has no status and is counted separately below the charts.
+ * (Unresolved included); ageing excludes Unresolved. Historical has no status and is counted separately below the charts.
  */
 export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filters, now: string = nowLocal()): Promise<NpsFollowupSummary> {
   const w = npsWhere(q, f);
@@ -570,12 +569,11 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
       WHERE f.nps_level = 1 AND ${w.sql}`, w.params);
   const list = rows as Record<string, unknown>[];
   const slaCases: { stage: string; sla: CaseSla; contacted: boolean }[] = [];
-  const statuses: Record<FollowupStatus, number> = { OPEN: 0, CLOSE: 0, DISPUTED: 0 };
+  const statuses: Record<FollowupStatus, number> = { OPEN: 0, CLOSED: 0, DISPUTED: 0 };
   const stages = new Map<FollowupStage, number>();
   type Sub = NpsSubReasonCount & { sort: number };
   const reasons = new Map<string | null, { categoryKey: string | null; label: string; labelAr: string | null; count: number; sort: number;
     noSubs: boolean; subs: Map<number, Sub> }>();
-  let rejected = 0;
   let unresolved = 0;
   let historical = 0;
   let noCase = 0;
@@ -585,11 +583,10 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
     if (stage === null) noCase += 1;
     else if (stage === 'HISTORICAL' || !status || !FOLLOWUP_STATUSES.includes(status)) historical += 1;
     else {
-      // A case with a status is counted once in each donut; ageing also excludes Rejected.
+      // A case with a status is counted once in each donut; ageing also excludes Unresolved (no SLA).
       statuses[status] += 1;
       stages.set(stage, (stages.get(stage) ?? 0) + 1);
-      if (stage === 'REJECTED') rejected += 1;
-      else if (stage === 'UNRESOLVED') unresolved += 1;
+      if (stage === 'UNRESOLVED') unresolved += 1;
       else {
         const contactedAt = asDateTime(r.contacted_at);
         slaCases.push({
@@ -625,13 +622,12 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
       reasons.set(key, entry);
     }
   }
-  const charted = statuses.OPEN + statuses.CLOSE + statuses.DISPUTED;
+  const charted = statuses.OPEN + statuses.CLOSED + statuses.DISPUTED;
   return {
     dateFrom: q.dateFrom,
     dateTo: q.dateTo,
     detractors: list.length,
     charted,
-    rejected,
     unresolved,
     historical,
     noCase,

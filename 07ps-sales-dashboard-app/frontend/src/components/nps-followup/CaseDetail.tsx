@@ -264,12 +264,6 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
                     <input type="datetime-local" className="ps-kaizen-input" value={form.resolvedAt} onChange={(e) => set('resolvedAt', e.target.value)} {...invalid('resolvedAt')} />
                   </label>
                 )}
-                {form.stage === 'REJECTED' && detail.stage === 'REJECTED' && detail.rejectedAt && (
-                  <div className="ps-kaizen-field">
-                    <span>Rejected at</span>
-                    <div className="ps-fu-value">{detail.rejectedAt.slice(0, 16)}</div>
-                  </div>
-                )}
                 <label className="ps-kaizen-field ps-kaizen-full">
                   <span>Root cause</span>
                   <textarea dir="auto" className="ps-kaizen-input" maxLength={2000} value={form.rootCause} onChange={(e) => set('rootCause', e.target.value)} {...invalid('rootCause')} />
@@ -279,7 +273,7 @@ export function CaseDetail({ caseId, options, onClose, onSaved }: {
                   <textarea dir="auto" className="ps-kaizen-input" maxLength={2000} value={form.actionTaken} onChange={(e) => set('actionTaken', e.target.value)} {...invalid('actionTaken')} />
                 </label>
                 <label className="ps-kaizen-field ps-kaizen-full">
-                  <span>Notes{form.stage === 'REJECTED' ? ' (say why it is rejected)' : ''}</span>
+                  <span>Notes</span>
                   <textarea dir="auto" className="ps-kaizen-input" maxLength={2000} value={form.notes} onChange={(e) => set('notes', e.target.value)} {...invalid('notes')} />
                 </label>
               </fieldset>

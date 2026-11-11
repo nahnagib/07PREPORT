@@ -421,7 +421,7 @@ Built on the Detractor Follow-up page (`docs/nps-followup.md`, migration 0052): 
 the cases **live** at request time: the Detractors table (Stage, Status, Reason, Owner, Time open / Resolved in),
 **Detractors by reason**, **Detractors by status** and **Resolved Ageing**. Time colours and ageing use the contact
 and close SLAs from case creation; see the SLA section of `docs/nps-followup.md`. Historical is excluded from all
-charts, and Rejected is also excluded from ageing; both are counted in the notes. A row opens its follow-up case.
+charts, and Unresolved is also excluded from ageing; both are counted in the notes. A row opens its follow-up case.
 
 ## 10. Continuation verification (2026-10-18)
 

@@ -6,19 +6,19 @@ import { HOURS_PER_DAY, type CaseSla } from './sla';
  *
  * STAGE and STATUS are two separate things and are never mixed:
  *   stage   the workflow step (editable): the board columns, the Stage filter, the history.
- *   status  OPEN / CLOSE / DISPUTED, worked out from the stage by the database (read-only): the badge, the Status
- *           filter, the Open / Close / Disputed KPIs. Two cards in the same column always have the same badge.
+ *   status  OPEN / CLOSED / DISPUTED, worked out from the stage by the database (read-only): the badge, the Status
+ *           filter, the Open / Closed / Disputed KPIs. Two cards in the same column always have the same badge.
  */
 
 /** The workflow steps. */
-export const STAGES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED'] as const;
+export const STAGES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED'] as const;
 export type FollowupStage = (typeof STAGES)[number];
 /** The board's columns (stages), left to right (Historical cases appear only in the List view). */
-export const BOARD_COLUMNS: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED'];
+export const BOARD_COLUMNS: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED'];
 export const EDITABLE_STAGES: readonly FollowupStage[] = BOARD_COLUMNS;
 
 /** The outcome groups. */
-export const STATUSES = ['OPEN', 'CLOSE', 'DISPUTED'] as const;
+export const STATUSES = ['OPEN', 'CLOSED', 'DISPUTED'] as const;
 export type FollowupStatus = (typeof STATUSES)[number];
 
 export const STAGE_LABEL: Record<FollowupStage, string> = {
@@ -28,7 +28,6 @@ export const STAGE_LABEL: Record<FollowupStage, string> = {
   IN_PROGRESS: 'In progress',
   RESOLVED: 'Resolved',
   UNRESOLVED: 'Unresolved',
-  REJECTED: 'Rejected',
 };
 
 export const STAGE_COLOR: Record<FollowupStage, string> = {
@@ -38,27 +37,26 @@ export const STAGE_COLOR: Record<FollowupStage, string> = {
   IN_PROGRESS: 'var(--ps-color-gold)',
   RESOLVED: 'var(--ps-color-success)',
   UNRESOLVED: 'var(--ps-color-alert)',
-  REJECTED: 'var(--ps-color-muted-text)',
 };
 
 export const STATUS_LABEL: Record<FollowupStatus, string> = {
   OPEN: 'Open',
-  CLOSE: 'Closed',
+  CLOSED: 'Closed',
   DISPUTED: 'Disputed',
 };
 
 export const STATUS_COLOR: Record<FollowupStatus, string> = {
   OPEN: 'var(--ps-color-accent)',
-  CLOSE: 'var(--ps-color-success)',
+  CLOSED: 'var(--ps-color-success)',
   DISPUTED: 'var(--ps-color-alert)',
 };
 
-/** The same rule as the database's generated column (migration 0066), for the form's preview only. */
+/** The same rule as the database's generated column (migration 0072), for the form's preview only. */
 export function statusOfStage(stage: FollowupStage): FollowupStatus | null {
   if (stage === 'NEW' || stage === 'CONTACTED' || stage === 'IN_PROGRESS') return 'OPEN';
-  if (stage === 'RESOLVED') return 'CLOSE';
-  if (stage === 'HISTORICAL') return null;
-  return 'DISPUTED';
+  if (stage === 'RESOLVED') return 'CLOSED';
+  if (stage === 'UNRESOLVED') return 'DISPUTED';
+  return null;
 }
 
 
@@ -86,8 +84,6 @@ export interface FollowupCase {
   ownerName: string | null;
   contactedAt: string | null;
   resolvedAt: string | null;
-  /** when the stage became Rejected (read-only) */
-  rejectedAt: string | null;
   rootCause: string | null;
   actionTaken: string | null;
   notes: string | null;
@@ -110,7 +106,7 @@ export interface FollowupCase {
   deliveryUrl: string | null;
   /** when process_nps created the case (Tripoli time): the start of both SLAs */
   createdAt: string | null;
-  /** hours from created_at to resolved / now; null for Rejected and Historical */
+  /** hours from created_at to resolved / now; null for Unresolved and Historical */
   hoursOpen: number | null;
   /** the SLA state (lib/nps/sla.ts) */
   sla: CaseSla;
@@ -386,7 +382,7 @@ export const FIELD_LABEL: Record<string, string> = {
 /** History values as people read them (stages by their label). */
 export function historyValue(field: string, value: string | null): string {
   if (value === null || value === '') return '—';
-  if (field === 'stage') return STAGE_LABEL[value as FollowupStage] ?? value;
-  if (field === 'contacted_at' || field === 'resolved_at') return value.slice(0, 16);
+  if (field === 'stage') return value === 'REJECTED' ? 'Rejected' : (STAGE_LABEL[value as FollowupStage] ?? value);
+  if (field === 'contacted_at' || field === 'resolved_at' || field === 'rejected_at') return value.slice(0, 16);
   return value;
 }

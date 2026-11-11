@@ -5,8 +5,8 @@ import { ReasonPie } from './ReasonPie';
 
 
 /**
- * "Detractors by status": level 1 = the STATUS (Open, Close, Disputed; the generated column), a click drills into that
- * status's STAGES (Open -> New / Contacted / In progress, Close -> Resolved, Disputed -> Rejected; 0-case stages stay
+ * "Detractors by status": level 1 = the STATUS (Open, Closed, Disputed; the generated column), a click drills into that
+ * status's STAGES (Open -> New / Contacted / In progress, Closed -> Resolved, Disputed -> Unresolved; 0-case stages stay
  * in the legend as 0). The parent keeps the drilled status, so the panel title can name it. Historical has no status
  * and is not in it. Same total as the other follow-up charts (summary.charted).
  */

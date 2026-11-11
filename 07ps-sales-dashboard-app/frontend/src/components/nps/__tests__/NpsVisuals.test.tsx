@@ -176,10 +176,10 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
   });
 });
 
-// the local data: 15 cases with a status (Open 13 = New 11 + In progress 2, Close 1, Disputed 1), 28 Historical
+// the local data: 15 cases with a status (Open 13 = New 11 + In progress 2, Closed 1, Disputed 1), 28 Historical
 const SUMMARY: NpsFollowupSummary = {
-  dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 15, rejected: 1, historical: 28, noCase: 0,
-  // Resolved Ageing: 1 resolved in a day; 13 open (5 under a day, 2 at 1-2 d, 4 at 5-10 d, 2 over 30 d); Rejected out
+  dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 15, unresolved: 1, historical: 28, noCase: 0,
+  // Resolved Ageing: 1 resolved in a day; 13 open (5 under a day, 2 at 1-2 d, 4 at 5-10 d, 2 over 30 d); Unresolved out
   ageing: {
     buckets: [
       { key: 'd1', label: '≤ 1 d', withinSla: true, resolved: 1, open: 5 }, { key: 'd2', label: '1–2 d', withinSla: true, resolved: 0, open: 2 },
@@ -191,8 +191,8 @@ const SUMMARY: NpsFollowupSummary = {
   },
   byStatus: [
     { key: 'OPEN', count: 13, stages: [{ stage: 'NEW', count: 11 }, { stage: 'CONTACTED', count: 0 }, { stage: 'IN_PROGRESS', count: 2 }] },
-    { key: 'CLOSE', count: 1, stages: [{ stage: 'RESOLVED', count: 1 }] },
-    { key: 'DISPUTED', count: 1, stages: [{ stage: 'REJECTED', count: 1 }] },
+    { key: 'CLOSED', count: 1, stages: [{ stage: 'RESOLVED', count: 1 }] },
+    { key: 'DISPUTED', count: 1, stages: [{ stage: 'UNRESOLVED', count: 1 }] },
   ],
   byReason: [{ categoryKey: null, label: 'Not yet classified', labelAr: null, count: 12, subReasons: [] },
     { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'التوصيل والخدمات اللوجستية', count: 3,
@@ -202,7 +202,7 @@ const SUMMARY: NpsFollowupSummary = {
 const fuState = (data: NpsFollowupSummary | null) => ({ data, loading: false, error: null, retry: () => undefined });
 
 describe('follow-up charts (live)', () => {
-  it('Resolved Ageing: six stacked bars, the Close SLA line after 2–5 d, the SLA line under it, Rejected / Historical in the note', () => {
+  it('Resolved Ageing: six stacked bars, the Close SLA line after 2–5 d, the SLA line under it, Unresolved / Historical in the note', () => {
     render(<FollowupCharts state={fuState(SUMMARY)} part="resolved" />);
     expect(screen.getByText('Resolved Ageing')).toBeTruthy();
     expect(screen.queryByText('Resolved by time')).toBeNull();
@@ -226,19 +226,19 @@ describe('follow-up charts (live)', () => {
     expect([...patterns].map((p) => p.querySelector('rect:last-child')?.getAttribute('fill'))).toEqual(['var(--ps-sla-green)', 'var(--ps-sla-red)']);
     expect(within(screen.getByTestId('fu-ageing')).queryByRole('button')).toBeNull(); // no click-to-filter: the detractor list has no chart filter
     expect(screen.queryByTestId('fu-by-status')).toBeNull();
-    expect(screen.getByTestId('fu-left-out').textContent).toBe('Rejected: 1 · Historical: 28');
+    expect(screen.getByTestId('fu-left-out').textContent).toBe('Unresolved: 1 · Historical: 28');
     expect(screen.queryByText(/Waiting for the follow-up data source|No follow-up data/)).toBeNull();
   });
 
-  it('keeps the SLA shares and exclusion note visible when all cases are Rejected or Historical', () => {
-    render(<FollowupCharts state={fuState({ ...SUMMARY, charted: 1, rejected: 1,
+  it('keeps the SLA shares and exclusion note visible when all cases are Unresolved or Historical', () => {
+    render(<FollowupCharts state={fuState({ ...SUMMARY, charted: 1, unresolved: 1,
       ageing: { buckets: SUMMARY.ageing.buckets.map((b) => ({ ...b, resolved: 0, open: 0 })),
         closedInSla: { count: 0, of: 0 }, contactedInSla: { count: 0, of: 0 } } })} part="resolved" />);
     expect(screen.getByTestId('fu-ageing-sla').textContent).toContain('Closed within SLA: — (none due yet)');
-    expect(screen.getByTestId('fu-left-out').textContent).toBe('Rejected: 1 · Historical: 28');
+    expect(screen.getByTestId('fu-left-out').textContent).toBe('Unresolved: 1 · Historical: 28');
   });
 
-  it('status: Open / Close / Disputed; a click drills into the stages (0 kept as 0) and "← All statuses" goes back', () => {
+  it('status: Open / Closed / Disputed; a click drills into the stages (0 kept as 0) and "← All statuses" goes back', () => {
     render(<FollowupCharts state={fuState(SUMMARY)} part="status" />);
     expect(screen.getByText('Detractors by status')).toBeTruthy();
     expect(screen.getByTestId('fu-status-OPEN').textContent).toContain('Open');

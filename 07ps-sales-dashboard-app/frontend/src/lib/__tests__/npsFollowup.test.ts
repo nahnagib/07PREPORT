@@ -37,9 +37,9 @@ describe('Detractor Follow-up view helpers', () => {
   });
 
   it('stage and status are separate lists, and the status follows the stage', () => {
-    expect([...STAGES]).toEqual(['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED']);
-    expect([...STATUSES]).toEqual(['OPEN', 'CLOSE', 'DISPUTED']);
-    expect(STAGES.map(statusOfStage)).toEqual([null, 'OPEN', 'OPEN', 'OPEN', 'CLOSE', 'DISPUTED', 'DISPUTED']);
+    expect([...STAGES]).toEqual(['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED']);
+    expect([...STATUSES]).toEqual(['OPEN', 'CLOSED', 'DISPUTED']);
+    expect(STAGES.map(statusOfStage)).toEqual([null, 'OPEN', 'OPEN', 'OPEN', 'CLOSED', 'DISPUTED']);
   });
 
   it('filters round-trip through the URL; stage and status apart; defaults are left out', () => {
@@ -51,27 +51,28 @@ describe('Detractor Follow-up view helpers', () => {
     const q = filtersToSearch(f, 7);
     expect(filtersFromSearch(`?${q}`)).toEqual({ ...f, dateTo: undefined, caseId: 7 });
     // a value of the other list is dropped, never mixed in
-    expect(filtersFromSearch('?stages=NEW,OPEN,SOLVED&statuses=CLOSE,RESOLVED&view=x')).toMatchObject({ stages: ['NEW'], statuses: ['CLOSE'] });
+    expect(filtersFromSearch('?stages=NEW,OPEN,SOLVED,REJECTED&statuses=CLOSED,RESOLVED&view=x')).toMatchObject({ stages: ['NEW'], statuses: ['CLOSED'] });
   });
 
   it('the API query carries the global filters and the follow-up filters, never the view', () => {
     const q = new URLSearchParams(apiQuery({ companyKeys: [1], salesTeamKeys: ['B2B'] },
-      { ...EMPTY_FILTERS, view: 'list', stages: ['RESOLVED'], statuses: ['CLOSE'], categories: ['delivery'] }, { page: 2 }));
+      { ...EMPTY_FILTERS, view: 'list', stages: ['RESOLVED'], statuses: ['CLOSED'], categories: ['delivery'] }, { page: 2 }));
     expect(q.getAll('companyKeys')).toEqual(['1']);
     expect(q.get('salesTeamKeys')).toBe('B2B');
     expect(q.get('stages')).toBe('RESOLVED');
-    expect(q.get('statuses')).toBe('CLOSE');
+    expect(q.get('statuses')).toBe('CLOSED');
     expect(q.get('categories')).toBe('delivery');
     expect(q.get('page')).toBe('2');
     expect(q.has('view')).toBe(false);
   });
 
   it('groups the board by stage (the columns)', () => {
-    const cases = [{ caseId: 1, stage: 'NEW', status: 'OPEN' }, { caseId: 2, stage: 'RESOLVED', status: 'CLOSE' }, { caseId: 3, stage: 'NEW', status: 'OPEN' }] as FollowupCase[];
+    const cases = [{ caseId: 1, stage: 'NEW', status: 'OPEN' }, { caseId: 2, stage: 'RESOLVED', status: 'CLOSED' }, { caseId: 3, stage: 'NEW', status: 'OPEN' }] as FollowupCase[];
     const cols = byColumn(cases);
     expect(cols.NEW.map((c) => c.caseId)).toEqual([1, 3]);
     expect(cols.RESOLVED).toHaveLength(1);
-    expect(cols.REJECTED).toEqual([]);
+    expect(cols.UNRESOLVED).toEqual([]);
+    expect(Object.keys(cols)).toEqual(STAGES);
   });
 
   it('groups the reasons as categories with their sub-reasons', () => {
@@ -112,6 +113,6 @@ describe('Detractor Follow-up view helpers', () => {
 
 it('Unresolved is a separate board column with Disputed status; resolved status is displayed as Closed', () => {
   expect(statusOfStage('UNRESOLVED')).toBe('DISPUTED');
-  expect(STATUS_LABEL.CLOSE).toBe('Closed');
+  expect(STATUS_LABEL.CLOSED).toBe('Closed');
   expect(byColumn([{ ...base, stage: 'UNRESOLVED' } as FollowupCase]).UNRESOLVED).toHaveLength(1);
 });
