@@ -3057,7 +3057,7 @@ export interface NpsTrend {
   /** from the first period with ratings to the end of the range */
   points: ({ period: string } & NpsCounts)[];
 }
-/** responders / (Delivered + Read): company and date only, from NPS_REACH_START (backend measures/npsScore.ts) */
+/** responders / (Delivered + Read): company and date only, from the first reach day (backend measures/npsScore.ts) */
 export interface NpsResponseRate {
   status: 'waiting' | 'restricted' | 'ready';
   /** Original requested start; dateFrom can be the later effective start of available data. */
@@ -3076,29 +3076,19 @@ export interface NpsResponseRate {
   band: NpsBand | null;
   target: number;
   variancePts: number | null;
-  /** measured weeks only (never estimated) */
+  /** per business week of the counted period, every source */
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
-  /** the headline includes estimated reached messages before reachStart (backend config/npsReachEstimate.ts) */
-  isEstimated: boolean;
-  estimateStatus: 'not_needed' | 'applied' | 'disabled' | 'no_basis';
-  /** the real rate from reachStart; null when the period ends before it */
-  measured: { from: string; responders: number; reached: number; rate: number | null } | null;
-  estimate: {
-    from: string;
-    to: string;
-    weeks: number;
-    perWeek: number;
-    reached: number;
-    basis: 'auto' | 'fixed';
-    basisWeeks: number;
-    basisFrom: string | null;
-    basisTo: string | null;
-    /** complete measured weeks left out of the basis (the Meta outage) */
-    excludedWeeks: string[];
-    /** per company, each from its own first rating */
-    byCompany: { companyKey: number; company: string; from: string; to: string; weeks: number; perWeek: number; reached: number }[];
-  } | null;
+  /** manual or estimated Delivered / Read (12 Jul – 02 Oct, backend migration 0071) are in the denominator */
+  includesManual: boolean;
+  /** Delivered + Read by source (etl = measured); they add up to reached */
+  reachedBySource: Record<NpsReachSource, number>;
+  /** the manual periods in the counted period (companies merged) */
+  manualPeriods: NpsManualPeriod[];
 }
+/** where a reach count comes from: etl = measured by the ETL, manual = Meta export, estimate = approved estimate */
+export type NpsReachSource = 'etl' | 'manual' | 'estimate';
+/** a process_nps_reach_manual period (backend migration 0071) */
+export interface NpsManualPeriod { from: string; to: string; source: 'estimate' | 'meta_manual' | 'meta_manual+estimate' }
 /** "Resolved Ageing" buckets (backend config/npsSla.ts) */
 export type NpsAgeingBucket = 'd1' | 'd2' | 'd5' | 'd10' | 'd30' | 'dmax';
 /** the follow-up workflow step (lib/nps/followup.ts) */
@@ -3141,19 +3131,18 @@ export interface NpsReach {
   dateTo: string;
   companyAndDateOnly: boolean;
   loadedAt: string | null;
-  /** first message date counted (the ETL's NPS_REACH_START), null = all history */
+  /** the ETL's NPS_REACH_START: measured from here, the manual reach (migration 0071) before it */
   reachStart: string | null;
-  /** the official counts: measured + the gap 12 Jul – 02 Oct when isEstimated (backend measures/npsReachEstimate.ts) */
+  /** every source together (backend measures/npsReachCounts.ts): the official counts */
   totals: NpsReachBoxes | null;
-  /** measured + the gap's real errors; they sum to totals.error */
+  /** the error groups of every source (manual errors = "Unclassified (Meta manual)"); they sum to totals.error */
   errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
-  /** Delivered, Read, Not Delivered of the gap are estimated; its Error is real */
-  isEstimated: boolean;
-  estimateStatus: 'not_needed' | 'applied' | 'disabled' | 'no_basis';
-  estimate: { from: string; to: string } | null;
-  /** the measured part (from reachStart) and the gap part of every box; null unless isEstimated */
-  measured: NpsReachBoxes | null;
-  gap: NpsReachBoxes | null;
+  /** manual or estimated messages are in the totals */
+  includesManual: boolean;
+  /** every box by source; they add up to totals */
+  bySource: Record<NpsReachSource, NpsReachBoxes> | null;
+  /** the manual periods in the range (companies merged) */
+  manualPeriods: NpsManualPeriod[];
 }
 export interface NpsReachBoxes { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number }
 export interface NpsPage<T> {

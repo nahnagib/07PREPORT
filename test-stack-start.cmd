@@ -23,10 +23,17 @@ if not defined PROD_DB_NAME set "PROD_DB_NAME=powerBI_Data"
 
 cd /d "%APP%" || exit /b 1
 
-rem Safety: every service must use the test database, never the production host.
+rem Safety: every service must use the test database, never the production host. Only the warehouse key itself (a
+rem line whose key is exactly DB_HOST) is checked, and every one must be test-mysql. Other *_DB_HOST keys, e.g.
+rem NPS_DB_HOST (the NPS source behind its SSH tunnel), are not the warehouse and are not matched. Counting, not "$":
+rem the compose output has LF line ends, where findstr's "$" and "\>" do not match.
 %COMPOSE% config > "%TEMP%\07ps-test-config.yml" || exit /b 1
-findstr /C:"DB_HOST: host.docker.internal" /C:"DB_HOST: 127.0.0.1" /C:"DB_HOST: localhost" "%TEMP%\07ps-test-config.yml" >nul
-if not errorlevel 1 (echo ABORT: a test-stack service points at the production database host. & exit /b 1)
+set "HOSTS_ALL=0"
+set "HOSTS_TEST=0"
+for /f %%N in ('findstr /R /C:"^ *DB_HOST: " "%TEMP%\07ps-test-config.yml" ^| find /c /v ""') do set "HOSTS_ALL=%%N"
+for /f %%N in ('findstr /R /C:"^ *DB_HOST: test-mysql" "%TEMP%\07ps-test-config.yml" ^| find /c /v ""') do set "HOSTS_TEST=%%N"
+if "%HOSTS_ALL%"=="0" (echo ABORT: no warehouse DB_HOST found in the test-stack configuration. & exit /b 1)
+if not "%HOSTS_ALL%"=="%HOSTS_TEST%" (echo ABORT: a test-stack service points at the production database host. & exit /b 1)
 
 echo Starting the test database...
 %COMPOSE% up -d test-mysql || exit /b 1

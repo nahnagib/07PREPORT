@@ -473,7 +473,7 @@ export const VISUAL_HELP = {
   'process.npsScore.responseRate': {
     help: {
       definition: 'Share of the feedback messages that reached the customer and got a rating.',
-      formula: ['Response Rate = Responders ÷ (Delivered + Read)', '12 Jul – 02 Oct: Delivered + Read estimated per company (the same figure as the Survey Reach cards)', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
+      formula: ['Response Rate = Responders ÷ (Delivered + Read)', 'Delivered + Read = the Survey Reach cards: measured from 03 Oct; 12 Jul – 02 Oct from the approved manual reach (Meta exports + estimates)', 'Company and date filters only: the other filters (customer group, channel, branch, salesperson, customer) are not applied, on either side', 'Responders = every rating of the selected companies', 'Rate of reach (Survey Reach) = Responders ÷ Total Reach, never above the Response Rate', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
     },
   },
   'process.npsScore.satisfactionTrend': {
@@ -485,10 +485,10 @@ export const VISUAL_HELP = {
     interactions: ['Switch week / month / year'],
   },
   'process.npsScore.reach': {
-    help: { definition: 'WhatsApp feedback messages by message date and company: Delivered, Read, Not Delivered and Error.' },
+    help: { definition: 'WhatsApp feedback messages by message date and company: Delivered, Read, Not Delivered and Error. Measured from 03 Oct 2026; 12 Jul – 02 Oct is the approved manual reach (12 Jul – 12 Aug estimated, 13 Aug – 02 Oct from Meta exports; 13–31 Aug Delivered/Read estimated), spread evenly over the days. Cards that include it are marked "incl. manual/est."; the tooltip splits measured / Meta manual / estimate.' },
   },
   'process.npsScore.errors': {
-    help: { definition: 'Messages that failed, by the error WhatsApp returned.' },
+    help: { definition: 'Messages that failed, by the error WhatsApp returned. Before 03 Oct the failed messages come from the manual reach without a reason: "Unclassified (Meta manual)".' },
   },
   'process.npsScore.byReason': {
     help: { definition: 'Detractor cases by the reason category recorded on the Detractor Follow-up page, live. "Not yet classified" = a case without a reason yet. Click a category to see its sub-reasons. Same total as the other follow-up charts (Historical left out).' },

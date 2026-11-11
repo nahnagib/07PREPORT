@@ -10,18 +10,29 @@ const ready: ReachData = {
   loadedAt: '2026-10-18 10:00:00', reachStart: '2026-10-03',
   totals: { totalReach: 12, delivered: 3, notDelivered: 2, read: 4, error: 2, otherState: 1 },
   errors: [{ key: 'phone_format', label: 'Phone format', fixable: true, hint: 'Correct the number in Odoo.', count: 2 }],
-  isEstimated: false, estimateStatus: 'not_needed', estimate: null, measured: null, gap: null,
+  includesManual: false, bySource: null, manualPeriods: [],
 };
-// YTD on the local warehouse (9 Nov 2026): measured since 03 Oct + the gap 12 Jul – 02 Oct (Error real)
-const MEASURED = { totalReach: 1733, delivered: 365, notDelivered: 78, read: 857, error: 433, otherState: 0 };
-const GAP = { totalReach: 3190, delivered: 764, notDelivered: 112, read: 1793, error: 521, otherState: 0 };
+// YTD on the local warehouse (9 Nov 2026): measured since 03 Oct + the manual reach 12 Jul – 02 Oct (migration 0071)
+const ETL = { totalReach: 1733, delivered: 365, notDelivered: 78, read: 857, error: 433, otherState: 0 };
+const META = { totalReach: 1555, delivered: 361, notDelivered: 21, read: 766, error: 407, otherState: 0 };
+const EST = { totalReach: 1207, delivered: 369, notDelivered: 5, read: 758, error: 75, otherState: 0 };
+const PERIODS: ReachData['manualPeriods'] = [
+  { from: '2026-07-12', to: '2026-08-12', source: 'estimate' },
+  { from: '2026-08-13', to: '2026-08-31', source: 'meta_manual+estimate' },
+  { from: '2026-09-01', to: '2026-09-30', source: 'meta_manual' },
+  { from: '2026-10-01', to: '2026-10-02', source: 'meta_manual' },
+];
 const estimated: ReachData = {
   ...ready, dateFrom: '2026-01-01', dateTo: '2026-11-09', companyAndDateOnly: false,
-  totals: { totalReach: 4923, delivered: 1129, notDelivered: 190, read: 2650, error: 954, otherState: 0 },
-  errors: [{ key: 'phone_format', label: 'Phone format', fixable: true, hint: 'Correct the number in Odoo.', count: 954 }],
-  isEstimated: true, estimateStatus: 'applied', estimate: { from: '2026-07-12', to: '2026-10-02' }, measured: MEASURED, gap: GAP,
+  totals: { totalReach: 4495, delivered: 1095, notDelivered: 104, read: 2381, error: 915, otherState: 0 },
+  errors: [{ key: 'phone_format', label: 'Phone format', fixable: true, hint: 'Correct the number in Odoo.', count: 433 },
+    { key: 'meta_manual', label: 'Unclassified (Meta manual)', fixable: false, hint: 'No reason per message.', count: 482 }],
+  includesManual: true, bySource: { etl: ETL, manual: META, estimate: EST }, manualPeriods: PERIODS,
 };
 const state = (data: ReachData | null, extra: Partial<ReachState> = {}): ReachState => ({ data, loading: false, error: null, retry: vi.fn(), ...extra });
+// the API's YTD response rate of the same period: 801 responders, Total Reach 4,495 (the same read as the cards)
+const YTD_RATE = { status: 'ready' as const, responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo,
+  totalReach: 4495, rateOfReach: (801 / 4495) * 100 };
 
 it('shows no numbers while waiting for the source', () => {
   render(<NpsReach part="boxes" state={state({ ...ready, status: 'waiting', totals: null, errors: [], loadedAt: null })} />);
@@ -49,30 +60,36 @@ it('each box shows its share of Total Reach and a tooltip saying reach uses the 
   expect(screen.getByText('Reach data from 03 Oct 2026')).toBeTruthy();
 });
 
-it('the gap in the period: official totals, "incl. est." on the estimated cards, "incl. gap" on Error, tooltips measured + gap, the subtitle', () => {
-  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
+it('manual reach in the period: combined totals, "incl. manual/est." on every card, tooltips measured / Meta manual / estimate, the subtitle', () => {
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={YTD_RATE} />);
   expect(screen.getByText('Survey Reach')).toBeTruthy();
-  expect(screen.getByText('Rate of reach: 16.27%')).toBeTruthy();
-  expect(screen.queryByText('100% of reach')).toBeNull();
-  expect(screen.getByTestId('reach-box-Total Reach').getAttribute('title')).toContain('Rate of reach = Responders ÷ Total reach = 801 ÷ 4,923 = 16.27%');
-  expect(screen.getByTestId('reach-subtitle').textContent).toBe('Measured from 03 Oct 2026 · 12 Jul – 02 Oct estimated');
-  expect(screen.getByText('4,923')).toBeTruthy();
-  expect(screen.getByText('22.93% of reach')).toBeTruthy(); // Delivered 1,129 / 4,923, on the new totals
-  for (const label of ['Total Reach', 'Delivered', 'Not Delivered', 'Read']) {
-    expect(screen.getByTestId(`reach-box-${label}`).textContent).toContain('incl. est.');
-    expect(screen.getByTestId(`reach-box-${label}`).getAttribute('data-estimated')).toBe('true');
+  expect(screen.getByText('Rate of reach: 17.82%')).toBeTruthy();
+  expect(screen.getByTestId('reach-box-Total Reach').getAttribute('title')).toContain('Rate of reach = Responders ÷ Total Reach = 801 ÷ 4,495 = 17.82%');
+  expect(screen.getByTestId('reach-box-Total Reach').getAttribute('title')).toContain('Total Reach = Delivered + Not Delivered + Read + Error');
+  expect(screen.getByTestId('reach-subtitle').textContent)
+    .toBe('12 Jul – 12 Aug estimated · 13 Aug – 02 Oct from Meta (manual; 13–31 Aug Delivered/Read estimated) · from 03 Oct measured');
+  expect(screen.getByText('4,495')).toBeTruthy();
+  expect(screen.getByText('24.36% of reach')).toBeTruthy(); // Delivered 1,095 / 4,495
+  for (const label of ['Total Reach', 'Delivered', 'Not Delivered', 'Read', 'Error']) {
+    expect(screen.getByTestId(`reach-box-${label}`).textContent).toContain('incl. manual/est.');
+    expect(screen.getByTestId(`reach-box-${label}`).getAttribute('data-manual')).toBe('true');
   }
-  expect(screen.getByTestId('reach-box-Error').textContent).toContain('incl. gap');
-  expect(screen.getByTestId('reach-box-Delivered').getAttribute('title')).toContain('Measured from 03 Oct: 365\n12 Jul – 02 Oct (estimated): 764\nTotal: 1,129');
-  expect(screen.getByTestId('reach-box-Error').getAttribute('title')).toContain('12 Jul – 02 Oct (actual, kept by the source): 521');
-  // Delivered + Read = the Response Rate denominator (801 / 3,779 = 21.20 %)
-  expect(estimated.totals!.delivered + estimated.totals!.read).toBe(3779);
+  expect(screen.getByTestId('reach-box-Delivered').getAttribute('title')).toContain('Measured (from 03 Oct): 365\nMeta manual: 361\nEstimate: 369\nTotal: 1,095');
+  expect(screen.getByTestId('reach-box-Error').getAttribute('title')).toContain('Measured (from 03 Oct): 433\nMeta manual: 407\nEstimate: 75\nTotal: 915');
+  // Delivered + Read = the Response Rate denominator (801 / 3,476 = 23.04 %)
+  expect(estimated.totals!.delivered + estimated.totals!.read).toBe(3476);
+});
+
+it('a card without manual reach is not marked (only the source-split tooltip)', () => {
+  const bySource = { etl: ETL, manual: { ...META, notDelivered: 0 }, estimate: { ...EST, notDelivered: 0 } };
+  render(<NpsReach part="boxes" state={state({ ...estimated, bySource })} />);
+  expect(screen.getByTestId('reach-box-Not Delivered').getAttribute('data-manual')).toBeNull();
+  expect(screen.getByTestId('reach-box-Read').getAttribute('data-manual')).toBe('true');
 });
 
 it('a period fully after 03 Oct: exactly the measured numbers, no marks, the usual subtitle', () => {
   render(<NpsReach part="boxes" state={state(ready)} />);
-  expect(screen.queryByText('incl. est.')).toBeNull();
-  expect(screen.queryByText('incl. gap')).toBeNull();
+  expect(screen.queryByText('incl. manual/est.')).toBeNull();
   expect(screen.getByTestId('reach-subtitle').textContent).toBe('Reach data from 03 Oct 2026');
 });
 
@@ -129,13 +146,29 @@ it('does not show an old snapshot while reloading filters and supports retry on 
 });
 
 it('does not show a stale-period rate or divide by zero', () => {
-  const { rerender } = render(<NpsReach part="boxes" state={state(ready)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
+  const { rerender } = render(<NpsReach part="boxes" state={state(ready)} responseRate={YTD_RATE} />);
   expect(screen.getByText('Rate of reach: —')).toBeTruthy();
-  rerender(<NpsReach part="boxes" state={state({ ...ready, totals: { ...ready.totals!, totalReach: 0 } })} responseRate={{ status: 'ready', responders: 0, dateFrom: ready.dateFrom, dateTo: ready.dateTo }} />);
+  rerender(<NpsReach part="boxes" state={state({ ...ready, totals: { ...ready.totals!, totalReach: 0 } })}
+    responseRate={{ status: 'ready', responders: 0, dateFrom: ready.dateFrom, dateTo: ready.dateTo, totalReach: 0, rateOfReach: null }} />);
   expect(screen.getByText('Rate of reach: —')).toBeTruthy();
 });
 
 it('rejects a stale requested start even when the end date and effective start match', () => {
-  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: '2026-07-01', dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ ...YTD_RATE, requestedDateFrom: '2026-07-01' }} />);
   expect(screen.getByText('Rate of reach: —')).toBeTruthy();
+});
+
+it('never a different denominator: a rate whose Total Reach is not this card\'s shows no Rate of reach', () => {
+  // the bug of 2026-11-11: 4,923 ÷ 3,779 = 130.27 % (Total Reach ÷ (Delivered + Read)) -- the rule is Responders ÷ Total Reach
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ ...YTD_RATE, totalReach: 3476, rateOfReach: (4495 / 3476) * 100 }} />);
+  expect(screen.getByText('Rate of reach: —')).toBeTruthy();
+  expect(screen.queryByText(/129\.|130\./)).toBeNull();
+});
+
+it('Rate of reach is never above the Response Rate nor 100 %', () => {
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={YTD_RATE} />);
+  const shown = Number(screen.getByText(/^Rate of reach: /).textContent!.replace(/[^\d.]/g, ''));
+  const t = estimated.totals!;
+  expect(shown).toBeLessThanOrEqual((100 * 801) / (t.delivered + t.read)); // Response Rate 23.04 %
+  expect(shown).toBeLessThanOrEqual(100);
 });

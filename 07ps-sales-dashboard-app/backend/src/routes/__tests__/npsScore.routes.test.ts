@@ -73,6 +73,7 @@ vi.mock('../../db/pool', () => ({
     query: async (sql: string, params: unknown[] = []) => {
       queries.push({ sql, params });
       if (/FROM process_nps_reach_state/.test(sql)) return [reachLoaded ? [{ loaded_at_utc: '2026-10-18 10:00:00', reach_start: new Date('2026-10-03T00:00:00Z') }] : [], []];
+      if (/MIN\(m\.MessageDateKey\)/.test(sql)) return [[{ first_key: 20261003 }], []];
       if (/FROM v_process_nps_reach /.test(sql)) return [[{ total_reach: '12', delivered: '3', not_delivered: '2', read_count: '4', error_count: '2', other_state: '1' }], []];
       if (/FROM v_process_nps_message_error /.test(sql)) return [[{ failure_group: 'phone_format', label_en: 'Phone format', is_fixable: 1, hint: 'Correct the number.', errors: '2' }], []];
       if (/COUNT\(\*\) AS n/.test(sql)) return [[{ n: 0 }], []];
@@ -178,13 +179,13 @@ describe('WhatsApp reach', () => {
     expect(body).toMatchObject({ status: 'ready', companyAndDateOnly: true, reachStart: '2026-10-03',
       totals: { totalReach: 12, delivered: 3, notDelivered: 2, read: 4, error: 2, otherState: 1 },
       errors: [{ key: 'phone_format', fixable: true, count: 2 }] });
-    // the two aggregates of the panel (the gap estimate's own queries are tested in measures/__tests__/npsScore.test.ts)
+    // the two aggregates of the panel (measures/npsReachCounts.ts + the error groups)
     const aggregates = queries.filter((q) => /FROM v_process_nps_(reach|message_error) /.test(q.sql));
     expect(aggregates).toHaveLength(2);
-    expect(body).toMatchObject({ isEstimated: false, estimateStatus: 'not_needed', gap: null }); // 1 Oct: the mock has no rating in the gap
+    expect(body).toMatchObject({ includesManual: false, manualPeriods: [] }); // the mock has no manual period
     for (const q of aggregates) {
       expect(q.params).toEqual([20261001, 20261018, 1]);
-      expect(q.sql).toContain('f.CompanyKey IN (?)');
+      expect(q.sql).toMatch(/\b[fm]\.CompanyKey IN \(\?\)/);
       expect(q.sql).not.toMatch(/SegmentKey|SalesTeamKey|mobile_number|failure_reason/);
     }
   });
@@ -205,11 +206,11 @@ describe('WhatsApp reach', () => {
 });
 
 describe('Response rate', () => {
-  it('company and date only on both sides, from NPS_REACH_START; the other filters are labelled, never applied', async () => {
+  it('company and date only on both sides, from the first reach day; the other filters are labelled, never applied', async () => {
     reachLoaded = true;
     const body = await (await get('/nps-score/response-rate?dateFrom=2026-01-01&dateTo=2026-10-18&companyKeys=1&segmentKeys=1&salespersonKeys=49', 'viewer')).json();
     expect(body).toMatchObject({ status: 'ready', dateFrom: '2026-10-03', reachStart: '2026-10-03', companyAndDateOnly: true, target: 30,
-      isEstimated: false, estimateStatus: 'not_needed', estimate: null, measured: { from: '2026-10-03' } });
+      requestedDateFrom: '2026-01-01', includesManual: false });
     const data = queries.filter((q) => q.sql.includes('GROUP BY wk'));
     expect(data).toHaveLength(2);
     for (const q of data) {

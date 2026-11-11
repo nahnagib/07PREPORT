@@ -7,6 +7,7 @@ import { FollowupCharts } from '../FollowupCharts';
 import { NpsTopRow, ResponseRateCard } from '../NpsTopRow';
 import { OdooLink } from '../../OdooLink';
 import { Waiting } from '../Waiting';
+import { VISUAL_HELP } from '../../../lib/visualHelp';
 
 afterEach(cleanup);
 
@@ -86,17 +87,19 @@ const RATE: NpsResponseRate = {
   responders: 120, delivered: 300, read: 350, reached: 650, totalReach: 900, rate: (120 / 650) * 100, rateOfReach: (120 / 900) * 100,
   band: 'red', target: 30, variancePts: (120 / 650) * 100 - 30,
   weekly: [{ weekStart: '2026-09-27', responders: 10, reached: 80, rate: 12.5 }, { weekStart: '2026-10-04', responders: 110, reached: 570, rate: 19.3 }],
-  isEstimated: false, estimateStatus: 'not_needed', measured: { from: '2026-10-03', responders: 120, reached: 650, rate: (120 / 650) * 100 }, estimate: null,
+  includesManual: false, reachedBySource: { etl: 650, manual: 0, estimate: 0 }, manualPeriods: [],
 };
-// YTD on the local data: 801 responders / (1,222 measured + 2,841 estimated)
+// YTD on the local data (9 Nov): 801 responders / (1,222 measured + 1,127 Meta manual + 1,127 estimate)
 const RATE_EST: NpsResponseRate = {
-  ...RATE, dateFrom: '2026-07-12', dateTo: '2026-11-09', responders: 801, delivered: 1129, read: 2650, reached: 3779, totalReach: 4923,
-  rate: (801 / 3779) * 100, rateOfReach: (801 / 4923) * 100, band: 'red', variancePts: (801 / 3779) * 100 - 30,
-  isEstimated: true, estimateStatus: 'applied', measured: { from: '2026-10-03', responders: 269, reached: 1222, rate: (269 / 1222) * 100 },
-  estimate: { from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 278, reached: 2557, basis: 'auto', basisWeeks: 4, basisFrom: '2026-10-03',
-    basisTo: '2026-10-30', excludedWeeks: ['2026-10-31'],
-    byCompany: [{ companyKey: 1, company: 'MAJAAL', from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 86.25, reached: 1023 },
-      { companyKey: 3, company: 'TIKA', from: '2026-08-08', to: '2026-10-02', weeks: 8, perWeek: 191.75, reached: 1534 }] },
+  ...RATE, requestedDateFrom: '2026-01-01', dateFrom: '2026-07-12', dateTo: '2026-11-09', responders: 801, delivered: 1095, read: 2381,
+  reached: 3476, totalReach: 4495, rate: (801 / 3476) * 100, rateOfReach: (801 / 4495) * 100, band: 'red', variancePts: (801 / 3476) * 100 - 30,
+  includesManual: true, reachedBySource: { etl: 1222, manual: 1127, estimate: 1127 },
+  manualPeriods: [
+    { from: '2026-07-12', to: '2026-08-12', source: 'estimate' },
+    { from: '2026-08-13', to: '2026-08-31', source: 'meta_manual+estimate' },
+    { from: '2026-09-01', to: '2026-09-30', source: 'meta_manual' },
+    { from: '2026-10-01', to: '2026-10-02', source: 'meta_manual' },
+  ],
 };
 const rateState = (data: NpsResponseRate | null, extra: Partial<{ loading: boolean; error: string | null }> = {}) =>
   ({ data, loading: false, error: null, retry: () => undefined, ...extra });
@@ -125,48 +128,56 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
     expect(screen.getByTestId('nps-card').textContent).toContain('On Track');
   });
 
-  it('response rate: value, pill, Target 30%, variance, since the reach start, the filter note and the tooltip', () => {
+  it('response rate: value, pill, Target 30%, variance, since, the formula line; the filter explanations only in the tooltip', () => {
     render(<ResponseRateCard state={rateState(RATE)} />);
     const card = screen.getByTestId('rate-card');
     expect(card.textContent).toContain('18.46%');
     expect(card.textContent).toContain('Critical');
     expect(card.textContent).toContain('30%');
     expect(card.textContent).toContain('−11.54 pts');
+    expect(card.textContent).toContain('Responders ÷ (Delivered + Read)');
     expect(screen.getByTestId('rate-since').textContent).toBe('since 03 Oct 2026');
-    expect(screen.getByTestId('rate-company-only').textContent).toBe('Company and date filters only');
-    expect(screen.getByTestId('rate-numerator-note').textContent).toBe('Responders = every rating of the selected companies (other filters not applied)');
+    // A2: no longer printed under the rate (RATE has companyAndDateOnly: true) ...
+    expect(screen.queryByTestId('rate-company-only')).toBeNull();
+    expect(screen.queryByTestId('rate-numerator-note')).toBeNull();
+    expect(card.textContent).not.toContain('Company and date filters only');
+    expect(card.textContent).not.toContain('other filters not applied');
+    // ... but kept in the value tooltip
+    const valueTip = screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')!;
+    expect(valueTip).toContain('Company and date filters only');
+    expect(valueTip).toContain('Responders = every rating of the selected companies');
     expect(screen.queryAllByTitle(/Responders ÷ Total Reach/)).toHaveLength(0);
-    // the numerator under the rate; no estimate badge after the reach start
+    // the numerator under the rate; no manual mark after the reach start
     expect(screen.getByTestId('rate-fraction').textContent).toBe('120 responders ÷ 650 reached');
+    expect(screen.queryByTestId('rate-manual-mark')).toBeNull();
     expect(screen.queryByTestId('rate-estimate-badge')).toBeNull();
-    expect(screen.queryByTestId('rate-measured')).toBeNull();
   });
 
-  it('response rate with the estimate: the badge with the gap, the measured-only line, the formula tooltip; sparkline unchanged', () => {
+  it('response rate with the manual reach: the small mark, since the first manual day, the split tooltip; the old badge is gone', () => {
     render(<ResponseRateCard state={rateState(RATE_EST)} />);
     const card = screen.getByTestId('rate-card');
-    expect(card.textContent).toContain('21.20%');
-    expect(screen.getByTestId('rate-fraction').textContent).toBe('801 responders ÷ 3,779 reached');
-    expect(screen.getByTestId('rate-estimate-badge').textContent).toBe('incl. estimate · 12 Jul – 02 Oct');
-    expect(screen.getByTestId('rate-measured').textContent).toBe('Measured since 03 Oct: 22.01%');
-    expect(screen.queryByTestId('rate-since')).toBeNull();
-    const tip = screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')!;
-    expect(tip).toContain('801 ÷ (1,222 measured + 2,557 estimated) = 21.20%');
-    expect(tip).toContain('MAJAAL: 86.3 per week × 11.86 weeks (12 Jul – 02 Oct) = 1,023');
-    expect(tip).toContain('TIKA: 191.8 per week × 8.00 weeks (08 Aug – 02 Oct) = 1,534');
-    expect(tip).toContain('left out: week of 31 Oct (Meta outage)');
-    expect(tip).toContain('did not keep successful messages before 03 Oct');
-  });
-
-  it('response rate without a complete measured week: no estimate and says so', () => {
-    render(<ResponseRateCard state={rateState({ ...RATE, estimateStatus: 'no_basis' })} />);
-    expect(screen.getByTestId('rate-no-basis').textContent).toBe('Not estimated before 03 Oct 2026: no complete measured week yet');
+    expect(card.textContent).toContain('23.04%');
+    expect(screen.getByTestId('rate-fraction').textContent).toBe('801 responders ÷ 3,476 reached');
+    expect(screen.getByTestId('rate-manual-mark').textContent).toBe('incl. manual/est.');
+    expect(screen.getByTestId('rate-since').textContent).toBe('since 12 Jul 2026');
     expect(screen.queryByTestId('rate-estimate-badge')).toBeNull();
+    expect(card.textContent).not.toContain('incl. estimate ·');
+    const tip = screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')!;
+    expect(tip).toContain('Responders ÷ (Delivered + Read) = 801 ÷ (1,095 + 2,381) = 23.04%');
+    expect(tip).toContain('Measured (from 03 Oct): 1,222\nMeta manual: 1,127\nEstimate: 1,127\nTotal: 3,476');
+    expect(tip).toContain('12 Jul – 12 Aug estimated · 13 Aug – 02 Oct from Meta (manual; 13–31 Aug Delivered/Read estimated) · from 03 Oct measured');
   });
 
-  it('response rate without the filter note when only company / date filters are set; restricted and waiting say why', () => {
+  it('response rate: the filter explanation is in the ⓘ help of the card', () => {
+    expect(VISUAL_HELP['process.npsScore.responseRate'].help.formula).toEqual(expect.arrayContaining([
+      'Company and date filters only: the other filters (customer group, channel, branch, salesperson, customer) are not applied, on either side',
+      'Responders = every rating of the selected companies',
+    ]));
+  });
+
+  it('response rate without the filter line in the tooltip when only company / date filters are set; restricted and waiting say why', () => {
     const { unmount } = render(<ResponseRateCard state={rateState({ ...RATE, companyAndDateOnly: false })} />);
-    expect(screen.queryByTestId('rate-company-only')).toBeNull();
+    expect(screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')).not.toContain('Company and date filters only');
     unmount();
     const r2 = render(<ResponseRateCard state={rateState({ ...RATE, status: 'restricted', rate: null })} />);
     expect(screen.getByTestId('rate-card').textContent).toContain('Unavailable for your assigned data scope.');

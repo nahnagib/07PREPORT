@@ -19,11 +19,10 @@
  * Response rate = responders / (Delivered + Read) x 100: a customer can only answer a message that reached them. The
  * WhatsApp messages have no delivery / order / customer, so BOTH sides use the company and date filters only (ratings
  * by rating date, messages by message date, the same period); the other filters are ignored for it, never applied to
- * one side only. Messages are kept only from NPS_REACH_START: the gap 12 Jul – 02 Oct is the OFFICIAL estimate of
- * measures/npsReachEstimate.ts (per company from its own first rating: Delivered + Read = per measured week x gap
- * weeks, split by the measured mix; Not Delivered by the measured ratio; Error real), used by BOTH the Message reach
- * cards and the Response Rate (every responder of the period / cards' Delivered + Read), so they never disagree.
- * Flagged isEstimated. A period from NPS_REACH_START on is measured only, exactly as before.
+ * one side only. The ETL keeps messages only from NPS_REACH_START (03 Oct 2026); 12 Jul – 02 Oct is the OFFICIAL manual
+ * reach (process_nps_reach_manual, migration 0071: Meta exports + approved estimates, spread per day). Both the Survey
+ * Reach cards and the Response Rate read v_process_nps_reach through measures/npsReachCounts.ts, so they never
+ * disagree; nothing else is estimated.
  * Follow-up: the detractor list and the follow-up charts read nps_followup_case LIVE (the follow-up page's edits show on
  * the next request; services/npsFollowupService.ts owns the time bands).
  * Filters: the global filters (company, customer group, channel, branch, salesperson, customer) through
@@ -37,9 +36,7 @@ import {
   CSAT_SCALE, NPS_SCALE, RESPONSE_RATE_SCALE, csatBand, minResponders, npsBand, responseRateBand, type Band, type BandScale,
 } from '../config/npsThresholds';
 import { addDaysIso, weekStartIso, weekStartSql } from '../lib/businessWeek';
-import { reachEstimateConfig, type ReachEstimateConfig } from '../config/npsReachEstimate';
-import { estimateGapReach, type ReachEstimateStatus } from './npsReachEstimate';
-export { completeMeasuredWeeks, reachGap, type ReachEstimateStatus } from './npsReachEstimate';
+import { fetchReachCounts, firstReachDate, type ManualPeriod, type ReachBoxes, type ReachSource } from './npsReachCounts';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 import {
   FOLLOWUP_STAGES,
@@ -426,92 +423,57 @@ export interface NpsReach {
   dateTo: string;
   companyAndDateOnly: boolean;
   loadedAt: string | null;
-  /** NPS_REACH_START of the last load (the ETL's setting; no earlier message is counted), null = all history */
+  /** NPS_REACH_START of the last load: the ETL's messages start there; before it the manual reach (migration 0071) */
   reachStart: string | null;
-  /** the official counts: measured (from reachStart) + the gap (measures/npsReachEstimate.ts) when isEstimated */
-  totals: { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number } | null;
-  /** the official error groups: measured + the gap's real errors; they sum to totals.error */
+  /** all sources together (measures/npsReachCounts.ts): the official counts */
+  totals: ReachBoxes | null;
+  /** the error groups of every source (manual errors = meta_manual "Unclassified (Meta manual)"); they sum to totals.error */
   errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
-  /** the gap 12 Jul – 02 Oct is in the totals (Delivered, Read, Not Delivered estimated; Error real) */
-  isEstimated: boolean;
-  estimateStatus: ReachEstimateStatus;
-  /** the earliest .. latest company gap; null unless isEstimated */
-  estimate: { from: string; to: string } | null;
-  /** the measured part (from reachStart) and the gap part of every box; null unless isEstimated */
-  measured: GapBoxes | null;
-  gap: GapBoxes | null;
+  /** manual or estimated messages are in the totals */
+  includesManual: boolean;
+  /** every box by source (etl = measured); they add up to totals */
+  bySource: Record<ReachSource, ReachBoxes> | null;
+  /** the manual periods in the range (companies merged), for the subtitle */
+  manualPeriods: ManualPeriod[];
 }
 
-export interface GapBoxes { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number }
+export type { ManualPeriod, ReachBoxes, ReachSource };
 
-export async function fetchNpsReach(
-  pool: Pool, q: NpsQuery, f: Filters, user: UserContext, cfg: ReachEstimateConfig = reachEstimateConfig(),
-): Promise<NpsReach> {
+export async function fetchNpsReach(pool: Pool, q: NpsQuery, f: Filters, user: UserContext): Promise<NpsReach> {
   const base: NpsReach = {
     status: 'waiting', dateFrom: q.dateFrom, dateTo: q.dateTo,
     companyAndDateOnly: REACH_UNSUPPORTED.some((key) => (f[key]?.length ?? 0) > 0),
-    loadedAt: null, reachStart: null, totals: null, errors: [],
-    isEstimated: false, estimateStatus: cfg.enabled ? 'not_needed' : 'disabled', estimate: null, measured: null, gap: null,
+    loadedAt: null, reachStart: null, totals: null, errors: [], includesManual: false, bySource: null, manualPeriods: [],
   };
   if (user.roleCode === 'SALESPERSON' || user.dataScopeRules?.some((r) => r.dimension !== 'companyKeys')) {
     return { ...base, status: 'restricted' };
   }
-  const [stateRows] = await pool.query(
-    `SELECT loaded_at_utc, reach_start, DATE_FORMAT(loaded_at_utc, '%Y-%m-%d %H:%i:%s') AS loaded_utc_text
-       FROM process_nps_reach_state WHERE singleton_id = 1`);
+  const [stateRows] = await pool.query('SELECT loaded_at_utc, reach_start FROM process_nps_reach_state WHERE singleton_id = 1');
   const state = (stateRows as Record<string, unknown>[])[0];
   if (!state) return base;
 
   const company = f.companyKeys ?? [];
+  // the SAME read as the Response Rate
+  const counts = await fetchReachCounts(pool, q.dateFrom, q.dateTo, company);
   const where = `f.MessageDateKey BETWEEN ? AND ?${company.length ? ` AND f.CompanyKey IN (${company.map(() => '?').join(', ')})` : ''}`;
-  const params = [dateKeyOf(q.dateFrom), dateKeyOf(q.dateTo), ...company];
-  const [rows] = await pool.query(
-    `SELECT SUM(f.total_reach) AS total_reach, SUM(f.delivered) AS delivered,
-            SUM(f.not_delivered) AS not_delivered, SUM(f.read_count) AS read_count,
-            SUM(f.error_count) AS error_count, SUM(f.other_state) AS other_state
-       FROM v_process_nps_reach f WHERE ${where}`, params);
   const [errors] = await pool.query(
     `SELECT f.failure_group, f.label_en, f.is_fixable, f.hint, SUM(f.errors) AS errors
        FROM v_process_nps_message_error f WHERE ${where}
-      GROUP BY f.failure_group, f.label_en, f.is_fixable, f.hint, f.sort_order ORDER BY f.sort_order`, params);
-  const r = (rows as Record<string, unknown>[])[0];
-  const reachStart = asDate(state.reach_start);
-  const measured: GapBoxes = {
-    totalReach: Number(r?.total_reach ?? 0), delivered: Number(r?.delivered ?? 0),
-    notDelivered: Number(r?.not_delivered ?? 0), read: Number(r?.read_count ?? 0),
-    error: Number(r?.error_count ?? 0), otherState: Number(r?.other_state ?? 0),
-  };
-  const errorRows = (errors as Record<string, unknown>[]).map((e) => ({
-    key: String(e.failure_group), label: String(e.label_en), fixable: Number(e.is_fixable) === 1,
-    hint: String(e.hint), count: Number(e.errors),
-  }));
-  const ready: NpsReach = { ...base, status: 'ready', loadedAt: asDateTime(state.loaded_at_utc), reachStart, totals: measured, errors: errorRows };
-
-  // the gap: the SAME calculation as the Response Rate (measures/npsReachEstimate.ts)
-  const est = await estimateGapReach(pool, q, company, reachStart, state.loaded_utc_text ? String(state.loaded_utc_text) : null, cfg);
-  if (est.status !== 'applied' || !est.from || !est.to) return { ...ready, estimateStatus: est.status };
-  const g = est.totals;
-  const gap: GapBoxes = { totalReach: g.totalReach, delivered: g.delivered, notDelivered: g.notDelivered, read: g.read, error: g.error, otherState: 0 };
-  // the gap's real errors join their groups (labels from dim_process_nps_failure_group)
-  const [groupRows] = await pool.query('SELECT failure_group, label_en, is_fixable, hint, sort_order FROM dim_process_nps_failure_group');
-  const groupInfo = new Map((groupRows as Record<string, unknown>[]).map((x) => [String(x.failure_group), x]));
-  const merged = new Map(errorRows.map((e) => [e.key, { ...e }]));
-  for (const { key: k, count } of est.errorsByGroup) {
-    const info = groupInfo.get(k);
-    const row = merged.get(k) ?? { key: k, label: String(info?.label_en ?? k), fixable: Number(info?.is_fixable ?? 0) === 1, hint: String(info?.hint ?? ''), count: 0 };
-    row.count += count;
-    merged.set(k, row);
-  }
-  const order = (k: string) => Number(groupInfo.get(k)?.sort_order ?? Number.MAX_SAFE_INTEGER);
+      GROUP BY f.failure_group, f.label_en, f.is_fixable, f.hint, f.sort_order ORDER BY f.sort_order`,
+    [dateKeyOf(q.dateFrom), dateKeyOf(q.dateTo), ...company]);
   return {
-    ...ready,
-    totals: {
-      totalReach: measured.totalReach + gap.totalReach, delivered: measured.delivered + gap.delivered,
-      notDelivered: measured.notDelivered + gap.notDelivered, read: measured.read + gap.read,
-      error: measured.error + gap.error, otherState: measured.otherState,
-    },
-    errors: [...merged.values()].sort((a, b) => order(a.key) - order(b.key)),
-    isEstimated: true, estimateStatus: 'applied', estimate: { from: est.from, to: est.to }, measured, gap,
+    ...base,
+    status: 'ready',
+    loadedAt: asDateTime(state.loaded_at_utc),
+    reachStart: asDate(state.reach_start),
+    totals: counts.totals,
+    errors: (errors as Record<string, unknown>[]).map((e) => ({
+      key: String(e.failure_group), label: String(e.label_en), fixable: Number(e.is_fixable) === 1,
+      hint: String(e.hint), count: Number(e.errors),
+    })),
+    includesManual: counts.includesManual,
+    bySource: counts.bySource,
+    manualPeriods: counts.manualPeriods,
   };
 }
 
@@ -656,158 +618,107 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
 // -- response rate ------------------------------------------------------------------------------------------------------
 export interface NpsResponseRate {
   status: 'waiting' | 'restricted' | 'ready';
-  /** Original request boundary; dateFrom below may be clamped to the first available rating/message. */
+  /** the page's start; dateFrom below may be later (the first day with reach) */
   requestedDateFrom: string;
-  /** the period counted: the page's range, from the first gap day (estimated) or from reachStart (measured only) */
+  /** the period counted: the page's range from the first day with reach (12 Jul 2026, the first manual day) */
   dateFrom: string;
   dateTo: string;
-  /** NPS_REACH_START of the last message load: before it there are no kept Delivered / Read messages */
+  /** NPS_REACH_START of the last message load: measured (ETL) from here, manual reach before it */
   reachStart: string | null;
   /** a team / salesperson / segment / customer filter is set and was ignored for this card */
   companyAndDateOnly: boolean;
-  /** the numerator used: every responder of the counted period (measured + gap) */
+  /** the numerator: every responder of the counted period (company + date filters) */
   responders: number;
-  /** the official Delivered / Read (= the Message reach cards): measured + the gap estimate when isEstimated */
+  /** the official Delivered / Read (= the Survey Reach cards, every source) */
   delivered: number;
   read: number;
-  /** the denominator used = delivered + read */
+  /** the denominator = delivered + read */
   reached: number;
   /** the official Total Reach (= the card) */
   totalReach: number;
   /** responders / reached x 100, unrounded (the headline); null when nothing reached anyone */
   rate: number | null;
-  /** responders / Total Reach x 100 (the tooltip's second view) */
+  /** responders / Total Reach x 100 */
   rateOfReach: number | null;
   /** band and variance of the headline rate */
   band: Band | null;
   target: number;
   /** rate - target, in points */
   variancePts: number | null;
-  /** per business week (Saturday..Friday) from reachStart, for the sparkline: measured weeks only */
+  /** per business week (Saturday..Friday) of the counted period, for the sparkline (every source) */
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
-  /** the headline includes the gap estimate */
-  isEstimated: boolean;
-  estimateStatus: ReachEstimateStatus;
-  /** the real rate over the part of the period from reachStart; null when the period ends before it */
-  measured: { from: string; responders: number; reached: number; rate: number | null } | null;
-  /** the gap estimate (measures/npsReachEstimate.ts), the sum of the companies; null unless applied */
-  estimate: {
-    from: string;
-    to: string;
-    /** (to - from + 1) / 7 */
-    weeks: number;
-    /** the companies' Delivered + Read per week, summed */
-    perWeek: number;
-    /** estimated Delivered + Read; part of `reached` */
-    reached: number;
-    basis: 'auto' | 'fixed';
-    /** the complete measured weeks the automatic basis averages (0 with a fixed value) */
-    basisWeeks: number;
-    basisFrom: string | null;
-    basisTo: string | null;
-    /** complete measured weeks left out of the basis (NPS_REACH_ESTIMATE_EXCLUDE_WEEKS) */
-    excludedWeeks: string[];
-    /** per company, each from its own first rating */
-    byCompany: { companyKey: number; company: string; from: string; to: string; weeks: number; perWeek: number; reached: number }[];
-  } | null;
+  /** manual or estimated Delivered / Read are in the denominator */
+  includesManual: boolean;
+  /** Delivered + Read by source (etl = measured); they add up to reached */
+  reachedBySource: Record<ReachSource, number>;
+  /** the manual periods in the counted period (companies merged) */
+  manualPeriods: ManualPeriod[];
 }
 
-/** n / d x 100, unrounded; null when d is 0. */
-export const ratePct = (n: number, d: number): number | null => (d > 0 ? (n / d) * 100 : null);
+/** n / d x 100, unrounded, with an optional ceiling; null when d is 0. */
+export const ratePct = (n: number, d: number, ceiling = Infinity): number | null =>
+  (d > 0 ? Math.min((n / d) * 100, ceiling) : null);
 
 /**
  * Response rate: ratings (rating date) / messages that reached the customer (message date), company and date only. The
  * same role restriction as the reach panel: a scope on anything but the company can't be applied to messages, so those
  * roles get no figure (never filtered ratings over unfiltered messages).
  *
- * Messages are kept only from NPS_REACH_START, ratings exist from the first rating. When the period touches that gap,
- * the gap's Delivered + Read come from estimateGapReach (measures/npsReachEstimate.ts) -- the SAME calculation as the
- * Message reach cards, so Delivered + Read on the cards = this denominator -- and every responder of the period is
- * counted. Never derived from responders or from the rate. A period from reachStart on is exactly the measured rate (no
- * estimate); so is a disabled estimate, and a gap without a measured basis week (status no_basis).
+ * Delivered + Read come from fetchReachCounts (measures/npsReachCounts.ts) -- the SAME read as the Survey Reach cards,
+ * every source (measured from NPS_REACH_START, the manual reach before it). The counted period starts at the page's start
+ * or, when that is earlier, at the first day with reach (no reach = no rate), and every responder of it is counted.
  */
-export async function fetchNpsResponseRate(
-  pool: Pool, q: NpsQuery, f: Filters, user: UserContext, cfg: ReachEstimateConfig = reachEstimateConfig(),
-): Promise<NpsResponseRate> {
+export async function fetchNpsResponseRate(pool: Pool, q: NpsQuery, f: Filters, user: UserContext): Promise<NpsResponseRate> {
   const empty: NpsResponseRate = {
     status: 'waiting', requestedDateFrom: q.dateFrom, dateFrom: q.dateFrom, dateTo: q.dateTo, reachStart: null,
     companyAndDateOnly: REACH_UNSUPPORTED.some((key) => (f[key]?.length ?? 0) > 0),
     responders: 0, delivered: 0, read: 0, reached: 0, totalReach: 0, rate: null, rateOfReach: null, band: null,
     target: RESPONSE_RATE_SCALE.target, variancePts: null, weekly: [],
-    isEstimated: false, estimateStatus: cfg.enabled ? 'not_needed' : 'disabled', measured: null, estimate: null,
+    includesManual: false, reachedBySource: { etl: 0, manual: 0, estimate: 0 }, manualPeriods: [],
   };
   if (user.roleCode === 'SALESPERSON' || user.dataScopeRules?.some((r) => r.dimension !== 'companyKeys')) return { ...empty, status: 'restricted' };
   const [stateRows] = await pool.query(
-    `SELECT DATE_FORMAT(reach_start, '%Y-%m-%d') AS reach_start, DATE_FORMAT(loaded_at_utc, '%Y-%m-%d %H:%i:%s') AS loaded_at_utc
-       FROM process_nps_reach_state WHERE singleton_id = 1`);
+    `SELECT DATE_FORMAT(reach_start, '%Y-%m-%d') AS reach_start FROM process_nps_reach_state WHERE singleton_id = 1`);
   const state = (stateRows as Record<string, unknown>[])[0];
   if (!state) return empty;
   const reachStart = asDate(state.reach_start);
-  const measuredFrom = reachStart && reachStart > q.dateFrom ? reachStart : q.dateFrom;
-
-  const company = f.companyKeys ?? [];
-  const inCompany = (alias: string) => (company.length ? ` AND ${alias}.CompanyKey IN (${company.map(() => '?').join(', ')})` : '');
-  const messageDate = "STR_TO_DATE(CAST(m.MessageDateKey AS CHAR), '%Y%m%d')";
-
-  // 1. measured: the part of the period from reachStart -- exactly the rate before the estimate existed
-  let responders = 0;
-  let delivered = 0;
-  let read = 0;
-  let totalReach = 0;
-  const weekly: NpsResponseRate['weekly'] = [];
-  if (measuredFrom <= q.dateTo) {
-    const range = [dateKeyOf(measuredFrom), dateKeyOf(q.dateTo)];
-    const [ratingRows] = await pool.query(
-      `SELECT DATE_FORMAT(${weekStartSql(ratingDate)}, '%Y-%m-%d') AS wk, COUNT(*) AS n
-         FROM v_process_nps_response f WHERE f.RatingDateKey BETWEEN ? AND ?${inCompany('f')} GROUP BY wk`, [...range, ...company]);
-    const [messageRows] = await pool.query(
-      `SELECT DATE_FORMAT(${weekStartSql(messageDate)}, '%Y-%m-%d') AS wk, SUM(m.delivered) AS delivered,
-              SUM(m.read_count) AS read_count, SUM(m.total_reach) AS total_reach
-         FROM v_process_nps_reach m WHERE m.MessageDateKey BETWEEN ? AND ?${inCompany('m')} GROUP BY wk`, [...range, ...company]);
-    const ratings = new Map((ratingRows as Record<string, unknown>[]).map((r) => [String(r.wk), Number(r.n)]));
-    const messages = new Map((messageRows as Record<string, unknown>[]).map((r) => [String(r.wk), r]));
-    for (let wk = weekStartIso(measuredFrom); wk <= q.dateTo; wk = addDaysIso(wk, 7)) {
-      const n = ratings.get(wk) ?? 0;
-      const m = messages.get(wk);
-      const d = Number(m?.delivered ?? 0);
-      const rd = Number(m?.read_count ?? 0);
-      responders += n;
-      delivered += d;
-      read += rd;
-      totalReach += Number(m?.total_reach ?? 0);
-      weekly.push({ weekStart: wk, responders: n, reached: d + rd, rate: ratePct(n, d + rd) });
-    }
-  }
-  const measuredReached = delivered + read;
-  const measured = measuredFrom <= q.dateTo
-    ? { from: measuredFrom, responders, reached: measuredReached, rate: ratePct(responders, measuredReached) }
-    : null;
   const withRate = (out: Omit<NpsResponseRate, 'band' | 'variancePts'>): NpsResponseRate => ({
     ...out, band: responseRateBand(out.rate), variancePts: out.rate === null ? null : out.rate - RESPONSE_RATE_SCALE.target,
   });
-  const measuredOnly = (estimateStatus: ReachEstimateStatus): NpsResponseRate => withRate({
-    ...empty, status: 'ready', reachStart, dateFrom: measuredFrom, responders, delivered, read, reached: measuredReached, totalReach,
-    rate: ratePct(responders, measuredReached), rateOfReach: ratePct(responders, totalReach), weekly, estimateStatus, measured,
-  });
 
-  // 2. the gap: the SAME calculation as the Message reach cards
-  const est = await estimateGapReach(pool, q, company, reachStart, state.loaded_at_utc ? String(state.loaded_at_utc) : null, cfg);
-  if (est.status !== 'applied' || !est.from || !est.to) return measuredOnly(est.status);
-  const g = est.totals;
-  const allResponders = responders + est.responders;
-  const reached = measuredReached + g.reached;
-  const allReach = totalReach + g.totalReach;
+  const company = f.companyKeys ?? [];
+  const first = await firstReachDate(pool, company);
+  const countedFrom = first && first > q.dateFrom ? first : q.dateFrom;
+  if (!first || countedFrom > q.dateTo) return withRate({ ...empty, status: 'ready', reachStart, dateFrom: countedFrom });
+
+  // the denominator: the SAME read as the Survey Reach cards
+  const counts = await fetchReachCounts(pool, countedFrom, q.dateTo, company);
+  const inCompany = company.length ? ` AND f.CompanyKey IN (${company.map(() => '?').join(', ')})` : '';
+  const [ratingRows] = await pool.query(
+    `SELECT DATE_FORMAT(${weekStartSql(ratingDate)}, '%Y-%m-%d') AS wk, COUNT(*) AS n
+       FROM v_process_nps_response f WHERE f.RatingDateKey BETWEEN ? AND ?${inCompany} GROUP BY wk`,
+    [dateKeyOf(countedFrom), dateKeyOf(q.dateTo), ...company]);
+  const ratings = new Map((ratingRows as Record<string, unknown>[]).map((r) => [String(r.wk), Number(r.n)]));
+  let responders = 0;
+  const weekly: NpsResponseRate['weekly'] = [];
+  for (let wk = weekStartIso(countedFrom); wk <= q.dateTo; wk = addDaysIso(wk, 7)) {
+    const n = ratings.get(wk) ?? 0;
+    const m = counts.weekly.get(wk);
+    const reachedWeek = (m?.delivered ?? 0) + (m?.read ?? 0);
+    responders += n;
+    weekly.push({ weekStart: wk, responders: n, reached: reachedWeek, rate: ratePct(n, reachedWeek) });
+  }
+  const { delivered, read, totalReach } = counts.totals;
+  const reached = delivered + read;
+  const bySrc = counts.bySource;
   return withRate({
-    ...empty, status: 'ready', reachStart, dateFrom: est.from, responders: allResponders, delivered: delivered + g.delivered,
-    read: read + g.read, reached, totalReach: allReach, rate: ratePct(allResponders, reached), rateOfReach: ratePct(allResponders, allReach),
-    weekly, isEstimated: true, estimateStatus: 'applied', measured,
-    estimate: {
-      from: est.from, to: est.to, weeks: (Math.round((Date.parse(`${est.to}T12:00:00Z`) - Date.parse(`${est.from}T12:00:00Z`)) / 86_400_000) + 1) / 7,
-      perWeek: est.byCompany.reduce((n, c) => n + c.perWeek, 0), reached: g.reached, basis: est.basis,
-      basisWeeks: est.basisWeeks.length, basisFrom: est.basisWeeks[0] ?? null,
-      basisTo: est.basisWeeks.length ? addDaysIso(est.basisWeeks[est.basisWeeks.length - 1], 6) : null,
-      excludedWeeks: est.excludedWeeks,
-      byCompany: est.byCompany.map((c) => ({ companyKey: c.companyKey, company: c.company, from: c.from, to: c.to, weeks: c.weeks, perWeek: c.perWeek, reached: c.reached })),
+    ...empty, status: 'ready', reachStart, dateFrom: countedFrom, responders, delivered, read, reached, totalReach,
+    rate: ratePct(responders, reached), rateOfReach: ratePct(responders, totalReach, 100), weekly,
+    includesManual: counts.includesManual,
+    reachedBySource: {
+      etl: bySrc.etl.delivered + bySrc.etl.read, manual: bySrc.manual.delivered + bySrc.manual.read,
+      estimate: bySrc.estimate.delivered + bySrc.estimate.read,
     },
+    manualPeriods: counts.manualPeriods,
   });
 }

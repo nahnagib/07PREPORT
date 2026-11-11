@@ -16,11 +16,9 @@ import {
   pct,
   periodCaption,
   periodLabel,
-  estimateBadge,
-  measuredLine,
+  manualSubtitle,
   rateFraction,
-  reachBoxTooltip,
-  reachSubtitle,
+  sourceSplit,
   responseRateMetrics,
   responseRateTooltip,
   smallSample,
@@ -144,37 +142,43 @@ describe('the top row', () => {
     ]);
   });
 
-  it('response rate with the estimate: formula, one line per company, the basis (outage week left out), measured-only rate, why', () => {
+  const PERIODS = [
+    { from: '2026-07-12', to: '2026-08-12', source: 'estimate' as const },
+    { from: '2026-08-13', to: '2026-08-31', source: 'meta_manual+estimate' as const },
+    { from: '2026-09-01', to: '2026-09-30', source: 'meta_manual' as const },
+    { from: '2026-10-01', to: '2026-10-02', source: 'meta_manual' as const },
+  ];
+
+  it('response rate with the manual reach: formula, Delivered + Read by source, where each part comes from', () => {
     const r = {
-      responders: 801, delivered: 1129, read: 2650, reached: 3779, totalReach: 4923, rate: (801 / 3779) * 100, rateOfReach: 16.3,
-      reachStart: '2026-10-03', isEstimated: true, measured: { from: '2026-10-03', responders: 269, reached: 1222, rate: (269 / 1222) * 100 },
-      estimate: { from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 278, reached: 2557, basis: 'auto' as const, basisWeeks: 4, basisFrom: '2026-10-03',
-        basisTo: '2026-10-30', excludedWeeks: ['2026-10-31'],
-        byCompany: [{ companyKey: 1, company: 'MAJAAL', from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 86.25, reached: 1023 },
-          { companyKey: 3, company: 'TIKA', from: '2026-08-08', to: '2026-10-02', weeks: 8, perWeek: 191.75, reached: 1534 }] },
+      responders: 801, delivered: 1095, read: 2381, reached: 3476, totalReach: 4495, rate: (801 / 3476) * 100, rateOfReach: (801 / 4495) * 100,
+      reachStart: '2026-10-03', includesManual: true, reachedBySource: { etl: 1222, manual: 1127, estimate: 1127 }, manualPeriods: PERIODS,
     };
     expect(responseRateTooltip(r).split('\n')).toEqual([
-      'Responders ÷ (Delivered + Read) = 801 ÷ (1,222 measured + 2,557 estimated) = 21.20%',
-      'MAJAAL: 86.3 per week × 11.86 weeks (12 Jul – 02 Oct) = 1,023',
-      'TIKA: 191.8 per week × 8.00 weeks (08 Aug – 02 Oct) = 1,534',
-      'Per week = average Delivered + Read of 4 complete weeks, 03 Oct – 30 Oct; left out: week of 31 Oct (Meta outage)',
-      'Measured since 03 Oct: 269 ÷ 1,222 = 22.01%',
-      'The WhatsApp source did not keep successful messages before 03 Oct, so that part is estimated.',
+      'Responders ÷ (Delivered + Read) = 801 ÷ (1,095 + 2,381) = 23.04%',
+      'Delivered + Read:',
+      'Measured (from 03 Oct): 1,222',
+      'Meta manual: 1,127',
+      'Estimate: 1,127',
+      'Total: 3,476',
+      '12 Jul – 12 Aug estimated · 13 Aug – 02 Oct from Meta (manual; 13–31 Aug Delivered/Read estimated) · from 03 Oct measured',
+      'Customers can only answer a message that reached them.',
     ]);
-    expect(responseRateTooltip({ ...r, estimate: { ...r.estimate, basis: 'fixed' as const, basisWeeks: 0, basisFrom: null, basisTo: null, excludedWeeks: [] } }).split('\n')[3])
-      .toBe("Per week: fixed setting, split by the companies' measured share");
-    expect(rateFraction(r)).toBe('801 responders ÷ 3,779 reached');
-    expect(estimateBadge(r)).toBe('incl. estimate · 12 Jul – 02 Oct');
-    expect(estimateBadge({ isEstimated: false, estimate: null })).toBeNull();
-    expect(measuredLine(r)).toBe('Measured since 03 Oct: 22.01%');
-    expect(measuredLine({ measured: null, reachStart: '2026-10-03' })).toBe('Measured since 03 Oct: —');
+    expect(rateFraction(r)).toBe('801 responders ÷ 3,476 reached');
   });
 
-  it('Message reach: the card tooltip (measured + gap; Error actual) and the subtitle', () => {
-    const est = { from: '2026-07-12', to: '2026-10-02' };
-    expect(reachBoxTooltip('delivered', 365, 764, '2026-10-03', est)).toBe('Measured from 03 Oct: 365\n12 Jul – 02 Oct (estimated): 764\nTotal: 1,129');
-    expect(reachBoxTooltip('error', 433, 521, '2026-10-03', est)).toBe('Measured from 03 Oct: 433\n12 Jul – 02 Oct (actual, kept by the source): 521\nTotal: 954');
-    expect(reachSubtitle('2026-10-03', est)).toBe('Measured from 03 Oct 2026 · 12 Jul – 02 Oct estimated');
+  it('the manual subtitle: periods in order, back-to-back Meta periods merged, the mixed one named; empty without periods', () => {
+    expect(manualSubtitle(PERIODS, '2026-10-03'))
+      .toBe('12 Jul – 12 Aug estimated · 13 Aug – 02 Oct from Meta (manual; 13–31 Aug Delivered/Read estimated) · from 03 Oct measured');
+    // the API may list a period once per company; the order of the rows does not matter
+    expect(manualSubtitle([...PERIODS, ...PERIODS].reverse(), '2026-10-03')).toBe(manualSubtitle(PERIODS, '2026-10-03'));
+    expect(manualSubtitle([PERIODS[2]], null)).toBe('01 Sep – 30 Sep from Meta (manual)');
+    expect(manualSubtitle([], '2026-10-03')).toBe('');
+  });
+
+  it('a reach figure split by source', () => {
+    expect(sourceSplit({ etl: 365, manual: 361, estimate: 369 }, '2026-10-03')).toBe('Measured (from 03 Oct): 365\nMeta manual: 361\nEstimate: 369\nTotal: 1,095');
+    expect(sourceSplit({ etl: 0, manual: 4, estimate: 0 }, null)).toBe('Measured: 0\nMeta manual: 4\nEstimate: 0\nTotal: 4');
   });
 });
 

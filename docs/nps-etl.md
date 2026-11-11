@@ -354,40 +354,54 @@ rating date, messages by message date, the same period. Any team / salesperson /
 for this card on both sides and the card says **Company and date filters only**; the same role restriction as the reach
 panel applies. Under the rate the card shows the fraction actually used ("N responders ÷ M reached").
 
-**The gap 12 Jul – 02 Oct is an official estimate (option A).** Ratings exist from the first rating (12 Jul 2026) but
-the WhatsApp source kept successful (Delivered / Read) and still-"sent" (Not Delivered) messages only from
-`NPS_REACH_START` (03 Oct 2026); it did keep the failed ones (Error). One backend function,
-`estimateGapReach` (`backend/src/measures/npsReachEstimate.ts`, config `backend/src/config/npsReachEstimate.ts`), feeds
-**both** the Message reach cards and the Response Rate, so Delivered + Read on the cards = the rate's denominator:
+**12 Jul – 02 Oct is the official MANUAL reach (decision 2026-11-11; replaces the automatic weekly estimate of PR
+#17).** Ratings exist from the first rating (12 Jul 2026), but the WhatsApp source kept successful (Delivered / Read)
+and still-"sent" (Not Delivered) messages only from `NPS_REACH_START` (03 Oct 2026). The business approved per-company
+figures for that range (Meta exports + estimates; `Claude outputs/nps_reach_manual_2026-07-12_to_10-02.csv`), seeded by
+migration **0071** into `process_nps_reach_manual` — the same 8 rows in every environment, no hand inserts:
 
-- **Per company**, each from its **own** first rating (Majaal 12 Jul, Tika 08 Aug); the selection = the sum.
-- **Basis:** the company's Delivered + Read per **complete** Saturday–Friday week from `NPS_REACH_START` to the day
-  before the last message load, **minus `NPS_REACH_ESTIMATE_EXCLUDE_WEEKS`** (default 31 Oct and 07 Nov: the Meta
-  outage, below); recalculated per request. `NPS_REACH_ESTIMATE_PER_WEEK` replaces it (split by measured share).
-- **Gap:** max(period start, first rating) .. min(period end, `NPS_REACH_START` − 1). Reached = round(per week × days ÷ 7).
-- **Delivered / Read:** reached split by the company's measured Delivered : Read over the basis weeks (Read = reached −
-  Delivered, exact). **Not Delivered:** reached × its measured Not Delivered ÷ (Delivered + Read) — the source holds 0
-  "sent" messages in every gap week, so it is estimated. **Error:** the gap's REAL failed messages (feedback template,
-  not a test number), by failure group — 23–88 a week, in line with October's 37–59, back to the first message.
-  **Total Reach** = the four boxes.
-- **Response Rate** = every responder of the period ÷ (cards' Delivered + Read). Never derived from responders.
-- A period from `NPS_REACH_START` on shows exactly the measured numbers (no estimate, no marks). So does
-  `NPS_REACH_ESTIMATE_ENABLED=false`, and a gap without a basis week (`estimateStatus: no_basis`).
-- **Cards:** subtitle "Measured from 03 Oct 2026 · 12 Jul – 02 Oct estimated", a mark "incl. est." (Error: "incl.
-  gap", its gap part is actual), tooltip measured + gap; "% of reach" on the new totals. **Rate card:** "N responders ÷
-  M reached", badge "incl. estimate · 12 Jul – 02 Oct", "Measured since 03 Oct: x %", one tooltip line per company. The
-  sparkline stays measured-only.
-- **Week of 31 Oct (investigated 2026-11-09):** 262 messages were sent, as in a normal week, but from 1 Nov the failure
-  group `meta_temporary` took over (117 errors that week, 73 in the first 3 days of the next; none before). The messages
-  are in the source and failed — not a load gap, nothing to reload — so the outage weeks are left out of the basis.
-- Local check 2026-11-09 (YTD, all companies): 801 ÷ (1,222 measured + 2,557 estimated) = **21.20 %**; cards Total
-  Reach 4,923 · Delivered 1,129 · Read 2,650 · Not Delivered 190 · Error 954. `scripts/process/check_nps_totals.py`
-  prints the measured rate, the estimated rate and the cards, and checks cards Delivered + Read = the rate's denominator.
+| Period | Source | Majaal D / ND / R / E = total | Tika D / ND / R / E = total |
+|---|---|---|---|
+| 12 Jul – 12 Aug | estimate | 106 / 2 / 193 / 48 = 349 | 47 / 3 / 107 / 27 = 184 |
+| 13 – 31 Aug | Meta export; Delivered / Read estimated | 74 / 0 / 136 / 14 = 224 | 142 / 4 / 322 / 206 = 674 |
+| 01 – 30 Sep | Meta export | 126 / 2 / 231 / 57 = 416 | 221 / 14 / 501 / 125 = 861 |
+| 01 – 02 Oct | Meta export | 4 / 0 / 4 / 0 = 8 | 10 / 1 / 30 / 5 = 46 |
+
+- **Daily grain:** `v_process_nps_reach_manual_daily` spreads each period evenly over its days, per state — day i of n
+  gets floor(v·i/n) − floor(v·(i−1)/n) (largest remainder; the extra units spread through the period) — so every
+  period's days add up exactly to its row and any date filter works.
+- **One view:** `v_process_nps_reach` = the ETL's messages (`source = 'etl'`) + the manual days (`'manual'` = Meta
+  export, `'estimate'`). For 13–31 Aug, Delivered / Read are `estimate` and Not Delivered / Error `manual`. Where a
+  manual period covers a company and day, the source's own rows of that day (its kept failed messages) are left out:
+  the manual table replaces **all** states there, nothing is counted twice. `v_process_nps_message_error` puts the
+  manual errors in one group, **Unclassified (Meta manual)** (`meta_manual`).
+- **One read:** `fetchReachCounts` (`backend/src/measures/npsReachCounts.ts`) feeds both the Survey Reach cards and the
+  Response Rate, so Delivered + Read on the cards = the rate's denominator.
+- **Response Rate** = every responder of the counted period (company + date filters) ÷ (Delivered + Read). The counted
+  period starts at the page's start or, if that is earlier, at the first day with reach (12 Jul): before it there is no
+  reach. From 03 Oct on everything is exactly as measured. Nothing else is estimated: the `NPS_REACH_ESTIMATE_*`
+  settings are gone.
+- **Cards:** when the period touches 12 Jul – 02 Oct the subtitle reads "12 Jul – 12 Aug estimated · 13 Aug – 02 Oct
+  from Meta (manual; 13–31 Aug Delivered/Read estimated) · from 03 Oct measured" (built from the table's periods), each
+  card that includes manual or estimated reach is marked **incl. manual/est.**, and its tooltip splits measured / Meta
+  manual / estimate. **Rate card:** the same mark, "N responders ÷ M reached", "since <first day counted>", the
+  Company-and-date-filters note; the tooltip splits Delivered + Read by source. The sparkline covers every week counted.
+- **The ETL never writes the table.** No ETL code names it (`data/etl/tests/test_nps_reach_manual_guard.py`);
+  `process_nps` replaces `fact_process_nps_message` and upserts `dim_process_nps_failure_group` (upsert, so the
+  `meta_manual` group stays); the 30-minute and 02:00 refreshes do not touch NPS reach tables. Changing a figure = a new
+  migration.
+- **Week of 31 Oct (re-checked 2026-11-11):** not estimated. 262 messages were sent (309 the week before), but from
+  1 Nov the failure group `meta_temporary` took over (Meta outage), so only 86 reached. The failed `process_nps` run of
+  06 Nov 20:31 UTC (`Unknown column 'recipient_email'` in the source) left no gap: the next runs (09 Nov 09:33 and 09:34
+  UTC, full reload) read all 9,069 messages again. The two quiet days, 30 Oct and 06 Nov, are Fridays (the rest day).
+- Local check (09 Nov data, all companies): 12 Jul – 02 Oct cards Delivered 730 · Not Delivered 26 · Read 1,524 · Error
+  482 · Total 2,762; rate 532 ÷ 2,254 = 23.60 % (Majaal 198 ÷ 874 = 22.65 %, Tika 334 ÷ 1,380 = 24.20 %); September
+  254 ÷ 1,079 = 23.54 %; from 03 Oct 269 ÷ 1,222 = 22.01 %; YTD 801 ÷ 3,476 = 23.04 %.
 Target 30 %: On Track from 30, Behind Target from 25, Critical below 25 (`backend/src/config/npsThresholds.ts`). The
-sparkline is the rate per business week (Sunday–Saturday).
+sparkline is the rate per business week (Saturday–Friday).
 
-`GET /nps-score/reach` reads `v_process_nps_reach` and `v_process_nps_message_error`, and `reach_start` from
-`process_nps_reach_state`. Only company and date filters apply; ordinary customer-group/channel/branch/salesperson/
+`GET /nps-score/reach` reads `v_process_nps_reach` and `v_process_nps_message_error` (both with the manual reach of
+migration 0071, split by `source`), and `reach_start` from `process_nps_reach_state`. Only company and date filters apply; ordinary customer-group/channel/branch/salesperson/
 customer selections leave the numbers visible with **Company and date filters only** (including the default B2B+B2C
 selection). Company role restrictions are enforced. Mandatory restrictions on any other dimension, including the
 salesperson lock, return a restricted state without counts because the source cannot enforce them. The box tooltips say
@@ -401,12 +415,15 @@ non-empty load warns and keeps it.
 the ratings checks 1–3: 4 raw = source (ids), 5 fact = raw after the filters (row by row: date, company, box, group,
 scope), 6 the serving views the API sums = the rule per Tripoli date and company, and 7 the weekly e-mail's **LAST 7
 DAYS** section — delivered / read / sent / error per company on the UTC `create_date`, feedback template, test number
-out, from `NPS_REACH_START` — = the warehouse. The API itself is checked against the fact for each company and date
+out, from `NPS_REACH_START` — = the warehouse (sections 6–7 compare the ETL rows, `source = 'etl'`). 8 (YTD) adds the
+manual reach in plain SQL (spread per day in Python, independently of the views) and checks the reach cards, their
+split by source and the rate against the API; 9 checks `process_nps_reach_manual` itself (totals, no overlap, the daily
+spread adds up, no ETL row under a manual day). The API itself is checked against the fact for each company and date
 filter by `npx vitest run -c vitest.nps-db.config.ts` (backend, read-only).
 
 ### 8.7 Switching it on in production
 
-1. Apply migrations 0046–0053 (DevOps; never re-run an applied one). 0053 adds the Odoo picking id; run `process_nps`
+1. Apply migrations 0046–0053 and 0071 (DevOps; never re-run an applied one — 0071 is re-runnable). 0053 adds the Odoo picking id; run `process_nps`
    once afterwards so the delivery links fill in.
 2. In the ETL environment: the `NPS_*` source values, `NPS_ENABLED=true`, `NPS_REACH_ENABLED=true`,
    `NPS_REACH_TEMPLATE_MATCH=Feedback`, `NPS_REACH_START=2026-10-03`, `NPS_REACH_EXCLUDED_NUMBERS=<the test number>`.
