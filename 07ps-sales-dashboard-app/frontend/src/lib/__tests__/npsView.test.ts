@@ -181,7 +181,7 @@ describe('the top row', () => {
 describe('follow-up', () => {
   it('the status colours', () => {
     expect(FOLLOWUP_STATUS_SLICES.OPEN.color).toBe('var(--ps-fu-open)');
-    expect(FOLLOWUP_STATUS_SLICES.CLOSE.color).toBe('var(--ps-fu-close)');
+    expect(FOLLOWUP_STATUS_SLICES.CLOSED.color).toBe('var(--ps-fu-close)');
     expect(FOLLOWUP_STATUS_SLICES.DISPUTED.color).toBe('var(--ps-fu-disputed)');
   });
 

@@ -80,7 +80,7 @@ export function StagePill({ stage }: { stage: FollowupStage }) {
   );
 }
 
-/** The STATUS badge (Open / Close / Disputed, worked out from the stage); none for Historical. */
+/** The STATUS badge (Open / Closed / Disputed, worked out from the stage); none for Historical. */
 export function StatusBadge({ status }: { status: FollowupStatus | null }) {
   if (!status) return null;
   const color = STATUS_COLOR[status];
@@ -96,8 +96,7 @@ export function StatusBadge({ status }: { status: FollowupStatus | null }) {
 const SLA_ICON: Record<SlaBand, LucideIcon> = { green: CheckCircle2, amber: Clock, red: AlertTriangle, grey: MinusCircle };
 
 /**
- * Time open with its SLA colour (lib/nps/sla.ts) and the rule in the tooltip; Resolved says "resolved in", Rejected /
- * Historical have no SLA and read "rejected" / "historical" in grey.
+ * Time open with its SLA colour (lib/nps/sla.ts) and the rule in the tooltip; Resolved says "resolved in", Unresolved and Historical have no SLA and show the stage name in grey.
  */
 export function TimeOpen({ c }: { c: { stage: FollowupStage; hoursOpen: number | null; sla: CaseSla | null } }) {
   if (!c.sla) return null;
@@ -105,7 +104,7 @@ export function TimeOpen({ c }: { c: { stage: FollowupStage; hoursOpen: number |
   const color = SLA_COLOR[band];
   const Icon = SLA_ICON[band];
   const hint = slaHint(c.sla);
-  const text = rule === 'unresolved' || rule === 'rejected' || rule === 'historical' ? rule
+  const text = rule === 'unresolved' || rule === 'historical' ? rule
     : `${c.stage === 'RESOLVED' ? 'resolved in ' : 'open '}${formatHoursOpen(c.hoursOpen)}`;
   return (
     <span className="ps-fu-time" title={hint} aria-label={`${text}. ${hint}`} data-band={band} data-rule={rule} data-testid="fu-time" style={{ color }}>

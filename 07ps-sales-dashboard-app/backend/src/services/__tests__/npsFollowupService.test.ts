@@ -21,7 +21,7 @@ function aCase(over: Partial<FollowupCase> = {}): FollowupCase {
   return {
     caseId: 1, responseId: 10, ratedAt: '2026-10-15 09:00:00', stage: 'NEW', status: 'OPEN', reasonId: null, categoryKey: null,
     categoryEn: null, categoryAr: null, subReasonEn: null, subReasonAr: null, reasonLabelEn: null, reasonLabelAr: null, reasonNote: null,
-    ownerUserId: null, ownerName: null, contactedAt: null, resolvedAt: null, rejectedAt: null, rootCause: null, actionTaken: null, notes: null,
+    ownerUserId: null, ownerName: null, contactedAt: null, resolvedAt: null, rootCause: null, actionTaken: null, notes: null,
     sourceChanged: false, sourceChangedAt: null, sourceChangeReason: null, version: 1, updatedAt: null, updatedByName: null,
     company: 'MAJAAL', customer: 'x', orderRef: 'S1', deliveryCode: 'WH/OUT/1', salesTeam: null, salesperson: null, teamBranch: null,
     hasComment: false, orderUrl: null, deliveryUrl: null, createdAt: '2026-10-15 09:30:00', hoursOpen: null,
@@ -62,10 +62,10 @@ describe('board SLA KPIs', () => {
       row(1, 'NEW', 24), row(2, 'NEW', 24 + 1 / 3600), row(3, 'CONTACTED', 60, true),
       row(4, 'IN_PROGRESS', 120, true), row(5, 'NEW', 120 + 1 / 3600), row(6, 'CONTACTED', 121, true),
       row(7, 'RESOLVED', 150, true, 120), row(8, 'RESOLVED', 150, true, 120 + 1 / 3600),
-      row(9, 'REJECTED', 900),
+      row(9, 'UNRESOLVED', 900),
     ];
     const pool = { query: async (sql: string) => [sql.includes('GROUP BY c.status')
-      ? [{ status: 'OPEN', n: 6 }, { status: 'CLOSE', n: 2 }, { status: 'DISPUTED', n: 1 }]
+      ? [{ status: 'OPEN', n: 6 }, { status: 'CLOSED', n: 2 }, { status: 'DISPUTED', n: 1 }]
       : rows] } as unknown as Pool;
     const board = await fetchBoard(pool, parseFollowupQuery({}), {}, now);
     expect(board.kpis).toEqual({
@@ -79,19 +79,18 @@ describe('board SLA KPIs', () => {
 });
 
 describe('stage and status', () => {
-  it('the status is worked out from the stage, exactly like the generated column of migration 0066', () => {
+  it('the status is worked out from the stage, exactly like the generated column of migration 0072', () => {
     expect((['NEW', 'CONTACTED', 'IN_PROGRESS'] as const).map((s) => statusOfStage(s))).toEqual(['OPEN', 'OPEN', 'OPEN']);
-    expect(statusOfStage('RESOLVED')).toBe('CLOSE');
-    expect(statusOfStage('REJECTED')).toBe('DISPUTED');
+    expect(statusOfStage('RESOLVED')).toBe('CLOSED');
     expect(statusOfStage('UNRESOLVED')).toBe('DISPUTED');
     expect(statusOfStage('HISTORICAL')).toBeNull();
   });
 
   it('a client can never write the status (or rejected_at): the edit is refused, whatever the value', () => {
-    expect(code(() => applyEdit(aCase(), { status: 'CLOSE' }, NOW))).toBe('case.statusReadOnly');
+    expect(code(() => applyEdit(aCase(), { status: 'CLOSED' }, NOW))).toBe('case.statusReadOnly');
     expect(code(() => applyEdit(aCase(), { status: 'RESOLVED' }, NOW))).toBe('case.statusReadOnly');
     expect(code(() => applyEdit(aCase(), { stage: 'CONTACTED', status: 'OPEN' }, NOW))).toBe('case.statusReadOnly');
-    expect(code(() => applyEdit(aCase(), { rejectedAt: NOW }, NOW))).toBe('case.rejectedAtReadOnly');
+    expect(code(() => applyEdit(aCase(), { rejectedAt: NOW }, NOW))).toBe('case.rejectedAtRemoved');
   });
 
   it('the edit result has no status field, so it can never be written or audited', () => {
@@ -104,6 +103,7 @@ describe('stage and status', () => {
     expect(code(() => applyEdit(aCase(), { stage: 'CANCELLED' }, NOW))).toBe('case.stage');
     expect(() => parseFollowupQuery({ statuses: 'NEW' })).toThrow(/Unknown status NEW/);
     expect(() => parseFollowupQuery({ stages: 'OPEN' })).toThrow(/Unknown stage OPEN/);
+    expect(() => parseFollowupQuery({ stages: 'rejected' })).toThrow(/Unknown stage/i);
   });
 });
 
@@ -111,9 +111,7 @@ describe('editing a case', () => {
   it('Unresolved can be saved, filters as a stage, and clears terminal timestamps when moving from another outcome', () => {
     expect(parseFollowupQuery({ stages: 'UNRESOLVED', statuses: 'DISPUTED' })).toMatchObject({ stages: ['UNRESOLVED'], statuses: ['DISPUTED'] });
     expect(applyEdit(aCase({ stage: 'RESOLVED', resolvedAt: NOW }), { stage: 'UNRESOLVED' }, NOW))
-      .toMatchObject({ stage: 'UNRESOLVED', resolvedAt: null, rejectedAt: null });
-    expect(applyEdit(aCase({ stage: 'REJECTED', rejectedAt: NOW }), { stage: 'UNRESOLVED' }, NOW))
-      .toMatchObject({ stage: 'UNRESOLVED', resolvedAt: null, rejectedAt: null });
+      .toMatchObject({ stage: 'UNRESOLVED', resolvedAt: null });
   });
   it('Contacted fills the contact time with now when empty', () => {
     expect(applyEdit(aCase(), { stage: 'CONTACTED' }, NOW)).toMatchObject({ stage: 'CONTACTED', contactedAt: NOW, resolvedAt: null });
@@ -123,16 +121,14 @@ describe('editing a case', () => {
     expect(code(() => applyEdit(aCase(), { stage: 'RESOLVED' }, NOW))).toBe('case.reasonRequired');
     const resolved = applyEdit(aCase(), { stage: 'RESOLVED', reasonId: 3 }, NOW);
     expect(resolved).toMatchObject({ stage: 'RESOLVED', resolvedAt: NOW, contactedAt: NOW, reasonId: 3 });
-    const reopened = applyEdit(aCase({ stage: 'RESOLVED', status: 'CLOSE', reasonId: 3, resolvedAt: NOW, contactedAt: NOW }), { stage: 'IN_PROGRESS' }, NOW);
+    const reopened = applyEdit(aCase({ stage: 'RESOLVED', status: 'CLOSED', reasonId: 3, resolvedAt: NOW, contactedAt: NOW }), { stage: 'IN_PROGRESS' }, NOW);
     expect(reopened.resolvedAt).toBeNull();
   });
 
-  it('Rejected needs a note saying why and records when it was rejected; leaving Rejected clears that time', () => {
-    expect(code(() => applyEdit(aCase(), { stage: 'REJECTED' }, NOW))).toBe('case.rejectNote');
-    expect(applyEdit(aCase(), { stage: 'REJECTED', notes: 'duplicate delivery' }, NOW)).toMatchObject({ stage: 'REJECTED', rejectedAt: NOW });
-    const rejected = aCase({ stage: 'REJECTED', status: 'DISPUTED', notes: 'dup', rejectedAt: '2026-10-16 08:00:00' });
-    expect(applyEdit(rejected, { notes: 'duplicate' }, NOW).rejectedAt).toBe('2026-10-16 08:00:00'); // kept while it stays Rejected
-    expect(applyEdit(rejected, { stage: 'IN_PROGRESS' }, NOW).rejectedAt).toBeNull();
+  it('refuses the removed Rejected stage even with a note', () => {
+    for (const stage of ['rejected', 'REJECTED']) {
+      expect(code(() => applyEdit(aCase(), { stage, notes: 'duplicate delivery' }, NOW))).toBe('case.stage');
+    }
   });
 
   it('refuses Historical as a new stage, dates before the rating or in the future, and resolved before contacted', () => {
@@ -202,7 +198,7 @@ describe('filters', () => {
   });
 
   it('builds parameterised SQL: global filters on the rating, stage and status apart, "no owner" as IS NULL', () => {
-    const q = parseFollowupQuery({ dateFrom: '2026-10-01', dateTo: '2026-10-19', owners: '__none__,Ali Ahmed', stages: 'NEW', statuses: 'CLOSE', categories: 'delivery' });
+    const q = parseFollowupQuery({ dateFrom: '2026-10-01', dateTo: '2026-10-19', owners: '__none__,Ali Ahmed', stages: 'NEW', statuses: 'CLOSED', categories: 'delivery' });
     const w = followupWhere(q, { companyKeys: [1] });
     expect(w.sql).toContain('f.CompanyKey');
     expect(w.sql).toContain('c.rated_at_local >= ?');
@@ -210,7 +206,7 @@ describe('filters', () => {
     expect(w.sql).toContain('c.status IN (?)');
     expect(w.sql).toContain('r.category_key IN (?)');
     expect(w.sql).toContain('(c.owner_name IN (?) OR c.owner_name IS NULL)');
-    expect(w.params).toEqual(expect.arrayContaining([1, '2026-10-01 00:00:00', '2026-10-19', 'NEW', 'CLOSE', 'delivery', 'Ali Ahmed']));
+    expect(w.params).toEqual(expect.arrayContaining([1, '2026-10-01 00:00:00', '2026-10-19', 'NEW', 'CLOSED', 'delivery', 'Ali Ahmed']));
     expect(followupWhere({ search: '50%_' }, {}).params.slice(-4, -1)).toEqual(['%50\\%\\_%', '%50\\%\\_%', '%50\\%\\_%']);
   });
 });

@@ -229,12 +229,12 @@ export const measuredLine = (r: Pick<NpsResponseRate, 'measured' | 'reachStart'>
 /** "Detractors by status", level 1 (the generated status). */
 export const FOLLOWUP_STATUS_SLICES: Record<NpsFollowupStatus, { label: string; color: string }> = {
   OPEN: { label: 'Open', color: 'var(--ps-fu-open)' },
-  CLOSE: { label: 'Closed', color: 'var(--ps-fu-close)' },
+  CLOSED: { label: 'Closed', color: 'var(--ps-fu-close)' },
   DISPUTED: { label: 'Disputed', color: 'var(--ps-fu-disputed)' },
 };
 
 export const FOLLOWUP_STAGE_LABEL: Record<NpsFollowupStage, string> = {
-  HISTORICAL: 'Historical', NEW: 'New', CONTACTED: 'Contacted', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', UNRESOLVED: 'Unresolved', REJECTED: 'Rejected',
+  HISTORICAL: 'Historical', NEW: 'New', CONTACTED: 'Contacted', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', UNRESOLVED: 'Unresolved',
 };
 
 /** The stages in the status drill-down: a single-stage status keeps its status colour; Open's three are validated apart. */
@@ -245,7 +245,6 @@ export const FOLLOWUP_STAGE_COLOR: Record<NpsFollowupStage, string> = {
   IN_PROGRESS: 'var(--ps-fu-plum)',
   RESOLVED: 'var(--ps-fu-close)',
   UNRESOLVED: 'var(--ps-fu-disputed)',
-  REJECTED: 'var(--ps-fu-disputed)',
 };
 
 /** The follow-up page's case card (?case=ID); a Historical case opens over the List view (the board hides them). */

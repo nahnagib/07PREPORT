@@ -437,7 +437,7 @@ const utcOfLocal = (local: string) => DateTime.fromSQL(local, { zone: getAppTime
 
 describe('follow-up summary (live from nps_followup_case)', () => {
   const NOW_LOCAL = '2026-10-20 12:00:00';
-  const STATUS: Record<string, string | null> = { NEW: 'OPEN', CONTACTED: 'OPEN', IN_PROGRESS: 'OPEN', RESOLVED: 'CLOSE', REJECTED: 'DISPUTED', HISTORICAL: null };
+  const STATUS: Record<string, string | null> = { NEW: 'OPEN', CONTACTED: 'OPEN', IN_PROGRESS: 'OPEN', RESOLVED: 'CLOSED', UNRESOLVED: 'DISPUTED', HISTORICAL: null };
   // 1 = Delivery › Late deliveries, 2 = Product Quality › Not specified (the category's own row), 3 = Delivery › Damaged goods
   const CAT: Record<number, [string, string, number, string | null]> = {
     1: ['delivery', 'Delivery & Logistics', 5, 'Late deliveries'], 2: ['quality', 'Product Quality', 1, null], 3: ['delivery', 'Delivery & Logistics', 5, 'Damaged goods'],
@@ -454,47 +454,47 @@ describe('follow-up summary (live from nps_followup_case)', () => {
   });
 
   it('Unresolved is counted as Disputed, appears in its stage drill-down, and is excluded from SLA ageing', async () => {
-    const { pool: p } = pool(() => [{ ...row('REJECTED', '2026-10-05 10:00:00', null, null), stage: 'UNRESOLVED', status: 'DISPUTED' }]);
+    const { pool: p } = pool(() => [row('UNRESOLVED', '2026-10-05 10:00:00', null, null)]);
     const s = await fetchNpsFollowupSummary(p, parseNpsQuery({}, NOW), {}, NOW_LOCAL);
-    expect(s).toMatchObject({ charted: 1, unresolved: 1, rejected: 0 });
-    expect(s.byStatus.find(x => x.key === 'DISPUTED')).toMatchObject({ count: 1, stages: [{ stage: 'UNRESOLVED', count: 1 }, { stage: 'REJECTED', count: 0 }] });
+    expect(s).toMatchObject({ charted: 1, unresolved: 1 });
+    expect(s.byStatus.find(x => x.key === 'DISPUTED')).toMatchObject({ count: 1, stages: [{ stage: 'UNRESOLVED', count: 1 }] });
     expect(s.ageing.buckets.every(b => b.resolved === 0 && b.open === 0)).toBe(true);
   });
 
-  it('one total for every chart (cases with a status, Rejected included); resolved by time; status with its stages; Historical apart', async () => {
+  it('one total for every chart (cases with a status, Unresolved included); resolved by time; status with its stages; Historical apart', async () => {
     const { pool: p, queries } = pool(() => [
       row('RESOLVED', '2026-10-01 10:00:00', '2026-10-02 09:00:00', 1),   // 23 h
       row('RESOLVED', '2026-10-01 10:00:00', '2026-10-03 10:00:00', 3),   // 48 h -> yellow
       row('RESOLVED', '2026-10-01 10:00:00', '2026-10-06 10:00:01', 2),   // > 5 days
       row('NEW', '2026-10-19 10:00:00', null, null),
       row('IN_PROGRESS', '2026-10-05 10:00:00', null, 2),
-      row('REJECTED', '2026-10-05 10:00:00', null, 1),
+      row('UNRESOLVED', '2026-10-05 10:00:00', null, 1),
       row('HISTORICAL', '2026-08-05 10:00:00', null, null),
       row('HISTORICAL', '2026-09-05 10:00:00', null, null),
       row(null, '2026-10-20 08:00:00', null, null), // rated after the last process_nps run: no case yet
     ]);
     const s = await fetchNpsFollowupSummary(p, parseNpsQuery({}, NOW), {}, NOW_LOCAL);
-    // Resolved Ageing (from created_at): resolved 23 h / 48 h / 120 h+1 s; open 26 h (New) and 362 h (In progress); Rejected left out
+    // Resolved Ageing (from created_at): resolved 23 h / 48 h / 120 h+1 s; open 26 h (New) and 362 h (In progress); Unresolved left out
     expect(Object.fromEntries(s.ageing.buckets.map((b) => [b.key, [b.resolved, b.open]]))).toEqual({
       d1: [1, 0], d2: [1, 1], d5: [0, 0], d10: [1, 0], d30: [0, 1], dmax: [0, 0] });
     expect(s.ageing.closedInSla).toEqual({ count: 2, of: 3 }); // 3 resolved (2 within 5 d)
     expect(s.ageing.contactedInSla).toEqual({ count: 0, of: 5 }); // nobody has a contacted_at
-    // the status counts come from the status column: Rejected is Disputed, Historical has none; each with its stages
+    // the status counts come from the status column: Unresolved is Disputed, Historical has none; each with its stages
     expect(s.byStatus).toEqual([
       { key: 'OPEN', count: 2, stages: [{ stage: 'NEW', count: 1 }, { stage: 'CONTACTED', count: 0 }, { stage: 'IN_PROGRESS', count: 1 }] },
-      { key: 'CLOSE', count: 3, stages: [{ stage: 'RESOLVED', count: 3 }] },
-      { key: 'DISPUTED', count: 1, stages: [{ stage: 'UNRESOLVED', count: 0 }, { stage: 'REJECTED', count: 1 }] },
+      { key: 'CLOSED', count: 3, stages: [{ stage: 'RESOLVED', count: 3 }] },
+      { key: 'DISPUTED', count: 1, stages: [{ stage: 'UNRESOLVED', count: 1 }] },
     ]);
-    expect(s).toMatchObject({ detractors: 9, charted: 6, rejected: 1, historical: 2, noCase: 1 });
+    expect(s).toMatchObject({ detractors: 9, charted: 6, unresolved: 1, historical: 2, noCase: 1 });
     expect(s.charted + s.historical + s.noCase).toBe(s.detractors);
     // the same total in the centre of every chart
     const sum = (xs: { count: number }[]) => xs.reduce((n, x) => n + x.count, 0);
     expect([sum(s.byReason), sum(s.byStatus)]).toEqual([s.charted, s.charted]);
     const ageingTotal = s.ageing.buckets.reduce((n, b) => n + b.resolved + b.open, 0);
-    expect(ageingTotal).toBe(s.charted - s.rejected); // the ageing chart: every charted case but Rejected
+    expect(ageingTotal).toBe(s.charted - s.unresolved); // the ageing chart: every charted case but Unresolved
     for (const st of s.byStatus) expect(sum(st.stages)).toBe(st.count);
     // by category, most cases first; a tie keeps the categories' order; "Not yet classified" for cases without a reason
-    // each category carries its sub-reasons for the drill-down ("Not specified" = the category's own row); Rejected counted
+    // each category carries its sub-reasons for the drill-down ("Not specified" = the category's own row); Unresolved counted
     expect(s.byReason).toEqual([
       { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'Delivery & Logistics-ar', count: 3,
         subReasons: [{ reasonId: 1, label: 'Late deliveries', labelAr: 'Late deliveries-ar', count: 2 },
@@ -534,7 +534,7 @@ describe('Odoo links (lib/odooLinks.ts)', () => {
           SalesOrderKey: 4000, PickingID: 7001, case_id: 11, stage: 'NEW', status: 'OPEN', case_created_at: utcOfLocal('2026-10-10 10:00:00'), contacted_at: null, resolved_at: null,
           category_en: 'Delivery & Logistics', category_ar: 'التوصيل', sub_reason_en: 'Late deliveries', sub_reason_ar: 'تأخر التوصيل', requires_note: 0, owner_name: 'Amal' },
         { response_id: 2, rated_at_local: '2026-10-10 10:00:00', CompanyKey: 1, CustomerKey: 101, order_ref: 'S2', delivery_code: 'WH/OUT/2',
-          SalesOrderKey: -1, PickingID: -1, case_id: 12, stage: 'RESOLVED', status: 'CLOSE', case_created_at: utcOfLocal('2026-10-10 10:00:00'), contacted_at: null, resolved_at: '2026-10-11 10:00:00',
+          SalesOrderKey: -1, PickingID: -1, case_id: 12, stage: 'RESOLVED', status: 'CLOSED', case_created_at: utcOfLocal('2026-10-10 10:00:00'), contacted_at: null, resolved_at: '2026-10-11 10:00:00',
           category_en: null, category_ar: null, sub_reason_en: null, sub_reason_ar: null, requires_note: null, owner_name: null },
       ]));
       const page = await fetchNpsDetractors(p, parseNpsQuery({}, NOW), {}, '2026-10-20 10:00:00');
@@ -543,7 +543,7 @@ describe('Odoo links (lib/odooLinks.ts)', () => {
         sla: { band: 'red', rule: 'close_missed', overByHours: 120 },
         orderUrl: 'https://erp.example.com/web#id=4000&model=sale.order&view_type=form&cids=3',
         deliveryUrl: 'https://erp.example.com/web#id=7001&model=stock.picking&view_type=form&cids=3' });
-      expect(page.rows[1]).toMatchObject({ caseId: 12, stage: 'RESOLVED', status: 'CLOSE', reason: null, hoursOpen: 24, sla: { band: 'green', rule: 'resolved_in_sla' }, orderUrl: null, deliveryUrl: null });
+      expect(page.rows[1]).toMatchObject({ caseId: 12, stage: 'RESOLVED', status: 'CLOSED', reason: null, hoursOpen: 24, sla: { band: 'green', rule: 'resolved_in_sla' }, orderUrl: null, deliveryUrl: null });
     } finally {
       if (old === undefined) delete process.env.ODOO_URL;
       else process.env.ODOO_URL = old;

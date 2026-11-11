@@ -8,15 +8,17 @@ import { NPS_SLA, caseSla, type CaseSla } from '../config/npsSla';
 
 /**
  * NPS Detractor Follow-up (Process department; routes/npsFollowup.ts; docs/nps-followup.md). Schema and rationale:
- * data/warehouse/migrations/0052_nps_detractor_followup.sql, 0066 (stage / status), 0067 (two-level reasons).
+ * data/warehouse/migrations/0052_nps_detractor_followup.sql, 0066 (stage / status), 0067 (two-level reasons), 0069
+ * (Unresolved), 0072 (Rejected removed: its cases became Unresolved).
  *
  * STAGE and STATUS are two separate things and are never mixed:
  *   stage   the workflow step people move a case through (column `stage`, editable): NEW -> CONTACTED -> IN_PROGRESS
- *           -> RESOLVED, or REJECTED; HISTORICAL = rated before the cut-over (set by the ETL only). Board columns, the
- *           Stage filter, the history.
- *   status  the outcome group OPEN / CLOSE / DISPUTED, worked out from the stage (a generated column, statusOfStage()
- *           is the same rule); nobody sets it, a client that sends `status` is refused. The badge, the Status filter,
- *           the Open / Close / Disputed KPIs. HISTORICAL has no status (NULL).
+ *           -> RESOLVED, or UNRESOLVED; HISTORICAL = rated before the cut-over (set by the ETL only). Board columns, the
+ *           Stage filter, the history. There is no Rejected stage (removed 2026-11-11, migration 0072).
+ *   status  the outcome group, worked out from the stage ONLY (a generated column, statusOfStage() is the same rule):
+ *           New / Contacted / In progress -> OPEN, Resolved -> CLOSED, Unresolved -> DISPUTED;
+ *           nobody sets it, a client that sends `status` is refused. The badge, the Status filter, the Open / Closed /
+ *           Disputed KPIs. HISTORICAL has no status (NULL).
  *
  * Cases are CREATED only by the ETL (process_nps adds one per detractor; departments/process/followup.py); people edit
  * the manual fields here. The rating's facts (company, customer, order, salesperson, branch) are read live from
@@ -24,36 +26,36 @@ import { NPS_SLA, caseSla, type CaseSla } from '../config/npsSla';
  * (buildWhereClause on alias f). A case whose rating left the source has no view row: it is shown only while no
  * global filter or role scope applies (the filter can't be checked, so it is never shown to a scoped user).
  *
- * Times: rated_at_local, contacted_at, resolved_at, rejected_at are Africa/Tripoli wall-clock times
+ * Times: rated_at_local, contacted_at, resolved_at are Africa/Tripoli wall-clock times
  * ("yyyy-mm-dd hh:mm:ss"); the UTC columns (updated_at, source_changed_at, the history's changed_at) are sent converted
  * to Tripoli time too. Time open = the case's created_at -> resolved (stage Resolved) or -> now (the open stages); none
- * for Rejected / Historical. Its colour is the SLA state (config/npsSla.ts: contact within 24 h, close within 5 days).
+ * for Unresolved / Historical. Its colour is the SLA state (config/npsSla.ts: contact within 24 h, close within 5 days).
  * Every edit carries the version it was made on; an older version is refused (FollowupConflictError, 409). Each
  * changed field is one nps_followup_audit row, in the same transaction as the update; the workflow step is recorded as
  * field `stage` only (never `status`, which follows the stage by itself).
  */
 
 /** The workflow steps (column `stage`). */
-export const FOLLOWUP_STAGES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED'] as const;
+export const FOLLOWUP_STAGES = ['HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED'] as const;
 export type FollowupStage = (typeof FOLLOWUP_STAGES)[number];
 /** What a person may set (HISTORICAL is only ever set by the ETL's cut-over). */
-export const EDITABLE_STAGES: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED', 'REJECTED'];
+export const EDITABLE_STAGES: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED'];
 /** The stages whose status is OPEN (time open runs to now). */
 export const OPEN_STAGES: readonly FollowupStage[] = ['NEW', 'CONTACTED', 'IN_PROGRESS'];
 
 /** The outcome groups (the generated column `status`, migration 0066). Never written by the API. */
-export const FOLLOWUP_STATUSES = ['OPEN', 'CLOSE', 'DISPUTED'] as const;
+export const FOLLOWUP_STATUSES = ['OPEN', 'CLOSED', 'DISPUTED'] as const;
 export type FollowupStatus = (typeof FOLLOWUP_STATUSES)[number];
 
 /** The status of a stage: the same CASE as the generated column of migration 0066. HISTORICAL -> null (no badge). */
 export function statusOfStage(stage: FollowupStage): FollowupStatus | null {
   if (OPEN_STAGES.includes(stage)) return 'OPEN';
-  if (stage === 'RESOLVED') return 'CLOSE';
-  if (stage === 'HISTORICAL') return null;
-  return 'DISPUTED';
+  if (stage === 'RESOLVED') return 'CLOSED';
+  if (stage === 'UNRESOLVED') return 'DISPUTED';
+  return null;
 }
 
-/** The board shows Resolved cases of the last 30 days only (the List view shows all; Rejected has no window). */
+/** The board shows Resolved cases of the last 30 days only (the List view shows all; Unresolved has no window). */
 export const BOARD_RESOLVED_DAYS = 30;
 /** The note an "Other" reason requires (nps_followup_case.reason_note, migration 0067). */
 export const MAX_REASON_NOTE = 200;
@@ -110,8 +112,6 @@ export interface FollowupCase {
   ownerName: string | null;
   contactedAt: string | null;
   resolvedAt: string | null;
-  /** when the stage became Rejected (set by the API, read-only) */
-  rejectedAt: string | null;
   rootCause: string | null;
   actionTaken: string | null;
   notes: string | null;
@@ -135,7 +135,7 @@ export interface FollowupCase {
   deliveryUrl: string | null;
   /** when process_nps created the case (Tripoli wall-clock): the start of both SLAs */
   createdAt: string | null;
-  /** hours from created_at to resolved / now (= sla.hours); null for Rejected and Historical */
+  /** hours from created_at to resolved / now (= sla.hours); null for Unresolved and Historical */
   hoursOpen: number | null;
   /** the SLA state (config/npsSla.ts): colour, rule, how far past the limit */
   sla: CaseSla;
@@ -160,7 +160,7 @@ export interface FollowupQuery {
   dateTo?: string;
   /** workflow steps (`stages=`) */
   stages: FollowupStage[];
-  /** outcome groups (`statuses=`): OPEN / CLOSE / DISPUTED */
+  /** outcome groups (`statuses=`): OPEN / CLOSED / DISPUTED */
   statuses: FollowupStatus[];
   /** reason categories (`categories=`, category keys) */
   categories: string[];
@@ -286,7 +286,7 @@ const FROM = `
 const SELECT = `
   SELECT c.case_id, c.response_id, c.rated_at_local, c.created_at, c.stage, c.status, c.reason_id, c.reason_note,
          r.category_key, r.category_en, r.category_ar, r.sub_reason_en, r.sub_reason_ar, r.requires_note,
-         c.owner_user_id, COALESCE(c.owner_name, o.display_name) AS owner_name, c.contacted_at, c.resolved_at, c.rejected_at,
+         c.owner_user_id, COALESCE(c.owner_name, o.display_name) AS owner_name, c.contacted_at, c.resolved_at,
          c.root_cause, c.action_taken, c.notes,
          c.source_changed, c.source_changed_at, c.source_change_reason, c.version, c.updated_at, u.display_name AS updated_by_name,
          f.company, f.customer, f.order_ref, f.delivery_code, f.sales_team, f.salesperson, f.team_branch,
@@ -375,7 +375,6 @@ function toCase(r: Record<string, unknown>, now: string): FollowupCase {
     ownerName: strOrNull(r.owner_name),
     contactedAt: asWall(r.contacted_at),
     resolvedAt: asWall(r.resolved_at),
-    rejectedAt: asWall(r.rejected_at),
     rootCause: strOrNull(r.root_cause),
     actionTaken: strOrNull(r.action_taken),
     notes: strOrNull(r.notes),
@@ -422,7 +421,7 @@ export interface FollowupKpis {
   resolved30Days: number;
   /** of those, resolved within closeDays */
   resolvedInSla: number;
-  /** board cases (Rejected excepted) without a reason */
+  /** board cases without a reason */
   noReason: number;
 }
 
@@ -436,8 +435,8 @@ export interface FollowupBoard {
 const share = (n: number, total: number): number | null => (total > 0 ? (n / total) * 100 : null);
 
 /**
- * The board: every non-Historical case matching the filters; Resolved only when resolved in the last 30 days (Rejected
- * has no window). The Open / Close / Disputed KPIs count every case of the filters by status (not only the 30 days).
+ * The board: every non-Historical case matching the filters; Resolved only when resolved in the last 30 days
+ * (Unresolved has no window). The Open / Close / Disputed KPIs count every case of the filters by status (not only the 30 days).
  */
 export async function fetchBoard(pool: Pool, q: FollowupQuery, f: Filters, now: string = nowLocal()): Promise<FollowupBoard> {
   const w = followupWhere({ ...q, stages: q.stages.filter((s) => s !== 'HISTORICAL') }, f);
@@ -448,11 +447,11 @@ export async function fetchBoard(pool: Pool, q: FollowupQuery, f: Filters, now: 
     [resolvedFrom, ...w.params, MAX_BOARD_CASES + 1]);
   const [byStatus] = await pool.query(
     `SELECT c.status, COUNT(*) AS n ${FROM} WHERE c.status IS NOT NULL AND ${w.sql} GROUP BY c.status`, w.params);
-  const counts: Record<FollowupStatus, number> = { OPEN: 0, CLOSE: 0, DISPUTED: 0 };
+  const counts: Record<FollowupStatus, number> = { OPEN: 0, CLOSED: 0, DISPUTED: 0 };
   for (const r of byStatus as Record<string, unknown>[]) {
     if (FOLLOWUP_STATUSES.includes(r.status as FollowupStatus)) counts[r.status as FollowupStatus] = Number(r.n);
   }
-  const total = counts.OPEN + counts.CLOSE + counts.DISPUTED;
+  const total = counts.OPEN + counts.CLOSED + counts.DISPUTED;
 
   const all = (rows as Record<string, unknown>[]).map((r) => toCase(r, now));
   const cases = all.slice(0, MAX_BOARD_CASES);
@@ -463,17 +462,17 @@ export async function fetchBoard(pool: Pool, q: FollowupQuery, f: Filters, now: 
     truncated: all.length > MAX_BOARD_CASES,
     kpis: {
       open: counts.OPEN,
-      close: counts.CLOSE,
+      close: counts.CLOSED,
       disputed: counts.DISPUTED,
       total,
       openShare: share(counts.OPEN, total),
-      closeShare: share(counts.CLOSE, total),
+      closeShare: share(counts.CLOSED, total),
       disputedShare: share(counts.DISPUTED, total),
       closeSlaMissed: open.filter((c) => c.sla.rule === 'close_missed').length,
       contactSlaMissed: open.filter((c) => !c.contactedAt && (c.sla.exactHours ?? 0) > NPS_SLA.contactHours).length,
       resolved30Days: resolved.length,
       resolvedInSla: resolved.filter((c) => c.sla.rule === 'resolved_in_sla').length,
-      noReason: cases.filter((c) => c.stage !== 'REJECTED' && c.reasonId === null).length,
+      noReason: cases.filter((c) => c.reasonId === null).length,
     },
     now,
   };
@@ -535,13 +534,18 @@ export async function fetchCase(pool: Pool, caseId: number, f: Filters, canSeeCo
   return {
     ...c,
     comment,
-    history: (hist as Record<string, unknown>[]).map((h) => ({
-      changedAt: utcToLocal(h.changed_at) ?? '',
-      changedBy: h.changed_by === null ? 'NPS refresh (process_nps)' : ((h.display_name as string) ?? `user #${h.changed_by}`),
-      field: String(h.field),
-      oldValue: (h.old_value as string) ?? null,
-      newValue: (h.new_value as string) ?? null,
-    })),
+    history: (hist as Record<string, unknown>[]).map((h) => {
+      const migrated = (h.field === 'stage' && h.old_value === 'REJECTED' && h.new_value === 'UNRESOLVED')
+        || (h.field === 'rejected_at' && h.new_value === null);
+      const systemActor = migrated ? 'Migration 0072' : 'NPS refresh (process_nps)';
+      return {
+        changedAt: utcToLocal(h.changed_at) ?? '',
+        changedBy: h.changed_by === null ? systemActor : ((h.display_name as string) ?? `user #${h.changed_by}`),
+        field: String(h.field),
+        oldValue: (h.old_value as string) ?? null,
+        newValue: (h.new_value as string) ?? null,
+      };
+    }),
   };
 }
 
@@ -583,7 +587,7 @@ export interface CaseInput {
   owner?: unknown;
   contactedAt?: unknown;
   resolvedAt?: unknown;
-  /** refused: set when the stage becomes Rejected */
+  /** refused: the Rejected stage and its time were removed (migration 0072) */
   rejectedAt?: unknown;
   rootCause?: unknown;
   actionTaken?: unknown;
@@ -645,7 +649,7 @@ export function applyEdit(existing: FollowupCase, input: CaseInput, now: string,
     throw new FollowupValidationError('case.statusReadOnly', "Status can't be set: it follows the stage. Change the stage instead.", 'status');
   }
   if (has(input, 'rejectedAt')) {
-    throw new FollowupValidationError('case.rejectedAtReadOnly', 'Rejected at is set when the stage becomes Rejected.', 'rejectedAt');
+    throw new FollowupValidationError('case.rejectedAtRemoved', 'There is no Rejected stage any more: use Unresolved.', 'rejectedAt');
   }
   const next = {
     stage: existing.stage,
@@ -654,7 +658,6 @@ export function applyEdit(existing: FollowupCase, input: CaseInput, now: string,
     ownerName: existing.ownerName,
     contactedAt: existing.contactedAt,
     resolvedAt: existing.resolvedAt,
-    rejectedAt: existing.rejectedAt,
     rootCause: existing.rootCause,
     actionTaken: existing.actionTaken,
     notes: existing.notes,
@@ -662,7 +665,7 @@ export function applyEdit(existing: FollowupCase, input: CaseInput, now: string,
   if (has(input, 'stage')) {
     const s = String(input.stage ?? '').toUpperCase() as FollowupStage;
     if (!EDITABLE_STAGES.includes(s)) {
-      throw new FollowupValidationError('case.stage', 'Stage must be New, Contacted, In progress, Resolved, Unresolved or Rejected.', 'stage');
+      throw new FollowupValidationError('case.stage', 'Stage must be New, Contacted, In progress, Resolved or Unresolved.', 'stage');
     }
     next.stage = s;
   }
@@ -686,13 +689,6 @@ export function applyEdit(existing: FollowupCase, input: CaseInput, now: string,
   } else {
     next.resolvedAt = null;
   }
-  // rejected_at: when the stage became Rejected (kept while it stays Rejected), cleared when it leaves
-  if (next.stage === 'REJECTED') {
-    next.rejectedAt = existing.stage === 'REJECTED' ? (existing.rejectedAt ?? now) : now;
-    if (!next.notes) throw new FollowupValidationError('case.rejectNote', 'Say in the notes why the case is rejected.', 'notes');
-  } else {
-    next.rejectedAt = null;
-  }
   // the note belongs to a reason that requires one (Other) and goes with it
   if (next.reasonId === null || (reason && !reason.requiresNote)) next.reasonNote = null;
   // asked when Other is chosen or its note is cleared (a case moved to Other by migration 0067 keeps working without one)
@@ -714,7 +710,7 @@ type Edited = ReturnType<typeof applyEdit>;
 
 /**
  * The columns an edit writes and the history field each one is recorded under. `status` is never written (generated
- * column) and never audited; rejected_at is written with the stage but not audited (the stage row has the time).
+ * column) and never audited. rejected_at is never written (always NULL since migration 0072).
  */
 const WRITE_FIELDS: { key: keyof Edited; column: string; field: string | null }[] = [
   { key: 'stage', column: 'stage', field: 'stage' },
@@ -723,7 +719,6 @@ const WRITE_FIELDS: { key: keyof Edited; column: string; field: string | null }[
   { key: 'ownerName', column: 'owner_name', field: 'owner' },
   { key: 'contactedAt', column: 'contacted_at', field: 'contacted_at' },
   { key: 'resolvedAt', column: 'resolved_at', field: 'resolved_at' },
-  { key: 'rejectedAt', column: 'rejected_at', field: null },
   { key: 'rootCause', column: 'root_cause', field: 'root_cause' },
   { key: 'actionTaken', column: 'action_taken', field: 'action_taken' },
   { key: 'notes', column: 'notes', field: 'notes' },

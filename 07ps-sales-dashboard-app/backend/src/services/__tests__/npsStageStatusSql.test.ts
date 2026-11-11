@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * Stage and status are two separate things (migration 0066, docs/nps-followup.md "Stage, status and reasons"). Since
- * 0066 the column `status` holds OPEN / CLOSE / DISPUTED, so old code such as `WHERE status = 'SOLVED'` or
+ * 0072 the column `status` holds OPEN / CLOSED / DISPUTED, so old code such as `WHERE status = 'SOLVED'` or
  * `c.status IN ('NEW', ...)` would not fail: it would quietly match nothing. This test fails when any SQL (or TS / Python
  * code) in the repo still compares `status` with a STAGE value. Only migration 0052 (which created the old column) and
  * the down/ files (which go back to it) may.
@@ -43,6 +43,8 @@ function* files(dir: string): Generator<string> {
 describe('stage and status are never mixed', () => {
   it('the check itself catches the old patterns and lets the new ones through', () => {
     expect(offendingLines("WHERE c.status = 'SOLVED'")).toHaveLength(1);
+    expect(offendingLines("WHERE c.status = 'UNRESOLVED'")).toHaveLength(1);
+    expect(offendingLines("WHERE c.status = 'REJECTED'")).toHaveLength(1);
     expect(offendingLines("WHERE status <> 'HISTORICAL' AND x")).toHaveLength(1);
     expect(offendingLines("c.status IN ('NEW', 'CONTACTED')")).toHaveLength(1);
     expect(offendingLines("WHERE fc.`status` NOT IN ('OPEN', 'CANCELLED')")).toHaveLength(1);
@@ -50,7 +52,8 @@ describe('stage and status are never mixed', () => {
     expect(offendingLines("SET status = 'CONTACTED'")).toHaveLength(1);
     // the new names
     expect(offendingLines("WHERE c.stage = 'RESOLVED' AND c.status IN ('OPEN', 'DISPUTED')")).toHaveLength(0);
-    expect(offendingLines("c.status = 'CLOSE'")).toHaveLength(0);
+    expect(offendingLines("c.stage = 'UNRESOLVED' AND c.status = 'DISPUTED'")).toHaveLength(0);
+    expect(offendingLines("c.status = 'CLOSED'")).toHaveLength(0);
     // other tables' statuses are not stage values
     expect(offendingLines("app_user WHERE status <> 'INACTIVE'")).toHaveLength(0);
     expect(offendingLines('job.status = "cancelled"')).toHaveLength(0);
@@ -69,6 +72,6 @@ describe('stage and status are never mixed', () => {
       });
     }
     expect(scanned, 'the scan reached the repo').toBeGreaterThan(100);
-    expect(hits, 'rename to `stage`, or compare the status with OPEN / CLOSE / DISPUTED').toEqual([]);
+    expect(hits, 'rename to `stage`, or compare the status with OPEN / CLOSED / DISPUTED').toEqual([]);
   });
 });
