@@ -108,8 +108,15 @@ describe.skipIf(!RUN)('an edit on the follow-up page shows on the NPS page at on
     const after = await call('GET', `/nps-score/followup-summary?${range}`);
     expect(countOf(after.body, reason.category_key)).toBe(countOf(before.body, reason.category_key) + 1);
     expect(after.body.detractors).toBe(before.body.detractors);
-    // still pending (In progress) and still Open, so the stage buckets and the status counts keep their totals
+    // Moving between Open stages changes the stage drilldown while leaving the status totals and ageing intact.
     expect(after.body.ageing.buckets).toEqual(before.body.ageing.buckets);
-    expect(after.body.byStatus).toEqual(before.body.byStatus);
+    const statusTotals = (body: Json) => body.byStatus.map(({ key, count }: Json) => ({ key, count }));
+    expect(statusTotals(after.body)).toEqual(statusTotals(before.body));
+    const openBefore = before.body.byStatus.find(({ key }: Json) => key === 'OPEN');
+    const openAfter = after.body.byStatus.find(({ key }: Json) => key === 'OPEN');
+    const stageDeltas: Record<string, number> = { [snapshot.stage]: -1, IN_PROGRESS: 1 };
+    expect(openAfter.stages).toEqual(openBefore.stages.map(({ stage, count }: Json) => ({
+      stage, count: count + (stageDeltas[stage] ?? 0),
+    })));
   });
 });
