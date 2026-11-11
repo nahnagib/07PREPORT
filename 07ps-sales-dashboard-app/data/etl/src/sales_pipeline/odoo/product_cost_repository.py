@@ -25,6 +25,19 @@ PRODUCT_COST_FIELDS = [
     "product_family_id",
     "size_dimensions_id",
 ]
+# Archived = product.product.active = False OR product.template.active = False (2026-11-11): the template's flag is read too
+PRODUCT_TEMPLATE_FIELDS = ["id", "active"]
+# product.category: the tree (parent_path "1/30/57/") for sub-categories, and the own name for a Raw Materials category
+PRODUCT_CATEGORY_FIELDS = ["id", "name", "complete_name", "parent_path"]
+
+
+def with_template_active(products: pd.DataFrame, template_active: dict[int, bool]) -> pd.DataFrame:
+    """Adds `template_active` (the variant's product.template.active; True when the template is unknown)."""
+    out = products.copy()
+    tmpl = out["product_tmpl_id_id"] if "product_tmpl_id_id" in out.columns else out.get("product_tmpl_id", pd.Series(pd.NA, index=out.index))
+    tmpl = tmpl.map(lambda v: v[0] if isinstance(v, (list, tuple)) and v else v)
+    out["template_active"] = pd.to_numeric(tmpl, errors="coerce").map(lambda t: True if pd.isna(t) else template_active.get(int(t), True))
+    return out
 
 
 class ProductCostRepository(OdooRepositoryBase):
@@ -57,8 +70,21 @@ class ProductCostRepository(OdooRepositoryBase):
             rows["cost_company_id"] = company_id
             frames.append(rows)
         if not frames:
-            return pd.DataFrame(columns=fields + ["cost_company", "cost_company_id", "vendor"])
-        return with_main_vendor(pd.concat(frames, ignore_index=True), self.fetch_vendor_lines())
+            return pd.DataFrame(columns=fields + ["cost_company", "cost_company_id", "vendor", "template_active"])
+        out = with_main_vendor(pd.concat(frames, ignore_index=True), self.fetch_vendor_lines())
+        return with_template_active(out, self.fetch_template_active())
+
+    def fetch_template_active(self) -> dict[int, bool]:
+        """product.template id -> active (archived templates included)."""
+        rows = self.search_read_all("product.template", [], PRODUCT_TEMPLATE_FIELDS, order="id", context={"active_test": False})
+        records = rows.to_dict("records") if isinstance(rows, pd.DataFrame) else list(rows)
+        return {int(r["id"]): bool(r.get("active")) for r in records}
+
+    def fetch_categories(self) -> pd.DataFrame:
+        """Every product.category with its parent_path (the tree) and own name."""
+        rows = self.search_read_all("product.category", [], PRODUCT_CATEGORY_FIELDS, order="id")
+        frame = rows if isinstance(rows, pd.DataFrame) else pd.DataFrame(list(rows))
+        return frame.reindex(columns=PRODUCT_CATEGORY_FIELDS) if frame.empty else frame
 
     def fetch_vendor_lines(self) -> list[dict[str, Any]]:
         """Every vendor line (Purchase tab) of every product, read in each company the ETL user can access (a line can

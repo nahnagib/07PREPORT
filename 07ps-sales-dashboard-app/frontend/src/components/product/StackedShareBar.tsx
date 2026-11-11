@@ -1,8 +1,8 @@
 'use client';
 import React from 'react';
 import { tooltipBoxStyle } from '@07ps/ui';
-import { fmtLYD, fmtUnits } from '../../lib/materialsAnalogy/shared';
 import { TooltipRow, useHoverTooltip } from './ProductUi';
+import { ShareLegend, fmtMoney, fmtQty } from './InventoryVisual';
 
 export interface ShareSegment {
   key: string;
@@ -12,13 +12,14 @@ export interface ShareSegment {
   skus: number;
   units: number;
   value: number;
-  /** Tooltip label of `value` (default "Value (LYD)"). */
+  /** Tooltip labels of `units` and `value` (Odoo names: Quantity On Hand / Quantity Sold, Total Value / Sales Value). */
+  unitsLabel?: string;
   valueLabel?: string;
 }
 
 /**
  * One 100% stacked horizontal bar (Stock Velocity: Fast / Normal / Slow movers, Stock Aging). Each segment's width is
- * its share of the SKUs; a legend under the bar repeats label + SKU count + share (so a thin segment stays readable and
+ * its share of the SKUs; a legend under the bar (ShareLegend: "■ Name  N SKUs · x.x%") repeats label + SKU count + share (so a thin segment stays readable and
  * clickable on a phone). Hover a segment or legend item: SKUs, % of SKUs, units, LYD. Click: onSelect(segment key).
  */
 export function StackedShareBar({ segments, onSelect, testId }: { segments: ShareSegment[]; onSelect: (key: string) => void; testId?: string }) {
@@ -45,31 +46,15 @@ export function StackedShareBar({ segments, onSelect, testId }: { segments: Shar
             </button>
           ))}
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', marginTop: 10 }}>
-        {segments.map((s) => (
-          <button
-            key={s.key}
-            type="button"
-            onClick={() => s.skus > 0 && onSelect(s.key)}
-            {...tip.bind(s.key)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: 0, cursor: s.skus > 0 ? 'pointer' : 'default', color: 'var(--ps-color-text)', fontSize: 12 }}
-          >
-            <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, flexShrink: 0 }} />
-            <span>{s.label}</span>
-            <span style={{ color: 'var(--ps-color-muted-text)', fontVariantNumeric: 'tabular-nums' }}>
-              {s.skus} SKUs · {pct(s).toFixed(1)}%
-            </span>
-          </button>
-        ))}
-      </div>
+      <ShareLegend items={segments} onSelect={onSelect} bind={tip.bind} />
       {tip.render((key) => {
         const s = byKey.get(key);
         return s ? (
           <div style={{ ...tooltipBoxStyle, padding: '8px 10px' }}>
             <div style={{ fontWeight: 700, marginBottom: 4 }}>{s.label}</div>
-            <TooltipRow label="SKUs" value={`${s.skus} (${pct(s).toFixed(1)}% of SKUs)`} />
-            <TooltipRow label="Units" value={fmtUnits(s.units)} />
-            <TooltipRow label={s.valueLabel ?? 'Value (LYD)'} value={fmtLYD(s.value)} />
+            <TooltipRow label="SKUs" value={`${s.skus.toLocaleString('en-US')} (${pct(s).toFixed(1)}% of SKUs)`} />
+            <TooltipRow label={s.unitsLabel ?? 'Quantity'} value={fmtQty(s.units)} />
+            <TooltipRow label={s.valueLabel ?? 'Value'} value={fmtMoney(s.value)} />
           </div>
         ) : null;
       })}

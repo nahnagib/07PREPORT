@@ -12,7 +12,8 @@ const fact = (over: Partial<ProductFact>): ProductFact => ({
   bcgExcludedCategory: false, total_value_YTD: 0, total_value_LYTD: 0, total_quantity_YTD: 0, total_quantity_LYTD: 0,
   avg_unit_price_YTD: null, perc_gross_profit_YTD: null, quantity_growth_pct: null, stockQty: 0, stockValue: 0, inTransitQty: 0,
   inTransitValue: 0, avgDailySales: 0, daysOfInventory: null, stockBand: 'Normal', stockAgeDays: null, stockAgeBucket: null, lifecycle: 'Mature', firstSaleDate: null,
-  lastSaleDate: null, daysSinceLastSale: null, Companies: ['Majaal'], parts: [], ...over,
+  lastSaleDate: null, daysSinceLastSale: null, Companies: ['Majaal'], parts: [], bcgVolume: null, bcgProfit: null, bcgGrossProfitPct: null, bcgDataPeriod: null, bcgDataAsOf: null,
+  onHandQty: 0, onHandValue: 0, stockAgeOldestDays: null, agingBuckets: [], ...over,
 });
 
 describe('partner brands', () => {
@@ -119,7 +120,7 @@ describe('Fast vs Slow Movers benchmark (config: Fast ≥ 150% of the category m
   it('defaults and the "?" line come from the config values', () => {
     expect(moverRule({})).toEqual({ fastPct: 150, slowPct: 50 });
     expect(moverRuleText(moverRule({ stock: { fast_mover_vs_category_median_pct: 200, slow_mover_vs_category_median_pct: 40 } })))
-      .toBe('Velocity = units sold ÷ days in period. Fast ≥ 200% of the category median · Slow ≤ 40%');
+      .toBe('Sales Velocity = Quantity Sold ÷ days in period. Fast ≥ 200% of the category median · Slow ≤ 40%');
   });
 });
 

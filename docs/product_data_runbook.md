@@ -130,14 +130,17 @@ message, and the pages keep showing the last good data.
 | **Volume** | Sum of the **invoiced** quantity (the same quantity as the Sales pages), in the product's unit of measure. |
 | **Units of measure** | Quantities in different units are **never added together**. A product sold in two units shows each unit separately. Totals across products are shown per unit (for example "12K UNIT · 450 m²") or in LYD. |
 | **Velocity (/day)** | Volume in the period ÷ days in the period (the end date is capped at today). |
-| **Stock on hand** | Odoo quantity in internal locations of finished-goods warehouses. Raw-materials warehouses are excluded. In-transit stock (Vessel) is shown separately and never counted as on hand. Negative quants count as 0 and are listed in the data-quality log. |
+| **Stock on hand** | Odoo quantity in internal locations of finished-goods warehouses. Raw-materials warehouses are excluded. In-transit stock (Vessel) is shown separately and never counted as on hand. Negative quants count as 0 and are listed in the data-quality log. Used for DOH, the stock band and ISR. |
+| **On Hand** (2026-11-10) | **Odoo's On Hand**, the number on the product form's On Hand button for that company: SUM(quantity) of every `stock.quant` of the company in an internal location (`location usage = internal`; transit, customer, supplier, inventory-loss and virtual locations are not internal), negatives included, in the product's unit. Value = the quants' Odoo value. One figure for the BCG Product Detail, the PIM brand table and the Stock Aging tooltip / export (`OnHandQty` / `OnHandValue`, migration 0070). |
+| **Stock aging** (2026-11-10) | Days the stock **still on hand** has been held: units-weighted average age of the Odoo receipt layers that still have units left (`stock.valuation.layer`, `remaining_qty > 0`, received on the layer's date; Odoo consumes them first in, first out for the AVCO / FIFO categories), at the ETL date. Not the product's first receipt: stock received 20 days ago is 20 days old even for a product sold since 2024. `stock.quant.in_date` alone is wrong for this (Odoo keeps the oldest incoming date when new stock joins a quant) and is only the fallback for a product without an open layer. On Hand ≤ 0 = no aging. Buckets 0–30, 31–60, 61–90, 91–180, 181–365, 365+ days; the units and value are split across buckets by layer (`AgeQty_*` / `AgeValue_*`). |
 | **LYD tied up / Inventory value** | Odoo's own stock valuation of that on-hand stock. |
 | **Days of inventory (DOH)** | Stock on hand ÷ average daily sales. Average daily sales = invoiced quantity in the last **90 days** ÷ 90. The look-back is `days_of_inventory.lookback_days` in the config. |
 | **Stock band** | Overstock if DOH is above the company threshold (Majaal 180 days, Tika 60). Stock-out risk if DOH is below the threshold (Majaal 60, Tika 30). **Stock with no sales in the look-back is "No movement" and counts as Overstocked** — never as stock-out risk. |
 | **Avg Days of Inventory (KPI)** | Average DOH across products that sold in the period, weighted by their sales value (the existing rule). |
 | **Fast vs Slow movers** | Products sold in the period (positive value; discount pseudo-products excluded) are split at the median velocity. The "Fast Movers" KPI is the top third by velocity. Bars show LYD, because units differ between products. |
-| **BCG class** | Calendar YTD. HV = YTD volume ≥ 3,500 (Majaal) or 25,000 (Tika). HP = gross profit ≥ 35%, where GP% = (Value − Qty × Odoo standard cost) ÷ Value, with cost read **per company** in Odoo. Stars = HV/HP, Cash Cows = HV/LP, Strategic = LV/HP, Dogs = LV/LP. Paper Bags and Raw Materials are excluded. **Products sold without a standard cost are "Unclassified (no cost)"** and listed in the data-quality log. |
-| **BCG movement** | YTD class vs the same period last year: New, Stable, Improved, Drop (Declined), or Discontinued (sold last year, not this year). |
+| **BCG class** | High volume means **≥ 3,500 units for Majaal** or **≥ 25,000 units for Tika**. High profit means **GP% ≥ 35%**. Stars meet both thresholds, Cash Cows meet the volume threshold, Strategic products meet the GP% threshold, and Dogs fall below both. The cards, KPI counts, class filter and default export order follow Stars, Cash Cows, Strategic, Dogs. |
+| **BCG profit data** | The measure reads eligible company-product sales from `v_sales_product_daily` after the product-page exclusions. It checks calendar YTD and prior years for the newest complete costed period with a gross margin. When no complete period has a margin, it checks totals from fully costed daily records. Profit is sales value minus recorded cost, and GP% is profit divided by sales value. Each product's class, profit and date use the same totals. The subtitle shows the latest sale date used across the visible products, and hover and exports carry each product's own data date. Products with no usable cost show **–** under **Not classified**. Products with zero sales value and known cost show their recorded profit under **Not classified**, since their GP% is undefined. Branch, salesperson, channel and customer-group filters preserve each company's classification. |
+| **Product Movement** | Calendar YTD volume vs the same period last year. Improved is above +10%, Drop is below −10%, and Stable is within ±10%. New covers first sale within 180 days or no LYTD volume. Discontinued refers to archived Odoo products. |
 
 ### Lifecycle rule
 
@@ -162,7 +165,7 @@ SELECT `Check`, Company, ProductName, Detail, Qty, Value FROM qa_productdataqual
 ```
 
 - `NegativeStock`: a location with negative on-hand stock (counted as 0).
-- `NoCost`: sold this year without a standard cost in Odoo, so it is excluded from BCG.
+- `NoCost`: sold this year without a standard cost in Odoo, so it is "Unclassified (no cost)" in BCG.
 - `MixedUoM`: sold in more than one unit of measure.
 
 ---
@@ -222,6 +225,51 @@ The copy is written to `07ps-sales-dashboard-app/db_backups/test-stack-copy.sql`
 gitignored; delete it when it is no longer needed.
 
 ---
+
+## 9b. Product exclusions and the inventory visuals (2026-11-11)
+
+**ProductExclusions.xlsx** (ETL Control Center → Input files) is read at every sales build (the 30-minute build from
+the Odoo mirror and the 02:00 full refresh); no code change or redeploy is needed.
+
+- Only the sheets `Customers`, `Categories` and `Products` are read; `Instructions`, `Summary`, `Lists` and
+  `Price Fix (Odoo)` never are. Matching is on Odoo ids only (res.partner / product.category / product.product).
+- A missing sheet or required column rejects the upload; a run keeps the last valid file
+  (`ProductExclusions.last-valid.xlsx` in the input-backup folder). A row with a missing or invalid id, or an unknown
+  Action / Company / Active value, is skipped and listed with its sheet and Excel row; the other rows apply.
+- **Active = No means "ignored"**: the row does nothing. It does **not** keep a product that another rule (archived,
+  a category, Raw Materials) removes. Only **Action = Keep with Active = Yes** keeps a product, against every other
+  rule (archived included). A Tika (or Majaal) row applies to that company only; when the same id has an All row and a
+  company row, the company row wins for that company.
+- Categories exclude their sub-categories (product.category.parent_path).
+  A Customers Keep row beats the Backoffice (3) / Inter Company (4) / IsIntercompany rule.
+- Reading (every sheet, checked on the Products sheet): columns are found by header name in any order and case; the
+  grey "(reference)" columns are never read. The id may be 123, 123.0 or the text "123"; blank, a decimal, text, 0 or a
+  negative number skips the row (sheet + row). Company / Action / Active are trimmed and case-insensitive. Fully blank
+  rows and the empty validation rows down to row 2000 are ignored. The same Company + id twice: the same Action is
+  applied once (warning); Exclude vs Keep skips every row of that id (reported). A Products id that is not an Odoo
+  product, or a product of another company than the row says, is a warning (the row still applies). Skipped rows and
+  warnings are shown on upload and in the Product exclusions card.
+
+**Automatic exclusions** (no file row): Customer Group Backoffice and Inter Company and partners flagged IsIntercompany
+(sales lines removed); archived products (product.product or product.template active = False: removed entirely, stock
+included); any Odoo category named Raw Materials (config `product_pages_raw_material_category_names`). Raw materials are
+never guessed from product names.
+
+**ETL Control Center → Product exclusions** shows, for the last build: the file's upload time, active rows per sheet and
+action, rows skipped and warnings (with sheet and row), products excluded per reason (file product, file category, archived, raw material), sales lines
+per customer rule, and the archived products Odoo still holds Quantity On Hand > 0 for (to clean up in Odoo). Source:
+`etl_task_log.details.product_exclusions` of `conform_sales` / `conform_sales_from_mirror`.
+
+**Inventory visuals** (Fast vs Slow Movers, Stock Aging, Stock-Out Risk, Overstock) share one hover, one export and one
+legend (`frontend/src/components/product/InventoryVisual.tsx`). Labels follow Odoo 17: Quantity On Hand
+(qty_available) and Total Value (Inventory Valuation). Export columns: Product ID, Product name, Company, BCG Class,
+Quantity On Hand, Total Value, DOH, Stock Age (days), Sales Velocity, Quantity Sold, Sales Value, then the visual's own
+columns; the CSV ends with a summary section. File names: `<visual>_<company>_<from>_<to>.csv`.
+
+- Overstock excess quantity = finished-goods Quantity On Hand above the company overstock DOH (all of it when nothing
+  sold); excess value = excess quantity × unit cost.
+- Stock-Out risk level: Out of stock (no finished goods) · High (DOH under half the company minimum) · Watch (under it);
+  days until stock-out = DOH.
 
 ## 10. Open items (recorded 2026-09-30, not fixed)
 

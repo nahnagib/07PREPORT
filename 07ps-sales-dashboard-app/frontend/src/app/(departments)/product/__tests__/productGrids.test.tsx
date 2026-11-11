@@ -15,7 +15,8 @@ const row = (id: number, over: Partial<ProductDashboardRow>): ProductDashboardRo
   volumePrior: 5, avgUnitPrice: 10, grossProfitPct: 40, stockQty: 0, stockValue: 0, inTransitQty: 0, inTransitValue: 0, avgDailySales: 0,
   daysOfInventory: null, stockBand: 'Normal', stockAgeDays: null, stockAgeBucket: null, lifecycleSegment: 'Mature', firstSaleDate: '2025-01-01',
   lastSaleDate: '2026-11-01', bcgClassYTD: 'Stars', bcgClassLYTD: 'Stars', bcgMovement: 'Improved', bcgExcludedCategory: false, valueYTD: 100,
-  volumeYTD: 10 * id, valueLYTD: 50, volumeLYTD: 5 * id, grossProfitPctYTD: 40, grossProfitPctLYTD: 40, negativeStockRows: 0, ...over,
+  volumeYTD: 10 * id, valueLYTD: 50, volumeLYTD: 5 * id, grossProfitPctYTD: 40, grossProfitPctLYTD: 40, negativeStockRows: 0,
+  bcgVolume: 10 * id, bcgValue: 100, bcgProfit: 40, bcgGrossProfitPct: 40, bcgDataPeriod: 'YTD 2026', bcgDataAsOf: '2026-11-0' + id, ...over,
 });
 const OVERVIEW: ProductDashboardOverview = {
   view: 'BMH', asOfDate: '2026-11-07', builtAtUtc: null, period: { from: '2026-01-01', to: '2026-11-07', days: 311, priorFrom: '', priorTo: '' },
@@ -60,11 +61,34 @@ describe('Product tables use the standard grid, volume first, and every product 
     const grid = screen.getByTestId('data-grid');
     expect(grid.getAttribute('data-file')).toBe('bcg-matrix-product-detail');
     expect(grid.getAttribute('data-headers')!.split('|').slice(0, 4)).toEqual(['Product Name', 'Volume YTD', 'Volume LYTD', 'Vol Growth']);
+    expect(grid.getAttribute('data-headers')).toMatch(/Vol Growth\|Quantity On Hand/); // Quantity On Hand right after the growth columns
     expect(grid.getAttribute('data-headers')).toMatch(/Volume YTD\|Volume LYTD/);
     expect(within(grid).getByRole('link', { name: /P3/ }).getAttribute('href')).toBe(url(3, 3)); // Tika product -> Tika company
     // the Stars panel (a ranked visual, not a grid) links too
     const links = screen.getAllByRole('link', { name: /P1/ }).map((a) => a.getAttribute('href'));
     expect(links).toContain(url(1, 1));
+  });
+
+  it('BCG Matrix (threshold version restored 2026-11-11): class rules from the config thresholds, no median, Product Detail full width under Product Movement', () => {
+    const { container } = render(<BcgMatrixPage />);
+    expect(screen.getByTestId('bcg-class-definition-Stars').textContent).toBe('Volume ≥ Majaal 3,500 / Tika 25,000 units, GP% ≥ 35%');
+    expect(screen.getByTestId('bcg-class-definition-Dogs').textContent).toBe('Volume < Majaal 3,500 / Tika 25,000 units, GP% < 35%');
+    // 2x2: STARS | CASH COWS / STRATEGIC | DOGS; KPI tiles in the same order, then Not classified
+    expect([...screen.getByTestId('bcg-class-grid').querySelectorAll('[data-testid^="bcg-class-card-"]')].map((e) => e.getAttribute('data-testid')))
+      .toEqual(['bcg-class-card-Stars', 'bcg-class-card-Cash Cows', 'bcg-class-card-Strategic', 'bcg-class-card-Dogs']);
+    const kpis = screen.getByTestId('bcg-kpis');
+    expect([...kpis.children].map((tile) => tile.querySelector('span:last-child')?.textContent))
+      .toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Not classified']);
+    expect(screen.queryByText(/axes|Export image/)).toBeNull();
+    expect(screen.getByTestId('bcg-profit-data').textContent).toMatch(/^Profit data as of 2026-/);
+    expect(screen.getByTestId('bcg-class-action-Dogs').textContent).toMatch(/not an automatic discontinue/);
+    expect(container.textContent).not.toMatch(/median|Cannot classify|Insufficient comparison|unstable/i);
+    const text = container.textContent ?? '';
+    expect(text.indexOf('Product Movement')).toBeLessThan(text.indexOf('Product Detail'));
+    // neither card shares a row with the other (no two-column grid around them)
+    const grid = screen.getByTestId('data-grid');
+    const sharedRow = [...container.querySelectorAll<HTMLElement>('div')].find((d) => d.style.gridTemplateColumns && d.contains(grid));
+    expect(sharedRow).toBeUndefined();
   });
 
   it('Product Lifecycle: Product Detail is the standard grid, volume first', () => {

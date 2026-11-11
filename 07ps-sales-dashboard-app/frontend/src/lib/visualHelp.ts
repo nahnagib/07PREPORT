@@ -342,21 +342,34 @@ export const VISUAL_HELP = {
   // band) -- one short line; self-explanatory charts only have their "i". Volume = invoiced quantity, added up as "Unit".
   'product.bcgMatrix.matrix': {
     // the page puts the config thresholds in the formula line (shared.ts bcgClassRule)
-    help: { definition: 'BCG class of each product, on volume and GP%.', formula: 'High volume = YTD qty ≥ company threshold; Stars / Strategic = GP% ≥ 35%' },
-    interactions: ['Click a product to open it in Odoo', 'Hover a product for its figures', 'Export each class, or the whole matrix, to CSV or PDF'],
+    help: {
+      definition: 'BCG class of each product, on volume and GP%, against the company thresholds.',
+      formula: 'High volume = Volume ≥ Majaal 3,500 / Tika 25,000 units · High profit = GP% ≥ 35%',
+      notes:
+        'The class, profit and data date use the same period. We use the most recent complete costed period with a gross margin, checking calendar YTD and then prior years. ' +
+        'When no complete period has a margin, we check the available fully costed daily totals. Profit is sales value minus cost. Products with missing profit or an undefined margin appear under Not classified. ' +
+        'Stars: protect availability, keep investing, support growth, monitor. ' +
+        'Cash Cows: review pricing, discounts, cost structure, supplier terms and channel profitability. ' +
+        'Strategic: protect profitability, look for ways to grow volume, avoid unnecessary discounting. ' +
+        'Dogs: review before deciding to retain, improve, reposition or discontinue; a Dog is not an automatic discontinue.',
+    },
+    interactions: ['Click a product to open it in Odoo', 'Hover a product for its figures and the date of its profit data', 'Export a class to CSV or PDF'],
   },
   'product.bcgMatrix.movement': {
     // the page puts the config band and "new" window in the formula line (shared.ts movementRule)
-    help: { definition: 'Volume YTD vs the same dates last year, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or no LYTD · Discontinued = archived in Odoo' },
+    help: { definition: 'Volume YTD vs the same dates last year, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or no LYTD · archived Odoo products are left out' },
     interactions: ['Click a slice to list its products', 'Click a product to open it in Odoo', 'Hover a product for its figures', 'Export the list to CSV or PDF'],
   },
   'product.bcgMatrix.productDetail': {
-    help: { definition: 'Volume growth and gross profit per product.', formula: 'Vol Growth = (Volume YTD − LYTD) ÷ LYTD · GP% = (Value − Qty × standard cost) ÷ Value' },
+    help: {
+      definition: 'Per product: BCG Class, Profit and its data date, growth, GP% and Quantity On Hand.',
+      formula: 'Vol Growth = (Volume YTD − LYTD) ÷ LYTD · GP% = (Value − Qty × standard cost) ÷ Value · Quantity On Hand = Odoo Quantity On Hand of the product in its company (every internal location)',
+    },
     interactions: ['Click a product to open it in Odoo', ...GRID],
   },
   // Stock Velocity: the page replaces the threshold lines (days on hand, ISR, buckets) with the ETL config values.
   'product.stockVelocity.kpiDoh': {
-    help: { definition: 'Days on Hand.', formula: 'DOH = finished-goods units on hand ÷ average daily units sold (last 90 days)' },
+    help: { definition: 'Days on Hand (DOH).', formula: 'DOH = finished-goods Quantity On Hand ÷ average daily Quantity Sold (last 90 days)' },
   },
   'product.stockVelocity.kpiOverstock': {
     help: { definition: 'SKUs above the company overstock DOH, plus stock with no sales.', formula: 'Tika > 60 days · Majaal > 180 days DOH; stock with no sales in 90 days counts as overstock' },
@@ -366,37 +379,49 @@ export const VISUAL_HELP = {
   },
   'product.stockVelocity.kpiFast': {
     // the page puts the config values in the formula line (shared.ts moverRuleText)
-    help: { definition: 'Fast movers.', formula: 'Velocity = units sold ÷ days in period. Fast ≥ 150% of the category median · Slow ≤ 50%' },
+    help: { definition: 'Fast movers.', formula: 'Sales Velocity = Quantity Sold ÷ days in period. Fast ≥ 150% of the category median · Slow ≤ 50%' },
   },
   'product.stockVelocity.kpiInStock': {
-    help: { definition: 'SKUs with stock on hand.', formula: 'Finished-goods stock > 0; in-transit and raw materials not included' },
+    help: { definition: 'SKUs with finished goods on hand.', formula: 'Finished-goods Quantity On Hand > 0; in-transit and raw materials not included' },
   },
   'product.stockVelocity.kpiInventory': {
-    help: { definition: 'Finished-goods stock on hand, at cost (LYD).', formula: 'Finished goods only; in-transit (shown separately) and raw materials not included' },
+    help: { definition: 'Total Value of the finished goods on hand, at cost (LYD).', formula: 'Finished goods only; in-transit (shown separately) and raw materials not included' },
   },
   'product.stockVelocity.isr': {
-    help: { definition: 'Inventory to Sales Ratio.', formula: 'ISR = inventory on hand (LYD at cost) ÷ net sales (LYD) in the period · target ≤ 15%' },
+    help: { definition: 'Inventory to Sales Ratio.', formula: 'ISR = Total Value on hand (LYD at cost) ÷ Sales Value (LYD) in the period · target ≤ 15%' },
   },
   'product.stockVelocity.movers': {
     // the page puts the config values in the formula line (shared.ts moverRuleText)
-    help: { definition: 'SKUs sold in the period, against their category median.', formula: 'Velocity = units sold ÷ days in period. Fast ≥ 150% of the category median · Slow ≤ 50%' },
-    interactions: ['Hover a segment for its SKUs, units and LYD', 'Click a segment to list its products', 'Click a product to open it in Odoo', 'Export the list to CSV or PDF'],
+    help: { definition: 'SKUs sold in the period, against their category median.', formula: 'Sales Velocity = Quantity Sold ÷ days in period. Fast ≥ 150% of the category median · Slow ≤ 50%' },
+    interactions: ['Hover a segment for its SKUs, Quantity Sold and Sales Value', 'Click a segment to list its products', 'Hover a product for the standard inventory figures, its Mover Group and Category Median Velocity', 'Click a product to open it in Odoo', 'Export movers data: every SKU of the visual (CSV with the group summary, or PDF)'],
   },
   'product.stockVelocity.aging': {
-    help: { definition: 'Finished-goods SKUs on hand by stock age.', formula: 'Age = days since the stock arrived (Odoo in_date), units-weighted per SKU' },
-    interactions: ['Hover a segment for its SKUs, units and LYD at cost', 'Click a segment to list its products', 'Click a product to open it in Odoo', 'Export the list to CSV or PDF'],
+    help: {
+      definition: 'SKUs with Quantity On Hand, by the Stock Age of the stock still on hand.',
+      formula: 'Stock Age = Σ(layer units × days since that layer was received) ÷ Σ(layer units), over the receipts still in stock',
+      notes: 'Layers = Odoo stock valuation layers with units remaining, so stock that arrived 20 days ago is 20 days old even for a product sold since 2024. Quantity On Hand = Odoo Quantity On Hand of the company (every internal location). Buckets: 0–30, 31–60, 61–90, 91–180, 181–365, 365+ days. No stock = no Stock Age (–).',
+    },
+    interactions: ['Hover a segment for its SKUs, Quantity On Hand and Total Value', 'Click a segment to list its products', 'Hover a product for the standard inventory figures and its Aging Bucket', 'Click a product to open it in Odoo', 'Export aging data: every SKU with its Quantity On Hand and Total Value per bucket, plus the bucket totals (CSV), or PDF'],
   },
   'product.stockVelocity.overstock': {
-    help: { definition: 'Overstocked SKUs by BCG class.', formula: 'Tika > 60 days · Majaal > 180 days DOH; stock with no sales in 90 days counts as overstock' },
-    interactions: ['Hover a bar for its SKUs, units and LYD', 'Click a class to list its products', 'Click a product to open it in Odoo', 'Export to CSV or PDF'],
+    help: {
+      definition: 'Overstocked SKUs by BCG Class.',
+      formula: 'Tika > 60 days · Majaal > 180 days DOH; stock with no sales in 90 days counts as overstock',
+      notes: 'Excess quantity = finished-goods Quantity On Hand above the company overstock DOH (all of it when nothing sold); excess value = excess quantity × the unit cost.',
+    },
+    interactions: ['Hover a bar for its SKUs, Quantity On Hand and Total Value', 'Click a class to list its products', 'Hover a product for the standard inventory figures and its excess quantity / value', 'Click a product to open it in Odoo', 'Export overstock data: every overstocked SKU (CSV with the BCG Class summary, or PDF)'],
   },
   'product.stockVelocity.frequency': {
     help: { definition: 'SKUs by how often they sell.', formula: 'Average gap = days in the period ÷ selling days (Daily ≤ 2 · Weekly 3–7 · Monthly 8–30 · Quarterly 31–90 · Rarely > 90)' },
-    interactions: ['Hover a bar for its SKUs, units and LYD', 'Click a bar to list its products', 'Click a product to open it in Odoo', ...GRID],
+    interactions: ['Hover a bar for its SKUs, Quantity Sold and Sales Value', 'Click a bar to list its products', 'Click a product to open it in Odoo', ...GRID],
   },
   'product.stockVelocity.stockOutRisk': {
-    help: { definition: 'Above-median sellers that may run out, by BCG class.', formula: 'Tika < 30 days · Majaal < 60 days DOH' },
-    interactions: ['Hover a bar for its SKUs, units and LYD', 'Click a class to list its products', 'Click a product to open it in Odoo', 'Export to CSV or PDF'],
+    help: {
+      definition: 'Above-median sellers that may run out, by BCG Class.',
+      formula: 'Tika < 30 days · Majaal < 60 days DOH',
+      notes: 'Days until stock-out = DOH of the finished goods. Risk level: Out of stock (no finished goods) · High (DOH under half the company minimum) · Watch (under the minimum).',
+    },
+    interactions: ['Hover a bar for its SKUs, Quantity On Hand and Total Value', 'Click a class to list its products', 'Hover a product for the standard inventory figures, its risk level and days until stock-out', 'Click a product to open it in Odoo', 'Export stock-out data: every SKU at risk (CSV with the BCG Class summary, or PDF)'],
   },
   'product.pimContribution.hierarchy': {
     help: { definition: 'Units (or LYD) by company, category, brand, family, size and product.' },
@@ -418,7 +443,7 @@ export const VISUAL_HELP = {
     interactions: ['Click a brand to open its page'],
   },
   'product.productLifecycle.pareto': {
-    help: { definition: 'Units sold per lifecycle segment, with the cumulative share.', formula: 'New = first sale ≤ 180 days · Growing / Declining = last 90 days vs the 90 before ±20% · Discontinued = archived or no sale in 365 days' },
+    help: { definition: 'Units sold per lifecycle segment, with the cumulative share.', formula: 'New = first sale ≤ 180 days · Growing / Declining = last 90 days vs the 90 before ±20% · Discontinued = no sale in 365 days (archived Odoo products are left out)' },
   },
   'product.productLifecycle.productDetail': {
     help: { definition: 'Every product with its lifecycle segment and volume.' },

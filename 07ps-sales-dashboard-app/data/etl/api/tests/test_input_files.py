@@ -240,7 +240,21 @@ def test_product_exclusions_upload_is_validated_and_counted(client, folders):
     assert counts["categories_active"] == 1 and counts["customers_ignored"] == 1 and counts["products_active"] == 0
 
 
-def test_product_exclusions_upload_with_an_invalid_row_is_refused_and_lists_it(client, folders):
+def test_product_exclusions_upload_with_an_invalid_row_is_accepted_and_lists_the_skipped_row(client, folders):
     response = put(client, "ProductExclusions.xlsx", _exclusions(category_id="Packaging"))
-    assert response.status_code == 422
-    assert "Categories row 2: Odoo Category ID must be a whole positive number" in str(response.get_json())
+    assert response.status_code == 200, response.get_json()
+    validation = response.get_json()["validation"]
+    assert validation["counts"]["rows_skipped"] == 1 and validation["counts"]["categories_active"] == 0
+    assert validation["warnings"] == ["Categories row 2 (Packaging): Odoo Category ID must be a whole positive number (got Packaging) -- row skipped"]
+
+
+def test_product_exclusions_upload_without_a_required_sheet_is_rejected_and_the_current_file_stays(client, folders):
+    inputs, _ = folders
+    good = put(client, "ProductExclusions.xlsx", _exclusions())
+    assert good.status_code == 200
+    before = (inputs / "ProductExclusions.xlsx").read_bytes()
+    broken = xlsx({"Customers": {"Company": [], "Odoo Partner ID": [], "Action": [], "Active": []},
+                   "Categories": {"Company": [], "Odoo Category ID": [], "Action": [], "Active": []}})
+    response = put(client, "ProductExclusions.xlsx", broken)
+    assert response.status_code == 422 and "Products sheet" in str(response.get_json())
+    assert (inputs / "ProductExclusions.xlsx").read_bytes() == before

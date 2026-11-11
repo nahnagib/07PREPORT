@@ -112,8 +112,11 @@ def conform_sales(ctx: RunContext) -> TaskResult:
     _apply_customer_growth(ctx, result, write=ctx.state.get("write_customer_growth", True))
     ctx.state["conformed"] = result
     gaps = write_product_gap_report(ctx, result.product_gaps) if ctx.full_refresh else None
+    # ProductExclusions.xlsx + automatic exclusions of this build (ETL Control Center -> Product exclusions)
+    exclusions = getattr(pipeline, "product_exclusion_report", None)
     return TaskResult(rows_loaded=0, details={"tables": {k: len(v) for k, v in result.tables.items()}, "legacy_key_parity": result.parity,
-                                              "notes": result.notes, **({"product_odoo_gaps": gaps} if gaps else {})})
+                                              "notes": result.notes, **({"product_odoo_gaps": gaps} if gaps else {}),
+                                              **({"product_exclusions": exclusions} if exclusions else {})})
 
 
 PRODUCT_GAP_REPORT = "product_odoo_gaps.csv"

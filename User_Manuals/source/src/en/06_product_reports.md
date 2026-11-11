@@ -3,42 +3,40 @@
 
 ## Purpose
 
-The **BCG Matrix** classifies every sellable product (SKU) into one of four portfolio classes, based on how much of it sells (volume) and how profitable it is (gross profit %). It also shows how each product's class has moved since last year.
+The **BCG Matrix** groups products by sales volume and gross profit margin. **Product Movement** compares sales volume with the same period last year.
 
 **To open it:** in the sidebar click **Product**, then the **BCG Matrix** card or tab.
-
-![BCG Matrix: class cards and top products](shots/bcg_top.png){annot="1:300,190;2:680,190;3:1060,190;4:1440,190;5:140,300"}
 
 1. **STARS**: high volume **and** high profit.
 2. **CASH COWS**: high volume, lower profit.
 3. **STRATEGIC**: lower volume, high profit.
 4. **DOGS**: lower volume and lower profit.
-5. **Top 10 products per class** by Revenue YTD. The bar length is relative to the class's top product. Point at a row to see Volume, ASP, GP%, Vol Growth and Movement. "+*n* more SKUs in this class" shows how many aren't listed.
-
-Each class card shows the number of products, their revenue YTD and the change compared with LYTD.
+On desktop, Stars and Cash Cows are on the top row and Strategic and Dogs are on the bottom row. Each card shows up to 10 products by volume, with units and profit in LYD. Hover over a product to see its data date and class rule. The card's CSV and PDF exports include every SKU in the class.
 
 ### How products are classified
 
 | | Gross profit ≥ 35% | Gross profit < 35% |
 |---|---|---|
-| **High volume** (YTD units at or above the company threshold) | **Stars** | **Cash Cows** |
-| **Low volume** | **Strategic** | **Dogs** |
+| **Volume ≥ company threshold** | **Stars** | **Cash Cows** |
+| **Volume < company threshold** | **Strategic** | **Dogs** |
 
-The volume threshold differs by company: **3,500 units YTD for Majaal** and **25,000 units YTD for Tika**. Packaging and input categories (**Paper Bags**, **Raw Materials**) are not classified.
+The volume thresholds are **3,500 units for Majaal** and **25,000 units for Tika**. The class and profit use the same data. The dashboard checks calendar YTD and prior years for the latest complete period with recorded costs and a gross margin. If none qualifies, it checks the fully costed daily totals. The **Profit data as of** subtitle shows the latest date used across the products shown.
 
-## Portfolio Movement
+Products with no usable cost appear under **Not classified** and show **–** for Profit. A product with zero revenue and recorded cost shows its profit under **Not classified** because its gross margin is undefined.
 
-The movement chips compare each product's class this year with last year:
+## Product Movement
+
+The movement labels compare each product's calendar YTD sales volume with the same dates last year.
 
 | Movement | Meaning |
 |---|---|
-| **New** | First sold within the last 12 months. |
-| **Stable** | Same class as last year, or a sideways move between Cash Cows and Strategic. |
-| **Improved** | Moved to a better class (for example Dogs → Strategic, or Cash Cows → Stars). |
-| **Drop** | Moved to a worse class. |
-| **Discontinued** | Sold last year but has no sales this year. |
+| **New** | First sale within 180 days or no sales volume in the equivalent period last year. |
+| **Stable** | Volume changed by at most 10% in either direction. |
+| **Improved** | Volume increased by more than 10%. |
+| **Drop** | Volume decreased by more than 10%. |
+| **Discontinued** | Product is archived in Odoo. |
 
-**Portfolio Movement** is a donut chart next to the Product Detail table (marker 5 below). Click a slice, or a row in its legend, to list those products.
+**Product Movement** is the donut chart above Product Detail. Click a slice to list those products.
 
 ## Product Detail table
 
@@ -48,9 +46,6 @@ The movement chips compare each product's class this year with last year:
 2. Column headings (**Product Name**, **Category**, **BCG Class**, **Movement**, **Revenue YTD**, **Revenue LYTD**, **Volume YTD**, **ASP**, **GP%**, **Vol Growth**): click the arrows to sort.
 3. **Filter...**: the box under each heading filters that column.
 4. **Search all columns...**: searches the whole table.
-5. **Portfolio Movement**: the movement donut (see above).
-
-**Performance Details** at the bottom summarises the portfolio, with **Export PDF**.
 
 This report uses the standard filter bar: dates, **Company**, **Customer Group**, **Distribution Channel**, **Branch** and **Salesperson**.
 

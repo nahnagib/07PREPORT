@@ -65,7 +65,7 @@ from sales_pipeline.staging import StagingStore, odoo_incremental_domain
 from sales_pipeline.validation import ModelValidator
 from sales_pipeline import odoo_products
 from sales_pipeline.product_dashboard import IntercompanyFlagger, ProductDashboardBuilder, ProductDashboardConfig
-from sales_pipeline.product_exclusions import ProductExclusionsLoader
+from sales_pipeline.product_exclusions import load_for_run as load_product_exclusions
 
 
 SALE_REPORT_CACHE_TABLE = "raw_sale_report_api"
@@ -187,6 +187,8 @@ class PowerBISalesPipeline:
         stock_quants_raw = pd.DataFrame()
         stock_locations_raw = pd.DataFrame()
         inventory_companies_raw = pd.DataFrame()
+        valuation_layers_raw = pd.DataFrame()
+        product_categories_raw = pd.DataFrame()
         if output_mode not in {"excel", "sql", "both"}:
             raise ValueError("output_mode must be one of: excel, sql, both")
         if load_mode not in {"full", "incremental"}:
@@ -273,12 +275,16 @@ class PowerBISalesPipeline:
                 _inv_quants_r = InventoryRepository(self._make_odoo_client(_uid_early), _bs_early)
                 _inv_locs_r = InventoryRepository(self._make_odoo_client(_uid_early), _bs_early)
                 _inv_comp_r = InventoryRepository(self._make_odoo_client(_uid_early), _bs_early)
+                _inv_svl_r = InventoryRepository(self._make_odoo_client(_uid_early), _bs_early)
+                _categ_r = ProductCostRepository(self._make_odoo_client(_uid_early), _bs_early)
 
                 _early_tasks: dict[str, Callable[[], pd.DataFrame]] = {
                     "product.product": product_cost_repo.fetch_product_costs,
                     "stock.quant": _inv_quants_r.fetch_stock_quants,
                     "stock.location": _inv_locs_r.fetch_locations,
                     "res.company": _inv_comp_r.fetch_companies,
+                    "stock.valuation.layer": _inv_svl_r.fetch_valuation_layers,
+                    "product.category": _categ_r.fetch_categories,
                 }
                 _early_started = time.perf_counter()
                 _early_fetched = self._parallel_odoo_fetch(_early_tasks, uid=_uid_early, max_workers=4)
@@ -291,6 +297,8 @@ class PowerBISalesPipeline:
                 stock_quants_raw = _early_fetched["stock.quant"]
                 stock_locations_raw = _early_fetched["stock.location"]
                 inventory_companies_raw = _early_fetched["res.company"]
+                valuation_layers_raw = _early_fetched["stock.valuation.layer"]
+                product_categories_raw = _early_fetched["product.category"]
 
                 self.logger.info("Odoo extraction product.product costs rows=%s", len(product_cost_raw))
                 self.logger.info("Odoo stock.quant rows extracted=%s", len(stock_quants_raw))
@@ -412,6 +420,8 @@ class PowerBISalesPipeline:
                     stock_quants_raw=stock_quants_raw,
                     stock_locations_raw=stock_locations_raw,
                     inventory_companies_raw=inventory_companies_raw,
+                    valuation_layers_raw=valuation_layers_raw,
+                    product_categories_raw=product_categories_raw,
                     sale_orders_raw=sale_orders_raw,
                 )
                 if metadata_exporter is not None:
@@ -659,12 +669,15 @@ class PowerBISalesPipeline:
         bs = self.settings.batch_size
         with run_context.step("extract_product_cost_and_inventory"):
             product_cost_repo = ProductCostRepository(new_client(), bs)
-            inv = [InventoryRepository(new_client(), bs) for _ in range(3)]
+            inv = [InventoryRepository(new_client(), bs) for _ in range(4)]
+            categ_repo = ProductCostRepository(new_client(), bs)
             fetched = fetch_all({
                 "product.product": product_cost_repo.fetch_product_costs,
                 "stock.quant": inv[0].fetch_stock_quants,
                 "stock.location": inv[1].fetch_locations,
                 "res.company": inv[2].fetch_companies,
+                "stock.valuation.layer": inv[3].fetch_valuation_layers,
+                "product.category": categ_repo.fetch_categories,
             }, 4)
             odoo_extract_count += sum(len(df) for df in fetched.values())
         with run_context.step("extract_sale_report"):
@@ -692,6 +705,8 @@ class PowerBISalesPipeline:
                 sales_raw, include_qa=include_qa, use_reference_cache=False,
                 product_cost_raw=fetched["product.product"], stock_quants_raw=fetched["stock.quant"],
                 stock_locations_raw=fetched["stock.location"], inventory_companies_raw=fetched["res.company"],
+                valuation_layers_raw=fetched["stock.valuation.layer"],
+                product_categories_raw=fetched["product.category"],
                 sale_orders_raw=crm["sale.order"],
             )
         with run_context.step("transform_crm_model"):
@@ -727,10 +742,15 @@ class PowerBISalesPipeline:
         business_today = pd.Timestamp.now(tz=self.settings.timezone).tz_localize(None).normalize()
         dim_product, dim_product_cost = sheets["Dim_Product"], sheets["Dim_ProductCost"]
         line_costs = ProductCostMatcher.attach(fact_sales_lines, dim_product_cost)["product_cost"]
-        exclusions = ProductExclusionsLoader().load(self.settings.product_exclusions_path)
-        tables = ProductDashboardBuilder(dashboard_config, business_today, exclusions).build(
-            fact_sales_lines, dim_product, sheets["Fact_Inventory"], line_costs=line_costs
+        exclusions = load_product_exclusions(self.settings.product_exclusions_path)
+        builder = ProductDashboardBuilder(dashboard_config, business_today, exclusions)
+        tables = builder.build(
+            fact_sales_lines, dim_product, sheets["Fact_Inventory"], line_costs=line_costs,
+            valuation_layers=getattr(self, "valuation_layers", None),
+            categories=getattr(self, "product_categories", None),
         )
+        # what was excluded and why (ETL Control Center; written to the conform_sales task log)
+        self.product_exclusion_report = builder.exclusion_report()
         tables["Fact_BCGMatrix"] = BCGMatrixBuilder.build(fact_sales_lines, dim_product_cost, dim_product=dim_product)
         return tables
 
@@ -744,6 +764,8 @@ class PowerBISalesPipeline:
         stock_locations_raw: pd.DataFrame | None = None,
         inventory_companies_raw: pd.DataFrame | None = None,
         sale_orders_raw: pd.DataFrame | None = None,
+        valuation_layers_raw: pd.DataFrame | None = None,
+        product_categories_raw: pd.DataFrame | None = None,
     ) -> dict[str, pd.DataFrame]:
         _t0 = time.perf_counter()
         sales = self._normalize_sales_export(sales_raw)
@@ -900,9 +922,15 @@ class PowerBISalesPipeline:
         _t14 = time.perf_counter()
         fact_bcg = BCGMatrixBuilder.build(fact_sales_lines, dim_product_cost, dim_product=dim_product)
         line_costs = ProductCostMatcher.attach(fact_sales_lines, dim_product_cost)["product_cost"]
-        exclusions = ProductExclusionsLoader().load(self.settings.product_exclusions_path)
+        exclusions = load_product_exclusions(self.settings.product_exclusions_path)
+        # Odoo's category tree (sub-categories of an excluded category, Raw Materials); kept for rebuild_product_tables
+        self.product_categories = product_categories_raw
+        # Stock Aging: the open receipt layers (kept for rebuild_product_tables, which runs on the same instance)
+        self.valuation_layers = InventoryModelBuilder.normalize_valuation_layers(valuation_layers_raw, inventory_companies_raw)
         product_tables = ProductDashboardBuilder(dashboard_config, business_today, exclusions).build(
-            fact_sales_lines, dim_product, inventory_result.fact_inventory, line_costs=line_costs
+            fact_sales_lines, dim_product, inventory_result.fact_inventory, line_costs=line_costs,
+            valuation_layers=self.valuation_layers,
+            categories=self.product_categories,
         )
         self.logger.info(
             "Product dashboard tables: products=%s daily_rows=%s odoo_gaps=%s dq=%s",

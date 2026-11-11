@@ -19,6 +19,7 @@ import {
   EtlRunStep,
   EtlSchedulerConfigResponse,
   EtlProductGapsReport,
+  EtlProductExclusionsReport,
   EtlShadowCompareResponse,
   EtlStatusResponse,
 } from '../../../lib/api';
@@ -680,6 +681,9 @@ function EtlControlBody() {
       {/* --- Products to complete in Odoo (the gap report of the last full refresh) --- */}
       <ProductGapsCard token={token} />
 
+      {/* --- Product exclusions (ProductExclusions.xlsx + automatic rules) of the last sales build --- */}
+      <ProductExclusionsCard token={token} />
+
       {/* --- Input files preflight --- */}
       <PreflightCard preflight={preflight} onRecheck={loadPreflight} />
 
@@ -1141,6 +1145,171 @@ const FILE_STATUS_TEXT: Record<string, string> = {
 /** The latest live-vs-shadow comparisons of the sales tables (sales_shadow_compare, after each 02:00 refresh in shadow
  * mode): MATCH means the 30-minute build from the Odoo mirror wrote exactly what the 02:00 rebuild from Odoo wrote. */
 /** Sold products that have no Brand, Family, Size or SKU in Odoo (Odoo is the only source of product attributes). */
+const PRODUCT_EXCLUSION_REASON: Record<string, string> = {
+  file_product: 'Products sheet (file)',
+  file_category: 'Categories sheet (file, with sub-categories)',
+  archived: 'Archived in Odoo',
+  raw_material: 'Raw Materials category',
+};
+const SALES_RULE: Record<string, string> = {
+  customers_exclude: 'Customers sheet: Exclude',
+  backoffice: 'Customer Group Backoffice (3)',
+  inter_company: 'Customer Group Inter Company (4)',
+  intercompany_flag: 'Partner flagged IsIntercompany',
+  customers_keep: 'Customers sheet: Keep (kept as real sales)',
+};
+
+/** What the last sales build left out of every Product and Inventory page, and why (2026-11-11). */
+function ProductExclusionsCard({ token }: { token: string | null }) {
+  const [report, setReport] = useState<EtlProductExclusionsReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    adminApi
+      .getEtlProductExclusions(token)
+      .then((res) => {
+        setReport(res.report);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load the product exclusions.'));
+  }, [token]);
+
+  if (!report && !error) return null; // no sales build has written the report yet
+  const cell = { padding: '4px 8px', borderBottom: '1px solid var(--ps-color-border)', textAlign: 'left' as const };
+  const num = { ...cell, textAlign: 'right' as const };
+  const companies = (m: Record<string, number>) => Object.entries(m).map(([c, n]) => `${c} ${formatCount(n)}`).join(' · ');
+  return (
+    <Card>
+      <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>Product exclusions</h3>
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
+        What the last sales build left out of every Product and Inventory page: ProductExclusions.xlsx plus the automatic rules
+        (Backoffice, Inter Company, archived products, Raw Materials category).
+      </p>
+      <p data-testid="etl-product-exclusions-active-rule" style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--ps-color-text)' }}>
+        <strong>Active = No</strong> means the row is <strong>ignored</strong>: it does not keep a product that another rule (archived, a category,
+        Raw Materials) removes. Only <strong>Action = Keep with Active = Yes</strong> keeps it. A company row wins over the All row of the
+        same id for that company.
+      </p>
+      {error && <ErrorState message={error} />}
+      {report && (
+        <div data-testid="etl-product-exclusions" style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 13.5 }}>
+          <div>
+            <strong>ProductExclusions.xlsx</strong>
+            {report.file.file ? <> uploaded {formatDateTime(report.file.uploaded_at_utc)}</> : ' not found: no file rules'} · applied by the build of{' '}
+            {formatDateTime(report.finishedAtUtc)}
+            {report.file.fallback_reason && (
+              <div style={{ color: 'var(--ps-color-alert)', marginTop: 4 }}>{report.file.fallback_reason}</div>
+            )}
+          </div>
+          <div>
+            Active rows applied:{' '}
+            {(['Customers', 'Categories', 'Products'] as const)
+              .map((sheet) => `${sheet} ${Object.entries(report.file.active_rows[sheet] ?? {}).map(([a, n]) => `${a} ${formatCount(n)}`).join(' / ') || '0'}`)
+              .join(' · ')}
+            {' · '}Active = No rows ignored: {formatCount(Object.values(report.file.inactive_rows).reduce((t, n) => t + n, 0))}
+            {' · '}Rows skipped: <strong style={{ color: report.file.skipped_rows ? 'var(--ps-color-alert)' : undefined }}>{formatCount(report.file.skipped_rows)}</strong>
+            {' · '}Warnings: <strong style={{ color: report.file.warning_rows ? 'var(--ps-color-watch)' : undefined }}>{formatCount(report.file.warning_rows ?? 0)}</strong>
+          </div>
+          {report.file.skipped.length > 0 && (
+            <ul data-testid="etl-product-exclusions-skipped" style={{ margin: 0, paddingLeft: 18, fontSize: 12.5 }}>
+              {report.file.skipped.map((s) => (
+                <li key={`${s.sheet}-${s.row}`}>
+                  {s.sheet} row {s.row}
+                  {s.name ? ` (${s.name})` : ''}: {s.reason}
+                </li>
+              ))}
+            </ul>
+          )}
+          {(report.file.warnings ?? []).length > 0 && (
+            <ul data-testid="etl-product-exclusions-warnings" style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: 'var(--ps-color-watch)' }}>
+              {(report.file.warnings ?? []).map((w, i) => (
+                <li key={`${w.sheet}-${w.row}-${i}`}>
+                  {w.sheet} row {w.row ?? '?'}
+                  {w.name ? ` (${w.name})` : ''}: {w.reason} (applied)
+                </li>
+              ))}
+            </ul>
+          )}
+          <table style={{ borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <thead>
+              <tr>
+                <th style={cell}>Products excluded by</th>
+                <th style={num}>Products</th>
+                <th style={cell}>Per company</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.keys(PRODUCT_EXCLUSION_REASON).map((k) => (
+                <tr key={k}>
+                  <td style={cell}>{PRODUCT_EXCLUSION_REASON[k]}</td>
+                  <td style={num}>{formatCount(report.products_excluded[k]?.total ?? 0)}</td>
+                  <td style={cell}>{companies(report.products_excluded[k]?.by_company ?? {}) || '–'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <table style={{ borderCollapse: 'collapse', fontSize: 12.5 }}>
+            <thead>
+              <tr>
+                <th style={cell}>Sales lines by customer rule</th>
+                <th style={num}>Lines</th>
+                <th style={num}>Quantity</th>
+                <th style={num}>Untaxed LYD</th>
+                <th style={cell}>Per company</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.keys(SALES_RULE)
+                .filter((k) => report.sales_lines_excluded[k])
+                .map((k) => {
+                  const r = report.sales_lines_excluded[k];
+                  return (
+                    <tr key={k}>
+                      <td style={cell}>{SALES_RULE[k]}</td>
+                      <td style={num}>{formatCount(r.lines)}</td>
+                      <td style={num}>{formatCount(Math.round(r.qty))}</td>
+                      <td style={num}>{formatCount(Math.round(r.value))}</td>
+                      <td style={cell}>{companies(r.by_company) || '–'}</td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+          <div>
+            <strong>Archived in Odoo with Quantity On Hand &gt; 0</strong>: {formatCount(report.archived_with_stock.length)} product(s). They are
+            excluded from every visual; clean up their stock in Odoo.
+            {report.archived_with_stock.length > 0 && (
+              <div style={{ maxHeight: 260, overflowY: 'auto', marginTop: 6 }}>
+                <table data-testid="etl-archived-with-stock" style={{ borderCollapse: 'collapse', fontSize: 12.5, width: '100%' }}>
+                  <thead>
+                    <tr>
+                      {['Company', 'Product ID', 'Product name', 'Quantity On Hand', 'Total Value'].map((h, i) => (
+                        <th key={h} style={i >= 3 ? num : cell}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.archived_with_stock.map((p) => (
+                      <tr key={`${p.company}-${p.product_id}`}>
+                        <td style={cell}>{p.company}</td>
+                        <td style={cell}>{p.product_id}</td>
+                        <td style={cell} dir="auto">{p.product_name ?? '–'}</td>
+                        <td style={num}>{p.quantity_on_hand.toLocaleString('en-US', { maximumFractionDigits: 2 })}</td>
+                        <td style={num}>LYD {formatCount(Math.round(p.total_value))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ProductGapsCard({ token }: { token: string | null }) {
   const [report, setReport] = useState<EtlProductGapsReport | null>(null);
   const [error, setError] = useState<string | null>(null);

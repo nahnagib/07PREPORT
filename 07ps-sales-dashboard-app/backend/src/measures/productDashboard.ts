@@ -34,6 +34,11 @@
  * and do not move with the period or the filters. Volume / Revenue YTD and LYTD (calendar, as of today) DO follow
  * the Customer Group / Channel / Branch / Salesperson filters (2026-11-07, option a); the class is never recomputed
  * for the filtered subset.
+ * BCG class (2026-11-11): the config thresholds applied to each product's LATEST profit data (measures/bcgLatestProfit.ts):
+ * calendar YTD when it sold this year fully costed, else its most recent fully costed calendar year. Served as
+ * bcgClassYTD (every Product page shows it) with the volume, profit, GP% and the period / date of the data used.
+ * On Hand (2026-11-10): Odoo's On Hand of the product in its company (OnHandQty / OnHandValue, every internal location);
+ * stockQty stays the finished-goods stock behind DOH, the stock band and ISR.
  *
  * Scope: Customer Group / Channel / Branch / Salesperson filters and the RBAC lock (resolveScopedFilters) narrow the
  * sales metrics. When any of them is active, a product is listed when it sold in scope in the period OR in the same
@@ -46,6 +51,7 @@ import { DateTime } from 'luxon';
 import { buildWhereClause, type Filters } from './filters';
 import { getAppTimezone } from '../lib/timezone';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
+import { bcgRule, fetchBcgWindows, latestBcg, withBcgThresholds } from './bcgLatestProfit';
 
 export interface UomQty {
   uom: string;
@@ -100,11 +106,30 @@ export interface ProductDashboardRow {
   stockAgeDays: number | null;
   /** Stock Aging bucket (config stock.aging_buckets), null = no stock on hand. */
   stockAgeBucket: string | null;
+  /** Odoo's On Hand in the product's company: every quant in an internal location (dim OnHandQty, 2026-11-10). */
+  onHandQty: number;
+  onHandValue: number;
+  /** Age (days) of the oldest receipt layer still in stock; null = no stock on hand. */
+  stockAgeOldestDays: number | null;
+  /** 'layers' (Odoo stock.valuation.layer) or 'quant_in_date' (no open layer). */
+  stockAgeSource: string | null;
+  /** On Hand units / value per aging bucket, split by receipt layer (config stock.aging_buckets order). */
+  agingBuckets: AgingBucketAmount[];
   lifecycleSegment: 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued' | 'Never sold';
   firstSaleDate: string | null;
   lastSaleDate: string | null;
+  /** BCG class on the product's latest profit data (bcgLatestProfit.ts); null = never sold. */
   bcgClassYTD: string | null;
   bcgClassLYTD: string | null;
+  /** The data behind bcgClassYTD: volume, sales value, profit (Value - Qty x standard cost), GP% of that window. */
+  bcgVolume: number | null;
+  bcgValue: number | null;
+  bcgProfit: number | null;
+  bcgGrossProfitPct: number | null;
+  /** 'YTD 2026' or the calendar year used ('2025'); null = no profit data in the database. */
+  bcgDataPeriod: string | null;
+  /** Last sale date of the data used. */
+  bcgDataAsOf: string | null;
   bcgMovement: 'New' | 'Stable' | 'Improved' | 'Drop' | 'Discontinued' | null;
   bcgExcludedCategory: boolean;
   valueYTD: number;
@@ -114,6 +139,13 @@ export interface ProductDashboardRow {
   grossProfitPctYTD: number | null;
   grossProfitPctLYTD: number | null;
   negativeStockRows: number;
+}
+
+export interface AgingBucketAmount {
+  key: string;
+  label: string;
+  qty: number;
+  value: number;
 }
 
 export interface ProductCompanyPart {
@@ -237,7 +269,14 @@ function emptyAgg(): Agg {
 const sumQty = (m: Map<string, number>) => [...m.values()].reduce((t, q) => t + q, 0);
 
 /** One page row from a v_sales_product_dashboard row and its period sums. */
-function toRow(key: string, p: any, a: Agg | undefined, days: number, companies: string[], parts: ProductCompanyPart[], orderDays = 0, odooBase: string | null = null): ProductDashboardRow {
+/** Aging buckets of the config (stock.aging_buckets: key + label), in order. */
+function agingBucketDefs(thresholds: Record<string, unknown>): { key: string; label: string }[] {
+  const raw = ((thresholds.stock ?? {}) as { aging_buckets?: { key?: string; label?: string }[] }).aging_buckets ?? [];
+  return raw.filter((b) => b.key).map((b) => ({ key: String(b.key), label: String(b.label ?? b.key) }));
+}
+
+function toRow(key: string, p: any, a: Agg | undefined, days: number, companies: string[], parts: ProductCompanyPart[], orderDays = 0, odooBase: string | null = null,
+  buckets: { key: string; label: string }[] = []): ProductDashboardRow {
   const value = a?.value ?? 0;
   const lines = a?.lines ?? 0;
   const volumeByUom = a ? uomList(a.qty) : [];
@@ -283,11 +322,22 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     stockBand: String(p.StockBand) as ProductDashboardRow['stockBand'],
     stockAgeDays: numOrNull(p.StockAgeDays),
     stockAgeBucket: str(p.StockAgeBucket),
+    onHandQty: num(p.OnHandQty),
+    onHandValue: num(p.OnHandValue),
+    stockAgeOldestDays: numOrNull(p.StockAgeOldestDays),
+    stockAgeSource: str(p.StockAgeSource),
+    agingBuckets: buckets.map((b) => ({ ...b, qty: num(p[`AgeQty_${b.key}`]), value: num(p[`AgeValue_${b.key}`]) })),
     lifecycleSegment: String(p.LifecycleSegment) as ProductDashboardRow['lifecycleSegment'],
     firstSaleDate: isoDate(p.FirstSaleDate),
     lastSaleDate: isoDate(p.LastSaleDate),
     bcgClassYTD: str(p.BcgClassYTD),
     bcgClassLYTD: str(p.BcgClassLYTD),
+    bcgVolume: null,
+    bcgValue: null,
+    bcgProfit: null,
+    bcgGrossProfitPct: null,
+    bcgDataPeriod: null,
+    bcgDataAsOf: null,
     bcgMovement: (str(p.BcgMovement) as ProductDashboardRow['bcgMovement']) ?? null,
     bcgExcludedCategory: Boolean(num(p.BcgExcludedCategory)),
     // Follow the filters (calendar YTD / LYTD of the period's sales rows); class and movement stay the ETL's.
@@ -367,12 +417,13 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   if (requestedView !== 'BMH') soldParams.push(requestedView);
   soldParams.push(EXCLUDED_COMPANIES);
 
-  const [[salesRows], [orderDayRows], [soldRows], [productRows], [metaRows]] = await Promise.all([
+  const [[salesRows], [orderDayRows], [soldRows], [productRows], [metaRows], bcgWindows] = await Promise.all([
     pool.query(salesSql, salesParams),
     pool.query(orderDaysSql, orderDaysParams),
     scoped ? pool.query(soldSql, soldParams) : Promise.resolve([[]] as unknown[]),
     pool.query('SELECT * FROM v_sales_product_dashboard WHERE Company NOT IN (?)', [EXCLUDED_COMPANIES]),
     pool.query('SELECT AsOfDate, BuiltAtUtc, LookbackDays, ConfigJson FROM etl_sales_product_dashboard_meta LIMIT 1'),
+    fetchBcgWindows(pool, period.ytdFrom, period.ytdTo, EXCLUDED_COMPANIES),
   ]);
   const view = requestedView;
 
@@ -406,6 +457,17 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     volumeByUom: a ? uomList(a.qty) : [],
   });
 
+  const meta = (metaRows as any[])[0] ?? {};
+  let thresholds: Record<string, unknown> = {};
+  try {
+    thresholds = meta.ConfigJson ? JSON.parse(String(meta.ConfigJson)) : {};
+    delete (thresholds as any).intercompany_customers;
+  } catch {
+    thresholds = {};
+  }
+  thresholds = withBcgThresholds(thresholds);
+  const buckets = agingBucketDefs(thresholds);
+
   const orderDaysOf = new Map((orderDayRows as any[]).map((r) => [String(r.k), num(r.orderDays)]));
   const soldAnywhere = new Set((soldRows as any[]).map((r) => String(r.k)));
   const odooBase = odooConfiguredBaseUrl();
@@ -415,7 +477,20 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     const a = byProduct.get(key);
     const soldInScope = Boolean(a && (a.lines > 0 || a.linesPrior > 0));
     if (scoped && !soldInScope && (query.salespersonTier || soldAnywhere.has(key))) continue;
-    products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)], orderDaysOf.get(key) ?? 0, odooBase));
+    products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)], orderDaysOf.get(key) ?? 0, odooBase, buckets));
+  }
+
+  // BCG on each product's latest fully costed data (company-wide), the config thresholds.
+  const latest = latestBcg(bcgWindows, bcgRule(thresholds), Number(period.ytdFrom.slice(0, 4)));
+  for (const r of products) {
+    const b = latest.get(r.productCompanyKey);
+    r.bcgClassYTD = b?.bcgClass ?? null;
+    r.bcgVolume = b?.volume ?? null;
+    r.bcgValue = b?.value ?? null;
+    r.bcgProfit = b?.profit ?? null;
+    r.bcgGrossProfitPct = b?.grossProfitPct ?? null;
+    r.bcgDataPeriod = b?.dataPeriod ?? null;
+    r.bcgDataAsOf = b?.dataAsOf ?? null;
   }
 
   // Totals straight from the sales rows (not from the product list), so a key missing from
@@ -430,14 +505,6 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     for (const [uom, qty] of a.qty) totalQty.set(uom, (totalQty.get(uom) ?? 0) + qty);
   }
 
-  const meta = (metaRows as any[])[0] ?? {};
-  let thresholds: Record<string, unknown> = {};
-  try {
-    thresholds = meta.ConfigJson ? JSON.parse(String(meta.ConfigJson)) : {};
-    delete (thresholds as any).intercompany_customers;
-  } catch {
-    thresholds = {};
-  }
   return {
     view,
     asOfDate: isoDate(meta.AsOfDate),

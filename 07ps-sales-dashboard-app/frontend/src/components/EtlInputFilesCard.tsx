@@ -157,6 +157,7 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
             .join(', ')}{' '}
           read. {outcome.result.backup ? <>Previous version backed up to <code>{outcome.result.backup.path}</code>. </> : null}
           It will be used by {whenApplied(outcome.result.name)}.
+          <SkippedRows warnings={outcome.result.validation.warnings} />
           {!outcome.result.auditLogged && (
             <div style={{ color: 'var(--ps-color-alert)', marginTop: 4 }}>
               The file was replaced, but the upload could not be recorded in the audit log.
@@ -172,6 +173,7 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
             .join(', ')}
           ). The input folder is read-only on this server, so it was checked, not replaced. Update the file directly in the
           input folder on the server; {whenApplied(outcome.result.name)} reads it.
+          <SkippedRows warnings={outcome.result.validation.warnings} />
         </div>
       )}
       {outcome?.kind === 'error' && (
@@ -286,5 +288,20 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
         busy={uploading}
       />
     </Card>
+  );
+}
+
+/** Rows the ETL will skip (missing / invalid id, unknown Action, Company or Active): the file is accepted, these rows are not applied. */
+function SkippedRows({ warnings }: { warnings?: string[] }) {
+  if (!warnings?.length) return null;
+  return (
+    <div data-testid="input-file-warnings" style={{ marginTop: 6, color: 'var(--ps-color-alert)' }}>
+      {warnings.length} row(s) will be skipped:
+      <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+        {warnings.map((w) => (
+          <li key={w}>{w}</li>
+        ))}
+      </ul>
+    </div>
   );
 }

@@ -1034,6 +1034,8 @@ class ProductCostDimensionBuilder:
         out["SKU"] = raw["default_code"].where(raw["default_code"].map(lambda v: isinstance(v, str) and v != ""), pd.NA)
         out["ProductCost"] = pd.to_numeric(raw.get("standard_price"), errors="coerce")
         out["IsActive"] = raw.get("active", pd.Series(True, index=raw.index)).fillna(False).astype(bool)
+        if "template_active" in raw.columns:  # an archived template archives the product
+            out["IsActive"] &= raw["template_active"].map(lambda v: v is not False)
         return out[self.COLUMNS].reset_index(drop=True)
 
 

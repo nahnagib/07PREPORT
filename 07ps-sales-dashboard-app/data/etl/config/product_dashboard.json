@@ -44,7 +44,7 @@
   },
 
   "stock_locations": {
-    "_comment": "Odoo internal locations are grouped by warehouse name. On-hand = finished_goods only. In-transit is shown separately and never counted as on-hand. Raw-materials warehouses are excluded. Any internal warehouse not listed under raw_materials or in_transit counts as finished goods.",
+    "_comment": "Odoo internal locations are grouped by warehouse name. Stock (DOH, stock band, ISR) = finished_goods only; in-transit is shown separately; raw-materials warehouses are excluded from it. The On Hand column / tooltip (2026-11-10) is Odoo's On Hand: every internal location of the company, whatever the warehouse. Any internal warehouse not listed under raw_materials or in_transit counts as finished goods.",
     "raw_materials_warehouses": ["RM Warehouse"],
     "in_transit_warehouses": ["Vessel"]
   },
@@ -57,18 +57,19 @@
   },
 
   "stock": {
-    "_comment": "Stock Velocity page. ISR = inventory on hand value (LYD at cost, finished goods) / net sales value (LYD) of the selected period: green <= isr_target_pct, yellow up to isr_red_pct, red at or above isr_red_pct. Stock Aging = units-weighted average age (days since Odoo stock.quant in_date) of a product's finished-goods stock on hand; each bucket holds ages up to max_days (null = no upper limit).",
+    "_comment": "Stock Velocity page. ISR = inventory on hand value (LYD at cost, finished goods) / net sales value (LYD) of the selected period: green <= isr_target_pct, yellow up to isr_red_pct, red at or above isr_red_pct. Stock Aging (2026-11-10) = units-weighted average age of the receipt layers still in stock (Odoo stock.valuation.layer remaining_qty > 0; quant in_date only when a product has no open layer) of the product's On Hand units (every internal location of the company, = Odoo On Hand), at the ETL as-of date; each bucket holds ages up to max_days (null = no upper limit) and the On Hand units / value are split across buckets by layer. The key names the table columns AgeQty_<key> / AgeValue_<key> (migration 0070).",
     "isr_target_pct": 15,
     "isr_red_pct": 25,
     "_movers_comment": "Fast vs Slow Movers: each SKU's velocity (units sold per day in the period) against the MEDIAN velocity of the SKUs of its own category in the same company: Fast >= fast_mover_vs_category_median_pct, Slow <= slow_mover_vs_category_median_pct, Normal in between.",
     "fast_mover_vs_category_median_pct": 150,
     "slow_mover_vs_category_median_pct": 50,
     "aging_buckets": [
-      { "label": "0–90 days", "max_days": 90 },
-      { "label": "91–180 days", "max_days": 180 },
-      { "label": "181–365 days", "max_days": 365 },
-      { "label": "1–2 years", "max_days": 730 },
-      { "label": "> 2 years", "max_days": null }
+      { "key": "0_30", "label": "0–30 days", "max_days": 30 },
+      { "key": "31_60", "label": "31–60 days", "max_days": 60 },
+      { "key": "61_90", "label": "61–90 days", "max_days": 90 },
+      { "key": "91_180", "label": "91–180 days", "max_days": 180 },
+      { "key": "181_365", "label": "181–365 days", "max_days": 365 },
+      { "key": "365_plus", "label": "365+ days", "max_days": null }
     ]
   },
 

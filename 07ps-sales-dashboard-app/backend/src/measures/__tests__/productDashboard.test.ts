@@ -4,9 +4,11 @@ import { DateTime } from 'luxon';
 import { computeProductDashboard, resolvePeriod } from '../productDashboard';
 
 /** Mocks pool.query by SQL text (same convention as the other measure tests). */
-const META = [{ AsOfDate: '2026-09-29', LookbackDays: 90, ConfigJson: '{"intercompany_customers":{"names":["x"]},"bcg":{"profit_threshold_pct":35}}' }];
+const META = [{ AsOfDate: '2026-09-29', LookbackDays: 90,
+  ConfigJson: '{"intercompany_customers":{"names":["x"]},"bcg":{"volume_threshold":{"Majaal":3500,"Tika":25000,"Athena":3500},"profit_threshold_pct":35}}' }];
 
-function makePool(salesRows: unknown[], productRows: unknown[], meta: unknown[] = META, orderDayRows: unknown[] = [], soldRows: unknown[] = []) {
+function makePool(salesRows: unknown[], productRows: unknown[], meta: unknown[] = META, orderDayRows: unknown[] = [], soldRows: unknown[] = [],
+  bcgWindows: unknown[] = []) {
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
@@ -16,6 +18,7 @@ function makePool(salesRows: unknown[], productRows: unknown[], meta: unknown[] 
     }
     if (sql.includes('COUNT(DISTINCT d.OrderDate)')) return [orderDayRows];
     if (sql.includes('SELECT DISTINCT d.ProductCompanyKey')) return [soldRows];
+    if (sql.includes('AS win')) return [bcgWindows];
     if (sql.includes('FROM v_sales_product_daily')) return [salesRows];
     if (sql.includes('FROM v_sales_product_dashboard')) return [productRows];
     if (sql.includes('FROM etl_sales_product_dashboard_meta')) return [meta];
@@ -32,6 +35,11 @@ const product = (key: string, company: string, extra: Record<string, unknown> = 
 const sale = (k: string, uom: string, value: number, qty: number, lines = 1, extra: Record<string, unknown> = {}) => ({
   k, uom, value, qty, lineCount: lines, costValue: 0, uncostedQty: qty, valuePrior: 0, qtyPrior: 0, icValue: 0,
   linesPrior: 0, valueYTD: 0, qtyYTD: 0, valueLYTD: 0, qtyLYTD: 0, ...extra,
+});
+
+/** One row of the BCG window query: product, window ('YTD' or a year), value, qty, cost, last sale date, uncosted qty. */
+const win = (k: string, w: string, value: number, qty: number, cost: number, lastDate = '2025-06-30', uncosted = 0) => ({
+  k, company: k.split('|')[0], win: w, value, qty, cost, incompleteDays: uncosted, costedRows: 1, lastDate,
 });
 
 describe('resolvePeriod', () => {
@@ -122,11 +130,13 @@ describe('computeProductDashboard', () => {
     });
   });
 
-  it('Volume / Revenue YTD and LYTD follow the filters (calendar windows); class and movement stay the ETL\'s', async () => {
+  it('Volume / Revenue YTD and LYTD follow the filters (calendar windows); class (company-wide) and movement do not', async () => {
     const { pool, calls } = makePool(
       [sale('Majaal|1', 'Unit', 10, 1, 1, { valueYTD: 900, qtyYTD: 90, valueLYTD: 400, qtyLYTD: 40 }),
        sale('Majaal|1', 'm2', 0, 0, 0, { valueYTD: 100, qtyYTD: 10 })],
-      [product('Majaal|1', 'Majaal', { ValueYTD: 99999, QtyYTD: 9999, BcgClassYTD: 'Stars', BcgMovement: 'Improved' })],
+      [product('Majaal|1', 'Majaal', { ValueYTD: 99999, QtyYTD: 9999, BcgClassYTD: 'Dogs', BcgMovement: 'Improved' })],
+      META, [], [],
+      [win('Majaal|1', 'YTD', 50000, 4000, 20000)], // company-wide: 4,000 units >= 3,500, GP 60% -> Stars
     );
     const out = await computeProductDashboard(pool, { fromDate: '2026-03-01', toDate: '2026-03-31', filters: { segmentKeys: [1] } });
     expect(out.products[0]).toMatchObject({ valueYTD: 1000, volumeYTD: 100, valueLYTD: 400, volumeLYTD: 40, bcgClassYTD: 'Stars', bcgMovement: 'Improved' });
@@ -238,5 +248,56 @@ describe('computeProductDashboard', () => {
       expect(out.products.find((p) => p.productName === 'Cemair')).toMatchObject({ value: 300, stockQty: 60 });
       await expect(computeProductDashboard(pool, { company: 'Tika', filters: { companyKeys: [1] } })).rejects.toThrow(/outside/);
     });
+  });
+
+  it('BCG: config thresholds on each product\'s latest fully costed data, with its profit and the date of that data', async () => {
+    const { pool } = makePool(
+      [],
+      ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((i) => product(`${i === '7' ? 'Tika' : 'Majaal'}|${i}`, i === '7' ? 'Tika' : 'Majaal')),
+      META, [], [],
+      [
+        win('Majaal|1', 'YTD', 7000, 3500, 4550, '2026-11-10'),         // volume = threshold -> High; GP 35% -> High -> Stars
+        win('Majaal|1', '2025', 100, 10, 90),                            // older year never used when YTD is costed
+        win('Majaal|2', 'YTD', 1000, 100, 500, '2026-10-01', 5),          // YTD has an uncosted line ...
+        win('Majaal|2', '2025', 2000, 200, 1800, '2025-12-20'),          // ... so the latest costed year: GP 10% -> Dogs
+        win('Majaal|2', '2024', 9000, 9000, 1000),
+        win('Majaal|3', '2023', 10000, 5000, 9000, '2023-06-30'),        // only sold in 2023: Cash Cows on 2023 data
+        { ...win('Majaal|4', 'YTD', 500, 50, 0, '2026-11-01', 50), costedRows: 0 }, // never costed
+        win('Majaal|5', 'YTD', 900, 30, 300, '2026-11-02'),              // low volume, GP 66.7% -> Strategic
+        win('Tika|7', 'YTD', 30000, 24999, 1000, '2026-11-03'),          // under the Tika 25,000 -> Strategic
+        win('Majaal|8', 'YTD', 0, 10, 80, '2026-11-01'),                // recorded cost, undefined margin
+        win('Majaal|9', '2025', 1000, 100, 1000, '2025-11-03', 5),      // only costed subtotal, genuine zero profit
+      ],
+    );
+    const out = await computeProductDashboard(pool, { company: 'All', fromDate: '2026-03-01', toDate: '2026-03-31' });
+    const by = Object.fromEntries(out.products.map((r) => [r.productCompanyKey, r]));
+    expect(by['Majaal|1']).toMatchObject({ bcgClassYTD: 'Stars', bcgProfit: 2450, bcgVolume: 3500, bcgDataAsOf: '2026-11-10' });
+    expect(by['Majaal|1'].bcgDataPeriod).toMatch(/^YTD \d{4}$/);
+    expect(by['Majaal|2']).toMatchObject({ bcgClassYTD: 'Dogs', bcgProfit: 200, bcgDataPeriod: '2025', bcgDataAsOf: '2025-12-20' });
+    expect(by['Majaal|3']).toMatchObject({ bcgClassYTD: 'Cash Cows', bcgProfit: 1000, bcgDataPeriod: '2023', bcgDataAsOf: '2023-06-30' });
+    expect(by['Majaal|4']).toMatchObject({ bcgClassYTD: 'Unclassified (no cost)', bcgProfit: null, bcgDataPeriod: null });
+    expect(by['Majaal|5'].bcgClassYTD).toBe('Strategic');
+    expect(by['Majaal|6']).toMatchObject({ bcgClassYTD: null, bcgProfit: null });   // never sold: no class
+    expect(by['Tika|7'].bcgClassYTD).toBe('Strategic');
+    expect(by['Majaal|8']).toMatchObject({ bcgClassYTD: 'Unclassified (zero revenue)', bcgProfit: -80, bcgGrossProfitPct: null });
+    expect(by['Majaal|9']).toMatchObject({ bcgClassYTD: 'Dogs', bcgProfit: 0, bcgDataPeriod: '2025 (costed sales)', bcgDataAsOf: '2025-11-03' });
+  });
+
+  it('BCG thresholds fall back to the config values when the ETL snapshot of the config has none', async () => {
+    const meta = [{ AsOfDate: '2026-11-11', LookbackDays: 90, ConfigJson: '{"bcg":{"movement_stable_band_pct":10}}' }];
+    const { pool } = makePool([], [product('Majaal|1', 'Majaal')], meta, [], [], [win('Majaal|1', 'YTD', 8000, 4000, 4000)]);
+    const out = await computeProductDashboard(pool, { company: 'Majaal' });
+    expect(out.thresholds.bcg).toEqual({ movement_stable_band_pct: 10, volume_threshold: { Majaal: 3500, Tika: 25000, Athena: 3500 }, profit_threshold_pct: 35 });
+    expect(out.products[0].bcgClassYTD).toBe('Stars'); // 4,000 >= 3,500 and GP 50%
+  });
+
+  it('serves Odoo On Hand and the aging buckets of the config', async () => {
+    const meta = [{ AsOfDate: '2026-11-10', LookbackDays: 90,
+      ConfigJson: JSON.stringify({ stock: { aging_buckets: [{ key: '0_30', label: '0–30 days', max_days: 30 }, { key: '365_plus', label: '365+ days', max_days: null }] } }) }];
+    const { pool } = makePool([], [product('Majaal|1', 'Majaal', { OnHandQty: 12, OnHandValue: 120, StockAgeDays: 20, StockAgeOldestDays: 400,
+      StockAgeSource: 'layers', AgeQty_0_30: 10, AgeValue_0_30: 100, AgeQty_365_plus: 2, AgeValue_365_plus: 20 })], meta);
+    const r = (await computeProductDashboard(pool, {})).products[0];
+    expect(r).toMatchObject({ onHandQty: 12, onHandValue: 120, stockAgeOldestDays: 400, stockAgeSource: 'layers' });
+    expect(r.agingBuckets).toEqual([{ key: '0_30', label: '0–30 days', qty: 10, value: 100 }, { key: '365_plus', label: '365+ days', qty: 2, value: 20 }]);
   });
 });

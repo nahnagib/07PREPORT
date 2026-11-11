@@ -911,6 +911,9 @@ export const adminApi = {
   getEtlShadowCompare: (token: string): Promise<EtlShadowCompareResponse> => request('/admin/etl/shadow-compare', token),
   getEtlProductGaps: (token: string): Promise<EtlProductGapsResponse> => request('/admin/etl/product-gaps', token),
 
+  /** What the last sales build excluded from the Product pages (ProductExclusions.xlsx + the automatic rules). */
+  getEtlProductExclusions: (token: string): Promise<EtlProductExclusionsResponse> => request('/admin/etl/product-exclusions', token),
+
   startEtlRun: (token: string, mode: EtlStartMode): Promise<{ ok: boolean; runId: number; jobId: string }> =>
     request(`/admin/etl/start/${mode}`, token, { method: 'POST' }),
 
@@ -1320,7 +1323,7 @@ export interface EtlInputFileReplaced {
   previous: { path: string; size_bytes: number; modified: string; sha256: string } | null;
   current: { path: string; size_bytes: number; modified: string; sha256: string };
   backup: { path: string; size_bytes: number } | null;
-  validation: { sheets: Record<string, string>; counts: Record<string, number> };
+  validation: { sheets: Record<string, string>; counts: Record<string, number>; warnings?: string[] };
   /** false = the file WAS replaced, but its audit_log entry could not be written. */
   auditLogged: boolean;
 }
@@ -1424,6 +1427,34 @@ export interface EtlProductGapsReport {
 
 export interface EtlProductGapsResponse {
   report: EtlProductGapsReport | null;
+}
+
+/** ETL Control Center -> Product exclusions (conform_sales task log, details.product_exclusions). */
+export interface EtlProductExclusionsReport {
+  as_of: string;
+  file: {
+    file: string | null;
+    uploaded_at_utc: string | null;
+    fallback_reason: string | null;
+    active_rows: Record<'Customers' | 'Categories' | 'Products', Record<string, number>>;
+    inactive_rows: Record<string, number>;
+    skipped_rows: number;
+    skipped: { sheet: string; row: number; name?: string; reason: string }[];
+    /** Rows applied with a remark: a duplicate applied once, an id not in Odoo, a product of another company. */
+    warning_rows?: number;
+    warnings?: { sheet: string; row: number | null; name?: string; reason: string }[];
+  };
+  /** file_product | file_category | archived | raw_material */
+  products_excluded: Record<string, { total: number; by_company: Record<string, number> }>;
+  /** customers_exclude | backoffice | inter_company | intercompany_flag | customers_keep (kept, not excluded) */
+  sales_lines_excluded: Record<string, { lines: number; qty: number; value: number; by_company: Record<string, number> }>;
+  archived_with_stock: { company: string; product_id: string; product_name: string | null; quantity_on_hand: number; total_value: number }[];
+  finishedAtUtc: string;
+  taskName: string;
+}
+
+export interface EtlProductExclusionsResponse {
+  report: EtlProductExclusionsReport | null;
 }
 
 export interface EtlScheduleInfo {
@@ -2521,10 +2552,18 @@ export interface ProductDashboardRow {
   avgDailySales: number;
   daysOfInventory: number | null;
   stockBand: StockBand;
-  /** Units-weighted average days since the finished-goods stock on hand arrived (Odoo in_date); null = no stock. */
+  /** Units-weighted average age (days) of the receipt layers still in stock (Odoo stock.valuation.layer); null = no stock. */
   stockAgeDays: number | null;
   /** Stock Aging bucket (config stock.aging_buckets), null = no stock on hand. */
   stockAgeBucket: string | null;
+  /** Odoo's On Hand in the product's company (every internal location) and its value. */
+  onHandQty?: number;
+  onHandValue?: number;
+  /** Age (days) of the oldest receipt layer still in stock. */
+  stockAgeOldestDays?: number | null;
+  stockAgeSource?: string | null;
+  /** On Hand units / value per aging bucket, split by receipt layer. */
+  agingBuckets?: AgingBucketAmount[];
   lifecycleSegment: LifecycleSegment;
   /** Companies in this row: one in a company view; both for a shared product in the BMH view. */
   companies: string[];
@@ -2533,6 +2572,15 @@ export interface ProductDashboardRow {
   lastSaleDate: string | null;
   bcgClassYTD: string | null;
   bcgClassLYTD: string | null;
+  /** The data behind bcgClassYTD (the product's latest fully costed window): volume, value, profit, GP%. */
+  bcgVolume?: number | null;
+  bcgValue?: number | null;
+  bcgProfit?: number | null;
+  bcgGrossProfitPct?: number | null;
+  /** 'YTD 2026' or the calendar year used ('2025'); null = no profit data. */
+  bcgDataPeriod?: string | null;
+  /** Last sale date of that data. */
+  bcgDataAsOf?: string | null;
   bcgMovement: BcgMovement | null;
   bcgExcludedCategory: boolean;
   valueYTD: number;
@@ -2544,6 +2592,13 @@ export interface ProductDashboardRow {
   negativeStockRows: number;
 }
 
+export interface AgingBucketAmount {
+  key: string;
+  label: string;
+  qty: number;
+  value: number;
+}
+
 export interface ProductDashboardOverview {
   /** 'BMH' = no company filter (a product both companies sell is one combined row); else one company. */
   view: 'BMH' | 'Majaal' | 'Tika';
@@ -2553,7 +2608,7 @@ export interface ProductDashboardOverview {
   lookbackDays: number;
   thresholds: {
     days_of_inventory?: { lookback_days?: number; overstock_days?: Record<string, number>; stockout_risk_days?: Record<string, number> };
-    bcg?: { volume_threshold?: Record<string, number>; profit_threshold_pct?: number; excluded_categories?: string[] };
+    bcg?: { volume_threshold?: Record<string, number>; profit_threshold_pct?: number; movement_stable_band_pct?: number; excluded_categories?: string[] };
     lifecycle?: { new_first_sale_within_days?: number; trend_window_days?: number; growth_threshold_pct?: number; discontinued_no_sales_days?: number };
     [key: string]: unknown;
   };
