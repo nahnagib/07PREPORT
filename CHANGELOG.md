@@ -6,6 +6,16 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (NPS reach 12 Jul – 02 Oct = approved manual figures, 2026-11-11)
+- Migration 0071: `process_nps_reach_manual`, seeded with the 8 approved rows (Meta exports + estimates, per company and
+  period), spread evenly per day into `v_process_nps_reach` (new column `source` = etl / manual / estimate). Before
+  03 Oct the manual figures replace every state the source kept, so nothing is counted twice; their errors are
+  "Unclassified (Meta manual)". The ETL never writes the table.
+- The Survey Reach cards and the Response Rate read the combined view through one function; the rate counts every
+  responder from the first day with reach (12 Jul). The automatic weekly estimate and `NPS_REACH_ESTIMATE_*` are removed.
+- Cards with manual or estimated reach show "incl. manual/est." and a measured / Meta manual / estimate tooltip; the
+  panel subtitle names the periods. `docs/nps-etl.md` §8.5.
+
 ### Changed (Critical Number split from sales_targets.xlsx, 2026-11-09)
 - Every filter on the Critical Number page now gets its own Daily Critical Number: base × the scope's share of the
   year's revenue target in `Input/sales_targets.xlsx`. This covers company, customer group, branch, salesperson,

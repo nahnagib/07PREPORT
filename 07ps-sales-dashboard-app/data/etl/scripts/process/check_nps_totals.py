@@ -16,9 +16,12 @@ Africa/Tripoli (UTC+2): a rating between 22:00 and 24:00 UTC is on the NEXT day 
 edges. Those ratings are listed. A run of the job after the source changed shows up as a difference: re-run the job first.
 8 YTD (the NPS page's default period, 1 January -> today, Tripoli): per company (all, Majaal, Tika), with the default
 B2B + B2C filter and with every filter cleared, plain SQL on the fact tables (responders, groups, NPS, CSAT, reach
-boxes, error groups, response rate = responders / (Delivered + Read) from NPS_REACH_START) vs the API (overview, weekly
-and monthly trend, reach, response-rate, followup-summary, detractor list), plus the page's consistency rules. The API
-part needs --api and NPS_CHECK_API_TOKEN (the Bearer token of a logged-in user with the NPS page; never printed).
+boxes, error groups, response rate = responders from the first reach day / (Delivered + Read)) vs the API (overview,
+weekly and monthly trend, reach with its split by source, response-rate, followup-summary, detractor list), plus the page's
+consistency rules. Reach before NPS_REACH_START = process_nps_reach_manual (migration 0071), spread evenly over its days
+here in Python, independently of the views; section 6 compares the ETL rows (source 'etl') only. 9 the manual table:
+totals, no overlap, the daily spread adds up, no ETL row under a manual day. The API part needs --api and
+NPS_CHECK_API_TOKEN (the Bearer token of a logged-in user with the NPS page; never printed).
 """
 
 from __future__ import annotations
@@ -26,7 +29,6 @@ from __future__ import annotations
 import argparse
 import collections
 import datetime as _dt
-import math as _math
 import os
 import sys
 from pathlib import Path
@@ -108,9 +110,10 @@ def reconcile_reach(conn, messages: list[dict], config: wa.ReachConfig, timezone
     params = {"lo": lo, "hi": hi}
     actual = {tuple(int(v) for v in row[:2]): {key: int(value or 0) for key, value in zip(columns, row[2:])}
               for row in conn.execute(text("SELECT MessageDateKey, CompanyKey, total_reach, delivered, not_delivered, read_count, error_count, other_state "
-                                           "FROM v_process_nps_reach WHERE MessageDateKey BETWEEN :lo AND :hi"), params)}
+                                           "FROM v_process_nps_reach WHERE source = 'etl' AND MessageDateKey BETWEEN :lo AND :hi"), params)}
     actual_errors = {(int(day), int(company), group): int(count) for day, company, group, count in conn.execute(text(
-        "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE MessageDateKey BETWEEN :lo AND :hi"), params)}
+        "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE source = 'etl' "
+        "AND MessageDateKey BETWEEN :lo AND :hi"), params)}
     normalized = {key: {column: counts[column] for column in columns} for key, counts in expected.items()}
     boxes_ok, errors_ok = normalized == actual, dict(errors) == actual_errors
 
@@ -179,111 +182,96 @@ def _fact_counts(conn, lo: int, hi: int, company: int | None, segments: list[int
             "nps": None if n == 0 else 100 * p / n - 100 * d / n, "csat": None if n == 0 else 100 * (p + m) / n}
 
 
-def _fact_reach(conn, lo: int, hi: int, company: int | None) -> dict:
-    where = "in_reach_scope = 1 AND MessageDateKey BETWEEN :lo AND :hi"
+_COVERED = ("EXISTS (SELECT 1 FROM process_nps_reach_manual r WHERE r.CompanyKey = m.CompanyKey "
+            "AND m.MessageDateKey BETWEEN DATE_FORMAT(r.date_from, '%Y%m%d') + 0 AND DATE_FORMAT(r.date_to, '%Y%m%d') + 0)")
+BOXES = ("totalReach", "delivered", "read", "notDelivered", "error", "otherState")
+
+
+def _manual_rows(conn, company: int | None) -> list[dict]:
+    """process_nps_reach_manual (migration 0071), the approved reach before NPS_REACH_START."""
+    where, params = ("WHERE CompanyKey = :c", {"c": company}) if company is not None else ("", {})
+    return [dict(r._mapping) for r in conn.execute(text(
+        f"SELECT CompanyKey, date_from, date_to, source, delivered, not_delivered, read_count, error_count, total_reach "
+        f"FROM process_nps_reach_manual {where} ORDER BY CompanyKey, date_from"), params)]
+
+
+def _manual_days(row: dict):
+    """Each day of a manual period with its even share per state: day i of n gets floor(v*i/n) - floor(v*(i-1)/n), so the
+    days add up to the row exactly (written here independently of v_process_nps_reach_manual_daily)."""
+    n = (row["date_to"] - row["date_from"]).days + 1
+    for i in range(1, n + 1):
+        share = {k: (int(row[k]) * i) // n - (int(row[k]) * (i - 1)) // n for k in ("delivered", "not_delivered", "read_count", "error_count")}
+        yield row["date_from"] + _dt.timedelta(days=i - 1), share
+
+
+def _plain_reach(conn, lo: int, hi: int, company: int | None) -> dict:
+    """The reach of a period in plain SQL: the message fact in scope on the days no manual period covers + the manual rows
+    spread over their days. 13-31 Aug (meta_manual+estimate): Delivered / Read = estimate, the rest = Meta manual."""
+    where = f"m.in_reach_scope = 1 AND m.MessageDateKey BETWEEN :lo AND :hi AND NOT {_COVERED}"
     params: dict = {"lo": lo, "hi": hi}
     if company is not None:
-        where += " AND CompanyKey = :c"
+        where += " AND m.CompanyKey = :c"
         params["c"] = company
-    row = conn.execute(text(f"SELECT COUNT(*), SUM(box = 'delivered'), SUM(box = 'read'), SUM(box = 'not_delivered'), SUM(box = 'error'), "
-                            f"SUM(box = 'other') FROM fact_process_nps_message WHERE {where}"), params).first()
-    total, delivered, read, not_delivered, error, other = (int(v or 0) for v in row)
+    row = conn.execute(text(f"SELECT COUNT(*), SUM(m.box = 'delivered'), SUM(m.box = 'read'), SUM(m.box = 'not_delivered'), "
+                            f"SUM(m.box = 'error'), SUM(m.box = 'other') FROM fact_process_nps_message m WHERE {where}"), params).first()
+    etl = dict(zip(BOXES, (int(v or 0) for v in row)))
     groups = {str(g): int(n) for g, n in conn.execute(text(
-        f"SELECT failure_group, COUNT(*) FROM fact_process_nps_message WHERE {where} AND box = 'error' GROUP BY failure_group"), params)}
-    return {"totalReach": total, "delivered": delivered, "read": read, "notDelivered": not_delivered, "error": error,
-            "otherState": other, "groups": groups}
+        f"SELECT m.failure_group, COUNT(*) FROM fact_process_nps_message m WHERE {where} AND m.box = 'error' GROUP BY m.failure_group"), params)}
+    by_source = {"etl": etl, "manual": dict.fromkeys(BOXES, 0), "estimate": dict.fromkeys(BOXES, 0)}
+    first_manual = None
+    for r in _manual_rows(conn, company):
+        first_manual = r["date_from"] if first_manual is None or r["date_from"] < first_manual else first_manual
+        dr = by_source["manual"] if r["source"] == "meta_manual" else by_source["estimate"]
+        rest = by_source["estimate"] if r["source"] == "estimate" else by_source["manual"]
+        for day, s in _manual_days(r):
+            if not lo <= int(day.strftime("%Y%m%d")) <= hi:
+                continue
+            dr["delivered"] += s["delivered"]
+            dr["read"] += s["read_count"]
+            dr["totalReach"] += s["delivered"] + s["read_count"]
+            rest["notDelivered"] += s["not_delivered"]
+            rest["error"] += s["error_count"]
+            rest["totalReach"] += s["not_delivered"] + s["error_count"]
+    totals = {k: sum(src[k] for src in by_source.values()) for k in BOXES}
+    manual_errors = by_source["manual"]["error"] + by_source["estimate"]["error"]
+    if manual_errors:
+        groups["meta_manual"] = groups.get("meta_manual", 0) + manual_errors
+    first_params = {"c": company} if company is not None else {}
+    first_etl = conn.execute(text("SELECT MIN(m.MessageDateKey) FROM fact_process_nps_message m WHERE m.in_reach_scope = 1"
+                                  + (" AND m.CompanyKey = :c" if company is not None else "")), first_params).scalar()
+    firsts = [d for d in (first_manual, _dt.datetime.strptime(str(first_etl), "%Y%m%d").date() if first_etl else None) if d]
+    return {**totals, "groups": groups, "bySource": by_source, "first": min(firsts) if firsts else None}
 
 
-DEFAULT_EXCLUDED_WEEKS = ("2026-10-31", "2026-11-07")  # = backend config/npsReachEstimate.ts (the Meta outage)
-
-
-def _excluded_weeks() -> set[_dt.date]:
-    raw = os.environ.get("NPS_REACH_ESTIMATE_EXCLUDE_WEEKS")
-    values = DEFAULT_EXCLUDED_WEEKS if raw is None else [w.strip() for w in raw.split(",") if w.strip()]
-    out = set()
-    for w in values:
-        try:
-            out.add(_dt.date.fromisoformat(w))
-        except ValueError:
-            pass
-    return out
-
-
-def _estimated_rate(conn, start: _dt.date, today: _dt.date, reach_start: _dt.date | None, loaded_local: _dt.date | None,
-                    company: int | None, measured_resp: int, measured: dict) -> dict:
-    """The gap 12 Jul - 02 Oct in plain SQL (backend measures/npsReachEstimate.ts), per company from its OWN first rating,
-    summed: Delivered + Read = per week (average of the complete measured weeks, minus NPS_REACH_ESTIMATE_EXCLUDE_WEEKS, or
-    NPS_REACH_ESTIMATE_PER_WEEK split by measured share) x gap days / 7; Delivered / Read by the company's measured mix;
-    Not Delivered by its measured ratio; Error = the REAL failed messages of the gap. The cards = measured + gap; the rate
-    = every responder / (cards Delivered + Read). Never derived from responders."""
-    m_reached = measured["delivered"] + measured["read"]
-    out = {"status": "not_needed", "rate": None, "responders": measured_resp, "reached": m_reached, "estimated": 0,
-           "cards": dict(measured)}
-    if os.environ.get("NPS_REACH_ESTIMATE_ENABLED", "").strip().lower() in ("false", "0", "no", "off"):
-        out["status"] = "disabled"
-        return out
-    if not reach_start:
-        return out
-    c_sql, params = ("", {}) if company is None else (" AND CompanyKey = :c", {"c": company})
-    firsts = conn.execute(text(f"SELECT CompanyKey, MIN(RatingDateKey) FROM fact_process_nps_response WHERE 1 = 1{c_sql} "
-                               "GROUP BY CompanyKey ORDER BY CompanyKey"), params).all()
-    gaps = []
-    for key, first in firsts:
-        first_d = _dt.datetime.strptime(str(first), "%Y%m%d").date()
-        g_from, g_to = max(start, first_d), min(today, reach_start - _dt.timedelta(days=1))
-        if g_from <= g_to:
-            gaps.append((int(key), g_from, g_to))
-    if not gaps:
-        return out
-    sat = reach_start + _dt.timedelta(days=(5 - reach_start.weekday()) % 7)  # the first Saturday on or after it
-    complete = []
-    while loaded_local and sat + _dt.timedelta(days=6) <= loaded_local - _dt.timedelta(days=1):
-        complete.append(sat)
-        sat += _dt.timedelta(days=7)
-    excluded = _excluded_weeks()
-    weeks = [w for w in complete if w not in excluded]
-    raw = os.environ.get("NPS_REACH_ESTIMATE_PER_WEEK", "").strip()
-    fixed = float(raw) if raw and float(raw) > 0 else None
-    mix_weeks = weeks or complete
-    mix = {}
-    for key, _f, _t in gaps:
-        d = r = nd = 0
-        for w in mix_weeks:
-            row = _fact_reach(conn, int(w.strftime("%Y%m%d")), int((w + _dt.timedelta(days=6)).strftime("%Y%m%d")), key)
-            d, r, nd = d + row["delivered"], r + row["read"], nd + row["notDelivered"]
-        mix[key] = (d, r, nd)
-    basis_total = sum(d + r for d, r, _nd in mix.values())
-    if fixed is None and (not weeks or basis_total <= 0):
-        out["status"] = "no_basis"
-        return out
-    gap = {"delivered": 0, "read": 0, "notDelivered": 0, "error": 0}
-    reached_total = gap_resp = 0
-    for key, g_from, g_to in gaps:
-        d, r, nd = mix[key]
-        per_week = fixed * ((d + r) / basis_total if basis_total else 1 / len(gaps)) if fixed is not None else (d + r) / len(weeks)
-        days = (g_to - g_from).days + 1
-        reached = _js_round(per_week * days / 7)
-        delivered = _js_round(reached * (d / (d + r) if d + r else 0))
-        gap["delivered"] += delivered
-        gap["read"] += reached - delivered
-        gap["notDelivered"] += _js_round(reached * (nd / (d + r) if d + r else 0))
-        lo, hi = int(g_from.strftime("%Y%m%d")), int(g_to.strftime("%Y%m%d"))
-        gap["error"] += int(conn.execute(text(
-            "SELECT COUNT(*) FROM fact_process_nps_message WHERE box = 'error' AND is_feedback_template = 1 AND is_test_number = 0 "
-            "AND CompanyKey = :k AND MessageDateKey BETWEEN :lo AND :hi"), {"k": key, "lo": lo, "hi": hi}).scalar() or 0)
-        gap_resp += _fact_counts(conn, lo, hi, key, None)["responders"]
-        reached_total += reached
-    cards = {k: measured[k] + gap.get(k, 0) for k in ("delivered", "read", "notDelivered", "error", "otherState")}
-    cards["totalReach"] = measured["totalReach"] + reached_total + gap["notDelivered"] + gap["error"]
-    reached = cards["delivered"] + cards["read"]
-    out.update(status="applied", responders=measured_resp + gap_resp, reached=reached, estimated=reached_total,
-               rate=None if reached == 0 else 100 * (measured_resp + gap_resp) / reached, cards=cards)
-    return out
-
-
-def _js_round(x: float) -> int:
-    """JavaScript Math.round (half up), as the backend rounds."""
-    return int(_math.floor(x + 0.5))
+def reconcile_manual(conn) -> bool:
+    """9. process_nps_reach_manual: total = the four states, no overlapping periods per company, each period's days in
+    v_process_nps_reach_manual_daily add up to the row, and no ETL row under a manual day in v_process_nps_reach."""
+    rows = _manual_rows(conn, None)
+    print(f"\n9. Manual reach before NPS_REACH_START (process_nps_reach_manual, {len(rows)} row(s); migrations only, never the ETL)")
+    cols = ["source", "delivered", "not_delivered", "read_count", "error_count", "total_reach"]
+    _table("   per company and period", {f"{r['CompanyKey']} {r['date_from']}..{r['date_to']}": r for r in rows}, cols)
+    ok = True
+    for r in rows:
+        if int(r["total_reach"]) != sum(int(r[k]) for k in ("delivered", "not_delivered", "read_count", "error_count")):
+            print(f"   total_reach != the four states: {r['CompanyKey']} {r['date_from']}")
+            ok = False
+        spread = conn.execute(text(
+            "SELECT SUM(delivered), SUM(not_delivered), SUM(read_count), SUM(error_count) FROM v_process_nps_reach_manual_daily "
+            "WHERE CompanyKey = :c AND MessageDateKey BETWEEN :lo AND :hi"),
+            {"c": r["CompanyKey"], "lo": int(r["date_from"].strftime("%Y%m%d")), "hi": int(r["date_to"].strftime("%Y%m%d"))}).first()
+        if [int(v or 0) for v in spread] != [int(r[k]) for k in ("delivered", "not_delivered", "read_count", "error_count")]:
+            print(f"   the daily spread does not add up to the row: {r['CompanyKey']} {r['date_from']} {list(spread)}")
+            ok = False
+    for a, b in zip(rows, rows[1:]):
+        if a["CompanyKey"] == b["CompanyKey"] and b["date_from"] <= a["date_to"]:
+            print(f"   overlapping periods: {a['CompanyKey']} {a['date_from']}..{a['date_to']} and {b['date_from']}..{b['date_to']}")
+            ok = False
+    under = conn.execute(text(f"SELECT COUNT(*) FROM v_process_nps_reach m WHERE m.source = 'etl' AND {_COVERED}")).scalar()
+    if int(under or 0):
+        print(f"   {under} ETL row(s) of v_process_nps_reach fall on a manual day (double counting)")
+        ok = False
+    print(f"   manual reach: {'MATCH' if ok else 'DIFFERENT'}")
+    return ok
 
 
 def _close(a, b) -> bool:
@@ -292,46 +280,33 @@ def _close(a, b) -> bool:
 
 def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None) -> bool:
     """YTD (1 January -> today, Tripoli): per company (all, Majaal 1, Tika 3), with the default B2B + B2C filter and with
-    every filter cleared, the plain-SQL figures vs the API, plus the page's consistency rules on the API's own answers."""
+    every filter cleared, the plain-SQL figures vs the API, plus the page's consistency rules on the API's own answers.
+    Reach = measured (ETL) + the manual reach before NPS_REACH_START; the response rate counts every responder from the
+    first day with reach (company + date filters) over Delivered + Read of every source."""
     start = today.replace(month=1, day=1)
     lo, hi = int(start.strftime("%Y%m%d")), int(today.strftime("%Y%m%d"))
-    state = conn.execute(text("SELECT reach_start, loaded_at_utc FROM process_nps_reach_state WHERE singleton_id = 1")).first()
+    state = conn.execute(text("SELECT reach_start FROM process_nps_reach_state WHERE singleton_id = 1")).first()
     reach_start = state[0] if state and state[0] else None
-    loaded_local = None
-    if state and state[1]:
-        zone = ZoneInfo(os.environ.get("TIMEZONE") or os.environ.get("APP_TIMEZONE") or "Africa/Tripoli")
-        loaded_local = state[1].replace(tzinfo=_dt.timezone.utc).astimezone(zone).date()
-    rr_from = max(start, reach_start) if reach_start else start
-    rr_lo = int(rr_from.strftime("%Y%m%d"))
-    print(f"\n8. YTD {start}..{today} (Tripoli) -- plain SQL on the fact tables vs the API"
+    print(f"\n8. YTD {start}..{today} (Tripoli) -- plain SQL on the fact tables + process_nps_reach_manual vs the API"
           f"{'' if token and api_base else ' (API NOT CHECKED: set NPS_CHECK_API_TOKEN and --api)'}")
-    print(f"   response rate: measured {rr_from}..{today} (NPS_REACH_START {reach_start}); est% = the YTD headline with the "
-          f"estimate before it (last message load {loaded_local}, Tripoli)")
+    print(f"   reach: measured from NPS_REACH_START {reach_start}, the manual reach before it; rate from the first reach day")
     ok = True
     for label, segments in (("default B2B + B2C", B2B_B2C), ("all filters cleared", None)):
         print(f"\n   {label}")
         print(f"   {'company':<8}{'resp':>6}{'prom':>6}{'pass':>6}{'detr':>6}{'NPS':>9}{'CSAT':>9}{'reach':>7}{'deliv':>7}{'read':>6}"
-              f"{'notdel':>7}{'error':>6}{'meas%':>8}{'est%':>8}{'est.reach':>10}  | cards{'reach':>7}{'deliv':>7}{'read':>6}{'notdel':>7}{'error':>6}  result")
+              f"{'notdel':>7}{'error':>6}{'from':>12}{'rresp':>7}{'D+R':>7}{'rate%':>8}{'etl':>6}{'meta':>6}{'est':>6}  result")
         for company in (None, 1, 3):
             want = _fact_counts(conn, lo, hi, company, segments)
-            reach = _fact_reach(conn, lo, hi, company)
-            rr_resp = _fact_counts(conn, rr_lo, hi, company, None)["responders"]
-            rr_reach = _fact_reach(conn, rr_lo, hi, company)
-            reached = rr_reach["delivered"] + rr_reach["read"]
+            reach = _plain_reach(conn, lo, hi, company)
+            counted = max(start, reach["first"]) if reach["first"] else start
+            rr_resp = _fact_counts(conn, int(counted.strftime("%Y%m%d")), hi, company, None)["responders"]
+            reached = reach["delivered"] + reach["read"]
             rate = None if reached == 0 else 100 * rr_resp / reached
-            measured_cards = {"totalReach": rr_reach["totalReach"], "delivered": rr_reach["delivered"], "read": rr_reach["read"],
-                              "notDelivered": rr_reach["notDelivered"], "error": rr_reach["error"], "otherState": rr_reach["otherState"]}
-            est = _estimated_rate(conn, start, today, reach_start, loaded_local, company, rr_resp, measured_cards)
-            cards = est["cards"]
+            src = {k: v["delivered"] + v["read"] for k, v in reach["bySource"].items()}
             checks: list[tuple[str, bool]] = []
-            # the cards and the rate from the same gap: Delivered + Read = the denominator; the boxes sum to Total Reach
-            checks.append(("cards D+R=rate", cards["delivered"] + cards["read"] == est["reached"]))
-            checks.append(("cards boxes=reach", cards["delivered"] + cards["read"] + cards["notDelivered"] + cards["error"]
-                           + cards["otherState"] == cards["totalReach"]))
-            # rules that hold on the plain SQL itself
             checks.append(("P+Pa+D=R", want["promoters"] + want["passives"] + want["detractors"] == want["responders"]))
             checks.append(("satisfied+D=R", (want["promoters"] + want["passives"]) + want["detractors"] == want["responders"]))
-            checks.append(("boxes=reach", reach["delivered"] + reach["read"] + reach["notDelivered"] + reach["error"] + reach["otherState"] == reach["totalReach"]))
+            checks.append(("boxes=reach", sum(reach[k] for k in BOXES if k != "totalReach") == reach["totalReach"]))
             checks.append(("errors=box", sum(reach["groups"].values()) == reach["error"]))
             if token and api_base:
                 params = [("dateFrom", str(start)), ("dateTo", str(today))]
@@ -347,18 +322,14 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
                     checks.append((f"trend {grain} sum", sum(p["responders"] for p in t["points"]) == want["responders"]))
                 r = _api_get(api_base, token, "reach", params)
                 if r["status"] == "ready":
-                    t = r["totals"]
-                    checks.append(("reach", all(t[k] == reach[k] for k in ("totalReach", "delivered", "read", "notDelivered", "error", "otherState"))))
+                    checks.append(("reach", all(r["totals"][k] == reach[k] for k in BOXES)))
+                    checks.append(("reach by source", all(r["bySource"][s][k] == reach["bySource"][s][k] for s in src for k in BOXES)))
                     checks.append(("errors", {e["key"]: e["count"] for e in r["errors"]} == reach["groups"]))
                 rr = _api_get(api_base, token, "response-rate", params)
-                measured = rr.get("measured") or {}
-                checks.append(("rate measured", rr["status"] == "ready" and measured.get("responders") == rr_resp
-                               and measured.get("reached") == reached and _close(measured.get("rate"), rate)))
-                checks.append(("rate estimate", rr.get("estimateStatus") == est["status"] and rr["responders"] == est["responders"]
-                               and rr["reached"] == est["reached"] and _close(rr["rate"], est["rate"] if est["status"] == "applied" else rate)))
+                checks.append(("rate", rr["status"] == "ready" and rr["dateFrom"] == str(counted) and rr["responders"] == rr_resp
+                               and rr["reached"] == reached and _close(rr["rate"], rate) and rr["reachedBySource"] == src))
                 if r["status"] == "ready":
-                    checks.append(("cards", all(r["totals"][k] == cards[k] for k in ("totalReach", "delivered", "read", "notDelivered", "error"))
-                                   and r["totals"]["delivered"] + r["totals"]["read"] == rr["reached"]))
+                    checks.append(("cards D+R=rate", r["totals"]["delivered"] + r["totals"]["read"] == rr["reached"]))
                 fu = _api_get(api_base, token, "followup-summary", params)
                 checks.append(("followup", fu["detractors"] == want["detractors"]
                                and fu["charted"] + fu["historical"] + fu["noCase"] == fu["detractors"]))
@@ -372,10 +343,8 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
             fmt = lambda v: "—" if v is None else f"{v:.2f}"  # noqa: E731
             print(f"   {('all' if company is None else company):<8}{want['responders']:>6}{want['promoters']:>6}{want['passives']:>6}"
                   f"{want['detractors']:>6}{fmt(want['nps']):>9}{fmt(want['csat']):>9}{reach['totalReach']:>7}{reach['delivered']:>7}"
-                  f"{reach['read']:>6}{reach['notDelivered']:>7}{reach['error']:>6}{fmt(rate):>8}"
-                  f"{fmt(est['rate']) if est['status'] == 'applied' else est['status']:>8}{est['estimated']:>10}  | "
-                  f"{cards['totalReach']:>12}{cards['delivered']:>7}{cards['read']:>6}{cards['notDelivered']:>7}{cards['error']:>6}  "
-                  f"{'MATCH' if not bad else 'DIFFERENT: ' + ', '.join(bad)}")
+                  f"{reach['read']:>6}{reach['notDelivered']:>7}{reach['error']:>6}{str(counted):>12}{rr_resp:>7}{reached:>7}{fmt(rate):>8}"
+                  f"{src['etl']:>6}{src['manual']:>6}{src['estimate']:>6}  {'MATCH' if not bad else 'DIFFERENT: ' + ', '.join(bad)}")
     hidden = conn.execute(text(f"SELECT {EFFECTIVE_SEGMENT} AS seg, COUNT(*) FROM {FACT_WITH_OVERRIDE} WHERE f.RatingDateKey BETWEEN :lo AND :hi "
                                f"AND {EFFECTIVE_SEGMENT} NOT IN (1, 2) GROUP BY seg ORDER BY seg"), {"lo": lo, "hi": hi}).all()
     print(f"\n   hidden by the default B2B + B2C filter: {sum(int(n) for _, n in hidden)} rating(s) "
@@ -485,6 +454,7 @@ def main() -> int:
     else:
         print("\n4. WhatsApp reach: SKIPPED (NPS_REACH_ENABLED is false or the source table is not available).")
     with wh.connect() as c:
+        ok &= reconcile_manual(c)
         ok &= reconcile_ytd(c, today, args.api, os.environ.get("NPS_CHECK_API_TOKEN"))
     wh.dispose()
     print("\nMATCH" if ok else "\nDIFFERENCE (see above and the docstring)")
