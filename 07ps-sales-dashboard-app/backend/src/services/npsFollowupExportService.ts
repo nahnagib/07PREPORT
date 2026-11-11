@@ -10,13 +10,14 @@ export const STAGE_LABEL: Record<FollowupStage, string> = {
   CONTACTED: 'Contacted',
   IN_PROGRESS: 'In progress',
   RESOLVED: 'Resolved',
+  UNRESOLVED: 'Unresolved',
   REJECTED: 'Rejected',
 };
 
 /** The outcome group (worked out from the stage). */
 export const STATUS_LABEL: Record<FollowupStatus, string> = {
   OPEN: 'Open',
-  CLOSE: 'Close',
+  CLOSE: 'Closed',
   DISPUTED: 'Disputed',
 };
 

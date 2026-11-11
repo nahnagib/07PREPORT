@@ -165,7 +165,7 @@ function NpsScoreBody() {
             </section>
 
             {/* Row 3: WhatsApp message reach (section 4) */}
-            <NpsReach state={reach} part="boxes" />
+            <NpsReach state={reach} part="boxes" responseRate={rate.loading || rate.error ? null : rate.data} />
 
             {/* Row 4: trend */}
             <section className="ps-nps-trends" aria-label="Trends">

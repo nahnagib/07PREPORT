@@ -33,6 +33,10 @@
  * days_past_due > 0 is the credit policy's "days overdue >= 0" (overdue from the day after the due date). The Customers
  * table's "Aging bucket" is NOT computed here: it is the chart's own placement (measures/debtAging.ts attachCreditZones,
  * days overdue from config/creditPolicy.ts OVERDUE_OFFSET_DAYS), so the table and the chart always agree.
+ * 2026-11-09: the Credit Policy chart, that bucket and the collection rate's start overdue are NET of unapplied credits
+ * (measures/creditAllocation.ts: credit notes + unreconciled payments applied FIFO, oldest due first, per customer +
+ * company + currency). The Overdue / Not yet due cards, the overdue bars and their drill-downs here are still
+ * invoice-only (the 2026-10-06 rule) -- switching them to the same helper is the pending second step.
  *
  * Size tiers (config/finance.ts) are the one place the company-currency (LYD) residual is still used: it classifies a
  * document (sum of its open lines) or a company + customer (its open balance) into Large / Medium / Small, on steps
@@ -998,8 +1002,9 @@ export async function fetchDebtCustomers(pool: Pool, q: DebtQuery, f: Filters): 
  *   salesperson  the overdue invoice lines of a salesperson               = its bar in "Overdue by salesperson"
  *   team         the overdue invoice lines of a sales team                = its bar in "Overdue by team"
  *   account      every line of one company + customer (key "co:cu")       = its row in the customer table (net)
- *   customer_open every invoice line of a customer (every company), the line-level page filters cleared
- *                = its dot on the Credit Policy Escalation chart (total outstanding)
+ *   customer_open every invoice, credit note and unreconciled payment line of a customer (every company), the
+ *                line-level page filters cleared = its dot on the Credit Policy Escalation chart: the raw lines behind
+ *                its net balance, so users see which credits were netted (2026-11-09; overdue = invoice lines only)
  */
 export type DebtDrillKind = 'customer' | 'aging' | 'salesperson' | 'team' | 'account' | 'customer_open';
 
@@ -1035,7 +1040,7 @@ function drillCondition(d: DebtDrill): Sql {
     case 'customer':
       return { sql: "d.CustomerKey = ? AND d.days_past_due > 0 AND d.line_kind = 'invoice'", params: [Number(d.key)] };
     case 'customer_open':
-      return { sql: "d.CustomerKey = ? AND d.line_kind = 'invoice'", params: [Number(d.key)] };
+      return { sql: "d.CustomerKey = ? AND d.line_kind IN ('invoice', 'credit_note', 'payment')", params: [Number(d.key)] };
     case 'aging':
       return { sql: "d.AgingBucketKey = ? AND d.line_kind = 'invoice'", params: [Number(d.key)] };
     case 'salesperson':
@@ -1110,7 +1115,8 @@ export async function fetchDebtDrilldown(pool: Pool, q: DebtQuery, f: Filters, d
   const docs = new DocumentAmounts();
   const out: DebtDrillRow[] = r.map((x) => {
     docs.add(x);
-    const days = num(x.days_past_due);
+    // a credit on a dot's list is shown, never counted as "overdue" (the chart nets it: measures/creditAllocation.ts)
+    const days = d.kind === 'customer_open' && x.line_kind !== 'invoice' ? 0 : num(x.days_past_due);
     const open = num(x.residual_doc_ccy);
     const openCompany = num(x.residual_company_ccy);
     return {

@@ -285,3 +285,7 @@ the Roles page.
 1. Apply migrations 0052, 0059, 0066, 0067 (in that order).
 2. ETL env: `NPS_FOLLOWUP_START=<go-live date>`.
 3. After the next 02:00 run, check the run details' `followup` block (created, by status) and the Board.
+
+### Unresolved stage (9 November 2026)
+
+Migration 0069 adds Unresolved as a separate editable board stage. Unresolved and Rejected both derive Disputed status; neither is a resolved case or part of SLA ageing. Existing Rejected cases retain their stage and history. The internal status code CLOSE is displayed as Closed throughout the app and exports.

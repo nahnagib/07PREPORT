@@ -571,9 +571,11 @@ export interface CustomerGroupRow extends ReferenceDataRow {
   customer_group_id: number;
   etl_segment_key: number | null;
   etl_segment_name: string | null;
-  /** Share of the Daily Critical Number (0-100) this group contributes -- see
-   * backend/src/measures/criticalNumber.ts's computeDailyCriticalNumber. */
+  /** Retired 2026-11-09: still returned, no longer used (see target_share_pct). */
   critical_number_pct: number;
+  /** Read-only share (0-100) of the current year's revenue target in sales_targets.xlsx -- the Critical Number split
+   * (backend measures/criticalNumber.ts computeTargetShare). null = no ETL link, or no targets. */
+  target_share_pct: number | null;
 }
 
 export interface DistributionChannelRow extends ReferenceDataRow {
@@ -586,9 +588,11 @@ export interface CompanyRow extends ReferenceDataRow {
   company_id: number;
   etl_company_key: number | null;
   etl_company_name: string | null;
-  /** Share of the Daily Critical Number (0-100) this company contributes -- see
-   * backend/src/measures/criticalNumber.ts's computeDailyCriticalNumber. */
+  /** Retired 2026-11-09: still returned, no longer used (see target_share_pct). */
   critical_number_pct: number;
+  /** Read-only share (0-100) of the current year's revenue target in sales_targets.xlsx -- the Critical Number split
+   * (backend measures/criticalNumber.ts computeTargetShare). null = no ETL link, or no targets. */
+  target_share_pct: number | null;
 }
 
 export interface ReferenceDataPatch {
@@ -1075,13 +1079,13 @@ export const adminApi = {
     request('/admin/customer-groups/etl-options', token),
   createCustomerGroup: (
     token: string,
-    input: ReferenceDataPatch & { name: string; etlSegmentKey?: number | null; criticalNumberPct?: number },
+    input: ReferenceDataPatch & { name: string; etlSegmentKey?: number | null },
   ): Promise<{ row: CustomerGroupRow }> =>
     request('/admin/customer-groups', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
   updateCustomerGroup: (
     token: string,
     id: number,
-    input: ReferenceDataPatch & { etlSegmentKey?: number | null; criticalNumberPct?: number },
+    input: ReferenceDataPatch & { etlSegmentKey?: number | null },
   ): Promise<{ row: CustomerGroupRow }> =>
     request(`/admin/customer-groups/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
   deleteCustomerGroup: (token: string, id: number): Promise<{ success: boolean }> =>
@@ -1129,13 +1133,13 @@ export const adminApi = {
     request('/admin/companies/etl-options', token),
   createCompany: (
     token: string,
-    input: ReferenceDataPatch & { name: string; etlCompanyKey?: number | null; criticalNumberPct?: number },
+    input: ReferenceDataPatch & { name: string; etlCompanyKey?: number | null },
   ): Promise<{ row: CompanyRow }> =>
     request('/admin/companies', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
   updateCompany: (
     token: string,
     id: number,
-    input: ReferenceDataPatch & { etlCompanyKey?: number | null; criticalNumberPct?: number },
+    input: ReferenceDataPatch & { etlCompanyKey?: number | null },
   ): Promise<{ row: CompanyRow }> =>
     request(`/admin/companies/${id}`, token, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
   deleteCompany: (token: string, id: number): Promise<{ success: boolean }> =>
@@ -1715,6 +1719,14 @@ export interface CriticalNumberOverview {
   /** The date actually requested (normally "today") before any fallback was applied. */
   requestedDate: string;
   dailyCriticalNumber: number;
+  /** The filters' share (0-1) of the base value: their part of the year's revenue target in Input/sales_targets.xlsx
+   * (backend measures/criticalNumber.ts computeTargetShare). dailyCriticalNumber = base x share. */
+  share?: number;
+  /** The sales_targets.xlsx year the share comes from; null when shareSource is 'missing' / 'error'. */
+  shareYear?: number | null;
+  /** current = the anchor year's targets; fallback = the latest earlier year (no targets for this one); missing / error
+   * = no targets / the query failed, factor 1. */
+  shareSource?: 'current' | 'fallback' | 'missing' | 'error';
   /** Admins only (null for everyone else): the unscaled base value active on the anchor date and who set it. */
   criticalNumberSource?: { baseValue: number; effectiveFrom: string; updatedAt: string; updatedBy: string | null } | null;
   dailyCounter: CriticalNumberDailyCounter;
@@ -2851,15 +2863,20 @@ export interface CreditCustomer {
   company: string;
   paymentTermKey: number;
   paymentTerm: string;
-  /** every unpaid invoice, in the view's currency (LYD for all currencies) */
+  /** the NET balance (2026-11-09): every invoice, credit note and unreconciled payment line, in the view's currency
+   * (LYD for all currencies) */
   totalOutstanding: number;
   totalOutstandingCompany: number;
+  /** unapplied credits netted against the invoices (positive), in the view's currency and in LYD */
+  creditsApplied: number;
+  creditsAppliedCompany: number;
+  /** invoices with something left after the credits */
   unpaidInvoiceCount: number;
-  /** lines overdue on the snapshot date (line due date + 1 <= snapshot; negative lines included): dot size and zone
-   * totals, in the view's currency (LYD for all currencies) */
+  /** what is left, after the credits, of the lines overdue on the snapshot date (line due date + 1 <= snapshot): dot
+   * size and zone totals, in the view's currency (LYD for all currencies) */
   overdueAmount: number;
   overdueAmountCompany: number;
-  /** unpaid invoices with at least one open overdue line */
+  /** invoices with an overdue line left after the credits */
   overdueInvoiceCount: number;
   oldestInvoiceMoveId: number;
   oldestInvoiceNumber: string | null;
@@ -3043,6 +3060,8 @@ export interface NpsTrend {
 /** responders / (Delivered + Read): company and date only, from NPS_REACH_START (backend measures/npsScore.ts) */
 export interface NpsResponseRate {
   status: 'waiting' | 'restricted' | 'ready';
+  /** Original requested start; dateFrom can be the later effective start of available data. */
+  requestedDateFrom?: string;
   dateFrom: string;
   dateTo: string;
   reachStart: string | null;
@@ -3083,7 +3102,7 @@ export interface NpsResponseRate {
 /** "Resolved Ageing" buckets (backend config/npsSla.ts) */
 export type NpsAgeingBucket = 'd1' | 'd2' | 'd5' | 'd10' | 'd30' | 'dmax';
 /** the follow-up workflow step (lib/nps/followup.ts) */
-export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'REJECTED';
+export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'UNRESOLVED' | 'REJECTED';
 /** the outcome group, worked out from the stage */
 export type NpsFollowupStatus = 'OPEN' | 'CLOSE' | 'DISPUTED';
 /** the follow-up charts (reason, status, Resolved Ageing), live from nps_followup_case */
@@ -3095,6 +3114,7 @@ export interface NpsFollowupSummary {
   charted: number;
   /** stage Rejected (inside charted) */
   rejected: number;
+  unresolved?: number;
   historical: number;
   noCase: number;
   /** "Resolved Ageing": resolved by time to resolve, open by age today, and the two SLA lines; Rejected / Historical out */

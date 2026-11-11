@@ -140,7 +140,6 @@ describe('the top row', () => {
     const tip = responseRateTooltip({ responders: 120, delivered: 300, read: 350, reached: 650, totalReach: 900, rate: (120 / 650) * 100, rateOfReach: (120 / 900) * 100 });
     expect(tip.split('\n')).toEqual([
       'Responders ÷ (Delivered + Read) = 120 ÷ (300 + 350) = 18.46%',
-      'Responders ÷ Total Reach = 120 ÷ 900 = 13.33%',
       'Customers can only answer a message that reached them.',
     ]);
   });

@@ -9,7 +9,7 @@ import { formatDate, formatMoney } from '../../../lib/format';
 function customer(p: Partial<CreditCustomer> & { customerKey: number; zone: CreditCustomer['zone']; daysOverdue: number; totalOutstanding: number }): CreditCustomer {
   return {
     customerCode: `C${p.customerKey}`, customer: `Customer ${p.customerKey}`, companyKey: 1, company: 'Majaal', paymentTermKey: 4, paymentTerm: '30 Days',
-    totalOutstandingCompany: p.totalOutstanding, unpaidInvoiceCount: 2,
+    totalOutstandingCompany: p.totalOutstanding, creditsApplied: 0, creditsAppliedCompany: 0, unpaidInvoiceCount: 2,
     overdueAmount: p.totalOutstanding, overdueAmountCompany: p.overdueAmount ?? p.totalOutstanding, overdueInvoiceCount: 2, oldestInvoiceMoveId: 10, oldestInvoiceNumber: 'INV/2026/0001',
     oldestInvoiceDate: '2026-08-01', oldestDueDate: '2026-08-31', oldestOverdueDate: '2026-09-01', dueDateSource: 'instalment', notYetDue: p.zone === 'NOT_YET_DUE', daysUntilDue: 0,
     responsibleRole: 'GCEO + CFO', requiredAction: 'Management Escalation', nextZone: null, daysToNextZone: null, approachingNextZone: false,
@@ -109,6 +109,19 @@ describe('CreditPolicyChart', () => {
     expect(rows).not.toHaveProperty('Total Outstanding LYD');
     expect(rows).not.toHaveProperty('Unpaid invoices');
     expect(document.querySelector('[data-customer="7"]')?.getAttribute('aria-label')).toContain(`${formatMoney('LYD', 100)} overdue`);
+  });
+
+  it('tooltip: unapplied credits netted (2026-11-09) and the net balance as "Total open balance"', () => {
+    // INV 1,500 overdue, credit note 1,045 applied: 455 left overdue, net 455
+    const netted = customer({ customerKey: 9, zone: 'RED', daysOverdue: 33, totalOutstanding: 455, overdueAmount: 455, creditsApplied: 1045, creditsAppliedCompany: 1045 });
+    render(<CreditPolicyChart {...props} data={{ ...data, customers: [netted] }} onCustomerClick={() => undefined} />);
+    fireEvent.pointerEnter(document.querySelector('[data-customer="9"]') as Element);
+    const tip = screen.getByRole('tooltip');
+    const rows = Object.fromEntries([...tip.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]));
+    expect(rows['Unapplied credits LYD']).toBe(formatMoney('LYD', -1045));
+    expect(rows['Total open balance LYD']).toBe(formatMoney('LYD', 455));
+    expect(rows['Overdue amount LYD']).toBe(formatMoney('LYD', 455));
+    expect(tip.textContent).toContain('open invoices and credits');
   });
 
   it('foreign currency view: overdue in the invoice currency too', () => {

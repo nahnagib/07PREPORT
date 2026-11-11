@@ -1,6 +1,6 @@
 'use client';
 import React, { useState } from 'react';
-import { ArrowLeft, FileDown, Layers } from 'lucide-react';
+import { ArrowLeft, FileDown, Filter, Layers } from 'lucide-react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { FilterBar } from '../../../../components/FilterBar';
 import { OpportunityChainView } from '../../../../components/OpportunityChainView';
@@ -618,7 +618,9 @@ export default function PipelineHealthPage() {
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)' }}>
           {view === 'summary' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
+            {/* First row: the open pipeline's value, full width (hero card, styled like the Daily Critical Number) */}
+            <TotalPipelineValueCard openPipeline={data?.openPipeline} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+            <div data-testid="pipeline-top-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
               {/* Top-left -- Full Pipeline Funnel + Stage Benchmark */}
               <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 'var(--ps-space-3, 16px)' }}>
                 <ChartPanel<FunnelTableRow>
@@ -669,9 +671,7 @@ export default function PipelineHealthPage() {
                   )}
                 </ChartPanel>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)', minHeight: 0 }}>
-                <TotalPipelineValueCard openPipeline={data?.openPipeline} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
-                <Card style={{ width: '100%', flex: 1, minHeight: 0 }}>
+                <Card style={{ width: '100%', minHeight: 0, alignSelf: 'stretch' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--ps-space-2, 8px)', gap: 8 }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Stage Benchmark</span>
@@ -694,7 +694,6 @@ export default function PipelineHealthPage() {
                     (data?.stageBenchmark ?? []).map((row) => <BenchmarkRow key={row.transition} row={row} />)
                   )}
                 </Card>
-                </div>
               </div>
 
               {/* Top-right -- Expected Closure Opportunity */}
@@ -1116,7 +1115,8 @@ function DataQualityCard({ dataQuality, loading }: { dataQuality?: DataQualityOv
 }
 
 /** Total expected revenue of open (Pending) opportunities -- the same population as Opportunity by Stage and the Pending
- * slice of Opportunity by Status (the backend takes it from that slice, so the three always agree). */
+ * slice of Opportunity by Status (the backend takes it from that slice, so the three always agree). The page's first row,
+ * full width, in the Daily Critical Number's hero style (.ps-cn-hero): compact number, exact value in its tooltip. */
 function TotalPipelineValueCard({
   openPipeline,
   loading,
@@ -1128,26 +1128,42 @@ function TotalPipelineValueCard({
   error?: string;
   onRetry: () => void;
 }) {
-  return (
-    <Card style={{ width: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Total Pipeline Value</span>
-        <VisualInfoIcons title="Total Pipeline Value" {...vh('promotion.pipelineHealth.totalPipelineValue')} />
-      </div>
-      {loading ? (
+  if (loading) {
+    return (
+      <Card style={{ width: '100%' }}>
         <LoadingSkeleton variant="kpi" />
-      ) : error ? (
+      </Card>
+    );
+  }
+  if (error) {
+    return (
+      <Card style={{ width: '100%' }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Total Pipeline Value</div>
         <ErrorState message={error} onRetry={onRetry} />
-      ) : (
-        <>
-          <div data-testid="total-pipeline-value" style={{ fontSize: 22, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
-            {formatCurrency(openPipeline?.value ?? 0)}
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>
-            {(openPipeline?.count ?? 0).toLocaleString(DISPLAY_LOCALE)} open opportunit{openPipeline?.count === 1 ? 'y' : 'ies'}
-          </div>
-        </>
-      )}
+      </Card>
+    );
+  }
+  const value = openPipeline?.value ?? 0;
+  const count = openPipeline?.count ?? 0;
+  return (
+    <Card style={{ width: '100%', borderInlineStart: '4px solid var(--ps-color-accent)' }}>
+      <div className="ps-cn-hero">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--ps-color-muted-text)' }}>
+          <Filter size={16} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Total Pipeline Value</span>
+          <VisualInfoIcons title="Total Pipeline Value" {...vh('promotion.pipelineHealth.totalPipelineValue')} />
+        </div>
+        <div
+          data-testid="total-pipeline-value"
+          style={{ fontSize: 40, fontWeight: 700, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}
+          title={formatCurrency(value)}
+        >
+          {formatCompactCurrency(value)}
+        </div>
+        <div className="ps-cn-hero-desc" style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--ps-color-muted-text)' }}>
+          {formatCurrency(value)} · {count.toLocaleString(DISPLAY_LOCALE)} open opportunit{count === 1 ? 'y' : 'ies'}
+        </div>
+      </div>
     </Card>
   );
 }

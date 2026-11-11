@@ -233,7 +233,7 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
       const want = asked ? new Map() : await direct(scope);
       sameTotals(kpiTotals(o.body), want, `overview ${qs}`);
     }
-  });
+  }, 300_000); // ~120 s on the local copy before 2026-11-09; the credit lines of the chart/table placement add ~15 s
 
   it('(a) the drill-down of every excluded line set is empty: asking for an excluded team returns no row', async () => {
     for (const key of excludedTeamKeys) {
@@ -315,13 +315,12 @@ describe.skipIf(!RUN)('Debt Report on the real warehouse (read-only)', () => {
     const rows = (await get('/debt-report/customers')).body.rows as Json[];
     close(rows.reduce((s, r) => s + r.lyd.open, 0), o.all.kpis.openAmount);
     close(rows.reduce((s, r) => s + r.lyd.overdue, 0), o.all.kpis.overdueAmount);
-    // every row with an open invoice carries its customer's credit-policy zone (both views); an overdue row is past due
+    // every row with an open invoice left after its unapplied credits (2026-11-09: FIFO per company + customer + currency,
+    // the row's own grain) carries its customer's credit-policy zone; a row whose overdue is not covered is past due
     for (const r of rows) {
-      if (r.open > 0.005) {
-        expect(r.creditZone.currency, `${r.customer} ${r.currency}`).not.toBeNull();
-        expect(r.creditZone.all, `${r.customer} all`).not.toBeNull();
-      }
-      if (r.overdue > 0.005) expect(r.creditZone.currency.zone, `${r.customer} ${r.currency}`).not.toBe('NOT_YET_DUE');
+      if (r.open + r.credits > 0.005) expect(r.creditZone.currency, `${r.customer} ${r.currency}`).not.toBeNull();
+      if (r.creditZone.currency === null) expect(r.open + r.credits, `${r.customer} ${r.currency}: no zone = covered`).toBeLessThanOrEqual(0.005);
+      if (r.overdue + r.credits > 0.005) expect(r.creditZone.currency.zone, `${r.customer} ${r.currency}`).not.toBe('NOT_YET_DUE');
     }
   });
 

@@ -54,6 +54,26 @@ This document reflects the implemented code. Where a source meaning is not expli
 | Date dimension | Starts at minimum actual sales date and ends at later of maximum sales/order date or refresh date. | `DateDimensionBuilder`, `_extend_dim_date_for_sales_and_delivery` | Includes configured weekly rest-day logic. |
 | Off-days | Parse `DD/MM/YYYY`, normalize date, deduplicate Date/Type/Country/Company/Branch, create DateKey. | `OffDaysFactBuilder.build` | |
 
+## Receivables: Unapplied Credits Against Overdue (2026-11-09)
+
+- An open credit note (`out_refund`) or an unreconciled customer payment is money the customer does not owe. Odoo's
+  partner "Due" nets them; an invoice-only overdue does not (customer 27775: INV/2026/10/00118 1,045.000 against
+  RINV/2026/10/0006 + 0007 = Due 0, but the dashboard showed 1,045 overdue in RED).
+- Rule (one implementation: `backend/src/measures/creditAllocation.ts`): per customer (commercial partner) + company +
+  currency (the "All currencies (≈ LYD)" views: per customer + company, in LYD), take the credit lines (credit notes,
+  unreconciled payments, any negative invoice line) as a positive pool and apply it FIFO to the open invoice lines:
+  earliest due date first, then the older invoice date, then the lower move id. A partly covered line keeps its
+  remainder; what is left of the pool is a net credit balance. Currencies are never mixed in a per-currency view.
+- Uses: the Credit Policy Escalation chart (placement, deciding invoice, days overdue, overdue amount, zone totals,
+  dot size), the Customers table aging bucket, and the collection rate's start overdue. A customer with nothing
+  overdue left is not on the chart. The Debt Report "Open invoices" card stays invoice-only (it matches Odoo's
+  Invoices list); its Overdue / Not yet due cards and overdue drill-downs are still invoice-only for now.
+- Report exclusions apply first: inter-company, the `other` scope and excluded segments / teams never enter a pool
+  (an invoice-only team rule keeps that team's credits).
+- Check: `scripts/finance/reconcile_net_credits.py` compares the snapshot's net balance per customer + company +
+  currency with Odoo's open receivable lines and lists the customers with overdue invoices AND open credits (to be
+  reconciled in Odoo).
+
 ## QA Rules
 
 Required sheets/tables, model keys, duplicate/null keys, date-key coverage, CRM linkage, delivery status, SQL row counts, incremental windows, latest-order freshness, and optional full SQL/DataFrame equality are validated in `PowerBISalesPipeline`, `ModelValidator`, `CrmModelBuilder`, and `DatabaseExporter`. Fast mode skips expensive QA exports, but structural checks and scoped SQL validation remain.

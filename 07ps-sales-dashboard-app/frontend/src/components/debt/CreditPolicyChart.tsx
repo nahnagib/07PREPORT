@@ -83,7 +83,7 @@ export function CreditPolicyChart({ data, loading, error, onRetry, term, onTermC
           <h3 style={{ ...h3, display: 'flex', alignItems: 'center', gap: 6 }}>Credit Policy Escalation · {viewLabel}
             <InfoHint label="Credit Policy Escalation" detail={[
               'Each dot is a customer, placed by the number of days overdue of its oldest unpaid invoice. Policy day 0 is the first day after the due date.',
-              'Dot size = overdue amount. Each customer appears once. Hover or focus for details; click a dot for its open invoices.',
+              'Dot size = overdue amount. Each customer appears once. Hover or focus for details; click a dot for its open invoices and credits.',
               `Dashed ring = moves to the next zone within ${data.escalationWindowDays} days.`,
               data.asOf ? `Days counted to ${formatDate(data.asOf)}.` : '',
             ].filter(Boolean).join('\n')} />
@@ -316,7 +316,10 @@ function DotTooltip({ c, anchor, zones, money, foreign }: { c: CreditCustomer; a
         <Fact k="Overdue amount LYD" v={<strong style={mono}>{formatMoney(COMPANY_CURRENCY, c.overdueAmountCompany)}</strong>} />
         {foreign ? <Fact k="Overdue, invoice currency" v={<strong style={mono}>{money(c.overdueAmount)}</strong>} /> : null}
         <Fact k="Overdue invoices" v={<span style={mono}>{formatNumber(c.overdueInvoiceCount)}</span>} />
-        {/* reference only: every open line, overdue or not */}
+        {/* open credit notes + unreconciled payments already netted against the invoices (oldest due first) */}
+        <Fact k="Unapplied credits LYD" v={<span style={mono}>{formatMoney(COMPANY_CURRENCY, -(c.creditsAppliedCompany ?? 0))}</span>} />
+        {foreign ? <Fact k="Unapplied credits, invoice currency" v={<span style={mono}>{money(-(c.creditsApplied ?? 0))}</span>} /> : null}
+        {/* reference only: the net balance (every invoice, credit note and payment line), overdue or not */}
         <Fact muted k="Total open balance LYD" v={<span style={mono}>{formatMoney(COMPANY_CURRENCY, c.totalOutstandingCompany)}</span>} />
         {foreign ? <Fact muted k="Total open, invoice currency" v={<span style={mono}>{money(c.totalOutstanding)}</span>} /> : null}
         <Fact k="Oldest invoice" v={c.oldestInvoiceNumber ?? '—'} />
@@ -331,7 +334,7 @@ function DotTooltip({ c, anchor, zones, money, foreign }: { c: CreditCustomer; a
         {c.actionDetails ? <Fact k="Additional action" v={c.actionDetails} /> : null}
       </dl>
       {next ? <p style={{ ...sub, margin: '8px 0 0', fontWeight: 600, color: 'var(--ps-color-text)' }}>{next}</p> : null}
-      <p style={{ ...sub, margin: '6px 0 0' }}>Click the dot for the customer&apos;s open invoices.</p>
+      <p style={{ ...sub, margin: '6px 0 0' }}>Click the dot for the customer&apos;s open invoices and credits.</p>
     </div>,
     document.body,
   );

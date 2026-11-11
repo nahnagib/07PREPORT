@@ -58,7 +58,7 @@ export function pctLabel(p: number | null | undefined): string {
 /** What a drill-down lists: an overdue bar its overdue lines, an aging bar / a table row every open line. */
 export function drillTitle(kind: DebtDrillKind, label: string, currency: string | null): string {
   const what =
-    kind === 'aging' ? 'Open documents in' : kind === 'account' ? 'Open documents of' : kind === 'customer_open' ? 'Open invoices of' : 'Overdue documents of';
+    kind === 'aging' ? 'Open documents in' : kind === 'account' ? 'Open documents of' : kind === 'customer_open' ? 'Open invoices and credits of' : 'Overdue documents of';
   return `${what} ${label} · ${currency ?? 'All currencies (≈ LYD)'}`;
 }
 

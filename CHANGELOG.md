@@ -6,6 +6,30 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Critical Number split from sales_targets.xlsx, 2026-11-09)
+- Every filter on the Critical Number page now gets its own Daily Critical Number: base × the scope's share of the
+  year's revenue target in `Input/sales_targets.xlsx`. This covers company, customer group, branch, salesperson,
+  channel, and any combination. Branch, Salesperson and Channel filters used to be ignored. Company × Customer Group is
+  one joint share from the targets, no longer the product of two typed percentages. Formula, refresh timing and
+  fallback: `docs/critical-number-split.md`.
+- The page shows the share under the Daily Critical Number card, e.g. "22.49% of group target · from
+  sales_targets.xlsx 2026", with a note when the share falls back to an earlier year.
+- Admin > Companies / Customer Groups: the editable "Critical Number %" is replaced by a read-only "Share of FY target
+  (from sales_targets.xlsx)". `critical_number_pct` stays in the database, unused. No migration, no ETL change.
+- An edited targets file shows at the next Sales Refresh or 02:00 run (about 3 hours) while `ETL_SALES_MODE=shadow`,
+  and within about 30 minutes after the switch to incremental.
+
+### Fixed (Credit policy nets unapplied credits, 2026-11-09)
+- Credit Policy Escalation, the Customers table "Aging bucket" and the Collections rate's start overdue now apply a
+  customer's open credit notes and unreconciled payments to its invoices first (FIFO by due date, per customer +
+  company + currency; "All currencies (≈ LYD)" in LYD), so a customer who owes nothing is no longer shown as overdue
+  (e.g. 27775: 1,045 "overdue" in RED, Odoo Due 0). One rule: `backend/src/measures/creditAllocation.ts`.
+- Chart tooltip: new "Unapplied credits" row; "Total open balance" is now the net balance. Clicking a dot lists the
+  customer's invoices AND credits.
+- New read-only check `data/etl/scripts/finance/reconcile_net_credits.py` (net balance vs Odoo, and the customers with
+  overdue invoices and open credits for finance to reconcile).
+- Not yet changed: the Debt Report Overdue / Not yet due cards, overdue bars and their drill-downs (still invoice-only).
+
 ### Changed (Product pages UI/UX, 2026-11-04)
 - Product pages (BCG Matrix, Stock Velocity, PIM Contribution + Brand page, Product Lifecycle): Athena is left out
   everywhere (ETL `product_pages.excluded_companies` + the API + the company filters), so totals exclude it. Promotion,

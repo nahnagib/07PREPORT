@@ -40,7 +40,7 @@ it('renders the five message counts, limited-filter label, other states and refr
 
 it('each box shows its share of Total Reach and a tooltip saying reach uses the message date', () => {
   render(<NpsReach part="boxes" state={state(ready)} />);
-  expect(screen.getByText('100% of reach')).toBeTruthy();
+  expect(screen.getByText('Rate of reach: —')).toBeTruthy();
   expect(screen.getByText('25.00% of reach')).toBeTruthy(); // Delivered 3 / 12
   expect(screen.getByText('33.33% of reach')).toBeTruthy(); // Read 4 / 12
   for (const label of ['Total Reach', 'Delivered', 'Not Delivered', 'Read', 'Error']) {
@@ -50,7 +50,11 @@ it('each box shows its share of Total Reach and a tooltip saying reach uses the 
 });
 
 it('the gap in the period: official totals, "incl. est." on the estimated cards, "incl. gap" on Error, tooltips measured + gap, the subtitle', () => {
-  render(<NpsReach part="boxes" state={state(estimated)} />);
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
+  expect(screen.getByText('Survey Reach')).toBeTruthy();
+  expect(screen.getByText('Rate of reach: 16.27%')).toBeTruthy();
+  expect(screen.queryByText('100% of reach')).toBeNull();
+  expect(screen.getByTestId('reach-box-Total Reach').getAttribute('title')).toContain('Rate of reach = Responders ÷ Total reach = 801 ÷ 4,923 = 16.27%');
   expect(screen.getByTestId('reach-subtitle').textContent).toBe('Measured from 03 Oct 2026 · 12 Jul – 02 Oct estimated');
   expect(screen.getByText('4,923')).toBeTruthy();
   expect(screen.getByText('22.93% of reach')).toBeTruthy(); // Delivered 1,129 / 4,923, on the new totals
@@ -110,7 +114,7 @@ it('distinguishes a loaded empty period from waiting', () => {
 
 it('hides data for a role whose mandatory scope cannot apply to messages', () => {
   render(<NpsReach part="boxes" state={state({ ...ready, status: 'restricted', totals: null, errors: [], loadedAt: null })} />);
-  expect(screen.getByText('Message reach is unavailable for your assigned data scope.')).toBeTruthy();
+  expect(screen.getByText('Survey Reach is unavailable for your assigned data scope.')).toBeTruthy();
   expect(screen.queryByText('Total Reach')).toBeNull();
 });
 
@@ -122,4 +126,16 @@ it('does not show an old snapshot while reloading filters and supports retry on 
   expect(screen.getByText('Request failed')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: /retry/i }));
   expect(retry).toHaveBeenCalledOnce();
+});
+
+it('does not show a stale-period rate or divide by zero', () => {
+  const { rerender } = render(<NpsReach part="boxes" state={state(ready)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
+  expect(screen.getByText('Rate of reach: —')).toBeTruthy();
+  rerender(<NpsReach part="boxes" state={state({ ...ready, totals: { ...ready.totals!, totalReach: 0 } })} responseRate={{ status: 'ready', responders: 0, dateFrom: ready.dateFrom, dateTo: ready.dateTo }} />);
+  expect(screen.getByText('Rate of reach: —')).toBeTruthy();
+});
+
+it('rejects a stale requested start even when the end date and effective start match', () => {
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: '2026-07-01', dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
+  expect(screen.getByText('Rate of reach: —')).toBeTruthy();
 });

@@ -529,6 +529,7 @@ export interface NpsFollowupSummary {
   charted: number;
   /** stage Rejected (= status Disputed), inside `charted`; shown in the note too */
   rejected: number;
+  unresolved: number;
   historical: number;
   /** detractors without a case yet (process_nps creates them on its next run); 0 normally */
   noCase: number;
@@ -575,6 +576,7 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
   const reasons = new Map<string | null, { categoryKey: string | null; label: string; labelAr: string | null; count: number; sort: number;
     noSubs: boolean; subs: Map<number, Sub> }>();
   let rejected = 0;
+  let unresolved = 0;
   let historical = 0;
   let noCase = 0;
   for (const r of list) {
@@ -587,6 +589,7 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
       statuses[status] += 1;
       stages.set(stage, (stages.get(stage) ?? 0) + 1);
       if (stage === 'REJECTED') rejected += 1;
+      else if (stage === 'UNRESOLVED') unresolved += 1;
       else {
         const contactedAt = asDateTime(r.contacted_at);
         slaCases.push({
@@ -629,6 +632,7 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
     detractors: list.length,
     charted,
     rejected,
+    unresolved,
     historical,
     noCase,
     ageing: resolutionAgeing(slaCases),
@@ -652,6 +656,8 @@ export async function fetchNpsFollowupSummary(pool: Pool, q: NpsQuery, f: Filter
 // -- response rate ------------------------------------------------------------------------------------------------------
 export interface NpsResponseRate {
   status: 'waiting' | 'restricted' | 'ready';
+  /** Original request boundary; dateFrom below may be clamped to the first available rating/message. */
+  requestedDateFrom: string;
   /** the period counted: the page's range, from the first gap day (estimated) or from reachStart (measured only) */
   dateFrom: string;
   dateTo: string;
@@ -724,7 +730,7 @@ export async function fetchNpsResponseRate(
   pool: Pool, q: NpsQuery, f: Filters, user: UserContext, cfg: ReachEstimateConfig = reachEstimateConfig(),
 ): Promise<NpsResponseRate> {
   const empty: NpsResponseRate = {
-    status: 'waiting', dateFrom: q.dateFrom, dateTo: q.dateTo, reachStart: null,
+    status: 'waiting', requestedDateFrom: q.dateFrom, dateFrom: q.dateFrom, dateTo: q.dateTo, reachStart: null,
     companyAndDateOnly: REACH_UNSUPPORTED.some((key) => (f[key]?.length ?? 0) > 0),
     responders: 0, delivered: 0, read: 0, reached: 0, totalReach: 0, rate: null, rateOfReach: null, band: null,
     target: RESPONSE_RATE_SCALE.target, variancePts: null, weekly: [],

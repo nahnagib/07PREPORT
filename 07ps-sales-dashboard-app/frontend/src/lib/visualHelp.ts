@@ -83,7 +83,8 @@ export const VISUAL_HELP = {
   'promotion.criticalNumber.daily': {
     help: {
       definition: 'The sales value (LYD) the company must invoice every working day to stay on its annual pace.',
-      notes: 'Set by an admin (Admin › Critical Number); changes apply on the next dashboard load.',
+      notes: 'The group value is set by an admin (Admin › Critical Number). With filters, the page shows their share of it: '
+        + 'their part of the year\'s revenue target in sales_targets.xlsx. Changes apply on the next dashboard load.',
     },
   },
   'promotion.criticalNumber.dailyCounter': {
@@ -472,7 +473,7 @@ export const VISUAL_HELP = {
   'process.npsScore.responseRate': {
     help: {
       definition: 'Share of the feedback messages that reached the customer and got a rating.',
-      formula: ['Response Rate = Responders ÷ (Delivered + Read)', '12 Jul – 02 Oct: Delivered + Read estimated per company (the same figure as the Message reach cards)', 'Rate of reach = Responders ÷ Total reach', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
+      formula: ['Response Rate = Responders ÷ (Delivered + Read)', '12 Jul – 02 Oct: Delivered + Read estimated per company (the same figure as the Survey Reach cards)', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
     },
   },
   'process.npsScore.satisfactionTrend': {
@@ -498,7 +499,7 @@ export const VISUAL_HELP = {
     interactions: ['Click a status to see its stages; "← All statuses" goes back'],
   },
   'process.npsScore.resolvedByTime': {
-    help: { definition: `Detractor cases by age from case creation: resolved cases by the time they took, open cases by their age today. Bars left of the "Close SLA ${NPS_SLA.closeDays} d" line are within SLA, right of it breached. Solid = resolved; hatched = still open. Rejected and Historical have no SLA and are left out.`,
+    help: { definition: `Detractor cases by age from case creation: resolved cases by the time they took, open cases by their age today. Bars left of the "Close SLA ${NPS_SLA.closeDays} d" line are within SLA, right of it breached. Solid = resolved; hatched = still open. Unresolved, Rejected and Historical have no SLA and are left out.`,
       formula: `Closed within SLA = resolved within ${NPS_SLA.closeDays} d ÷ all resolved · Contacted within ${NPS_SLA.contactHours} h = contacted within ${NPS_SLA.contactHours} h ÷ cases contacted, resolved or open beyond ${NPS_SLA.contactHours} h (each counted once)` },
   },
   'process.npsScore.detractors': {
