@@ -1,7 +1,7 @@
 """NPS Detractor Follow-up: process_nps adds a case per detractor (idempotent, cut-over by NPS_FOLLOWUP_START), flags
-source changes, and never writes a manual field (departments/process/followup.py, migrations 0052, 0066).
+source changes, and never writes a manual field (departments/process/followup.py, migrations 0052, 0066, 0072).
 
-The tests run on the 0066 shape (column `stage`, `status` GENERATED from it) unless they say otherwise; `fu52` is the
+The tests run on the 0072 shape (column `stage`, `status` GENERATED from it) unless they say otherwise; `fu52` is the
 table as 0052 left it, for the fallback that writes the stage into `status` until 0066 is applied."""
 
 from __future__ import annotations
@@ -15,11 +15,11 @@ from test_process_nps import BELOW, MET, SOURCE_FULL, SOURCE_LOW, SYNC, FakeNpsS
 CASES = ("SELECT response_id, rated_at_local, stage, status, source_changed, source_change_reason, notes, version "
          "FROM nps_followup_case ORDER BY response_id")
 
-# migration 0066 in SQLite (which can't drop a CHECK or rename one): the case table rebuilt in the 0066 shape. The
+# SQLite cannot alter these checks, so the fixture recreates the case table in the 0072 shape. The
 # status CASE is the migration's own text.
-_STATUS_CASE = ("CASE WHEN stage IN ('NEW', 'CONTACTED', 'IN_PROGRESS') THEN 'OPEN' WHEN stage = 'RESOLVED' THEN 'CLOSE' "
-                "WHEN stage = 'HISTORICAL' THEN NULL ELSE 'DISPUTED' END")
-_CASE_0066 = f"""CREATE TABLE nps_followup_case (
+_STATUS_CASE = ("CASE WHEN stage IN ('NEW', 'CONTACTED', 'IN_PROGRESS') THEN 'OPEN' WHEN stage = 'RESOLVED' THEN 'CLOSED' "
+                "WHEN stage = 'UNRESOLVED' THEN 'DISPUTED' END")
+_CASE_0072 = f"""CREATE TABLE nps_followup_case (
   case_id INTEGER PRIMARY KEY AUTOINCREMENT, response_id BIGINT NOT NULL UNIQUE, rated_at_local DATETIME NULL,
   stage VARCHAR(20) NOT NULL DEFAULT 'NEW', status VARCHAR(10) GENERATED ALWAYS AS ({_STATUS_CASE}) STORED,
   reason_id BIGINT NULL, reason_note VARCHAR(200) NULL, owner_user_id INT NULL, owner_name VARCHAR(120) NULL,
@@ -27,19 +27,19 @@ _CASE_0066 = f"""CREATE TABLE nps_followup_case (
   notes TEXT NULL, source_changed BOOLEAN NOT NULL DEFAULT FALSE, source_changed_at DATETIME NULL, source_change_reason VARCHAR(200) NULL,
   version INT NOT NULL DEFAULT 1, created_by INT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_by INT NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT chk_nps_followup_stage CHECK (stage IN ('HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED')),
+  CONSTRAINT chk_nps_followup_stage CHECK (stage IN ('HISTORICAL', 'NEW', 'CONTACTED', 'IN_PROGRESS', 'RESOLVED', 'UNRESOLVED')),
   CONSTRAINT chk_nps_followup_resolved CHECK ((stage = 'RESOLVED' AND resolved_at IS NOT NULL) OR (stage <> 'RESOLVED' AND resolved_at IS NULL)),
-  CONSTRAINT chk_nps_followup_rejected CHECK ((stage = 'REJECTED' AND rejected_at IS NOT NULL) OR (stage <> 'REJECTED' AND rejected_at IS NULL)),
+  CONSTRAINT chk_nps_followup_no_rejected_at CHECK (rejected_at IS NULL),
   CONSTRAINT chk_nps_followup_resolved_after CHECK (resolved_at IS NULL OR rated_at_local IS NULL OR resolved_at >= rated_at_local),
   CONSTRAINT chk_nps_followup_contacted_after CHECK (contacted_at IS NULL OR rated_at_local IS NULL OR contacted_at >= rated_at_local))"""
 
 
-def _apply_0066(engine) -> None:
-    with open(MIGRATIONS / "0066_nps_followup_stage_status.sql", encoding="utf-8") as f:
-        assert _STATUS_CASE.replace("'", "''") in f.read(), "the test's status CASE must be the migration's"
+def _apply_0072(engine) -> None:
+    with open(MIGRATIONS / "0072_nps_followup_remove_rejected.sql", encoding="utf-8") as f:
+        assert " ".join(_STATUS_CASE.split()) in " ".join(f.read().split()), "the test's status CASE must be the migration's"
     with engine.begin() as conn:
         conn.execute(text("DROP TABLE nps_followup_case"))
-        conn.execute(text(_CASE_0066))
+        conn.execute(text(_CASE_0072))
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def fu52(npsjob, monkeypatch):
 
 @pytest.fixture
 def fu(fu52):
-    _apply_0066(fu52[0])
+    _apply_0072(fu52[0])
     return fu52
 
 
@@ -148,7 +148,7 @@ def test_migration_seeds_the_eight_agreed_reasons(fu):
     assert reasons.name_ar.str.len().gt(0).all()
 
 
-def test_after_0066_only_the_stage_is_written_and_the_status_follows_it(fu):
+def test_after_0072_only_the_stage_is_written_and_the_status_follows_it(fu):
     engine, run, _ = fu
     run()  # an INSERT naming `status` would fail here: it is a generated column
     details = _details(engine)
@@ -160,12 +160,12 @@ def test_after_0066_only_the_stage_is_written_and_the_status_follows_it(fu):
         assert (None if got is None or got != got else got) == status, stage
     with engine.begin() as conn:
         conn.execute(text("UPDATE nps_followup_case SET stage = 'RESOLVED', resolved_at = '2026-10-05 09:00:00'"))
-    assert _df(engine, "SELECT status FROM nps_followup_case").status.tolist() == ["CLOSE"]
+    assert _df(engine, "SELECT status FROM nps_followup_case").status.tolist() == ["CLOSED"]
     with engine.begin() as conn:
-        conn.execute(text("UPDATE nps_followup_case SET stage = 'REJECTED', resolved_at = NULL, rejected_at = '2026-10-05 10:00:00'"))
+        conn.execute(text("UPDATE nps_followup_case SET stage = 'UNRESOLVED', resolved_at = NULL"))
     assert _df(engine, "SELECT status FROM nps_followup_case").status.tolist() == ["DISPUTED"]
     run()  # a reload leaves the stage alone
-    assert _df(engine, CASES)[["stage", "status"]].values.tolist() == [["REJECTED", "DISPUTED"]]
+    assert _df(engine, CASES)[["stage", "status"]].values.tolist() == [["UNRESOLVED", "DISPUTED"]]
 
 
 def test_before_0066_the_stage_is_written_into_the_old_column(fu52):
@@ -176,7 +176,7 @@ def test_before_0066_the_stage_is_written_into_the_old_column(fu52):
     assert '"stage_column": "status"' in _details(engine) and "by_status" not in _details(engine)
 
 
-def test_the_database_refuses_resolved_without_a_date_rejected_without_a_time_and_dates_before_the_rating(fu):
+def test_the_database_refuses_invalid_stages_and_dates(fu):
     engine, run, _ = fu
     run()
     for sql in ("UPDATE nps_followup_case SET stage = 'RESOLVED'",
@@ -189,4 +189,4 @@ def test_the_database_refuses_resolved_without_a_date_rejected_without_a_time_an
         with pytest.raises(Exception, match="CHECK"), engine.begin() as conn:
             conn.execute(text(sql))
     with pytest.raises(Exception, match="generated column"), engine.begin() as conn:
-        conn.execute(text("UPDATE nps_followup_case SET status = 'CLOSE'"))
+        conn.execute(text("UPDATE nps_followup_case SET status = 'CLOSED'"))

@@ -617,14 +617,17 @@ error; Other; "-" not an error.
 
 ### process_nps_reach_state
 One row: `loaded_at_utc`, `messages_loaded`, `reach_start` (the `NPS_REACH_START` of the last load), `_run_id`.
-The gap before `reach_start` (12 Jul – 02 Oct) is estimated per request from this state and the fact (backend
-`measures/npsReachEstimate.ts`; `docs/nps-etl.md` §8.5): per company, Delivered + Read of the complete weeks from
-`reach_start` to the day before `loaded_at_utc` (Tripoli, minus the excluded outage weeks) × the gap weeks, split by the
-measured mix; Not Delivered by the measured ratio; Error = the real rows of `fact_process_nps_message` before
-`reach_start` (`box = 'error'`, `is_feedback_template = 1`, `is_test_number = 0`). Used by the Message reach cards and the
-Response Rate alike. Nothing is stored.
+Before `reach_start` the reach is the approved manual table below; nothing is estimated per request.
+
+### process_nps_reach_manual (migration 0071; written by migrations only, never the ETL)
+One row per company and period: `CompanyKey`, `date_from`, `date_to` (inclusive, Tripoli message dates), `source`
+(`estimate` | `meta_manual` | `meta_manual+estimate` = Meta export with Delivered / Read estimated), `delivered`,
+`not_delivered`, `read_count`, `error_count`, `total_reach` (= the four), `note`, `loaded_at_utc`. Key
+(`CompanyKey`, `date_from`). Seeded with the 8 approved rows for 12 Jul – 02 Oct 2026 (`docs/nps-etl.md` §8.5).
 
 ### Views
-`v_process_nps_reach` (per date x company, in scope: total_reach, delivered, not_delivered, read_count, error_count,
-other_state) and `v_process_nps_message_error` (per date x company x error group: errors). Counts are messages, not
-people.
+`v_process_nps_reach` (per date x company x `source`: total_reach, delivered, not_delivered, read_count, error_count,
+other_state). `source` = `etl` (the message fact in scope, on days no manual period covers), `manual` (Meta export) or
+`estimate`, the manual ones from `v_process_nps_reach_manual_daily` (each period spread evenly over its days, exact per
+period). `v_process_nps_message_error` (per date x company x source x error group: errors; manual errors =
+`meta_manual` "Unclassified (Meta manual)"). Counts are messages, not people.

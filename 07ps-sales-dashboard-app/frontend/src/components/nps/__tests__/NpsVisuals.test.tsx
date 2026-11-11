@@ -7,6 +7,7 @@ import { FollowupCharts } from '../FollowupCharts';
 import { NpsTopRow, ResponseRateCard } from '../NpsTopRow';
 import { OdooLink } from '../../OdooLink';
 import { Waiting } from '../Waiting';
+import { VISUAL_HELP } from '../../../lib/visualHelp';
 
 afterEach(cleanup);
 
@@ -86,17 +87,19 @@ const RATE: NpsResponseRate = {
   responders: 120, delivered: 300, read: 350, reached: 650, totalReach: 900, rate: (120 / 650) * 100, rateOfReach: (120 / 900) * 100,
   band: 'red', target: 30, variancePts: (120 / 650) * 100 - 30,
   weekly: [{ weekStart: '2026-09-27', responders: 10, reached: 80, rate: 12.5 }, { weekStart: '2026-10-04', responders: 110, reached: 570, rate: 19.3 }],
-  isEstimated: false, estimateStatus: 'not_needed', measured: { from: '2026-10-03', responders: 120, reached: 650, rate: (120 / 650) * 100 }, estimate: null,
+  includesManual: false, reachedBySource: { etl: 650, manual: 0, estimate: 0 }, manualPeriods: [],
 };
-// YTD on the local data: 801 responders / (1,222 measured + 2,841 estimated)
+// YTD on the local data (9 Nov): 801 responders / (1,222 measured + 1,127 Meta manual + 1,127 estimate)
 const RATE_EST: NpsResponseRate = {
-  ...RATE, dateFrom: '2026-07-12', dateTo: '2026-11-09', responders: 801, delivered: 1129, read: 2650, reached: 3779, totalReach: 4923,
-  rate: (801 / 3779) * 100, rateOfReach: (801 / 4923) * 100, band: 'red', variancePts: (801 / 3779) * 100 - 30,
-  isEstimated: true, estimateStatus: 'applied', measured: { from: '2026-10-03', responders: 269, reached: 1222, rate: (269 / 1222) * 100 },
-  estimate: { from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 278, reached: 2557, basis: 'auto', basisWeeks: 4, basisFrom: '2026-10-03',
-    basisTo: '2026-10-30', excludedWeeks: ['2026-10-31'],
-    byCompany: [{ companyKey: 1, company: 'MAJAAL', from: '2026-07-12', to: '2026-10-02', weeks: 83 / 7, perWeek: 86.25, reached: 1023 },
-      { companyKey: 3, company: 'TIKA', from: '2026-08-08', to: '2026-10-02', weeks: 8, perWeek: 191.75, reached: 1534 }] },
+  ...RATE, requestedDateFrom: '2026-01-01', dateFrom: '2026-07-12', dateTo: '2026-11-09', responders: 801, delivered: 1095, read: 2381,
+  reached: 3476, totalReach: 4495, rate: (801 / 3476) * 100, rateOfReach: (801 / 4495) * 100, band: 'red', variancePts: (801 / 3476) * 100 - 30,
+  includesManual: true, reachedBySource: { etl: 1222, manual: 1127, estimate: 1127 },
+  manualPeriods: [
+    { from: '2026-07-12', to: '2026-08-12', source: 'estimate' },
+    { from: '2026-08-13', to: '2026-08-31', source: 'meta_manual+estimate' },
+    { from: '2026-09-01', to: '2026-09-30', source: 'meta_manual' },
+    { from: '2026-10-01', to: '2026-10-02', source: 'meta_manual' },
+  ],
 };
 const rateState = (data: NpsResponseRate | null, extra: Partial<{ loading: boolean; error: string | null }> = {}) =>
   ({ data, loading: false, error: null, retry: () => undefined, ...extra });
@@ -125,48 +128,56 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
     expect(screen.getByTestId('nps-card').textContent).toContain('On Track');
   });
 
-  it('response rate: value, pill, Target 30%, variance, since the reach start, the filter note and the tooltip', () => {
+  it('response rate: value, pill, Target 30%, variance and the formula line; the filter explanations only in the tooltip', () => {
     render(<ResponseRateCard state={rateState(RATE)} />);
     const card = screen.getByTestId('rate-card');
     expect(card.textContent).toContain('18.46%');
     expect(card.textContent).toContain('Critical');
     expect(card.textContent).toContain('30%');
     expect(card.textContent).toContain('−11.54 pts');
-    expect(screen.getByTestId('rate-since').textContent).toBe('since 03 Oct 2026');
-    expect(screen.getByTestId('rate-company-only').textContent).toBe('Company and date filters only');
-    expect(screen.getByTestId('rate-numerator-note').textContent).toBe('Responders = every rating of the selected companies (other filters not applied)');
+    expect(card.textContent).toContain('Responders ÷ (Delivered + Read)');
+    expect(screen.queryByTestId('rate-since')).toBeNull();
+    // A2: no longer printed under the rate (RATE has companyAndDateOnly: true) ...
+    expect(screen.queryByTestId('rate-company-only')).toBeNull();
+    expect(screen.queryByTestId('rate-numerator-note')).toBeNull();
+    expect(card.textContent).not.toContain('Company and date filters only');
+    expect(card.textContent).not.toContain('other filters not applied');
+    // ... but kept in the value tooltip
+    const valueTip = screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')!;
+    expect(valueTip).toContain('Company and date filters only');
+    expect(valueTip).toContain('Responders = every rating of the selected companies');
     expect(screen.queryAllByTitle(/Responders ÷ Total Reach/)).toHaveLength(0);
-    // the numerator under the rate; no estimate badge after the reach start
+    // the numerator under the rate; no manual mark after the reach start
     expect(screen.getByTestId('rate-fraction').textContent).toBe('120 responders ÷ 650 reached');
+    expect(screen.queryByTestId('rate-manual-mark')).toBeNull();
     expect(screen.queryByTestId('rate-estimate-badge')).toBeNull();
-    expect(screen.queryByTestId('rate-measured')).toBeNull();
   });
 
-  it('response rate with the estimate: the badge with the gap, the measured-only line, the formula tooltip; sparkline unchanged', () => {
+  it('response rate with the manual reach: the source breakdown appears in the tooltip', () => {
     render(<ResponseRateCard state={rateState(RATE_EST)} />);
     const card = screen.getByTestId('rate-card');
-    expect(card.textContent).toContain('21.20%');
-    expect(screen.getByTestId('rate-fraction').textContent).toBe('801 responders ÷ 3,779 reached');
-    expect(screen.getByTestId('rate-estimate-badge').textContent).toBe('incl. estimate · 12 Jul – 02 Oct');
-    expect(screen.getByTestId('rate-measured').textContent).toBe('Measured since 03 Oct: 22.01%');
+    expect(card.textContent).toContain('23.04%');
+    expect(screen.getByTestId('rate-fraction').textContent).toBe('801 responders ÷ 3,476 reached');
+    expect(screen.queryByTestId('rate-manual-mark')).toBeNull();
     expect(screen.queryByTestId('rate-since')).toBeNull();
-    const tip = screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')!;
-    expect(tip).toContain('801 ÷ (1,222 measured + 2,557 estimated) = 21.20%');
-    expect(tip).toContain('MAJAAL: 86.3 per week × 11.86 weeks (12 Jul – 02 Oct) = 1,023');
-    expect(tip).toContain('TIKA: 191.8 per week × 8.00 weeks (08 Aug – 02 Oct) = 1,534');
-    expect(tip).toContain('left out: week of 31 Oct (Meta outage)');
-    expect(tip).toContain('did not keep successful messages before 03 Oct');
-  });
-
-  it('response rate without a complete measured week: no estimate and says so', () => {
-    render(<ResponseRateCard state={rateState({ ...RATE, estimateStatus: 'no_basis' })} />);
-    expect(screen.getByTestId('rate-no-basis').textContent).toBe('Not estimated before 03 Oct 2026: no complete measured week yet');
     expect(screen.queryByTestId('rate-estimate-badge')).toBeNull();
+    expect(card.textContent).not.toContain('incl. estimate ·');
+    const tip = screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')!;
+    expect(tip).toContain('Responders ÷ (Delivered + Read) = 801 ÷ (1,095 + 2,381) = 23.04%');
+    expect(tip).toContain('Measured (from 03 Oct): 1,222\nMeta manual: 1,127\nEstimate: 1,127\nTotal: 3,476');
+    expect(tip).toContain('12 Jul – 12 Aug estimated · 13 Aug – 02 Oct from Meta (manual; 13–31 Aug Delivered/Read estimated) · from 03 Oct measured');
   });
 
-  it('response rate without the filter note when only company / date filters are set; restricted and waiting say why', () => {
+  it('response rate: the filter explanation is in the ⓘ help of the card', () => {
+    expect(VISUAL_HELP['process.npsScore.responseRate'].help.formula).toEqual(expect.arrayContaining([
+      'Company and date filters only: the other filters (customer group, channel, branch, salesperson, customer) are not applied, on either side',
+      'Responders = every rating of the selected companies',
+    ]));
+  });
+
+  it('response rate without the filter line in the tooltip when only company / date filters are set; restricted and waiting say why', () => {
     const { unmount } = render(<ResponseRateCard state={rateState({ ...RATE, companyAndDateOnly: false })} />);
-    expect(screen.queryByTestId('rate-company-only')).toBeNull();
+    expect(screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')).not.toContain('Company and date filters only');
     unmount();
     const r2 = render(<ResponseRateCard state={rateState({ ...RATE, status: 'restricted', rate: null })} />);
     expect(screen.getByTestId('rate-card').textContent).toContain('Unavailable for your assigned data scope.');
@@ -176,10 +187,10 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
   });
 });
 
-// the local data: 15 cases with a status (Open 13 = New 11 + In progress 2, Close 1, Disputed 1), 28 Historical
+// the local data: 15 cases with a status (Open 13 = New 11 + In progress 2, Closed 1, Disputed 1), 28 Historical
 const SUMMARY: NpsFollowupSummary = {
-  dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 15, rejected: 1, historical: 28, noCase: 0,
-  // Resolved Ageing: 1 resolved in a day; 13 open (5 under a day, 2 at 1-2 d, 4 at 5-10 d, 2 over 30 d); Rejected out
+  dateFrom: '2026-01-01', dateTo: '2026-10-20', detractors: 43, charted: 15, unresolved: 1, historical: 28, noCase: 0,
+  // Resolved Ageing: 1 resolved in a day; 13 open (5 under a day, 2 at 1-2 d, 4 at 5-10 d, 2 over 30 d); Unresolved out
   ageing: {
     buckets: [
       { key: 'd1', label: '≤ 1 d', withinSla: true, resolved: 1, open: 5 }, { key: 'd2', label: '1–2 d', withinSla: true, resolved: 0, open: 2 },
@@ -191,8 +202,8 @@ const SUMMARY: NpsFollowupSummary = {
   },
   byStatus: [
     { key: 'OPEN', count: 13, stages: [{ stage: 'NEW', count: 11 }, { stage: 'CONTACTED', count: 0 }, { stage: 'IN_PROGRESS', count: 2 }] },
-    { key: 'CLOSE', count: 1, stages: [{ stage: 'RESOLVED', count: 1 }] },
-    { key: 'DISPUTED', count: 1, stages: [{ stage: 'REJECTED', count: 1 }] },
+    { key: 'CLOSED', count: 1, stages: [{ stage: 'RESOLVED', count: 1 }] },
+    { key: 'DISPUTED', count: 1, stages: [{ stage: 'UNRESOLVED', count: 1 }] },
   ],
   byReason: [{ categoryKey: null, label: 'Not yet classified', labelAr: null, count: 12, subReasons: [] },
     { categoryKey: 'delivery', label: 'Delivery & Logistics', labelAr: 'التوصيل والخدمات اللوجستية', count: 3,
@@ -202,7 +213,7 @@ const SUMMARY: NpsFollowupSummary = {
 const fuState = (data: NpsFollowupSummary | null) => ({ data, loading: false, error: null, retry: () => undefined });
 
 describe('follow-up charts (live)', () => {
-  it('Resolved Ageing: six stacked bars, the Close SLA line after 2–5 d, the SLA line under it, Rejected / Historical in the note', () => {
+  it('Resolved Ageing: six stacked bars, the Close SLA line after 2–5 d, the SLA line under it, Unresolved / Historical in the note', () => {
     render(<FollowupCharts state={fuState(SUMMARY)} part="resolved" />);
     expect(screen.getByText('Resolved Ageing')).toBeTruthy();
     expect(screen.queryByText('Resolved by time')).toBeNull();
@@ -226,19 +237,19 @@ describe('follow-up charts (live)', () => {
     expect([...patterns].map((p) => p.querySelector('rect:last-child')?.getAttribute('fill'))).toEqual(['var(--ps-sla-green)', 'var(--ps-sla-red)']);
     expect(within(screen.getByTestId('fu-ageing')).queryByRole('button')).toBeNull(); // no click-to-filter: the detractor list has no chart filter
     expect(screen.queryByTestId('fu-by-status')).toBeNull();
-    expect(screen.getByTestId('fu-left-out').textContent).toBe('Rejected: 1 · Historical: 28');
+    expect(screen.getByTestId('fu-left-out').textContent).toBe('Unresolved: 1 · Historical: 28');
     expect(screen.queryByText(/Waiting for the follow-up data source|No follow-up data/)).toBeNull();
   });
 
-  it('keeps the SLA shares and exclusion note visible when all cases are Rejected or Historical', () => {
-    render(<FollowupCharts state={fuState({ ...SUMMARY, charted: 1, rejected: 1,
+  it('keeps the SLA shares and exclusion note visible when all cases are Unresolved or Historical', () => {
+    render(<FollowupCharts state={fuState({ ...SUMMARY, charted: 1, unresolved: 1,
       ageing: { buckets: SUMMARY.ageing.buckets.map((b) => ({ ...b, resolved: 0, open: 0 })),
         closedInSla: { count: 0, of: 0 }, contactedInSla: { count: 0, of: 0 } } })} part="resolved" />);
     expect(screen.getByTestId('fu-ageing-sla').textContent).toContain('Closed within SLA: — (none due yet)');
-    expect(screen.getByTestId('fu-left-out').textContent).toBe('Rejected: 1 · Historical: 28');
+    expect(screen.getByTestId('fu-left-out').textContent).toBe('Unresolved: 1 · Historical: 28');
   });
 
-  it('status: Open / Close / Disputed; a click drills into the stages (0 kept as 0) and "← All statuses" goes back', () => {
+  it('status: Open / Closed / Disputed; a click drills into the stages (0 kept as 0) and "← All statuses" goes back', () => {
     render(<FollowupCharts state={fuState(SUMMARY)} part="status" />);
     expect(screen.getByText('Detractors by status')).toBeTruthy();
     expect(screen.getByTestId('fu-status-OPEN').textContent).toContain('Open');

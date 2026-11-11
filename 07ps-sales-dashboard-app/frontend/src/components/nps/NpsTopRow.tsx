@@ -3,7 +3,7 @@ import React from 'react';
 import { Reply, Smile, ThumbsUp } from 'lucide-react';
 import { CompactKpiCard, KpiCard } from '@07ps/ui';
 import type { NpsBandScale, NpsCounts, NpsResponseRate } from '../../lib/api';
-import { NPS_CONTEXT, bandStatus, csatFooter, estimateBadge, fmt2, longDate, measuredLine, npsBreakdown, npsFooter, pct, rateFraction, responseRateMetrics, responseRateTooltip, smallSample } from '../../lib/nps/view';
+import { NPS_CONTEXT, bandStatus, csatFooter, fmt2, npsBreakdown, npsFooter, pct, rateFraction, responseRateMetrics, responseRateTooltip, smallSample } from '../../lib/nps/view';
 
 export type RateState = { data: NpsResponseRate | null; loading: boolean; error: string | null; retry: () => void };
 
@@ -68,9 +68,8 @@ export function NpsTopRow({ totals, thresholds, rate }: {
 }
 
 /**
- * The narrow middle card: responders / (Delivered + Read), company and date filters only. A period reaching before the
- * reach start includes an estimate of that gap (badge + the measured-only rate on a second line); the sparkline is
- * measured weeks only.
+ * The narrow middle card: responders / (Delivered + Read), company and date filters only, from the first day with reach.
+ * Delivered + Read = the Survey Reach cards: measured from 03 Oct, the approved manual reach 12 Jul – 02 Oct. The tooltip shows the source breakdown. The sparkline is every week counted.
  */
 export function ResponseRateCard({ state }: { state: RateState }) {
   const r = state.data;
@@ -82,25 +81,8 @@ export function ResponseRateCard({ state }: { state: RateState }) {
     const why = r.status === 'restricted' ? 'Unavailable for your assigned data scope.' : 'Waiting for the WhatsApp message data.';
     return <CompactKpiCard {...vh("process.npsScore.responseRate")} title="Response Rate" icon={Reply} status="neutral" valueLabel="—" referenceMetrics={[]} notes={[why]} testId="rate-card" />;
   }
-  const badge = estimateBadge(r);
-  const notes: React.ReactNode[] = badge
-    ? [
-        <span key="est" data-testid="rate-estimate-badge"
-          style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, border: '1px solid var(--ps-color-watch-border)',
-            background: 'var(--ps-color-watch-bg)', color: 'var(--ps-color-text)', fontWeight: 600 }}>{badge}</span>,
-        <span key="measured" data-testid="rate-measured">{measuredLine(r)}</span>,
-      ]
-    : [
-        <span key="since" data-testid="rate-since">since {longDate(r.reachStart ?? r.dateFrom)}</span>,
-        <span key="what">Responders ÷ (Delivered + Read)</span>,
-      ];
-  if (r.estimateStatus === 'no_basis') {
-    notes.push(<span key="nobasis" data-testid="rate-no-basis">Not estimated before {longDate(r.reachStart)}: no complete measured week yet</span>);
-  }
-  if (r.companyAndDateOnly) {
-    notes.push(<strong key="only" data-testid="rate-company-only">Company and date filters only</strong>);
-    notes.push(<span key="numerator" data-testid="rate-numerator-note">Responders = every rating of the selected companies (other filters not applied)</span>);
-  }
+  const notes = ['Responders ÷ (Delivered + Read)'];
+  // "Company and date filters only" and what the numerator counts live in the ⓘ (visualHelp) and the value tooltip
   return (
     <CompactKpiCard {...vh("process.npsScore.responseRate")}
       title="Response Rate"

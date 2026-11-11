@@ -133,7 +133,6 @@ function NpsScoreBody() {
         <span title="Every visual on this page covers this period (rating date / message date, Tripoli time)" data-testid="nps-period"><strong>{periodCaption(period)}</strong></span>
         <span>Latest rating <strong>{meta.data?.lastRatingAt ? `${meta.data.lastRatingAt.slice(0, 16)}` : '—'}</strong></span>
         <span>Ratings since <strong>{longDate(meta.data?.firstRatingDate)}</strong></span>
-        <span>Reach since <strong>{longDate(rate.data?.reachStart)}</strong></span>
         {freshness?.lastFailureUtc ? <span style={{ color: 'var(--ps-color-alert)' }}>Last NPS run failed at {formatTimestamp(freshness.lastFailureUtc)}</span> : null}
       </div>
 

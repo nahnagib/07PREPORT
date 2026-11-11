@@ -498,7 +498,7 @@ export const VISUAL_HELP = {
   'process.npsScore.responseRate': {
     help: {
       definition: 'Share of the feedback messages that reached the customer and got a rating.',
-      formula: ['Response Rate = Responders ÷ (Delivered + Read)', '12 Jul – 02 Oct: Delivered + Read estimated per company (the same figure as the Survey Reach cards)', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
+      formula: ['Response Rate = Responders ÷ (Delivered + Read)', 'Delivered + Read = the Survey Reach cards: measured from 03 Oct; 12 Jul – 02 Oct from the approved manual reach (Meta exports + estimates)', 'Company and date filters only: the other filters (customer group, channel, branch, salesperson, customer) are not applied, on either side', 'Responders = every rating of the selected companies', 'Rate of reach (Survey Reach) = Responders ÷ Total Reach, never above the Response Rate', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
     },
   },
   'process.npsScore.satisfactionTrend': {
@@ -510,21 +510,21 @@ export const VISUAL_HELP = {
     interactions: ['Switch week / month / year'],
   },
   'process.npsScore.reach': {
-    help: { definition: 'WhatsApp feedback messages by message date and company: Delivered, Read, Not Delivered and Error.' },
+    help: { definition: 'WhatsApp feedback messages by message date and company: Delivered, Read, Not Delivered and Error. Measured from 03 Oct 2026; 12 Jul – 02 Oct is the approved manual reach (12 Jul – 12 Aug estimated, 13 Aug – 02 Oct from Meta exports; 13–31 Aug Delivered/Read estimated), spread evenly over the days. Card tooltips show the measured, Meta manual and estimated figures.' },
   },
   'process.npsScore.errors': {
-    help: { definition: 'Messages that failed, by the error WhatsApp returned.' },
+    help: { definition: 'Messages that failed, by the error WhatsApp returned. Before 03 Oct the failed messages come from the manual reach without a reason: "Unclassified (Meta manual)".' },
   },
   'process.npsScore.byReason': {
     help: { definition: 'Detractor cases by the reason category recorded on the Detractor Follow-up page, live. "Not yet classified" = a case without a reason yet. Click a category to see its sub-reasons. Same total as the other follow-up charts (Historical left out).' },
     interactions: ['Click a category to see its sub-reasons; "← All reasons" goes back'],
   },
   'process.npsScore.byStatus': {
-    help: { definition: 'Detractor cases by status (Open, Close, Disputed), worked out from the follow-up stage, live. Click a status to see its stages. Historical cases have no status and are left out. Same total as the other follow-up charts.' },
+    help: { definition: 'Detractor cases by status (Open, Closed, Disputed), worked out from the follow-up stage, live. Click a status to see its stages. Historical cases have no status and are left out. Same total as the other follow-up charts.' },
     interactions: ['Click a status to see its stages; "← All statuses" goes back'],
   },
   'process.npsScore.resolvedByTime': {
-    help: { definition: `Detractor cases by age from case creation: resolved cases by the time they took, open cases by their age today. Bars left of the "Close SLA ${NPS_SLA.closeDays} d" line are within SLA, right of it breached. Solid = resolved; hatched = still open. Unresolved, Rejected and Historical have no SLA and are left out.`,
+    help: { definition: `Detractor cases by age from case creation: resolved cases by the time they took, open cases by their age today. Bars left of the "Close SLA ${NPS_SLA.closeDays} d" line are within SLA, right of it breached. Solid = resolved; hatched = still open. Unresolved and Historical have no SLA and are left out.`,
       formula: `Closed within SLA = resolved within ${NPS_SLA.closeDays} d ÷ all resolved · Contacted within ${NPS_SLA.contactHours} h = contacted within ${NPS_SLA.contactHours} h ÷ cases contacted, resolved or open beyond ${NPS_SLA.contactHours} h (each counted once)` },
   },
   'process.npsScore.detractors': {

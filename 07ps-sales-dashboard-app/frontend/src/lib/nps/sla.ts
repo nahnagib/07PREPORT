@@ -18,7 +18,6 @@ export type SlaRule =
   | 'resolved_in_sla'
   | 'resolved_late'
   | 'unresolved'
-  | 'rejected'
   | 'historical';
 
 export interface CaseSla {
@@ -63,8 +62,6 @@ export function slaHint(sla: CaseSla): string {
       return `Close SLA missed by ${days(sla.overByHours ?? 0)}`;
     case 'unresolved':
       return 'Unresolved: no SLA';
-    case 'rejected':
-      return 'Rejected: no SLA';
     default:
       return 'Historical (rated before the follow-up started): no SLA';
   }

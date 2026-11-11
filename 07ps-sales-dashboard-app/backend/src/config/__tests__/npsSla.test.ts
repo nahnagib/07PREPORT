@@ -68,13 +68,13 @@ describe('colour rule (every row of the SLA table)', () => {
     expect(resolved(120)).toMatchObject({ band: 'green', rule: 'resolved_in_sla', hours: 120 });
     expect(resolved(120.5)).toMatchObject({ band: 'red', rule: 'resolved_late', overByHours: 0.5 });
   });
-  it('Rejected / Historical: grey, no SLA', () => {
+  it('Unresolved / Historical: grey, no SLA', () => {
     expect(
       caseSla(
-        { stage: 'REJECTED', createdAt: CREATED, contactedAt: null, resolvedAt: null },
+        { stage: 'UNRESOLVED', createdAt: CREATED, contactedAt: null, resolvedAt: null },
         at(500),
       ),
-    ).toMatchObject({ band: 'grey', rule: 'rejected', hours: null });
+    ).toMatchObject({ band: 'grey', rule: 'unresolved', hours: null });
     expect(
       caseSla(
         { stage: 'HISTORICAL', createdAt: CREATED, contactedAt: null, resolvedAt: null },
@@ -152,10 +152,10 @@ describe('Resolved Ageing', () => {
       c(open(130), 'NEW', false), //                   d10 open, close + contact missed
       c(
         caseSla(
-          { stage: 'REJECTED', createdAt: CREATED, contactedAt: null, resolvedAt: null },
+          { stage: 'UNRESOLVED', createdAt: CREATED, contactedAt: null, resolvedAt: null },
           at(10),
         ),
-        'REJECTED',
+        'UNRESOLVED',
         false,
       ), // left out
       c(

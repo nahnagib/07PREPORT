@@ -1,4 +1,4 @@
-import type { NpsBand, NpsCounts, NpsFollowupStage, NpsFollowupStatus, NpsResponseRate, NpsTrend } from '../api';
+import type { NpsBand, NpsCounts, NpsFollowupStage, NpsFollowupStatus, NpsManualPeriod, NpsReachSource, NpsResponseRate, NpsTrend } from '../api';
 
 /**
  * NPS Score page helpers (app/(departments)/process/nps-score). Pure, so they are unit tested. Every figure comes from
@@ -166,75 +166,95 @@ export function responseRateMetrics(r: Pick<NpsResponseRate, 'target' | 'varianc
 }
 
 type RateTip = Pick<NpsResponseRate, 'responders' | 'delivered' | 'read' | 'reached' | 'totalReach' | 'rate' | 'rateOfReach'>
-  & Partial<Pick<NpsResponseRate, 'isEstimated' | 'estimate' | 'measured' | 'reachStart'>>;
+  & Partial<Pick<NpsResponseRate, 'includesManual' | 'reachedBySource' | 'manualPeriods' | 'reachStart' | 'companyAndDateOnly'>>;
+
+/** What the Response Rate counts and which filters it uses (the ⓘ and the value tooltip; no longer printed on the card). */
+export const RATE_FILTER_NOTE = 'Company and date filters only: the other filters (customer group, channel, branch, salesperson, customer) '
+  + 'are not applied, on either side. Responders = every rating of the selected companies.';
+
+/**
+ * Rate of reach = Responders ÷ Total Reach (Total Reach = Delivered + Not Delivered + Read + Error + other states), from
+ * the API's response rate (backend fetchNpsResponseRate: the SAME reach read as the cards). Total Reach ≥ Delivered +
+ * Read, so it is never above the Response Rate, and is capped at 100%. "—" without a figure.
+ */
+export function rateOfReachLine(r: Pick<NpsResponseRate, 'responders' | 'totalReach' | 'rateOfReach'> | null): { value: string; tip: string } {
+  const value = r && r.rateOfReach !== null ? pct(r.rateOfReach) : '—';
+  const counts = r && r.rateOfReach !== null && r.responders <= r.totalReach ? ` = ${count(r.responders)} ÷ ${count(r.totalReach)} = ${value}` : '';
+  return { value, tip: `Rate of reach = Responders ÷ Total Reach${counts}\nTotal Reach = Delivered + Not Delivered + Read + Error + any other state. Capped at 100%.` };
+}
 
 const count = (n: number) => n.toLocaleString('en-US');
 
+/** "13–31 Aug" inside one month, else "13 Aug – 02 Oct". */
+const dayRange = (from: string, to: string) =>
+  (from.slice(0, 7) === to.slice(0, 7) ? `${from.slice(8, 10)}–${dayMonth(to)}` : `${dayMonth(from)} – ${dayMonth(to)}`);
+const nextDay = (iso: string) => new Date(Date.parse(`${iso}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+
 /**
- * The hover text of the response rate: the formula with its counts, and responders / Total Reach. With the estimate:
- * the formula over measured + estimated reached, the per-week basis, the measured-only rate, and why it is estimated.
+ * Where the reach of 12 Jul – 02 Oct comes from, from the manual periods (backend migration 0071), then the measured
+ * part: "12 Jul – 12 Aug estimated · 13 Aug – 02 Oct from Meta (manual; 13–31 Aug Delivered/Read estimated) · from
+ * 03 Oct measured". Back-to-back periods of the same kind are merged; '' without manual periods.
+ */
+export function manualSubtitle(periods: NpsManualPeriod[], reachStart: string | null): string {
+  const runs: { kind: 'estimate' | 'meta'; from: string; to: string; mixed: { from: string; to: string }[] }[] = [];
+  for (const p of [...periods].sort((a, b) => a.from.localeCompare(b.from))) {
+    const kind = p.source === 'estimate' ? 'estimate' : 'meta';
+    const last = runs[runs.length - 1];
+    if (last && last.kind === kind && nextDay(last.to) >= p.from) {
+      if (p.to > last.to) last.to = p.to;
+    } else runs.push({ kind, from: p.from, to: p.to, mixed: [] });
+    const run = runs[runs.length - 1];
+    if (p.source === 'meta_manual+estimate' && !run.mixed.some((m) => m.from === p.from && m.to === p.to)) run.mixed.push({ from: p.from, to: p.to });
+  }
+  if (runs.length === 0) return '';
+  const parts = runs.map((r) => (r.kind === 'estimate'
+    ? `${dayMonth(r.from)} – ${dayMonth(r.to)} estimated`
+    : `${dayMonth(r.from)} – ${dayMonth(r.to)} from Meta (manual${r.mixed.map((m) => `; ${dayRange(m.from, m.to)} Delivered/Read estimated`).join('')})`));
+  if (reachStart) parts.push(`from ${dayMonth(reachStart.slice(0, 10))} measured`);
+  return parts.join(' · ');
+}
+
+/** The mark on a card whose figure includes manual or estimated reach. */
+/** A reach figure split by source: "Measured (from 03 Oct): 1,222 · Meta manual: 1,141 · Estimate: 1,113 · Total: 3,476". */
+export function sourceSplit(split: Record<NpsReachSource, number>, reachStart: string | null): string {
+  return [
+    `Measured${reachStart ? ` (from ${dayMonth(reachStart.slice(0, 10))})` : ''}: ${count(split.etl)}`,
+    `Meta manual: ${count(split.manual)}`,
+    `Estimate: ${count(split.estimate)}`,
+    `Total: ${count(split.etl + split.manual + split.estimate)}`,
+  ].join('\n');
+}
+
+/**
+ * The hover text of the response rate: the formula with its counts. With manual reach in the period: Delivered + Read
+ * split measured / Meta manual / estimate, and where each part comes from.
  */
 export function responseRateTooltip(r: RateTip): string {
-  if (!r.isEstimated || !r.estimate) {
-    return [
-      `Responders ÷ (Delivered + Read) = ${r.responders} ÷ (${r.delivered} + ${r.read}) = ${pct(r.rate)}`,
-      'Customers can only answer a message that reached them.',
-    ].join('\n');
+  const lines = [`Responders ÷ (Delivered + Read) = ${count(r.responders)} ÷ (${count(r.delivered)} + ${count(r.read)}) = ${pct(r.rate)}`];
+  if (r.includesManual && r.reachedBySource) {
+    lines.push(`Delivered + Read:\n${sourceSplit(r.reachedBySource, r.reachStart ?? null)}`);
+    const where = manualSubtitle(r.manualPeriods ?? [], r.reachStart ?? null);
+    if (where) lines.push(where);
   }
-  const e = r.estimate;
-  const measuredReached = r.reached - e.reached;
-  const start = r.reachStart ? dayMonth(r.reachStart) : dayMonth(e.to);
-  const basis = e.basis === 'fixed'
-    ? 'Per week: fixed setting, split by the companies\' measured share'
-    : `Per week = average Delivered + Read of ${e.basisWeeks} complete week${e.basisWeeks === 1 ? '' : 's'}`
-      + `${e.basisFrom && e.basisTo ? `, ${dayMonth(e.basisFrom)} – ${dayMonth(e.basisTo)}` : ''}`
-      + `${e.excludedWeeks?.length ? `; left out: ${e.excludedWeeks.map((w) => `week of ${dayMonth(w)}`).join(', ')} (Meta outage)` : ''}`;
-  const lines = [
-    `Responders ÷ (Delivered + Read) = ${count(r.responders)} ÷ (${count(measuredReached)} measured + ${count(e.reached)} estimated) = ${pct(r.rate)}`,
-    ...(e.byCompany ?? []).map((c) =>
-      `${c.company}: ${c.perWeek.toFixed(1)} per week × ${c.weeks.toFixed(2)} weeks (${dayMonth(c.from)} – ${dayMonth(c.to)}) = ${count(c.reached)}`),
-    basis,
-  ];
-  if (r.measured) lines.push(`Measured since ${dayMonth(r.measured.from)}: ${count(r.measured.responders)} ÷ ${count(r.measured.reached)} = ${pct(r.measured.rate)}`);
-  lines.push(`The WhatsApp source did not keep successful messages before ${start}, so that part is estimated.`);
+  lines.push('Customers can only answer a message that reached them.');
+  if (r.companyAndDateOnly) lines.push(RATE_FILTER_NOTE);
   return lines.join('\n');
 }
 
-/** The Message reach card tooltip: the measured value and the gap value (estimated, or real for Error). */
-export function reachBoxTooltip(box: 'totalReach' | 'delivered' | 'notDelivered' | 'read' | 'error', measured: number, gap: number,
-  reachStart: string | null, estimate: { from: string; to: string }): string {
-  const gapLabel = box === 'error'
-    ? `${dayMonth(estimate.from)} – ${dayMonth(estimate.to)} (actual, kept by the source)`
-    : `${dayMonth(estimate.from)} – ${dayMonth(estimate.to)} (estimated)`;
-  return `Measured from ${reachStart ? dayMonth(reachStart) : '—'}: ${count(measured)}\n${gapLabel}: ${count(gap)}\nTotal: ${count(measured + gap)}`;
-}
-
-/** "Measured from 03 Oct 2026 · 12 Jul – 02 Oct estimated" (the Message reach panel's subtitle when the gap is in). */
-export const reachSubtitle = (reachStart: string | null, estimate: { from: string; to: string }): string =>
-  `Measured from ${longDate(reachStart)} · ${dayMonth(estimate.from)} – ${dayMonth(estimate.to)} estimated`;
-
-/** "801 responders ÷ 4,063 reached": the numerator and the denominator the headline uses. */
+/** "801 responders ÷ 3,476 reached": the numerator and the denominator the headline uses. */
 export const rateFraction = (r: Pick<NpsResponseRate, 'responders' | 'reached'>): string =>
   `${count(r.responders)} responders ÷ ${count(r.reached)} reached`;
-
-/** "incl. estimate · 12 Jul – 02 Oct"; null when nothing is estimated. */
-export const estimateBadge = (r: Pick<NpsResponseRate, 'isEstimated' | 'estimate'>): string | null =>
-  (r.isEstimated && r.estimate ? `incl. estimate · ${dayMonth(r.estimate.from)} – ${dayMonth(r.estimate.to)}` : null);
-
-/** "Measured since 03 Oct: 22.01%" ("—" when the period has no measured part). */
-export const measuredLine = (r: Pick<NpsResponseRate, 'measured' | 'reachStart'>): string =>
-  `Measured since ${dayMonth((r.measured?.from ?? r.reachStart ?? '').slice(0, 10) || '0000-00-00')}: ${r.measured ? pct(r.measured.rate) : '—'}`;
 
 // -- follow-up charts -----------------------------------------------------------------------------------------------------
 /** "Detractors by status", level 1 (the generated status). */
 export const FOLLOWUP_STATUS_SLICES: Record<NpsFollowupStatus, { label: string; color: string }> = {
   OPEN: { label: 'Open', color: 'var(--ps-fu-open)' },
-  CLOSE: { label: 'Closed', color: 'var(--ps-fu-close)' },
+  CLOSED: { label: 'Closed', color: 'var(--ps-fu-close)' },
   DISPUTED: { label: 'Disputed', color: 'var(--ps-fu-disputed)' },
 };
 
 export const FOLLOWUP_STAGE_LABEL: Record<NpsFollowupStage, string> = {
-  HISTORICAL: 'Historical', NEW: 'New', CONTACTED: 'Contacted', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', UNRESOLVED: 'Unresolved', REJECTED: 'Rejected',
+  HISTORICAL: 'Historical', NEW: 'New', CONTACTED: 'Contacted', IN_PROGRESS: 'In Progress', RESOLVED: 'Resolved', UNRESOLVED: 'Unresolved',
 };
 
 /** The stages in the status drill-down: a single-stage status keeps its status colour; Open's three are validated apart. */
@@ -245,7 +265,6 @@ export const FOLLOWUP_STAGE_COLOR: Record<NpsFollowupStage, string> = {
   IN_PROGRESS: 'var(--ps-fu-plum)',
   RESOLVED: 'var(--ps-fu-close)',
   UNRESOLVED: 'var(--ps-fu-disputed)',
-  REJECTED: 'var(--ps-fu-disputed)',
 };
 
 /** The follow-up page's case card (?case=ID); a Historical case opens over the List view (the board hides them). */
