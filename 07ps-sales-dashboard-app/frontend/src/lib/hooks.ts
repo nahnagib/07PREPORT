@@ -52,6 +52,7 @@ import {
   type AgingCategory,
   type AgingDetails,
 } from './api';
+import { fetchPeopleOverview, type PeopleOverview } from './salesPeoplePerformance';
 
 interface AsyncState<T> {
   data: T | null;
@@ -280,6 +281,38 @@ export function useCriticalNumberOverview(
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
+/** Sales People Performance overview (backend's /sales-people-performance/overview). Same authGate/makeRetry
+ * template as useCriticalNumberOverview; `enabled` = the viewer may open the page. */
+export function useSalesPeopleOverview(
+  token: string | null,
+  anchorDate: string,
+  filters: TachometerFilters,
+  authError: string | null,
+  retryAuth: () => void,
+  enabled = true,
+) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
+  const [state, setState] = useState<AsyncState<PeopleOverview>>({ data: null, loading: true, error: null });
+
+  const load = useCallback(() => {
+    if (!enabled) return;
+    if (authGate(token, authError, setState)) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
+    fetchPeopleOverview(token as string, anchorDate, filters)
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
 
   useEffect(() => {
     load();

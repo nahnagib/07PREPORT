@@ -312,6 +312,81 @@ export const VISUAL_HELP = {
   'promotion.pipelineTrend.agingDrill': {
     help: { definition: 'The open opportunities or quotations in the age bucket you clicked.' },
   },
+  // ---- Sales People Performance (docs/sales-people-performance.md) -----------------------------------------------------
+  'promotion.salesPeople.statusCards': {
+    help: {
+      definition: 'Sales people in each YTD status and how far their combined sales are from their combined target.',
+      formula: [
+        'Achievement = Actual YTD ÷ prorated YTD target',
+        'LYD variance = Σ Actual − Σ Target of the people in the card',
+        '% vs target = (Σ Actual − Σ Target) ÷ Σ Target of the people in the card',
+      ],
+      notes: 'Only people with a positive YTD target are included. Critical ≤50% · Need attention >50–90% · '
+        + 'Behind target >90–<100% · On target 100–110% · Top performer >110%.',
+    },
+    interactions: ['Click a status card to filter contributions, sales charts and the details table', 'Click it again, or Total sales people, to show everyone'],
+  },
+  'promotion.salesPeople.topPeople': {
+    help: {
+      definition: 'The #1 person of each status: the best for Top performer and On target, the one furthest behind for Behind '
+        + 'target, Need attention and Critical.',
+      formula: [
+        'Variance % = (Actual YTD − YTD target) ÷ YTD target (the ranking and the big number)',
+        'Team pulse: achievement = Σ actual ÷ Σ YTD target; need/month = (full-year target − YTD actual) ÷ months left; '
+          + 'running/month = YTD actual ÷ months elapsed',
+      ],
+      notes: 'Always ranked by variance % to YTD target; a tie goes to the higher actual value. The first card (Team pulse) '
+        + 'covers everyone on the page, or the selected person.',
+    },
+    interactions: [
+      'Search a name: each card then shows the #1 among the matching people',
+      'Click a person to follow them in the charts and the details table',
+    ],
+  },
+  'promotion.salesPeople.details': {
+    help: {
+      definition: 'YTD actual, target, last year and variance for every person in the selection.',
+      formula: ['Variance = Actual − YTD target', 'Variance % = (Actual − Target) ÷ Target', 'Achievement = Actual ÷ Target'],
+      notes: 'Same period last year = 1 Jan to the same date last year.',
+    },
+    interactions: ['Click a row to select that person', ...GRID],
+  },
+  'promotion.salesPeople.statusMix': {
+    help: {
+      definition: 'How many people are in each performance status and how their share of the team compares with the benchmark.',
+      formula: [
+        'Team share = people in the status ÷ everyone in scope with a target for the period',
+        'Gap in percentage points = difference between the team share and the benchmark',
+      ],
+      notes: 'The ≥ benchmarks are minimums and the ≤ benchmarks are caps. Monthly status uses month actual ÷ month target. '
+        + 'The current month uses the target prorated to the as-of date. Selecting a person shows their status row using the full team share.',
+    },
+    interactions: ['Pick YTD or a month', 'Hover a status for its headcount, team share and benchmark gap', 'Export the figures as PDF'],
+  },
+  'promotion.salesPeople.actualVsTarget': {
+    help: { definition: 'Monthly actual sales value (LYD) against the monthly target for the selection.' },
+    interactions: ['Hover a month for actual and target', 'Export the monthly figures as PDF'],
+  },
+  'promotion.salesPeople.momStatus': {
+    help: {
+      definition: 'Month by month, the achievement of the people in each status that month.',
+      formula: 'Achievement = Σ month actual ÷ Σ monthly target of the people in the status',
+      notes: 'Status uses that month\'s actual ÷ monthly target, so people move between lines from month to month. '
+        + 'The anchor month is partial (target prorated to the as-of date). Dashed line = 100%.',
+    },
+    interactions: ['Click a status in the legend to hide or show its line', 'Hover a month for achievement, LYD and people', 'Export as PDF'],
+  },
+  'promotion.salesPeople.contributions': {
+    help: {
+      definition: 'Share of the selection\'s YTD actual sales by company, then segment, sales team and person. With a person '
+        + 'selected it opens on their team, highlights them and shows their share at every level.',
+      formula: ['Share = slice YTD actual ÷ YTD actual of all slices', 'Achievement = slice actual ÷ slice target'],
+      notes: 'Sales are attributed to each sale\'s company, effective segment and effective sales team. A person\'s target '
+        + 'is split across them in proportion to their YTD target plan. A Group level appears first only when there is more '
+        + 'than one group. Slices with net-negative sales are listed without a share.',
+    },
+    interactions: ['Click a slice or a row in the list to drill down', 'Use the breadcrumb to go back up', 'Export the current level as PDF'],
+  },
   // ---- Activity Momentum ----------------------------------------------------------------------------------------------
   'promotion.activityMomentum.counts': {
     help: {

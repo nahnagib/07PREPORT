@@ -17,6 +17,7 @@ export const NAV_ITEMS = [
   { label: 'Tachometer', icon: GaugeIcon, href: '/promotion/tachometer', pageKey: 'tachometer', department: 'promotion' },
   { label: 'Critical Number', icon: AlertTriangle, href: '/promotion/critical-number', pageKey: 'critical_number', department: 'promotion' },
   { label: 'Revenue Trend', icon: TrendingUp, href: '/promotion/revenue-trend', pageKey: 'revenue_trend', department: 'promotion' },
+  { label: 'Sales People Performance', icon: Users, href: '/promotion/sales-people-performance', pageKey: 'sales_people_performance', department: 'promotion' },
   { label: 'Invoices Engine', icon: FileText, href: '/promotion/invoices-engine', pageKey: 'invoices_engine', department: 'promotion' },
   { label: 'Customer Growth', icon: Users, href: '/promotion/customer-growth', pageKey: 'customer_growth', department: 'promotion' },
   { label: 'Pipeline Health', icon: Filter, href: '/promotion/pipeline-health', pageKey: 'pipeline_health', department: 'promotion' },
