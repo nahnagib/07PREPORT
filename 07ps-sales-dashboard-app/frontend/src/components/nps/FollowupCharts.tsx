@@ -16,7 +16,7 @@ const NOTE = { fontSize: 12, color: 'var(--ps-color-neutral-text)', margin: '4px
 function LeftOut({ s, withUnresolved = false }: { s: NpsFollowupSummary; withUnresolved?: boolean }) {
   return (
     <p style={NOTE} data-testid="fu-left-out">
-      {withUnresolved ? `Unresolved: ${formatNumber(s.unresolved)} · ` : ''}Historical: {formatNumber(s.historical)}
+      {withUnresolved ? `Unresolved: ${formatNumber(s.unresolved ?? 0)} · ` : ''}Historical: {formatNumber(s.historical)}
       {s.noCase > 0 ? ` · Not yet a case: ${formatNumber(s.noCase)}` : ''}
     </p>
   );
