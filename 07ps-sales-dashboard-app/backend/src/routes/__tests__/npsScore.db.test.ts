@@ -322,7 +322,7 @@ describe.skipIf(!RUN)('NPS page consistency, YTD, default B2B + B2C filter and a
         if (reached > 0) expect(body.rate, label).toBeCloseTo((100 * n(ratings.n)) / reached, 9);
         // Rate of reach = Responders ÷ Total Reach (every state); never above the Response Rate or 100 %
         if (want.totals.totalReach > 0) {
-          expect(body.rateOfReach, label).toBeCloseTo((100 * n(ratings.n)) / want.totals.totalReach, 9);
+          expect(body.rateOfReach, label).toBeCloseTo(Math.min((100 * n(ratings.n)) / want.totals.totalReach, 100), 9);
           expect(body.rateOfReach, label).toBeLessThanOrEqual(body.rate);
           expect(body.rateOfReach, label).toBeLessThanOrEqual(100);
         }

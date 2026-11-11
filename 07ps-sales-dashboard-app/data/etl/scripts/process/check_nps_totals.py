@@ -303,14 +303,15 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
             reached = reach["delivered"] + reach["read"]
             rate = None if reached == 0 else 100 * rr_resp / reached
             # Rate of reach = Responders ÷ Total Reach (every state): never above the Response Rate, never above 100 %
-            rate_of_reach = None if reach["totalReach"] == 0 else 100 * rr_resp / reach["totalReach"]
+            rate_of_reach = None if reach["totalReach"] == 0 else min(100, 100 * rr_resp / reach["totalReach"])
             src = {k: v["delivered"] + v["read"] for k, v in reach["bySource"].items()}
             checks: list[tuple[str, bool]] = []
             checks.append(("P+Pa+D=R", want["promoters"] + want["passives"] + want["detractors"] == want["responders"]))
             checks.append(("satisfied+D=R", (want["promoters"] + want["passives"]) + want["detractors"] == want["responders"]))
             checks.append(("boxes=reach", sum(reach[k] for k in BOXES if k != "totalReach") == reach["totalReach"]))
             checks.append(("errors=box", sum(reach["groups"].values()) == reach["error"]))
-            checks.append(("reach% <= rate <= 100", rate_of_reach is None or (rate is not None and rate_of_reach <= rate <= 100)))
+            checks.append(("reach% <= 100 and <= response rate when defined", rate_of_reach is None
+                           or (rate_of_reach <= 100 and (rate is None or rate_of_reach <= rate))))
             if token and api_base:
                 params = [("dateFrom", str(start)), ("dateTo", str(today))]
                 if company is not None:

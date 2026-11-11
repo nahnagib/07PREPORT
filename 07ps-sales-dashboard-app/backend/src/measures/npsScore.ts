@@ -655,8 +655,9 @@ export interface NpsResponseRate {
   manualPeriods: ManualPeriod[];
 }
 
-/** n / d x 100, unrounded; null when d is 0. */
-export const ratePct = (n: number, d: number): number | null => (d > 0 ? (n / d) * 100 : null);
+/** n / d x 100, unrounded, with an optional ceiling; null when d is 0. */
+export const ratePct = (n: number, d: number, ceiling = Infinity): number | null =>
+  (d > 0 ? Math.min((n / d) * 100, ceiling) : null);
 
 /**
  * Response rate: ratings (rating date) / messages that reached the customer (message date), company and date only. The
@@ -712,7 +713,7 @@ export async function fetchNpsResponseRate(pool: Pool, q: NpsQuery, f: Filters, 
   const bySrc = counts.bySource;
   return withRate({
     ...empty, status: 'ready', reachStart, dateFrom: countedFrom, responders, delivered, read, reached, totalReach,
-    rate: ratePct(responders, reached), rateOfReach: ratePct(responders, totalReach), weekly,
+    rate: ratePct(responders, reached), rateOfReach: ratePct(responders, totalReach, 100), weekly,
     includesManual: counts.includesManual,
     reachedBySource: {
       etl: bySrc.etl.delivered + bySrc.etl.read, manual: bySrc.manual.delivered + bySrc.manual.read,

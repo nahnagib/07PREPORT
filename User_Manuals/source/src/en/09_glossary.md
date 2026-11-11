@@ -60,7 +60,7 @@
 | **PIM** | Product Information Management: the product hierarchy (company, category, brand, family, size, product). |
 | **Quotation** | A price offer sent to a customer. |
 | **Response Rate (NPS)** | Responders ÷ messages that reached the customer (Delivered + Read), from the first day with reach. The message source did not keep 12 Jul – 02 Oct 2026, so that range uses the approved **manual reach**: Meta exports (13 Aug – 02 Oct; 13–31 Aug Delivered/Read estimated) and estimates (12 Jul – 12 Aug). From 03 Oct everything is measured. The Response Rate and the **Survey Reach** cards use the same figures; cards that include manual or estimated reach are marked "incl. manual/est." and their tooltip splits measured / Meta manual / estimate. |
-| **Rate of reach (NPS)** | On the Survey Reach panel's Total Reach card: Responders ÷ Total Reach, where Total Reach = Delivered + Not Delivered + Read + Error (+ any other state). Same responders and period as the Response Rate, so it is never above the Response Rate and never above 100%. Example (YTD, 09 Nov data): 801 ÷ 4,495 = 17.82%. |
+| **Rate of reach (NPS)** | On the Survey Reach panel's Total Reach card: Responders ÷ Total Reach, where Total Reach = Delivered + Not Delivered + Read + Error (+ any other state). Same responders and period as the Response Rate, so it is never above the Response Rate and is capped at 100%. Example (YTD, 09 Nov data): 801 ÷ 4,495 = 17.82%. |
 | **Retention Rate** | Share of last year's customers who bought again this year. |
 | **ROI** | Return On Investment: revenue ÷ spend. |
 | **Stars** | High-volume, high-profit products. |

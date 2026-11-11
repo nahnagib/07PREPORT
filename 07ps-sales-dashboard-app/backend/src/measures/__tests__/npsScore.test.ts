@@ -241,6 +241,8 @@ describe('response rate = responders / (Delivered + Read)', () => {
     expect(ratePct(30, 100)).toBe(30);
     expect(ratePct(1, 3)).toBeCloseTo(33.3333333, 6);
     expect(ratePct(5, 0)).toBeNull();
+    expect(ratePct(120, 100, 100)).toBe(100);
+    expect(ratePct(120, 100)).toBe(120);
   });
 
   it('from the first reach day, sums both sides per Saturday week of the same period, band and variance from the target', async () => {

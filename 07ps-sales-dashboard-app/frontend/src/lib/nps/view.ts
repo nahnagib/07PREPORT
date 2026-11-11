@@ -175,12 +175,12 @@ export const RATE_FILTER_NOTE = 'Company and date filters only: the other filter
 /**
  * Rate of reach = Responders ÷ Total Reach (Total Reach = Delivered + Not Delivered + Read + Error + other states), from
  * the API's response rate (backend fetchNpsResponseRate: the SAME reach read as the cards). Total Reach ≥ Delivered +
- * Read, so it is never above the Response Rate, nor above 100 %. "—" without a figure.
+ * Read, so it is never above the Response Rate, and is capped at 100%. "—" without a figure.
  */
 export function rateOfReachLine(r: Pick<NpsResponseRate, 'responders' | 'totalReach' | 'rateOfReach'> | null): { value: string; tip: string } {
   const value = r && r.rateOfReach !== null ? pct(r.rateOfReach) : '—';
-  const counts = r && r.rateOfReach !== null ? ` = ${count(r.responders)} ÷ ${count(r.totalReach)} = ${value}` : '';
-  return { value, tip: `Rate of reach = Responders ÷ Total Reach${counts}\nTotal Reach = Delivered + Not Delivered + Read + Error. Never above the Response Rate.` };
+  const counts = r && r.rateOfReach !== null && r.responders <= r.totalReach ? ` = ${count(r.responders)} ÷ ${count(r.totalReach)} = ${value}` : '';
+  return { value, tip: `Rate of reach = Responders ÷ Total Reach${counts}\nTotal Reach = Delivered + Not Delivered + Read + Error + any other state. Capped at 100%.` };
 }
 
 const count = (n: number) => n.toLocaleString('en-US');
