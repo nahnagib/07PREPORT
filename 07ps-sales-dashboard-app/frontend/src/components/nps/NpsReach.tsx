@@ -3,7 +3,7 @@ import React from 'react';
 import { ChartPanel, EmptyState, ErrorState, KpiTile, LoadingSkeleton } from '@07ps/ui';
 import type { NpsReach as ReachData, NpsResponseRate } from '../../lib/api';
 import { formatDate, formatNumber } from '../../lib/format';
-import { MANUAL_MARK, manualSubtitle, pct, sourceSplit } from '../../lib/nps/view';
+import { MANUAL_MARK, manualSubtitle, pct, rateOfReachLine, sourceSplit } from '../../lib/nps/view';
 import { errorPieItems } from '../../lib/nps/errorReasons';
 import { ReasonPie } from './ReasonPie';
 import { Waiting } from './Waiting';
@@ -33,7 +33,10 @@ const BOX_KEY = {
  * 02 Oct marks each card that includes them ("incl. manual/est."), its tooltip split measured / Meta manual / estimate,
  * and the subtitle says where each part comes from. Manual errors are one group, "Unclassified (Meta manual)".
  */
-export function NpsReach({ state, part, responseRate }: { state: ReachState; part: 'boxes' | 'errors'; responseRate?: Pick<NpsResponseRate, 'status' | 'responders' | 'dateFrom' | 'dateTo' | 'requestedDateFrom'> | null }) {
+export function NpsReach({ state, part, responseRate }: {
+  state: ReachState; part: 'boxes' | 'errors';
+  responseRate?: Pick<NpsResponseRate, 'status' | 'responders' | 'dateFrom' | 'dateTo' | 'requestedDateFrom' | 'totalReach' | 'rateOfReach'> | null;
+}) {
   const data = state.data;
   let body: React.ReactNode;
   if (state.error) body = <ErrorState message={state.error} onRetry={state.retry} />;
@@ -42,9 +45,11 @@ export function NpsReach({ state, part, responseRate }: { state: ReachState; par
   else if (data.status === 'waiting' || !data.totals) body = <Waiting message="Waiting for the WhatsApp message data" />;
   else if (part === 'boxes') {
     const totals = data.totals;
-    const responders = responseRate?.status === 'ready' && (responseRate.requestedDateFrom ?? responseRate.dateFrom) === data.dateFrom && responseRate.dateTo === data.dateTo ? responseRate.responders : null;
-    const rateOfReach = responders !== null && totals.totalReach > 0 ? pct(100 * responders / totals.totalReach) : '—';
-    const rateTip = `Rate of reach = Responders ÷ Total reach${responders !== null ? ` = ${formatNumber(responders)} ÷ ${formatNumber(totals.totalReach)} = ${rateOfReach}` : ''}`;
+    // Rate of reach = the API's responders ÷ Total Reach (the same reach read as these cards), only for this very period
+    // and only when its Total Reach is this card's -- never a stale or a different denominator
+    const same = responseRate?.status === 'ready' && (responseRate.requestedDateFrom ?? responseRate.dateFrom) === data.dateFrom
+      && responseRate.dateTo === data.dateTo && responseRate.totalReach === totals.totalReach;
+    const { value: rateOfReach, tip: rateTip } = rateOfReachLine(same ? responseRate : null);
     body = (
       <>
         <section className="ps-nps-boxes" aria-label="WhatsApp message counts">

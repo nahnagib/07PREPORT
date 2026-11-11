@@ -473,7 +473,7 @@ export const VISUAL_HELP = {
   'process.npsScore.responseRate': {
     help: {
       definition: 'Share of the feedback messages that reached the customer and got a rating.',
-      formula: ['Response Rate = Responders ÷ (Delivered + Read)', 'Delivered + Read = the Survey Reach cards: measured from 03 Oct; 12 Jul – 02 Oct from the approved manual reach (Meta exports + estimates)', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
+      formula: ['Response Rate = Responders ÷ (Delivered + Read)', 'Delivered + Read = the Survey Reach cards: measured from 03 Oct; 12 Jul – 02 Oct from the approved manual reach (Meta exports + estimates)', 'Company and date filters only: the other filters (customer group, channel, branch, salesperson, customer) are not applied, on either side', 'Responders = every rating of the selected companies', 'Rate of reach (Survey Reach) = Responders ÷ Total Reach, never above the Response Rate', 'Colours: Critical below 25% · Behind Target 25–30% · On Track 30% and up'],
     },
   },
   'process.npsScore.satisfactionTrend': {

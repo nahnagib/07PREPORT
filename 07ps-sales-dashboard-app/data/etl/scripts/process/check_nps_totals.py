@@ -294,7 +294,7 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
     for label, segments in (("default B2B + B2C", B2B_B2C), ("all filters cleared", None)):
         print(f"\n   {label}")
         print(f"   {'company':<8}{'resp':>6}{'prom':>6}{'pass':>6}{'detr':>6}{'NPS':>9}{'CSAT':>9}{'reach':>7}{'deliv':>7}{'read':>6}"
-              f"{'notdel':>7}{'error':>6}{'from':>12}{'rresp':>7}{'D+R':>7}{'rate%':>8}{'etl':>6}{'meta':>6}{'est':>6}  result")
+              f"{'notdel':>7}{'error':>6}{'from':>12}{'rresp':>7}{'D+R':>7}{'rate%':>8}{'reach%':>8}{'etl':>6}{'meta':>6}{'est':>6}  result")
         for company in (None, 1, 3):
             want = _fact_counts(conn, lo, hi, company, segments)
             reach = _plain_reach(conn, lo, hi, company)
@@ -302,12 +302,15 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
             rr_resp = _fact_counts(conn, int(counted.strftime("%Y%m%d")), hi, company, None)["responders"]
             reached = reach["delivered"] + reach["read"]
             rate = None if reached == 0 else 100 * rr_resp / reached
+            # Rate of reach = Responders ÷ Total Reach (every state): never above the Response Rate, never above 100 %
+            rate_of_reach = None if reach["totalReach"] == 0 else 100 * rr_resp / reach["totalReach"]
             src = {k: v["delivered"] + v["read"] for k, v in reach["bySource"].items()}
             checks: list[tuple[str, bool]] = []
             checks.append(("P+Pa+D=R", want["promoters"] + want["passives"] + want["detractors"] == want["responders"]))
             checks.append(("satisfied+D=R", (want["promoters"] + want["passives"]) + want["detractors"] == want["responders"]))
             checks.append(("boxes=reach", sum(reach[k] for k in BOXES if k != "totalReach") == reach["totalReach"]))
             checks.append(("errors=box", sum(reach["groups"].values()) == reach["error"]))
+            checks.append(("reach% <= rate <= 100", rate_of_reach is None or (rate is not None and rate_of_reach <= rate <= 100)))
             if token and api_base:
                 params = [("dateFrom", str(start)), ("dateTo", str(today))]
                 if company is not None:
@@ -328,6 +331,7 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
                 rr = _api_get(api_base, token, "response-rate", params)
                 checks.append(("rate", rr["status"] == "ready" and rr["dateFrom"] == str(counted) and rr["responders"] == rr_resp
                                and rr["reached"] == reached and _close(rr["rate"], rate) and rr["reachedBySource"] == src))
+                checks.append(("rate of reach", rr["totalReach"] == reach["totalReach"] and _close(rr["rateOfReach"], rate_of_reach)))
                 if r["status"] == "ready":
                     checks.append(("cards D+R=rate", r["totals"]["delivered"] + r["totals"]["read"] == rr["reached"]))
                 fu = _api_get(api_base, token, "followup-summary", params)
@@ -343,7 +347,7 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
             fmt = lambda v: "—" if v is None else f"{v:.2f}"  # noqa: E731
             print(f"   {('all' if company is None else company):<8}{want['responders']:>6}{want['promoters']:>6}{want['passives']:>6}"
                   f"{want['detractors']:>6}{fmt(want['nps']):>9}{fmt(want['csat']):>9}{reach['totalReach']:>7}{reach['delivered']:>7}"
-                  f"{reach['read']:>6}{reach['notDelivered']:>7}{reach['error']:>6}{str(counted):>12}{rr_resp:>7}{reached:>7}{fmt(rate):>8}"
+                  f"{reach['read']:>6}{reach['notDelivered']:>7}{reach['error']:>6}{str(counted):>12}{rr_resp:>7}{reached:>7}{fmt(rate):>8}{fmt(rate_of_reach):>8}"
                   f"{src['etl']:>6}{src['manual']:>6}{src['estimate']:>6}  {'MATCH' if not bad else 'DIFFERENT: ' + ', '.join(bad)}")
     hidden = conn.execute(text(f"SELECT {EFFECTIVE_SEGMENT} AS seg, COUNT(*) FROM {FACT_WITH_OVERRIDE} WHERE f.RatingDateKey BETWEEN :lo AND :hi "
                                f"AND {EFFECTIVE_SEGMENT} NOT IN (1, 2) GROUP BY seg ORDER BY seg"), {"lo": lo, "hi": hi}).all()

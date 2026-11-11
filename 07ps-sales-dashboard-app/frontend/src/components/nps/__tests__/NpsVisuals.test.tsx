@@ -7,6 +7,7 @@ import { FollowupCharts } from '../FollowupCharts';
 import { NpsTopRow, ResponseRateCard } from '../NpsTopRow';
 import { OdooLink } from '../../OdooLink';
 import { Waiting } from '../Waiting';
+import { VISUAL_HELP } from '../../../lib/visualHelp';
 
 afterEach(cleanup);
 
@@ -127,16 +128,24 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
     expect(screen.getByTestId('nps-card').textContent).toContain('On Track');
   });
 
-  it('response rate: value, pill, Target 30%, variance, since the reach start, the filter note and the tooltip', () => {
+  it('response rate: value, pill, Target 30%, variance, since, the formula line; the filter explanations only in the tooltip', () => {
     render(<ResponseRateCard state={rateState(RATE)} />);
     const card = screen.getByTestId('rate-card');
     expect(card.textContent).toContain('18.46%');
     expect(card.textContent).toContain('Critical');
     expect(card.textContent).toContain('30%');
     expect(card.textContent).toContain('−11.54 pts');
+    expect(card.textContent).toContain('Responders ÷ (Delivered + Read)');
     expect(screen.getByTestId('rate-since').textContent).toBe('since 03 Oct 2026');
-    expect(screen.getByTestId('rate-company-only').textContent).toBe('Company and date filters only');
-    expect(screen.getByTestId('rate-numerator-note').textContent).toBe('Responders = every rating of the selected companies (other filters not applied)');
+    // A2: no longer printed under the rate (RATE has companyAndDateOnly: true) ...
+    expect(screen.queryByTestId('rate-company-only')).toBeNull();
+    expect(screen.queryByTestId('rate-numerator-note')).toBeNull();
+    expect(card.textContent).not.toContain('Company and date filters only');
+    expect(card.textContent).not.toContain('other filters not applied');
+    // ... but kept in the value tooltip
+    const valueTip = screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')!;
+    expect(valueTip).toContain('Company and date filters only');
+    expect(valueTip).toContain('Responders = every rating of the selected companies');
     expect(screen.queryAllByTitle(/Responders ÷ Total Reach/)).toHaveLength(0);
     // the numerator under the rate; no manual mark after the reach start
     expect(screen.getByTestId('rate-fraction').textContent).toBe('120 responders ÷ 650 reached');
@@ -159,14 +168,16 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
     expect(tip).toContain('12 Jul – 12 Aug estimated · 13 Aug – 02 Oct from Meta (manual; 13–31 Aug Delivered/Read estimated) · from 03 Oct measured');
   });
 
-  it('response rate keeps the filter note with the manual reach', () => {
-    render(<ResponseRateCard state={rateState(RATE_EST)} />);
-    expect(screen.getByTestId('rate-company-only').textContent).toBe('Company and date filters only');
+  it('response rate: the filter explanation is in the ⓘ help of the card', () => {
+    expect(VISUAL_HELP['process.npsScore.responseRate'].help.formula).toEqual(expect.arrayContaining([
+      'Company and date filters only: the other filters (customer group, channel, branch, salesperson, customer) are not applied, on either side',
+      'Responders = every rating of the selected companies',
+    ]));
   });
 
-  it('response rate without the filter note when only company / date filters are set; restricted and waiting say why', () => {
+  it('response rate without the filter line in the tooltip when only company / date filters are set; restricted and waiting say why', () => {
     const { unmount } = render(<ResponseRateCard state={rateState({ ...RATE, companyAndDateOnly: false })} />);
-    expect(screen.queryByTestId('rate-company-only')).toBeNull();
+    expect(screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')).not.toContain('Company and date filters only');
     unmount();
     const r2 = render(<ResponseRateCard state={rateState({ ...RATE, status: 'restricted', rate: null })} />);
     expect(screen.getByTestId('rate-card').textContent).toContain('Unavailable for your assigned data scope.');

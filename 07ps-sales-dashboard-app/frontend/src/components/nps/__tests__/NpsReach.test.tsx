@@ -30,6 +30,9 @@ const estimated: ReachData = {
   includesManual: true, bySource: { etl: ETL, manual: META, estimate: EST }, manualPeriods: PERIODS,
 };
 const state = (data: ReachData | null, extra: Partial<ReachState> = {}): ReachState => ({ data, loading: false, error: null, retry: vi.fn(), ...extra });
+// the API's YTD response rate of the same period: 801 responders, Total Reach 4,495 (the same read as the cards)
+const YTD_RATE = { status: 'ready' as const, responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo,
+  totalReach: 4495, rateOfReach: (801 / 4495) * 100 };
 
 it('shows no numbers while waiting for the source', () => {
   render(<NpsReach part="boxes" state={state({ ...ready, status: 'waiting', totals: null, errors: [], loadedAt: null })} />);
@@ -58,10 +61,11 @@ it('each box shows its share of Total Reach and a tooltip saying reach uses the 
 });
 
 it('manual reach in the period: combined totals, "incl. manual/est." on every card, tooltips measured / Meta manual / estimate, the subtitle', () => {
-  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={YTD_RATE} />);
   expect(screen.getByText('Survey Reach')).toBeTruthy();
   expect(screen.getByText('Rate of reach: 17.82%')).toBeTruthy();
-  expect(screen.getByTestId('reach-box-Total Reach').getAttribute('title')).toContain('Rate of reach = Responders ÷ Total reach = 801 ÷ 4,495 = 17.82%');
+  expect(screen.getByTestId('reach-box-Total Reach').getAttribute('title')).toContain('Rate of reach = Responders ÷ Total Reach = 801 ÷ 4,495 = 17.82%');
+  expect(screen.getByTestId('reach-box-Total Reach').getAttribute('title')).toContain('Total Reach = Delivered + Not Delivered + Read + Error');
   expect(screen.getByTestId('reach-subtitle').textContent)
     .toBe('12 Jul – 12 Aug estimated · 13 Aug – 02 Oct from Meta (manual; 13–31 Aug Delivered/Read estimated) · from 03 Oct measured');
   expect(screen.getByText('4,495')).toBeTruthy();
@@ -142,13 +146,29 @@ it('does not show an old snapshot while reloading filters and supports retry on 
 });
 
 it('does not show a stale-period rate or divide by zero', () => {
-  const { rerender } = render(<NpsReach part="boxes" state={state(ready)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: estimated.dateFrom, dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
+  const { rerender } = render(<NpsReach part="boxes" state={state(ready)} responseRate={YTD_RATE} />);
   expect(screen.getByText('Rate of reach: —')).toBeTruthy();
-  rerender(<NpsReach part="boxes" state={state({ ...ready, totals: { ...ready.totals!, totalReach: 0 } })} responseRate={{ status: 'ready', responders: 0, dateFrom: ready.dateFrom, dateTo: ready.dateTo }} />);
+  rerender(<NpsReach part="boxes" state={state({ ...ready, totals: { ...ready.totals!, totalReach: 0 } })}
+    responseRate={{ status: 'ready', responders: 0, dateFrom: ready.dateFrom, dateTo: ready.dateTo, totalReach: 0, rateOfReach: null }} />);
   expect(screen.getByText('Rate of reach: —')).toBeTruthy();
 });
 
 it('rejects a stale requested start even when the end date and effective start match', () => {
-  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ status: 'ready', responders: 801, requestedDateFrom: '2026-07-01', dateFrom: '2026-07-12', dateTo: estimated.dateTo }} />);
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ ...YTD_RATE, requestedDateFrom: '2026-07-01' }} />);
   expect(screen.getByText('Rate of reach: —')).toBeTruthy();
+});
+
+it('never a different denominator: a rate whose Total Reach is not this card\'s shows no Rate of reach', () => {
+  // the bug of 2026-11-11: 4,923 ÷ 3,779 = 130.27 % (Total Reach ÷ (Delivered + Read)) -- the rule is Responders ÷ Total Reach
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={{ ...YTD_RATE, totalReach: 3476, rateOfReach: (4495 / 3476) * 100 }} />);
+  expect(screen.getByText('Rate of reach: —')).toBeTruthy();
+  expect(screen.queryByText(/129\.|130\./)).toBeNull();
+});
+
+it('Rate of reach is never above the Response Rate nor 100 %', () => {
+  render(<NpsReach part="boxes" state={state(estimated)} responseRate={YTD_RATE} />);
+  const shown = Number(screen.getByText(/^Rate of reach: /).textContent!.replace(/[^\d.]/g, ''));
+  const t = estimated.totals!;
+  expect(shown).toBeLessThanOrEqual((100 * 801) / (t.delivered + t.read)); // Response Rate 23.04 %
+  expect(shown).toBeLessThanOrEqual(100);
 });

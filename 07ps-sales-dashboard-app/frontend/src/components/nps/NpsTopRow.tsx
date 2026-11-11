@@ -90,10 +90,7 @@ export function ResponseRateCard({ state }: { state: RateState }) {
     // the small mark: 12 Jul – 02 Oct is the approved manual reach (the tooltip gives the split)
     notes.unshift(<span key="manual" data-testid="rate-manual-mark" style={{ fontSize: 11, fontWeight: 600 }}>{MANUAL_MARK}</span>);
   }
-  if (r.companyAndDateOnly) {
-    notes.push(<strong key="only" data-testid="rate-company-only">Company and date filters only</strong>);
-    notes.push(<span key="numerator" data-testid="rate-numerator-note">Responders = every rating of the selected companies (other filters not applied)</span>);
-  }
+  // "Company and date filters only" and what the numerator counts live in the ⓘ (visualHelp) and the value tooltip
   return (
     <CompactKpiCard {...vh("process.npsScore.responseRate")}
       title="Response Rate"

@@ -166,7 +166,22 @@ export function responseRateMetrics(r: Pick<NpsResponseRate, 'target' | 'varianc
 }
 
 type RateTip = Pick<NpsResponseRate, 'responders' | 'delivered' | 'read' | 'reached' | 'totalReach' | 'rate' | 'rateOfReach'>
-  & Partial<Pick<NpsResponseRate, 'includesManual' | 'reachedBySource' | 'manualPeriods' | 'reachStart'>>;
+  & Partial<Pick<NpsResponseRate, 'includesManual' | 'reachedBySource' | 'manualPeriods' | 'reachStart' | 'companyAndDateOnly'>>;
+
+/** What the Response Rate counts and which filters it uses (the ⓘ and the value tooltip; no longer printed on the card). */
+export const RATE_FILTER_NOTE = 'Company and date filters only: the other filters (customer group, channel, branch, salesperson, customer) '
+  + 'are not applied, on either side. Responders = every rating of the selected companies.';
+
+/**
+ * Rate of reach = Responders ÷ Total Reach (Total Reach = Delivered + Not Delivered + Read + Error + other states), from
+ * the API's response rate (backend fetchNpsResponseRate: the SAME reach read as the cards). Total Reach ≥ Delivered +
+ * Read, so it is never above the Response Rate, nor above 100 %. "—" without a figure.
+ */
+export function rateOfReachLine(r: Pick<NpsResponseRate, 'responders' | 'totalReach' | 'rateOfReach'> | null): { value: string; tip: string } {
+  const value = r && r.rateOfReach !== null ? pct(r.rateOfReach) : '—';
+  const counts = r && r.rateOfReach !== null ? ` = ${count(r.responders)} ÷ ${count(r.totalReach)} = ${value}` : '';
+  return { value, tip: `Rate of reach = Responders ÷ Total Reach${counts}\nTotal Reach = Delivered + Not Delivered + Read + Error. Never above the Response Rate.` };
+}
 
 const count = (n: number) => n.toLocaleString('en-US');
 
@@ -224,6 +239,7 @@ export function responseRateTooltip(r: RateTip): string {
     if (where) lines.push(where);
   }
   lines.push('Customers can only answer a message that reached them.');
+  if (r.companyAndDateOnly) lines.push(RATE_FILTER_NOTE);
   return lines.join('\n');
 }
 

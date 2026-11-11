@@ -327,6 +327,10 @@ describe('manual reach 12 Jul – 02 Oct (migration 0071): Response Rate and Sur
       reachedBySource: { etl: 120, manual: 80, estimate: 50 } });
     expect(r.reachedBySource.etl + r.reachedBySource.manual + r.reachedBySource.estimate).toBe(r.reached);
     expect(r.rate).toBeCloseTo((65 / 250) * 100, 9);
+    // Rate of reach = Responders ÷ Total Reach (291 = every state), never Total Reach ÷ (Delivered + Read)
+    expect(r.totalReach).toBe(291);
+    expect(r.rateOfReach).toBeCloseTo((65 / 291) * 100, 9);
+    expect(r.rateOfReach!).toBeLessThanOrEqual(r.rate!);
     expect(r.manualPeriods.map((m) => m.source)).toEqual(['estimate', 'meta_manual+estimate', 'meta_manual', 'meta_manual']);
     expect(r.weekly[0]).toMatchObject({ weekStart: '2026-07-11', responders: 8, reached: 30 });
   });
