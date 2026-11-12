@@ -128,7 +128,7 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
     expect(screen.getByTestId('nps-card').textContent).toContain('On Track');
   });
 
-  it('response rate: value, pill, Target 30%, variance and the formula line; the filter explanations only in the tooltip', () => {
+  it('response rate: value, pill, Target 30%, variance, since and the formula line; the filter explanations only in the tooltip', () => {
     render(<ResponseRateCard state={rateState(RATE)} />);
     const card = screen.getByTestId('rate-card');
     expect(card.textContent).toContain('18.46%');
@@ -136,7 +136,7 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
     expect(card.textContent).toContain('30%');
     expect(card.textContent).toContain('−11.54 pts');
     expect(card.textContent).toContain('Responders ÷ (Delivered + Read)');
-    expect(screen.queryByTestId('rate-since')).toBeNull();
+    expect(screen.getByTestId('rate-since').textContent).toBe('since 03 Oct 2026');
     // A2: no longer printed under the rate (RATE has companyAndDateOnly: true) ...
     expect(screen.queryByTestId('rate-company-only')).toBeNull();
     expect(screen.queryByTestId('rate-numerator-note')).toBeNull();
@@ -153,13 +153,13 @@ describe('top row: NPS tachometer · Response Rate · CSAT tachometer (the Promo
     expect(screen.queryByTestId('rate-estimate-badge')).toBeNull();
   });
 
-  it('response rate with the manual reach: the source breakdown appears in the tooltip', () => {
+  it('response rate with the manual reach: the source label, first counted day and tooltip', () => {
     render(<ResponseRateCard state={rateState(RATE_EST)} />);
     const card = screen.getByTestId('rate-card');
     expect(card.textContent).toContain('23.04%');
     expect(screen.getByTestId('rate-fraction').textContent).toBe('801 responders ÷ 3,476 reached');
-    expect(screen.queryByTestId('rate-manual-mark')).toBeNull();
-    expect(screen.queryByTestId('rate-since')).toBeNull();
+    expect(screen.getByTestId('rate-manual-mark').textContent).toBe('incl. manual/est.');
+    expect(screen.getByTestId('rate-since').textContent).toBe('since 12 Jul 2026');
     expect(screen.queryByTestId('rate-estimate-badge')).toBeNull();
     expect(card.textContent).not.toContain('incl. estimate ·');
     const tip = screen.getByTestId('rate-fraction').parentElement!.getAttribute('title')!;

@@ -57,20 +57,22 @@ it('each box shows its share of Total Reach and a tooltip saying reach uses the 
   for (const label of ['Total Reach', 'Delivered', 'Not Delivered', 'Read', 'Error']) {
     expect(screen.getByTestId(`reach-box-${label}`).getAttribute('title')).toContain('message date');
   }
-  expect(screen.queryByTestId('reach-subtitle')).toBeNull();
+  expect(screen.getByText('Reach data from 03 Oct 2026')).toBeTruthy();
 });
 
-it('manual reach in the period: combined totals and source details in the tooltips', () => {
+it('manual reach in the period: combined totals, "incl. manual/est." on every card, tooltips measured / Meta manual / estimate, the subtitle', () => {
   render(<NpsReach part="boxes" state={state(estimated)} responseRate={YTD_RATE} />);
   expect(screen.getByText('Survey Reach')).toBeTruthy();
   expect(screen.getByText('Rate of reach: 17.82%')).toBeTruthy();
   expect(screen.getByTestId('reach-box-Total Reach').getAttribute('title')).toContain('Rate of reach = Responders ÷ Total Reach = 801 ÷ 4,495 = 17.82%');
   expect(screen.getByTestId('reach-box-Total Reach').getAttribute('title')).toContain('Total Reach = Delivered + Not Delivered + Read + Error');
-  expect(screen.queryByTestId('reach-subtitle')).toBeNull();
+  expect(screen.getByTestId('reach-subtitle').textContent)
+    .toBe('12 Jul – 12 Aug estimated · 13 Aug – 02 Oct from Meta (manual; 13–31 Aug Delivered/Read estimated) · from 03 Oct measured');
   expect(screen.getByText('4,495')).toBeTruthy();
   expect(screen.getByText('24.36% of reach')).toBeTruthy(); // Delivered 1,095 / 4,495
   for (const label of ['Total Reach', 'Delivered', 'Not Delivered', 'Read', 'Error']) {
-    expect(screen.getByTestId(`reach-box-${label}`).textContent).not.toContain('incl. manual/est.');
+    expect(screen.getByTestId(`reach-box-${label}`).textContent).toContain('incl. manual/est.');
+    expect(screen.getByTestId(`reach-box-${label}`).getAttribute('data-manual')).toBe('true');
   }
   expect(screen.getByTestId('reach-box-Delivered').getAttribute('title')).toContain('Measured (from 03 Oct): 365\nMeta manual: 361\nEstimate: 369\nTotal: 1,095');
   expect(screen.getByTestId('reach-box-Error').getAttribute('title')).toContain('Measured (from 03 Oct): 433\nMeta manual: 407\nEstimate: 75\nTotal: 915');
@@ -78,17 +80,17 @@ it('manual reach in the period: combined totals and source details in the toolti
   expect(estimated.totals!.delivered + estimated.totals!.read).toBe(3476);
 });
 
-it('the source breakdown stays in the card tooltips', () => {
+it('a card without manual reach is not marked (only the source-split tooltip)', () => {
   const bySource = { etl: ETL, manual: { ...META, notDelivered: 0 }, estimate: { ...EST, notDelivered: 0 } };
   render(<NpsReach part="boxes" state={state({ ...estimated, bySource })} />);
-  expect(screen.getByTestId('reach-box-Not Delivered').textContent).not.toContain('incl. manual/est.');
-  expect(screen.getByTestId('reach-box-Read').getAttribute('title')).toContain('Meta manual');
+  expect(screen.getByTestId('reach-box-Not Delivered').getAttribute('data-manual')).toBeNull();
+  expect(screen.getByTestId('reach-box-Read').getAttribute('data-manual')).toBe('true');
 });
 
-it('a period fully after 03 Oct: exactly the measured numbers', () => {
+it('a period fully after 03 Oct: exactly the measured numbers, no marks, the usual subtitle', () => {
   render(<NpsReach part="boxes" state={state(ready)} />);
   expect(screen.queryByText('incl. manual/est.')).toBeNull();
-  expect(screen.queryByTestId('reach-subtitle')).toBeNull();
+  expect(screen.getByTestId('reach-subtitle').textContent).toBe('Reach data from 03 Oct 2026');
 });
 
 it('no share when nothing was sent, and no start label for all history', () => {

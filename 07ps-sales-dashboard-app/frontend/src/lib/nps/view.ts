@@ -210,6 +210,8 @@ export function manualSubtitle(periods: NpsManualPeriod[], reachStart: string | 
 
 /** The mark on a card whose figure includes manual or estimated reach. */
 /** A reach figure split by source: "Measured (from 03 Oct): 1,222 · Meta manual: 1,141 · Estimate: 1,113 · Total: 3,476". */
+export const MANUAL_MARK = 'incl. manual/est.';
+
 export function sourceSplit(split: Record<NpsReachSource, number>, reachStart: string | null): string {
   return [
     `Measured${reachStart ? ` (from ${dayMonth(reachStart.slice(0, 10))})` : ''}: ${count(split.etl)}`,

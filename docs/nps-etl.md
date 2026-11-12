@@ -381,9 +381,10 @@ migration **0071** into `process_nps_reach_manual` — the same 8 rows in every 
   period starts at the page's start or, if that is earlier, at the first day with reach (12 Jul): before it there is no
   reach. From 03 Oct on everything is exactly as measured. Nothing else is estimated: the `NPS_REACH_ESTIMATE_*`
   settings are gone.
-- **Cards:** tooltips show the measured, Meta manual and estimated figures. The Response Rate card shows the
-  responders and reached counts, target, variance, formula, and weekly sparkline. Its help explains the company
-  and date filters and which ratings count as responders.
+- **Cards:** Survey Reach shows the source periods. Cards with manual or estimated reach display **incl. manual/est.**,
+  and their tooltips split the measured, Meta manual and estimated figures. The Response Rate card shows the same
+  marker when applicable, the first day counted, responders and reached counts, target, variance, formula, and
+  weekly sparkline. Its help explains the company and date filters and which ratings count as responders.
 - **The ETL never writes the table.** No ETL code names it (`data/etl/tests/test_nps_reach_manual_guard.py`);
   `process_nps` replaces `fact_process_nps_message` and upserts `dim_process_nps_failure_group` (upsert, so the
   `meta_manual` group stays); the 30-minute and 02:00 refreshes do not touch NPS reach tables. Changing a figure = a new

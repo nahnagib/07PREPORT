@@ -589,14 +589,14 @@ export const VISUAL_HELP = {
   },
   'process.npsScore.satisfactionTrend': {
     help: { definition: 'NPS and CSAT per period (lines) with responders (bars). Muted points have fewer responders than the minimum.', formula: [NPS, CSAT] },
-    interactions: ['Switch week / month / year'],
+    interactions: ['Switch day / week / month / year'],
   },
   'process.npsScore.respondersTrend': {
     help: { definition: 'Responders per period (bars) with Promoters, Passives and Detractors (lines).', },
-    interactions: ['Switch week / month / year'],
+    interactions: ['Switch day / week / month / year'],
   },
   'process.npsScore.reach': {
-    help: { definition: 'WhatsApp feedback messages by message date and company: Delivered, Read, Not Delivered and Error. Measured from 03 Oct 2026; 12 Jul – 02 Oct is the approved manual reach (12 Jul – 12 Aug estimated, 13 Aug – 02 Oct from Meta exports; 13–31 Aug Delivered/Read estimated), spread evenly over the days. Card tooltips show the measured, Meta manual and estimated figures.' },
+    help: { definition: 'WhatsApp feedback messages by message date and company: Delivered, Read, Not Delivered and Error. Measured from 03 Oct 2026; 12 Jul – 02 Oct is the approved manual reach (12 Jul – 12 Aug estimated, 13 Aug – 02 Oct from Meta exports; 13–31 Aug Delivered/Read estimated), spread evenly over the days. Cards that include manual or estimated reach display "incl. manual/est.". Their tooltips give the measured, Meta manual and estimated counts.' },
   },
   'process.npsScore.errors': {
     help: { definition: 'Messages that failed, by the error WhatsApp returned. Before 03 Oct the failed messages come from the manual reach without a reason: "Unclassified (Meta manual)".' },

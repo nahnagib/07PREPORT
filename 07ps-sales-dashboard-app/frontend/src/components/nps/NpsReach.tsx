@@ -2,8 +2,8 @@ import { vh } from '../../lib/visualHelp';
 import React from 'react';
 import { ChartPanel, EmptyState, ErrorState, KpiTile, LoadingSkeleton } from '@07ps/ui';
 import type { NpsReach as ReachData, NpsResponseRate } from '../../lib/api';
-import { formatNumber } from '../../lib/format';
-import { pct, rateOfReachLine, sourceSplit } from '../../lib/nps/view';
+import { formatDate, formatNumber } from '../../lib/format';
+import { MANUAL_MARK, manualSubtitle, pct, rateOfReachLine, sourceSplit } from '../../lib/nps/view';
 import { errorPieItems } from '../../lib/nps/errorReasons';
 import { ReasonPie } from './ReasonPie';
 import { Waiting } from './Waiting';
@@ -29,7 +29,9 @@ const BOX_KEY = {
 
 /**
  * Both panels share one request. Counts are messages in their current state, not unique people. Before 03 Oct the
- * counts are from the approved manual reach (migration 0071). Each card's tooltip gives the source breakdown. Manual errors are one group, "Unclassified (Meta manual)".
+ * counts are the approved manual reach (Meta exports + estimates, backend migration 0071): a period touching 12 Jul –
+ * 02 Oct marks each card that includes them ("incl. manual/est."), its tooltip split measured / Meta manual / estimate,
+ * and the subtitle says where each part comes from. Manual errors are one group, "Unclassified (Meta manual)".
  */
 export function NpsReach({ state, part, responseRate }: {
   state: ReachState; part: 'boxes' | 'errors';
@@ -58,10 +60,13 @@ export function NpsReach({ state, part, responseRate }: {
             const k = BOX_KEY[label];
             const src = data.includesManual && data.bySource
               ? { etl: data.bySource.etl[k], manual: data.bySource.manual[k], estimate: data.bySource.estimate[k] } : null;
+            const marked = src !== null && src.manual + src.estimate > 0;
             const tip = src ? `${sourceSplit(src, data.reachStart)}\n${BOX_TIPS[label]}` : BOX_TIPS[label];
             return (
-              <div key={label} title={label === 'Total Reach' ? `${tip}\n${rateTip}` : tip} data-testid={`reach-box-${label}`}>
+              <div key={label} title={label === 'Total Reach' ? `${tip}\n${rateTip}` : tip} data-testid={`reach-box-${label}`} data-manual={marked ? 'true' : undefined}>
+                {/* the mark: manual or estimated reach (12 Jul – 02 Oct) is in this card */}
                 <KpiTile label={label} value={formatNumber(value)} emphasizeLabel
+                  labelDetail={marked ? MANUAL_MARK : undefined}
                   subValue={label === 'Total Reach' ? `Rate of reach: ${rateOfReach}` : `${share(value, totals.totalReach)} of reach`} />
               </div>
             );
@@ -80,6 +85,9 @@ export function NpsReach({ state, part, responseRate }: {
   return (
     <ChartPanel {...vh(part === 'boxes' ? 'process.npsScore.reach' : 'process.npsScore.errors')} title={part === 'boxes' ? 'Survey Reach' : 'Errors by reason'}>
       {data?.companyAndDateOnly && <p style={{ fontSize: 12 }}>Company and date filters only</p>}
+      {ready && data.includesManual && data.manualPeriods.length > 0
+        ? <p style={{ fontSize: 12, color: 'var(--ps-color-neutral-text)' }} data-testid="reach-subtitle">{manualSubtitle(data.manualPeriods, data.reachStart)}</p>
+        : ready && data.reachStart && <p style={{ fontSize: 12, color: 'var(--ps-color-neutral-text)' }} data-testid="reach-subtitle">Reach data from {formatDate(data.reachStart)}</p>}
       {body}
       {ready && data.loadedAt && <p style={{ fontSize: 12, color: 'var(--ps-color-neutral-text)' }}>Message refresh {data.loadedAt} UTC</p>}
     </ChartPanel>
