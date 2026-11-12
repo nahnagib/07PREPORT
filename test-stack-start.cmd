@@ -23,10 +23,17 @@ if not defined PROD_DB_NAME set "PROD_DB_NAME=powerBI_Data"
 
 cd /d "%APP%" || exit /b 1
 
-rem Safety: every service must use the test database, never the production host.
+rem Check the warehouse DB_HOST only. Source databases such as NPS_DB_HOST are separate.
 %COMPOSE% config > "%TEMP%\07ps-test-config.yml" || exit /b 1
-findstr /C:"DB_HOST: host.docker.internal" /C:"DB_HOST: 127.0.0.1" /C:"DB_HOST: localhost" "%TEMP%\07ps-test-config.yml" >nul
-if not errorlevel 1 (echo ABORT: a test-stack service points at the production database host. & exit /b 1)
+set "FOUND_WAREHOUSE_DB_HOST="
+for /f "tokens=1,*" %%K in ('findstr /R /C:"^ *DB_HOST: *" "%TEMP%\07ps-test-config.yml"') do (
+  set "FOUND_WAREHOUSE_DB_HOST=1"
+  if not "%%L"=="test-mysql" (
+    echo ABORT: a test-stack service does not point at the test warehouse.
+    exit /b 1
+  )
+)
+if not defined FOUND_WAREHOUSE_DB_HOST (echo ABORT: no warehouse DB_HOST found in the test-stack configuration. & exit /b 1)
 
 echo Starting the test database...
 %COMPOSE% up -d test-mysql || exit /b 1
