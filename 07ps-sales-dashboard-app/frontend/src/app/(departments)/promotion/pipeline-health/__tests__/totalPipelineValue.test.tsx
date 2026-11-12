@@ -95,4 +95,21 @@ describe('Total Pipeline Value hero row', () => {
     expect(grid.contains(label)).toBe(false);
     expect(label.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+
+  it('row 1 = Opportunity by Status + Expected Closure; row 2 = Opportunity by Stage + Full Pipeline + Stage Benchmark (2026-11-10)', () => {
+    mocked.overview = { data: overview({ count: 2, value: 10 }), loading: false, error: null, retry: () => {} };
+    render(<PipelineHealthPage />);
+    const titles = (id: string) => [...screen.getByTestId(id).children].map((c) => c.textContent ?? '');
+    const row1 = titles('pipeline-row-1');
+    expect(row1).toHaveLength(2);
+    expect(row1[0]).toMatch(/^Opportunity by Status/);
+    expect(row1[1]).toMatch(/^Expected Closure Opportunity/);
+    const row2 = titles('pipeline-row-2');
+    expect(row2).toHaveLength(3);
+    expect(row2[0]).toMatch(/^Opportunity by Stage/);
+    expect(row2[1]).toMatch(/^Full Pipeline/);
+    expect(row2[2]).toMatch(/^Stage Benchmark/);
+    // the benchmarks sit in their own flex column, spread down the card
+    expect(screen.getByTestId('stage-benchmark-card').contains(screen.getByTestId('stage-benchmark-rows'))).toBe(true);
+  });
 });

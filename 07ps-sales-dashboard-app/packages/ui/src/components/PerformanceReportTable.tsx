@@ -106,6 +106,9 @@ export function PerformanceReportTable({ title, help, interactions, rows, showSt
         background: 'var(--ps-card-bg)',
         boxShadow: 'var(--ps-card-shadow)',
         overflow: 'hidden',
+        // stretched beside a longer table: the rows grow to fill the card (no empty band at the bottom)
+        display: 'flex',
+        flexDirection: 'column',
       }}
     >
       <div
@@ -150,8 +153,8 @@ export function PerformanceReportTable({ title, help, interactions, rows, showSt
         </div>
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: theme.table.bodyFontSize }}>
+      <div style={{ overflowX: 'auto', flex: 1 }}>
+        <table style={{ width: '100%', height: '100%', borderCollapse: 'collapse', fontSize: theme.table.bodyFontSize }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--ps-color-border)' }}>
               <th style={{ textAlign: 'left', padding: '8px 16px', color: 'var(--ps-color-muted-text)', fontWeight: 600, fontSize: theme.table.headerFontSize }}>
