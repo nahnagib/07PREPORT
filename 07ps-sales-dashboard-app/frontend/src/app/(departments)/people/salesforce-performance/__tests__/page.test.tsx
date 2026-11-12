@@ -121,7 +121,7 @@ afterEach(cleanup);
 const topCard = (name: string) => within(screen.getByRole('region', { name: 'Top people by category' })).getByRole('region', { name });
 const shown = (name: string) => within(topCard(name)).queryAllByRole('button').map((b) => b.getAttribute('aria-label'));
 
-describe('Sales People Performance: top people by category', () => {
+describe('Salesforce Performance: top people by category', () => {
   it('shows only the #1 person: best for good statuses, worst variance for the others', async () => {
     render(<Page />);
     await screen.findByRole('region', { name: 'Top people by category' });
@@ -168,7 +168,7 @@ describe('Sales People Performance: top people by category', () => {
   });
 });
 
-describe('Sales People Performance: status cards, charts and table', () => {
+describe('Salesforce Performance: status cards, charts and table', () => {
   it('cards show headcount and YTD variance in LYD and percent', async () => {
     render(<Page />);
     const summary = await screen.findByRole('region', { name: 'YTD status summary' });
@@ -182,7 +182,7 @@ describe('Sales People Performance: status cards, charts and table', () => {
     expect(critical.textContent).toContain('−LYD 895 · -63.93%');
     expect(summary.textContent).not.toMatch(/Achievement|Benchmark/);
     expect(document.body.textContent).not.toContain('No target');
-    expect(nav.active).toBe('Sales People Performance');
+    expect(nav.active).toBe('Salesforce Performance');
     expect(filterBar.props.salespersons?.map((option) => option.salesperson_name)).toEqual(['Omar']);
   });
   it('a status card filters the table; Total shows everyone again', async () => {

@@ -33,7 +33,7 @@ export function performanceFigures(actual: number, target: number | null) {
   };
 }
 
-// Keep in sync with the salesperson picker on the Sales People Performance page.
+// Keep in sync with the salesperson picker on the Salesforce Performance page.
 function isVacantSalesSeat(name: string) {
   return /^sale(?:s|rs)[\s._-]*person(?:[\s._#-]*\d+)?$/i.test(name.trim());
 }

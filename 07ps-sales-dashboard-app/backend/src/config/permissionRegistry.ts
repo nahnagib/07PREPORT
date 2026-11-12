@@ -37,7 +37,7 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   { key: 'tachometer', label: 'Tachometer', group: 'dashboard', actions: DASHBOARD },
   { key: 'critical_number', label: 'Critical Number', group: 'dashboard', actions: DASHBOARD },
   { key: 'revenue_trend', label: 'Revenue Trend', group: 'dashboard', actions: DASHBOARD },
-  { key: 'sales_people_performance', label: 'Sales People Performance', group: 'dashboard', actions: DASHBOARD },
+  { key: 'sales_people_performance', label: 'Salesforce Performance', group: 'dashboard', actions: DASHBOARD },
   { key: 'invoices_engine', label: 'Invoices Engine', group: 'dashboard', actions: DASHBOARD },
   { key: 'customer_growth', label: 'Customer Growth', group: 'dashboard', actions: DASHBOARD },
   { key: 'pipeline_health', label: 'Pipeline Health', group: 'dashboard', actions: DASHBOARD },

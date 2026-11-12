@@ -321,9 +321,11 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
                 o = _api_get(api_base, token, "overview", params)["totals"]
                 checks.append(("overview", all(o[k] == want[k] for k in ("responders", "promoters", "passives", "detractors"))
                                and _close(o["nps"], want["nps"]) and _close(o["csat"], want["csat"])))
-                for grain in ("week", "month"):
-                    t = _api_get(api_base, token, "trend", [*params, ("grain", grain)])
-                    checks.append((f"trend {grain} sum", sum(p["responders"] for p in t["points"]) == want["responders"]))
+                for granularity in ("week", "month"):
+                    t = _api_get(api_base, token, "trend", [*params, ("granularity", granularity)])
+                    trend_lo, trend_hi = (int(t[k].replace("-", "")) for k in ("from", "to"))
+                    expected = _fact_counts(conn, trend_lo, trend_hi, company, segments)["responders"]
+                    checks.append((f"trend {granularity} sum", sum(p["responders"] for p in t["points"]) == expected))
                 r = _api_get(api_base, token, "reach", params)
                 if r["status"] == "ready":
                     checks.append(("reach", all(r["totals"][k] == reach[k] for k in BOXES)))

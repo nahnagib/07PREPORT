@@ -24,7 +24,10 @@ const nextConfig = {
   },
   // Renamed reports: old links and bookmarks keep working (basePath is added to both sides automatically).
   async redirects() {
-    return [{ source: '/price/debt-report', destination: '/price/receivables-collections', permanent: false }];
+    return [
+      { source: '/price/debt-report', destination: '/price/receivables-collections', permanent: false },
+      { source: '/promotion/sales-people-performance', destination: '/people/salesforce-performance', permanent: false },
+    ];
   },
 };
 export default nextConfig;

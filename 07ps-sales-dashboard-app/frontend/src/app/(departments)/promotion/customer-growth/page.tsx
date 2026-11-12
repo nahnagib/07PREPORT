@@ -33,27 +33,24 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useCustomerGrowthOverview, useRefreshStatus } from '../../../../lib/hooks';
+import { useCustomerGrowthOverview, usePeriodTrend, useRefreshStatus } from '../../../../lib/hooks';
 import type {
   CustomerGrowthOverview,
   CustomerGrowthPeriodCounts,
   CustomerGrowthScope,
   CustomerStatusCounts,
   CustomerStatusLabel,
+  CustomersTrend,
+  PeriodGranularity,
 } from '../../../../lib/api';
-import { formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
+import { DEFAULT_GRANULARITY, formatChange, usePeriodWindow } from '../../../../lib/periods';
+import { PeriodTrendSelector } from '../../../../components/PeriodTrendSelector';
+import { formatCompactNumber, formatCurrency, formatTimestamp, formatVariance, DISPLAY_LOCALE } from '../../../../lib/format';
 import { CUSTOMER_CATEGORY_DEFINITION, customerCategoryColor, isCustomerCategory } from '../../../../lib/customerCategory';
 import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 
 // Customer Category order, labels, palette and definition: lib/customerCategory.ts (shared with Receivables and Collections).
 
-
-/** Y-axis tick formatter for currency values: millions with an "M" suffix -- same convention as
- * Invoices Engine / Revenue Trend's chart axes. */
-function formatMillions(value: number): string {
-  const fixed = (value / 1_000_000).toFixed(1);
-  return `${fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed}M`;
-}
 
 // ---------------------------------------------------------------------------
 // Executive Summary -- this page has no target/benchmark anywhere in its data model (confirmed:
@@ -198,15 +195,19 @@ function toCustomerStatusTableRows(counts?: CustomerStatusCounts): PeriodCountTa
 
 interface TrendTableRow extends Record<string, unknown> {
   id: string;
-  year: string;
+  period: string;
   totalSalesValue: string;
   customerCount: number;
+  change: string;
 }
-const trendTableColumns: Column<TrendTableRow>[] = [
-  { key: 'year', header: 'Year' },
-  { key: 'totalSalesValue', header: 'Total Sales Value', align: 'right' },
-  { key: 'customerCount', header: 'Customer Count', align: 'right' },
-];
+function trendTableColumns(changeLabel: string): Column<TrendTableRow>[] {
+  return [
+    { key: 'period', header: 'Period' },
+    { key: 'totalSalesValue', header: 'Total Sales Value', align: 'right' },
+    { key: 'customerCount', header: 'Customer Count', align: 'right' },
+    { key: 'change', header: `Value change ${changeLabel}`, align: 'right' },
+  ];
+}
 
 interface RateTableRow extends Record<string, unknown> {
   id: string;
@@ -284,9 +285,9 @@ function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => vo
  * toggled locally (not routed): `view === 'summary'` (default) and `view === 'details'`, reached
  * by clicking the Customer Status panel's title. Three independent interactions, same
  * self-contained pattern as Invoices Engine:
- *   1. Customers Trend: clicking a year sets/clears the page's Year filter (selectedYear) -- a
- *      real backend re-query, re-scoping every other visual (including the Details view). No
- *      drill-down mode of its own -- always click-to-filter.
+ *   1. Customers Trend: follows its Daily / Weekly / Monthly / Yearly period selector (lib/periods.ts); on Yearly,
+ *      clicking a year sets/clears the page's Year filter (selectedYear) -- a real backend re-query, re-scoping every
+ *      other visual (including the Details view). No drill-down mode of its own.
  *   2. Customers Contribution donut: clicking Top 10 / Other drills the chart itself into that
  *      bucket's individual customers -- purely local state, no re-fetch (the backend already
  *      returns the ranked customer list).
@@ -334,6 +335,13 @@ export default function CustomerGrowthPage() {
 
   const filterOptions = useScopedFilterOptions();
   const overview = useCustomerGrowthOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
+  const [granularity, setGranularity] = useState<PeriodGranularity>(DEFAULT_GRANULARITY);
+  const win = usePeriodWindow(granularity);
+  const trend = usePeriodTrend<CustomersTrend>(token, 'customer-growth', anchorDate, effectiveFilters, granularity, authError, retryAuth, {
+    selectedCategory,
+  });
+  const trendData = trend.data?.granularity === granularity ? trend.data : null;
+  const trendLoading = trend.loading || (trend.data !== null && !trendData);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
@@ -383,6 +391,7 @@ export default function CustomerGrowthPage() {
   }
 
   function handleTrendCategoryClick(label: string) {
+    if (granularity !== 'year') return; // only a year is a page filter
     const year = Number(label);
     if (Number.isNaN(year)) return;
     setSelectedYear((prev) => (prev === year ? null : year));
@@ -439,11 +448,14 @@ export default function CustomerGrowthPage() {
   const data = overview.data;
   const kpis = data?.kpis;
 
-  const trendPoints = (data?.customersTrend ?? []).map((y) => ({
-    label: y.label,
-    totalSalesValue: y.totalSalesValue,
-    customerCount: y.customerCount,
+  const trendSource = trendData?.points ?? [];
+  const trendPoints = trendSource.map((p) => ({
+    label: win.label(p.start),
+    totalSalesValue: p.totalSalesValue,
+    customerCount: p.customerCount,
+    change: p.totalSalesValueChangePct,
   }));
+  const trendColumns = trendTableColumns(win.changeLabel);
 
   const hasCustomerSelection = selectedCustomerKeys.length > 0;
 
@@ -507,11 +519,12 @@ export default function CustomerGrowthPage() {
   const totalCustomersTableRows = toPeriodCountTableRows(kpis?.totalCustomers);
   const customerStatusTableRows = toCustomerStatusTableRows(kpis?.customerStatus);
 
-  const trendTableRows: TrendTableRow[] = trendPoints.map((p) => ({
-    id: p.label,
-    year: p.label,
+  const trendTableRows: TrendTableRow[] = trendSource.map((p) => ({
+    id: p.start,
+    period: `${win.title(p.start)}${p.inProgress ? ' (in progress)' : ''}`,
     totalSalesValue: formatCurrency(p.totalSalesValue),
     customerCount: p.customerCount,
+    change: formatChange(p.totalSalesValueChangePct, granularity) ?? '—',
   }));
 
   const rateTableRows: RateTableRow[] = [
@@ -617,23 +630,27 @@ export default function CustomerGrowthPage() {
                   title="Customers Trend"
                   {...vh('promotion.customerGrowth.customersTrend')}
                   style={{ minHeight: 380 }}
-                  tableColumns={overview.error ? undefined : trendTableColumns}
-                  tableRows={overview.error ? undefined : trendTableRows}
+                  tableColumns={trend.error ? undefined : trendColumns}
+                  tableRows={trend.error ? undefined : trendTableRows}
                   getRowId={(row) => row.id}
+                  wrapHeader
                   headerActions={
-                    !overview.error && (
-                      <ExportPdfButton
-                        downloading={downloadingPdf === 'trend'}
-                        disabled={trendTableRows.length === 0}
-                        onClick={() => handleDownloadTablePdf('trend', 'Customers Trend', trendTableColumns, trendTableRows)}
-                      />
-                    )
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <PeriodTrendSelector value={granularity} onChange={setGranularity} label="Customers Trend period" />
+                      {!trend.error && (
+                        <ExportPdfButton
+                          downloading={downloadingPdf === 'trend'}
+                          disabled={trendTableRows.length === 0}
+                          onClick={() => handleDownloadTablePdf('trend', `Customers Trend · ${win.name}`, trendColumns, trendTableRows)}
+                        />
+                      )}
+                    </div>
                   }
                 >
-                  {overview.loading ? (
+                  {trendLoading ? (
                     <LoadingSkeleton variant="chart" />
-                  ) : overview.error ? (
-                    <ErrorState message={overview.error} onRetry={overview.retry} />
+                  ) : trend.error ? (
+                    <ErrorState message={trend.error} onRetry={trend.retry} />
                   ) : (
                     <ComboChart
                       title="Customers Trend"
@@ -641,15 +658,20 @@ export default function CustomerGrowthPage() {
                       points={trendPoints}
                       bars={[{ key: 'totalSalesValue', name: 'Total Sales Value', color: 'var(--ps-color-accent)' }]}
                       lines={[{ key: 'customerCount', name: 'Customer Count', color: 'var(--ps-color-last-year)', yAxisId: 'right' }]}
-                      leftAxisFormatter={formatMillions}
+                      leftAxisFormatter={formatCompactNumber}
                       rightAxisFormatter={formatPlainNumber}
                       tooltipFormatters={{
-                        totalSalesValue: (v) => formatCurrency(v),
+                        totalSalesValue: (v, p) => {
+                          const change = typeof p?.change === 'number' ? formatChange(p.change, granularity) : null;
+                          return change ? `${formatCurrency(v)} (${change})` : formatCurrency(v);
+                        },
                         customerCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                       }}
+                      tooltipLabelFormatter={win.tooltipTitle(trendSource)}
+                      inProgressLabel={win.inProgressLabel(trendSource)}
                       onCategoryClick={handleTrendCategoryClick}
                       onAreaClick={handleTrendAreaClick}
-                      highlightedCategory={selectedYear != null ? String(selectedYear) : null}
+                      highlightedCategory={granularity === 'year' && selectedYear != null ? String(selectedYear) : null}
                     />
                   )}
                 </ChartPanel>
