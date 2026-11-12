@@ -107,12 +107,13 @@ def reconcile_reach(conn, messages: list[dict], config: wa.ReachConfig, timezone
         expected[key][box_col[row["box"]]] += 1
         if row["box"] == "error":
             errors[(*key, row["failure_group"])] += 1
+    # Compare the source bytes to avoid MySQL collation differences and keep the SQLite audit tests portable.
     params = {"lo": lo, "hi": hi}
     actual = {tuple(int(v) for v in row[:2]): {key: int(value or 0) for key, value in zip(columns, row[2:])}
               for row in conn.execute(text("SELECT MessageDateKey, CompanyKey, total_reach, delivered, not_delivered, read_count, error_count, other_state "
-                                           "FROM v_process_nps_reach WHERE CAST(source AS BINARY) = 'etl' AND MessageDateKey BETWEEN :lo AND :hi"), params)}
+                                           "FROM v_process_nps_reach WHERE HEX(source) = HEX('etl') AND MessageDateKey BETWEEN :lo AND :hi"), params)}
     actual_errors = {(int(day), int(company), group): int(count) for day, company, group, count in conn.execute(text(
-        "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE CAST(source AS BINARY) = 'etl' "
+        "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE HEX(source) = HEX('etl') "
         "AND MessageDateKey BETWEEN :lo AND :hi"), params)}
     normalized = {key: {column: counts[column] for column in columns} for key, counts in expected.items()}
     boxes_ok, errors_ok = normalized == actual, dict(errors) == actual_errors
@@ -266,7 +267,7 @@ def reconcile_manual(conn) -> bool:
         if a["CompanyKey"] == b["CompanyKey"] and b["date_from"] <= a["date_to"]:
             print(f"   overlapping periods: {a['CompanyKey']} {a['date_from']}..{a['date_to']} and {b['date_from']}..{b['date_to']}")
             ok = False
-    under = conn.execute(text(f"SELECT COUNT(*) FROM v_process_nps_reach m WHERE CAST(m.source AS BINARY) = 'etl' AND {_COVERED}")).scalar()
+    under = conn.execute(text(f"SELECT COUNT(*) FROM v_process_nps_reach m WHERE HEX(m.source) = HEX('etl') AND {_COVERED}")).scalar()
     if int(under or 0):
         print(f"   {under} ETL row(s) of v_process_nps_reach fall on a manual day (double counting)")
         ok = False
