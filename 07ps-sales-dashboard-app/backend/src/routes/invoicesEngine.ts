@@ -4,11 +4,12 @@ import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import { dateOnlyUTC } from '../measures/filters';
-import { parseGranularity, PeriodQueryError } from '../lib/periods';
 import {
   computeInvoicesEngineKpis,
   fetchInvoiceClassificationYtd,
-  fetchInvoicesEngineTrend,
+  fetchInvoicesTrendByYear,
+  fetchSalesTrendByYear,
+  fetchSalesTrendByYearClass,
   type InvoicesEngineScope,
 } from '../measures/invoicesEngine';
 
@@ -17,10 +18,9 @@ import {
  * routes/tachometer.ts, routes/criticalNumber.ts and routes/revenueTrend.ts -- every query goes
  * through resolveScopedFilters before any measures function runs.
  *
- * /overview: the Zone A/B KPI tiles and the Invoices Classification donut.
- * /trend?granularity=day|week|month|year (default week): the Sales Trend (by period and by period + class, so the
- * drill-down toggle needs no second request) and the Invoices Trend over that period window (lib/periods.ts), so the
- * period selector reloads only the two trend charts. The Year page-filter is a Sales Trend click on Yearly.
+ * One /overview endpoint: the page needs the Zone A/B KPI tiles, the Sales Trend series (by year
+ * and by year+class, so the drill-down toggle needs no second request), the Invoices Trend series,
+ * and the Invoices Classification donut on a single load.
  *
  * Page-filter interactivity: `selectedYear`/`selectedInvoiceClass` are optional and come from a
  * Sales Trend bar click / Invoices Classification segment click respectively (see the frontend
@@ -72,11 +72,15 @@ invoicesEngineRouter.get('/overview', async (req, res, next) => {
     const selectedInvoiceClass = parseSelectedInvoiceClass(req.query.selectedInvoiceClass);
 
     // Self-exclusion per chart -- see this file's header comment.
+    const classOnlyScope: InvoicesEngineScope = { invoiceClass: selectedInvoiceClass };
     const yearOnlyScope: InvoicesEngineScope = { year: selectedYear };
     const fullScope: InvoicesEngineScope = { year: selectedYear, invoiceClass: selectedInvoiceClass };
 
-    const [kpis, classification] = await Promise.all([
+    const [kpis, byYear, byYearClass, invoicesTrend, classification] = await Promise.all([
       computeInvoicesEngineKpis(pool, anchor, filters, fullScope),
+      fetchSalesTrendByYear(pool, anchor, filters, classOnlyScope),
+      fetchSalesTrendByYearClass(pool, anchor, filters, classOnlyScope),
+      fetchInvoicesTrendByYear(pool, anchor, filters, fullScope),
       fetchInvoiceClassificationYtd(pool, anchor, filters, yearOnlyScope),
     ]);
 
@@ -85,28 +89,11 @@ invoicesEngineRouter.get('/overview', async (req, res, next) => {
       selectedYear: selectedYear ?? null,
       selectedInvoiceClass: selectedInvoiceClass ?? null,
       kpis,
+      salesTrend: { byYear, byYearClass },
+      invoicesTrend,
       classification,
     });
   } catch (err) {
-    next(err);
-  }
-});
-
-/** The two trend charts. The Sales Trend ignores the year it produces (self-exclusion); the Invoices Trend takes both. */
-invoicesEngineRouter.get('/trend', async (req, res, next) => {
-  try {
-    const selectedYear = parseSelectedYear(req.query.selectedYear);
-    const selectedInvoiceClass = parseSelectedInvoiceClass(req.query.selectedInvoiceClass);
-    const trend = await fetchInvoicesEngineTrend(pool, parseAnchorDate(req.query.anchorDate), parseGranularity(req.query.granularity), req.scopedFilters!, {
-      year: selectedYear,
-      invoiceClass: selectedInvoiceClass,
-    });
-    res.json(trend);
-  } catch (err) {
-    if (err instanceof PeriodQueryError) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
     next(err);
   }
 });

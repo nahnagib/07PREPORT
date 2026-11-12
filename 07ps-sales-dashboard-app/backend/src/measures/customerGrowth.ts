@@ -40,7 +40,6 @@ import {
   type Filters,
 } from './filters';
 import { CUSTOMER_CATEGORIES } from '../lib/customerCategory';
-import { anchorToday, byPeriod, changePct, fillPeriods, periodBucketSql, periodRangeSql, periodWindow, type PeriodGranularity } from '../lib/periods';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 
 function toDateOnlyString(d: Date): string {
@@ -391,78 +390,45 @@ export function computeRates(
 }
 
 // ---------------------------------------------------------------------------
-// Zone B (left) -- Customers Trend: Total Sales Value + Customer Count per Daily / Weekly / Monthly / Yearly period of
-// the page's period selector (lib/periods.ts window ending with the anchor's period). On Yearly a click PRODUCES the Year
-// page-filter, so it deliberately ignores scope.year itself (same self-exclusion convention as invoicesEngine.ts's Sales
-// Trend). Customer Count = distinct customers buying in the period (not additive across periods).
+// Zone B (left) -- Customers Trend: Total Sales Value + Customer Count, by Year. Drillable only in
+// the sense that it PRODUCES the Year page-filter -- deliberately ignores scope.year itself (same
+// self-exclusion convention as invoicesEngine.ts's Sales Trend), always shows the full series.
 // ---------------------------------------------------------------------------
 
-export interface CustomerPeriodPoint {
-  start: string;
-  end: string;
-  inProgress: boolean;
+export interface CustomerYearPoint {
+  year: number;
+  label: string;
   totalSalesValue: number;
   customerCount: number;
-  /** against the previous period of the same granularity */
-  totalSalesValueChangePct: number | null;
 }
 
-export interface CustomersTrend {
-  granularity: PeriodGranularity;
-  from: string;
-  to: string;
-  points: CustomerPeriodPoint[];
-  /** the window's sales value and distinct customers */
-  totals: { totalSalesValue: number; customerCount: number };
-}
-
-export async function fetchCustomersTrend(
+export async function fetchCustomersTrendByYear(
   pool: Pool,
   anchor: Date,
-  g: PeriodGranularity,
   filters: Filters,
   scope: CustomerGrowthScope = {},
-): Promise<CustomersTrend> {
-  const w = periodWindow(g, anchorToday(anchor));
+): Promise<CustomerYearPoint[]> {
   const { clause, params } = buildWhereClause(filters, 'fsl', true);
   const cat = buildCategorySqlClause(scope.category, 'dc');
-  const from = `FROM v_sales_lines fsl
+  const sql = `
+    SELECT
+      dd.Year AS year,
+      COALESCE(SUM(fsl.Value), 0) AS totalSalesValue,
+      COUNT(DISTINCT fsl.CustomerKey) AS customerCount
+    FROM v_sales_lines fsl
     JOIN dim_date dd ON fsl.DateKey = dd.DateKey
-    JOIN dim_customer dc ON dc.CustomerKey = fsl.CustomerKey`;
-  const range = periodRangeSql('dd.Date', w.previous.start, w.to);
-  const windowRange = periodRangeSql('dd.Date', w.from, w.to);
-  const [[rows], [totalRows]] = await Promise.all([
-    pool.query(
-      `SELECT ${periodBucketSql(g, 'dd.Date')} AS p, COALESCE(SUM(fsl.Value), 0) AS totalSalesValue, COUNT(DISTINCT fsl.CustomerKey) AS customerCount
-       ${from}
-       WHERE ${range.sql} AND ${clause} AND ${cat.clause}
-       GROUP BY p`,
-      [...range.params, ...params, ...cat.params],
-    ),
-    pool.query(
-      `SELECT COALESCE(SUM(fsl.Value), 0) AS totalSalesValue, COUNT(DISTINCT fsl.CustomerKey) AS customerCount
-       ${from}
-       WHERE ${windowRange.sql} AND ${clause} AND ${cat.clause}`,
-      [...windowRange.params, ...params, ...cat.params],
-    ),
-  ]);
-  const map = byPeriod(rows as Record<string, unknown>[]);
-  let prev = Number(map.get(w.previous.start)?.totalSalesValue ?? 0);
-  const points = fillPeriods(w, map, (p, r): CustomerPeriodPoint => {
-    const value = Number(r?.totalSalesValue ?? 0);
-    const point = {
-      start: p.start,
-      end: p.end,
-      inProgress: p.inProgress,
-      totalSalesValue: value,
-      customerCount: Number(r?.customerCount ?? 0),
-      totalSalesValueChangePct: changePct(value, prev),
-    };
-    prev = value;
-    return point;
-  });
-  const t = (totalRows as Record<string, unknown>[])[0] ?? {};
-  return { granularity: g, from: w.from, to: w.to, points, totals: { totalSalesValue: Number(t.totalSalesValue ?? 0), customerCount: Number(t.customerCount ?? 0) } };
+    JOIN dim_customer dc ON dc.CustomerKey = fsl.CustomerKey
+    WHERE dd.Date <= ? AND ${clause} AND ${cat.clause}
+    GROUP BY dd.Year
+    ORDER BY dd.Year
+  `;
+  const [rows] = await pool.query(sql, [toDateOnlyString(anchor), ...params, ...cat.params]);
+  return (rows as any[]).map((r) => ({
+    year: Number(r.year),
+    label: String(r.year),
+    totalSalesValue: Number(r.totalSalesValue),
+    customerCount: Number(r.customerCount),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -627,6 +593,7 @@ export interface CustomerGrowthKpis {
 export interface CustomerGrowthOverview {
   kpis: CustomerGrowthKpis;
   rates: CustomerGrowthRates;
+  customersTrend: CustomerYearPoint[];
   customersContribution: CustomersContribution;
   categoryPerformance: CategoryPerformanceRow[];
   customersTable: CustomerRow[];
@@ -640,10 +607,11 @@ export async function computeCustomerGrowthOverview(
 ): Promise<CustomerGrowthOverview> {
   const effectiveAnchor = anchorForYear(anchor, scope.year);
 
-  const [newCustomers, totalCustomers, customersTable, customersContribution, categoryPerformance] = await Promise.all([
+  const [newCustomers, totalCustomers, customersTable, customersTrend, customersContribution, categoryPerformance] = await Promise.all([
     computeNewCustomers(pool, anchor, filters, scope),
     computeTotalCustomers(pool, anchor, filters, scope),
     fetchCustomerRows(pool, effectiveAnchor, filters, scope),
+    fetchCustomersTrendByYear(pool, anchor, filters, scope),
     fetchCustomersContribution(pool, anchor, filters, scope),
     fetchCategoryPerformance(pool, anchor, filters, scope),
   ]);
@@ -654,6 +622,7 @@ export async function computeCustomerGrowthOverview(
   return {
     kpis: { newCustomers, totalCustomers, customerStatus },
     rates,
+    customersTrend,
     customersContribution,
     categoryPerformance,
     customersTable,

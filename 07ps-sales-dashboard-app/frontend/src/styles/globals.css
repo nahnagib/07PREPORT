@@ -568,7 +568,7 @@ input:not([type]), input[type='text'], input[type='search'],
 .ps-nps-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .ps-nps-trends { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .ps-nps-trends > *, .ps-nps-row > * { min-width: 0; }
-.ps-nps-pie { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0 12px; flex: 1; justify-content: space-evenly; } /* in a stretched card: the donut and its legend spread down the card, no empty bottom band */
+.ps-nps-pie { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 8px 0 12px; }
 .ps-nps-pie-plot { position: relative; flex: none; }
 .ps-nps-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; pointer-events: none; }
 .ps-nps-donut-center strong { font-size: 26px; line-height: 1; color: var(--ps-color-text); font-variant-numeric: tabular-nums; }

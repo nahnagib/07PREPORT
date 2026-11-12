@@ -2,27 +2,31 @@
 import { vh } from '../../lib/visualHelp';
 import React, { useEffect } from 'react';
 import { ExternalLink, X } from 'lucide-react';
-import { ChartPanel, ComboChart, DataGrid, EmptyState, ErrorState, LoadingSkeleton, type DataGridColumn } from '@07ps/ui';
+import { Button, ChartPanel, ComboChart, DataGrid, EmptyState, ErrorState, LoadingSkeleton, type DataGridColumn } from '@07ps/ui';
 import type { CollectionGrain, CollectionPaymentRow, CollectionPoint, CollectionsDrilldown, CollectionsTrend } from '../../lib/api';
 import { formatCompactMoney, formatDate, formatMoney, formatNumber } from '../../lib/format';
 import { safeOdooUrl } from '../../lib/debt/view';
-import { periodAxisLabel, periodTitle as sharedPeriodTitle } from '../../lib/periods';
-import { PeriodTrendSelector } from '../PeriodTrendSelector';
 
 /** Collections are the qualifying invoice portions of payments, dated by payment day.
  * Invoice date must be before payment date; due status only splits the eligible amount. */
 export const COLLECTIONS_INFO =
   'Collections against invoices issued before the payment day, whether overdue or not yet due. Same-day sales, advance payments not matched to an earlier invoice, and other receipts are excluded. Mixed payments count only the portion applied to earlier invoices. Credit notes, write-offs and exchange differences are excluded. Collection rate = paid against invoices overdue at the start of the period / that overdue (requires a snapshot on the day before).';
 export const COLLECTIONS_NOTE = 'Earlier invoices only: invoice date before payment date. Includes overdue and not-yet-due invoices; excludes same-day sales and unmatched advances.';
-/** The x-axis label of a period (the shared trend labels, lib/periods.ts): unique per period, so a click maps back to it. */
+const GRAIN_LABELS: Record<CollectionGrain, string> = { day: 'Day', week: 'Week', month: 'Month' };
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** The x-axis label of a period: unique per period, so a click maps back to it. */
 export function periodLabel(p: Pick<CollectionPoint, 'periodStart'>, grain: CollectionGrain): string {
-  return periodAxisLabel(p.periodStart, grain);
+  const [y, m, d] = p.periodStart.split('-').map(Number);
+  if (grain === 'month') return `${MONTHS[m - 1]} ${y}`;
+  return `${d} ${MONTHS[m - 1]} ${String(y).slice(2)}`; // a week by its Saturday
 }
 
-/** Tooltip / drill-down title of a period: "Wk of 04 Oct 2026 (04 Oct – 10 Oct)", "Oct 2026", "Sun 11 Oct 2026", "2026". */
+/** Tooltip / drill-down title of a period: "Week 4–10 Oct 2026", "Oct 2026", "11 Oct 2026". */
 export function periodTitle(p: Pick<CollectionPoint, 'periodStart' | 'periodEnd'>, grain: CollectionGrain): string {
-  if (grain === 'week') return `${sharedPeriodTitle(p.periodStart, grain)} (${formatDate(p.periodStart)} – ${formatDate(p.periodEnd)})`;
-  return sharedPeriodTitle(p.periodStart, grain);
+  if (grain === 'day') return formatDate(p.periodStart);
+  if (grain === 'month') return periodLabel(p, 'month');
+  return `Week ${formatDate(p.periodStart)} – ${formatDate(p.periodEnd)}`;
 }
 
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
@@ -62,10 +66,17 @@ export function CollectionsTrendPanel({
     total: p.collected,
     rate: p.collectionRate,
   }));
-  const inProgress = list.find((p) => p.inProgress);
-  const header = <PeriodTrendSelector value={grain} onChange={onGrainChange} label="Collections trend period" />;
+  const header = (
+    <div role="group" aria-label="Period" style={{ display: 'inline-flex', gap: 4 }}>
+      {(Object.keys(GRAIN_LABELS) as CollectionGrain[]).map((g) => (
+        <Button key={g} variant={g === grain ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => onGrainChange(g)} aria-pressed={g === grain}>
+          {GRAIN_LABELS[g]}
+        </Button>
+      ))}
+    </div>
+  );
   return (
-    <ChartPanel {...vh("price.receivables.collections")} title={`Collections trend · ${viewLabel}`} headerActions={header} wrapHeader>
+    <ChartPanel {...vh("price.receivables.collections")} title={`Collections trend · ${viewLabel}`} headerActions={header}>
       {error ? (
         <ErrorState message={error} onRetry={onRetry} />
       ) : loading && !data ? (
@@ -96,7 +107,6 @@ export function CollectionsTrendPanel({
               return p ? `${periodTitle(p, grain)} · ${formatNumber(p.payments)} payment${p.payments === 1 ? '' : 's'}` : label;
             }}
             connectNulls={false}
-            inProgressLabel={inProgress ? periodLabel(inProgress, grain) : null}
             topPadding={24}
             height={300}
             onCategoryClick={(label) => {

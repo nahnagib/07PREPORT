@@ -56,7 +56,7 @@
  * that is neither open, won nor lost (none in the live data) is counted in `unclassified` and in
  * #YTD, so the page can show the gap instead of silently not adding up. #Active therefore now means
  * "open and moving" (open, not W/O Activity, not W/O Next Step). The New Opportunities chart counts
- * every created opportunity too (Lost included), so its points sum to the opportunities created in its window. lostDealsRatio is
+ * every created opportunity too (Lost included), so its months sum to #YTD. lostDealsRatio is
  * unchanged in value: #Lost / all YTD opportunities, which is now simply #Lost / #YTD.
  *
  * YEAR-TO-DATE ONLY (2026-09-21): every figure on this page is now scoped to opportunities CREATED
@@ -64,8 +64,8 @@
  * anchor. That supersedes the all-time "snapshot" scoping described in the next paragraph: the
  * snapshot figures (`active`/`withoutActivity`/`withoutNextStep`, at-risk ratio, the details array)
  * still describe CURRENT state, but only of this year's origination cohort -- nothing created in a
- * previous year is fetched or calculated. Exception (2026-11-09): the New Opportunities chart follows the page's
- * Daily / Weekly / Monthly / Yearly period selector (lib/periods.ts: last 30 days / 12 weeks / 12 months / 5 years).
+ * previous year is fetched or calculated. The New Opportunities chart is the current year only
+ * (January through the anchor's month), with no prior-year series.
  *
  * Cohort vs. snapshot scoping (fixed 2026-09, superseded by the YTD-only rule above for the
  * creation-date window): `totalYtdAll`/`totalYtd`/`won`/`lost` describe *this
@@ -102,12 +102,12 @@
 import type { Pool } from 'mysql2/promise';
 import { buildCrmWhereClause, notArchivedClause, parsePipelineAnchor, ytdWindow, type Filters } from './filters';
 import { fetchPipelineStageOrder } from './pipelineStages';
-import { anchorToday, byPeriod, changePct, fillPeriods, periodBucketSql, periodRangeSql, periodWindow, type PeriodGranularity } from '../lib/periods';
 
 function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function safeDiv(numerator: number, denominator: number): number | null {
   if (!denominator) return null;
@@ -317,55 +317,36 @@ async function fetchLostByReason(pool: Pool, anchor: Date, filters: Filters): Pr
 }
 
 // ---------------------------------------------------------------------------
-// New Opportunities per Daily / Weekly / Monthly / Yearly period of the page's period selector (lib/periods.ts window
-// ending with the anchor's period). Every opportunity created in the period, Lost included (as the #YTD tile).
+// New Opportunities by month -- current year only, January through the anchor's month (no
+// prior-year series).
 // ---------------------------------------------------------------------------
 
-export interface NewOpportunitiesPeriodPoint {
-  start: string;
-  end: string;
-  inProgress: boolean;
-  count: number;
-  /** against the previous period of the same granularity */
-  changePct: number | null;
+export interface NewOpportunitiesMonthPoint {
+  month: number;
+  label: string;
+  countYtd: number;
 }
 
-export interface NewOpportunitiesTrend {
-  granularity: PeriodGranularity;
-  from: string;
-  to: string;
-  points: NewOpportunitiesPeriodPoint[];
-  /** opportunities created in the whole window (the points add up to it) */
-  total: number;
-}
-
-export async function fetchNewOpportunitiesTrend(pool: Pool, anchor: Date, g: PeriodGranularity, filters: Filters): Promise<NewOpportunitiesTrend> {
-  const w = periodWindow(g, anchorToday(anchor));
+/** Every opportunity created in the month, Lost included, so the months sum to the #YTD tile (see
+ * "MUTUALLY EXCLUSIVE STATUSES" in the module header). */
+async function fetchNewOpportunitiesByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<NewOpportunitiesMonthPoint[]> {
+  const year = anchor.getUTCFullYear();
+  const throughMonth = anchor.getUTCMonth() + 1;
   const { clause, params } = buildCrmWhereClause(filters, 'fo');
-  const range = periodRangeSql('fo.OpportunityCreatedDate', w.previous.start, w.to);
-  const windowRange = periodRangeSql('fo.OpportunityCreatedDate', w.from, w.to);
-  const [[rows], [totalRows]] = await Promise.all([
-    pool.query(
-      `SELECT ${periodBucketSql(g, 'fo.OpportunityCreatedDate')} AS p, COUNT(*) AS cnt
-       FROM v_sales_opportunities fo
-       WHERE ${range.sql} AND ${clause} AND ${notArchivedClause('fo')}
-       GROUP BY p`,
-      [...range.params, ...params],
-    ),
-    pool.query(
-      `SELECT COUNT(*) AS cnt FROM v_sales_opportunities fo WHERE ${windowRange.sql} AND ${clause} AND ${notArchivedClause('fo')}`,
-      [...windowRange.params, ...params],
-    ),
-  ]);
-  const map = byPeriod(rows as Record<string, unknown>[]);
-  let prev = Number(map.get(w.previous.start)?.cnt ?? 0);
-  const points = fillPeriods(w, map, (p, r): NewOpportunitiesPeriodPoint => {
-    const count = Number(r?.cnt ?? 0);
-    const point = { start: p.start, end: p.end, inProgress: p.inProgress, count, changePct: changePct(count, prev) };
-    prev = count;
-    return point;
-  });
-  return { granularity: g, from: w.from, to: w.to, points, total: Number((totalRows as Record<string, unknown>[])[0]?.cnt ?? 0) };
+  const sql = `
+    SELECT YEAR(fo.OpportunityCreatedDate) AS yr, MONTH(fo.OpportunityCreatedDate) AS mo, COUNT(*) AS cnt
+    FROM v_sales_opportunities fo
+    WHERE YEAR(fo.OpportunityCreatedDate) = ? AND ${clause} AND ${notArchivedClause('fo')}
+    GROUP BY YEAR(fo.OpportunityCreatedDate), MONTH(fo.OpportunityCreatedDate)
+  `;
+  const [rows] = await pool.query(sql, [year, ...params]);
+  const byYearMonth = new Map<string, number>();
+  for (const r of rows as any[]) byYearMonth.set(`${r.yr}-${r.mo}`, Number(r.cnt));
+  return Array.from({ length: throughMonth }, (_, i) => i + 1).map((m) => ({
+    month: m,
+    label: MONTH_LABELS[m - 1],
+    countYtd: byYearMonth.get(`${year}-${m}`) ?? 0,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -460,16 +441,18 @@ export interface ActivityMomentumOverview {
   counts: OpportunityActivityCounts;
   rates: ActivityRates;
   lostByReason: LostReasonSlice[];
+  newOpportunitiesByMonth: NewOpportunitiesMonthPoint[];
   opportunities: ActivityOpportunityRow[];
 }
 
 export async function computeActivityMomentumOverview(pool: Pool, anchor: Date, filters: Filters): Promise<ActivityMomentumOverview> {
   const activityColumnsAvailable = await checkActivityColumnsAvailable(pool);
   const counts = await computeOpportunityActivityCounts(pool, anchor, filters, activityColumnsAvailable);
-  const [rates, lostByReason, opportunities] = await Promise.all([
+  const [rates, lostByReason, newOpportunitiesByMonth, opportunities] = await Promise.all([
     computeActivityRates(pool, filters, activityColumnsAvailable, counts, anchor),
     fetchLostByReason(pool, anchor, filters),
+    fetchNewOpportunitiesByMonth(pool, anchor, filters),
     fetchActivityOpportunities(pool, anchor, filters, activityColumnsAvailable),
   ]);
-  return { activityColumnsAvailable, counts, rates, lostByReason, opportunities };
+  return { activityColumnsAvailable, counts, rates, lostByReason, newOpportunitiesByMonth, opportunities };
 }

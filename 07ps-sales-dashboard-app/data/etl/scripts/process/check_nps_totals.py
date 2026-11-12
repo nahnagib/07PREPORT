@@ -107,13 +107,12 @@ def reconcile_reach(conn, messages: list[dict], config: wa.ReachConfig, timezone
         expected[key][box_col[row["box"]]] += 1
         if row["box"] == "error":
             errors[(*key, row["failure_group"])] += 1
-    # Compare the source bytes to avoid MySQL collation differences and keep the SQLite audit tests portable.
     params = {"lo": lo, "hi": hi}
     actual = {tuple(int(v) for v in row[:2]): {key: int(value or 0) for key, value in zip(columns, row[2:])}
               for row in conn.execute(text("SELECT MessageDateKey, CompanyKey, total_reach, delivered, not_delivered, read_count, error_count, other_state "
-                                           "FROM v_process_nps_reach WHERE HEX(source) = HEX('etl') AND MessageDateKey BETWEEN :lo AND :hi"), params)}
+                                           "FROM v_process_nps_reach WHERE CAST(source AS BINARY) = 'etl' AND MessageDateKey BETWEEN :lo AND :hi"), params)}
     actual_errors = {(int(day), int(company), group): int(count) for day, company, group, count in conn.execute(text(
-        "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE HEX(source) = HEX('etl') "
+        "SELECT MessageDateKey, CompanyKey, failure_group, errors FROM v_process_nps_message_error WHERE CAST(source AS BINARY) = 'etl' "
         "AND MessageDateKey BETWEEN :lo AND :hi"), params)}
     normalized = {key: {column: counts[column] for column in columns} for key, counts in expected.items()}
     boxes_ok, errors_ok = normalized == actual, dict(errors) == actual_errors
@@ -267,7 +266,7 @@ def reconcile_manual(conn) -> bool:
         if a["CompanyKey"] == b["CompanyKey"] and b["date_from"] <= a["date_to"]:
             print(f"   overlapping periods: {a['CompanyKey']} {a['date_from']}..{a['date_to']} and {b['date_from']}..{b['date_to']}")
             ok = False
-    under = conn.execute(text(f"SELECT COUNT(*) FROM v_process_nps_reach m WHERE HEX(m.source) = HEX('etl') AND {_COVERED}")).scalar()
+    under = conn.execute(text(f"SELECT COUNT(*) FROM v_process_nps_reach m WHERE CAST(m.source AS BINARY) = 'etl' AND {_COVERED}")).scalar()
     if int(under or 0):
         print(f"   {under} ETL row(s) of v_process_nps_reach fall on a manual day (double counting)")
         ok = False
@@ -322,11 +321,9 @@ def reconcile_ytd(conn, today: _dt.date, api_base: str | None, token: str | None
                 o = _api_get(api_base, token, "overview", params)["totals"]
                 checks.append(("overview", all(o[k] == want[k] for k in ("responders", "promoters", "passives", "detractors"))
                                and _close(o["nps"], want["nps"]) and _close(o["csat"], want["csat"])))
-                for granularity in ("week", "month"):
-                    t = _api_get(api_base, token, "trend", [*params, ("granularity", granularity)])
-                    trend_lo, trend_hi = (int(t[k].replace("-", "")) for k in ("from", "to"))
-                    expected = _fact_counts(conn, trend_lo, trend_hi, company, segments)["responders"]
-                    checks.append((f"trend {granularity} sum", sum(p["responders"] for p in t["points"]) == expected))
+                for grain in ("week", "month"):
+                    t = _api_get(api_base, token, "trend", [*params, ("grain", grain)])
+                    checks.append((f"trend {grain} sum", sum(p["responders"] for p in t["points"]) == want["responders"]))
                 r = _api_get(api_base, token, "reach", params)
                 if r["status"] == "ready":
                     checks.append(("reach", all(r["totals"][k] == reach[k] for k in BOXES)))

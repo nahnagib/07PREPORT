@@ -8,7 +8,7 @@ describe('minimal visual hint policy', () => {
   it.each([
     'promotion.tachometer.ytdValue','promotion.tachometer.ytdVolume','promotion.tachometer.mtdValue','promotion.tachometer.mtdVolume',
     'promotion.criticalNumber.dailyCounter','promotion.criticalNumber.monthlyCounter','promotion.criticalNumber.yearlyCounter',
-    'promotion.revenueTrend.valueTrend','promotion.revenueTrend.volumeTrend','promotion.revenueTrend.aspTrend',
+    'promotion.revenueTrend.momValue','promotion.revenueTrend.momVolume','promotion.revenueTrend.momAsp',
     'promotion.invoicesEngine.linesPerInvoice','promotion.invoicesEngine.salesPerInvoice','promotion.invoicesEngine.volumePerInvoice',
     'promotion.customerGrowth.newCustomers','promotion.customerGrowth.categoryShare','promotion.customerGrowth.contribution',
     'promotion.pipelineTrend.opportunities','promotion.pipelineTrend.quotations','promotion.pipelineTrend.salesOrders',

@@ -150,8 +150,8 @@ describe('NPS Score access', () => {
 
   it('400 on a bad parameter', async () => {
     expect((await get('/nps-score/overview?dateFrom=2026-02-30', 'viewer')).status).toBe(400);
-    expect((await get('/nps-score/trend?granularity=quarter', 'viewer')).status).toBe(400);
-    expect((await get('/nps-score/trend?granularity=day', 'viewer')).status).toBe(200);
+    expect((await get('/nps-score/trend?grain=day', 'viewer')).status).toBe(400);
+    expect((await get('/nps-score/trend?grain=week', 'viewer')).status).toBe(200);
     expect((await get('/nps-score/detractors?pageSize=1000', 'commentReader')).status).toBe(400);
     expect((await get('/nps-score/reach?dateFrom=bad', 'viewer')).status).toBe(400);
   });

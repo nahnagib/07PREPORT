@@ -15,21 +15,19 @@
  * than inventing a new status scheme.
  *
  * YEAR-TO-DATE ONLY (2026-09-21): every query here is limited to records created/quoted from Jan 1
- * of the current year through the anchor (clamped by filters.ts's parsePipelineAnchor), and the aging buckets only
- * cover this year's open records. Exception (2026-11-09): the Opportunities / Quotations / Sales Orders charts follow the
- * page's Daily / Weekly / Monthly / Yearly period selector (lib/periods.ts window), with no prior-year series.
+ * of the current year through the anchor (clamped by filters.ts's parsePipelineAnchor). The by-month
+ * charts have no prior-year series, and the aging buckets only cover this year's open records.
  *
- * Lost-exclusion policy: fetchOpportunitiesByPeriod (v_sales_opportunities-scoped) excludes closed-lost
+ * Lost-exclusion policy: fetchOpportunitiesByMonth (v_sales_opportunities-scoped) excludes closed-lost
  * opportunities via filters.ts's excludeLostClause -- it's a general creation-volume trend, not a
  * lost-specific one. Every other query on this page is v_sales_documents-scoped (Quotation Rates,
- * Quotations/Sales Orders by period, aging), which has no Stage/IsLost concept of its own (its
+ * Quotations/Sales Orders by month, aging), which has no Stage/IsLost concept of its own (its
  * "lost" signal is OrderState='cancel', already tracked separately as lostQuotations/its own
  * aging bucket) -- untouched.
  */
 
 import type { Pool } from 'mysql2/promise';
 import { fetchPipelineStageOrder } from './pipelineStages';
-import { anchorToday, byPeriod, changePct, fillPeriods, periodBucketSql, periodRangeSql, periodWindow, type PeriodGranularity } from '../lib/periods';
 import {
   buildCrmWhereClause,
   buildWhereClause,
@@ -45,6 +43,7 @@ function toDateOnlyString(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function safeDiv(numerator: number, denominator: number): number | null {
   if (!denominator) return null;
@@ -97,114 +96,68 @@ export async function computeQuotationRates(pool: Pool, anchor: Date, filters: F
 }
 
 // ---------------------------------------------------------------------------
-// 3 combo charts -- Opportunities / Quotations / Sales Orders (count + value) per Daily / Weekly / Monthly / Yearly period
-// of the page's period selector (lib/periods.ts window ending with the anchor's period).
+// 3 by-month combo charts -- Opportunities / Quotations / Sales Orders. Current year only: January
+// through the anchor's month, no prior-year (LYTD) series and nothing from earlier years is queried.
 // ---------------------------------------------------------------------------
 
-export interface PeriodComparisonPoint {
-  start: string;
-  end: string;
-  inProgress: boolean;
-  count: number;
-  value: number;
-  /** against the previous period of the same granularity */
-  countChangePct: number | null;
-  valueChangePct: number | null;
+export interface MonthComparisonPoint {
+  month: number;
+  label: string;
+  countYtd: number;
+  valueYtd: number;
 }
 
-export interface PeriodComparisonSeries {
-  points: PeriodComparisonPoint[];
-  /** the whole window (the points add up to it) */
-  totals: { count: number; value: number };
-}
-
-async function fetchPeriodComparison(
+async function fetchMonthComparison(
   pool: Pool,
   anchor: Date,
-  g: PeriodGranularity,
   filters: Filters,
   table: 'v_sales_opportunities' | 'v_sales_documents',
   dateColumn: string,
   valueColumn: string,
   extraWhere: string,
   crmScoped: boolean,
-): Promise<PeriodComparisonSeries> {
-  const w = periodWindow(g, anchorToday(anchor));
+): Promise<MonthComparisonPoint[]> {
+  const year = anchor.getUTCFullYear();
+  const throughMonth = anchor.getUTCMonth() + 1;
   const { clause, params } = crmScoped ? buildCrmWhereClause(filters, 't') : buildWhereClause(filters, 't');
-  const range = periodRangeSql(`t.${dateColumn}`, w.previous.start, w.to);
-  const windowRange = periodRangeSql(`t.${dateColumn}`, w.from, w.to);
-  const [[rows], [totalRows]] = await Promise.all([
-    pool.query(
-      `SELECT ${periodBucketSql(g, `t.${dateColumn}`)} AS p, COUNT(*) AS cnt, COALESCE(SUM(t.${valueColumn}), 0) AS val
-       FROM ${table} t
-       WHERE ${range.sql} AND ${extraWhere} AND ${clause}
-       GROUP BY p`,
-      [...range.params, ...params],
-    ),
-    pool.query(
-      `SELECT COUNT(*) AS cnt, COALESCE(SUM(t.${valueColumn}), 0) AS val FROM ${table} t WHERE ${windowRange.sql} AND ${extraWhere} AND ${clause}`,
-      [...windowRange.params, ...params],
-    ),
-  ]);
-  const map = byPeriod(rows as Record<string, unknown>[]);
-  let prev = map.get(w.previous.start);
-  const points = fillPeriods(w, map, (p, r): PeriodComparisonPoint => {
-    const count = Number(r?.cnt ?? 0);
-    const value = Number(r?.val ?? 0);
-    const point = {
-      start: p.start,
-      end: p.end,
-      inProgress: p.inProgress,
-      count,
-      value,
-      countChangePct: changePct(count, Number(prev?.cnt ?? 0)),
-      valueChangePct: changePct(value, Number(prev?.val ?? 0)),
-    };
-    prev = r;
-    return point;
-  });
-  const t = (totalRows as Record<string, unknown>[])[0] ?? {};
-  return { points, totals: { count: Number(t.cnt ?? 0), value: Number(t.val ?? 0) } };
+  const sql = `
+    SELECT YEAR(t.${dateColumn}) AS yr, MONTH(t.${dateColumn}) AS mo, COUNT(*) AS cnt, COALESCE(SUM(t.${valueColumn}), 0) AS val
+    FROM ${table} t
+    WHERE YEAR(t.${dateColumn}) = ? AND ${extraWhere} AND ${clause}
+    GROUP BY YEAR(t.${dateColumn}), MONTH(t.${dateColumn})
+  `;
+  const [rows] = await pool.query(sql, [year, ...params]);
+  const byYearMonth = new Map<string, { cnt: number; val: number }>();
+  for (const r of rows as any[]) {
+    byYearMonth.set(`${r.yr}-${r.mo}`, { cnt: Number(r.cnt), val: Number(r.val) });
+  }
+  return Array.from({ length: throughMonth }, (_, i) => i + 1).map((m) => ({
+    month: m,
+    label: MONTH_LABELS[m - 1],
+    countYtd: byYearMonth.get(`${year}-${m}`)?.cnt ?? 0,
+    valueYtd: byYearMonth.get(`${year}-${m}`)?.val ?? 0,
+  }));
 }
 
 /** Excludes Lost (see filters.ts's excludeLostClause) -- a general opportunity-creation trend, not
- * a lost-specific one. v_sales_documents-scoped siblings below (Quotations/Sales Orders) are
+ * a lost-specific one. v_sales_documents-scoped siblings below (Quotations/Sales Orders by month) are
  * untouched: v_sales_documents has no Stage/IsLost concept of its own, and those documents already
  * happened regardless of the linked opportunity's current status. */
-export function fetchOpportunitiesByPeriod(pool: Pool, anchor: Date, g: PeriodGranularity, filters: Filters): Promise<PeriodComparisonSeries> {
-  return fetchPeriodComparison(pool, anchor, g, filters, 'v_sales_opportunities', 'OpportunityCreatedDate', 'ExpectedRevenue', excludeLostClause('t'), true);
+export function fetchOpportunitiesByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<MonthComparisonPoint[]> {
+  return fetchMonthComparison(pool, anchor, filters, 'v_sales_opportunities', 'OpportunityCreatedDate', 'ExpectedRevenue', excludeLostClause('t'), true);
 }
 
 /** Same "real quotation universe" (IsRealQuotation=1 OR IsRealSalesOrder=1) as computeQuotationRates, minus cancelled
- * documents (not pipeline: excludeCancelledDocumentsClause), cohorted by QuotationDate's period regardless of whether
+ * documents (not pipeline: excludeCancelledDocumentsClause), cohorted by QuotationDate's month regardless of whether
  * the row has since converted. */
-export function fetchQuotationsByPeriod(pool: Pool, anchor: Date, g: PeriodGranularity, filters: Filters): Promise<PeriodComparisonSeries> {
-  return fetchPeriodComparison(pool, anchor, g, filters, 'v_sales_documents', 'QuotationDate', 'OrderValue',
+export function fetchQuotationsByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<MonthComparisonPoint[]> {
+  return fetchMonthComparison(pool, anchor, filters, 'v_sales_documents', 'QuotationDate', 'OrderValue',
     `(t.IsRealQuotation = 1 OR t.IsRealSalesOrder = 1) AND ${excludeCancelledDocumentsClause('t')}`, false);
 }
 
-export function fetchSalesOrdersByPeriod(pool: Pool, anchor: Date, g: PeriodGranularity, filters: Filters): Promise<PeriodComparisonSeries> {
-  return fetchPeriodComparison(pool, anchor, g, filters, 'v_sales_documents', 'OrderDate', 'OrderValue',
+export function fetchSalesOrdersByMonth(pool: Pool, anchor: Date, filters: Filters): Promise<MonthComparisonPoint[]> {
+  return fetchMonthComparison(pool, anchor, filters, 'v_sales_documents', 'OrderDate', 'OrderValue',
     `(t.SalesDocumentType = 'Sales Order' AND t.IsRealSalesOrder = 1) AND ${excludeCancelledDocumentsClause('t')}`, false);
-}
-
-export interface PipelineTrendPeriods {
-  granularity: PeriodGranularity;
-  from: string;
-  to: string;
-  opportunities: PeriodComparisonSeries;
-  quotations: PeriodComparisonSeries;
-  salesOrders: PeriodComparisonSeries;
-}
-
-export async function fetchPipelineTrendPeriods(pool: Pool, anchor: Date, g: PeriodGranularity, filters: Filters): Promise<PipelineTrendPeriods> {
-  const w = periodWindow(g, anchorToday(anchor));
-  const [opportunities, quotations, salesOrders] = await Promise.all([
-    fetchOpportunitiesByPeriod(pool, anchor, g, filters),
-    fetchQuotationsByPeriod(pool, anchor, g, filters),
-    fetchSalesOrdersByPeriod(pool, anchor, g, filters),
-  ]);
-  return { granularity: g, from: w.from, to: w.to, opportunities, quotations, salesOrders };
 }
 
 // ---------------------------------------------------------------------------
@@ -392,10 +345,19 @@ export async function computeAgingDistribution(pool: Pool, anchor: Date, filters
 
 export interface PipelineTrendOverview {
   quotationRates: QuotationRates;
+  opportunitiesByMonth: MonthComparisonPoint[];
+  quotationsByMonth: MonthComparisonPoint[];
+  salesOrdersByMonth: MonthComparisonPoint[];
   aging: AgingDistribution;
 }
 
 export async function computePipelineTrendOverview(pool: Pool, anchor: Date, filters: Filters): Promise<PipelineTrendOverview> {
-  const [quotationRates, aging] = await Promise.all([computeQuotationRates(pool, anchor, filters), computeAgingDistribution(pool, anchor, filters)]);
-  return { quotationRates, aging };
+  const [quotationRates, opportunitiesByMonth, quotationsByMonth, salesOrdersByMonth, aging] = await Promise.all([
+    computeQuotationRates(pool, anchor, filters),
+    fetchOpportunitiesByMonth(pool, anchor, filters),
+    fetchQuotationsByMonth(pool, anchor, filters),
+    fetchSalesOrdersByMonth(pool, anchor, filters),
+    computeAgingDistribution(pool, anchor, filters),
+  ]);
+  return { quotationRates, opportunitiesByMonth, quotationsByMonth, salesOrdersByMonth, aging };
 }

@@ -3,7 +3,7 @@ import React from 'react';
 import { Reply, Smile, ThumbsUp } from 'lucide-react';
 import { CompactKpiCard, KpiCard } from '@07ps/ui';
 import type { NpsBandScale, NpsCounts, NpsResponseRate } from '../../lib/api';
-import { MANUAL_MARK, NPS_CONTEXT, bandStatus, csatFooter, fmt2, longDate, npsBreakdown, npsFooter, pct, rateFraction, responseRateMetrics, responseRateTooltip, smallSample } from '../../lib/nps/view';
+import { NPS_CONTEXT, bandStatus, csatFooter, fmt2, npsBreakdown, npsFooter, pct, rateFraction, responseRateMetrics, responseRateTooltip, smallSample } from '../../lib/nps/view';
 
 export type RateState = { data: NpsResponseRate | null; loading: boolean; error: string | null; retry: () => void };
 
@@ -69,8 +69,7 @@ export function NpsTopRow({ totals, thresholds, rate }: {
 
 /**
  * The narrow middle card: responders / (Delivered + Read), company and date filters only, from the first day with reach.
- * Delivered + Read = the Survey Reach cards: measured from 03 Oct, the approved manual reach 12 Jul – 02 Oct (marked
- * "incl. manual/est."; the tooltip splits measured / Meta manual / estimate). The sparkline is every week counted.
+ * Delivered + Read = the Survey Reach cards: measured from 03 Oct, the approved manual reach 12 Jul – 02 Oct. The tooltip shows the source breakdown. The sparkline is every week counted.
  */
 export function ResponseRateCard({ state }: { state: RateState }) {
   const r = state.data;
@@ -82,14 +81,7 @@ export function ResponseRateCard({ state }: { state: RateState }) {
     const why = r.status === 'restricted' ? 'Unavailable for your assigned data scope.' : 'Waiting for the WhatsApp message data.';
     return <CompactKpiCard {...vh("process.npsScore.responseRate")} title="Response Rate" icon={Reply} status="neutral" valueLabel="—" referenceMetrics={[]} notes={[why]} testId="rate-card" />;
   }
-  const notes: React.ReactNode[] = [
-    <span key="since" data-testid="rate-since">since {longDate(r.dateFrom)}</span>,
-    <span key="what">Responders ÷ (Delivered + Read)</span>,
-  ];
-  if (r.includesManual) {
-    // the small mark: 12 Jul – 02 Oct is the approved manual reach (the tooltip gives the split)
-    notes.unshift(<span key="manual" data-testid="rate-manual-mark" style={{ fontSize: 11, fontWeight: 600 }}>{MANUAL_MARK}</span>);
-  }
+  const notes = ['Responders ÷ (Delivered + Read)'];
   // "Company and date filters only" and what the numerator counts live in the ⓘ (visualHelp) and the value tooltip
   return (
     <CompactKpiCard {...vh("process.npsScore.responseRate")}

@@ -36,7 +36,6 @@ import {
   CSAT_SCALE, NPS_SCALE, RESPONSE_RATE_SCALE, csatBand, minResponders, npsBand, responseRateBand, type Band, type BandScale,
 } from '../config/npsThresholds';
 import { addDaysIso, weekStartIso, weekStartSql } from '../lib/businessWeek';
-import { byPeriod, fillPeriods, periodBucketSql, periodWindow, type PeriodGranularity } from '../lib/periods';
 import { fetchReachCounts, firstReachDate, type ManualPeriod, type ReachBoxes, type ReachSource } from './npsReachCounts';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 import {
@@ -52,6 +51,10 @@ import {
 import { caseSla, resolutionAgeing, type CaseSla, type ResolutionAgeing } from '../config/npsSla';
 
 export const MAX_PAGE_SIZE = 500;
+export type NpsGrain = 'week' | 'month' | 'year';
+export const NPS_GRAINS: readonly NpsGrain[] = ['week', 'month', 'year'];
+/** A weekly trend longer than this is refused (400): choose monthly or yearly. */
+export const MAX_WEEKLY_POINTS = 400;
 
 export class NpsQueryError extends Error {}
 
@@ -59,6 +62,7 @@ export interface NpsQuery {
   /** yyyy-mm-dd, inclusive (local dates). */
   dateFrom: string;
   dateTo: string;
+  grain: NpsGrain;
   page: number;
   pageSize: number;
 }
@@ -90,9 +94,12 @@ export function parseNpsQuery(q: Record<string, unknown>, now: Date = new Date()
   const dateTo = isoDate(q.dateTo, 'dateTo', today);
   const dateFrom = isoDate(q.dateFrom, 'dateFrom', `${dateTo.slice(0, 4)}-01-01`);
   if (dateFrom > dateTo) throw new NpsQueryError('dateFrom must not be after dateTo');
+  const grain = (q.grain === undefined || q.grain === '' ? 'month' : String(q.grain)) as NpsGrain;
+  if (!NPS_GRAINS.includes(grain)) throw new NpsQueryError(`grain must be one of ${NPS_GRAINS.join(', ')}`);
   return {
     dateFrom,
     dateTo,
+    grain,
     page: positiveInt(q.page, 'page', 1, 100_000),
     pageSize: positiveInt(q.pageSize, 'pageSize', 100, MAX_PAGE_SIZE),
   };
@@ -163,7 +170,45 @@ export function npsWhere(q: Pick<NpsQuery, 'dateFrom' | 'dateTo'>, f: Filters, a
 
 const COUNT_COLUMNS = 'SUM(f.nps_level = 3) AS promoters, SUM(f.nps_level = 2) AS passives, SUM(f.nps_level = 1) AS detractors';
 
+/** Every period key of the range at a grain: yyyymmdd of the week's Saturday / yyyymm / yyyy. */
+export function periodsBetween(from: string, to: string, grain: NpsGrain): number[] {
+  const out: number[] = [];
+  if (grain === 'year') {
+    for (let y = Number(from.slice(0, 4)); y <= Number(to.slice(0, 4)); y++) out.push(y);
+    return out;
+  }
+  if (grain === 'month') {
+    let y = Number(from.slice(0, 4));
+    let m = Number(from.slice(5, 7));
+    const end = Number(to.slice(0, 4)) * 100 + Number(to.slice(5, 7));
+    while (y * 100 + m <= end) {
+      out.push(y * 100 + m);
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+    }
+    return out;
+  }
+  for (let w = weekStartIso(from); w <= to && out.length <= MAX_WEEKLY_POINTS; w = addDaysIso(w, 7)) out.push(dateKeyOf(w));
+  return out;
+}
+
+/** "20261004" (a week's Saturday) -> "2026-10-04", "202610" -> "2026-10", "2026" -> "2026". */
+export function periodLabel(key: number): string {
+  const s = String(key);
+  if (s.length === 8) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  if (s.length === 6) return `${s.slice(0, 4)}-${s.slice(4, 6)}`;
+  return s;
+}
+
 const ratingDate = "STR_TO_DATE(CAST(f.RatingDateKey AS CHAR), '%Y%m%d')";
+const GRAIN_EXPR: Record<NpsGrain, string> = {
+  week: `CAST(DATE_FORMAT(${weekStartSql(ratingDate)}, '%Y%m%d') AS UNSIGNED)`,
+  month: 'FLOOR(f.RatingDateKey / 100)',
+  year: 'FLOOR(f.RatingDateKey / 10000)',
+};
 
 export interface NpsOverview {
   dateFrom: string;
@@ -180,61 +225,39 @@ export async function fetchNpsOverview(pool: Pool, q: NpsQuery, f: Filters): Pro
   return { dateFrom: q.dateFrom, dateTo: q.dateTo, totals: { ...toCounts(total, min), withComment: Number(total?.with_comment ?? 0) }, minResponders: min };
 }
 
-export interface NpsTrendPoint extends NpsCounts {
-  /** yyyy-mm-dd, the period's first day (a week's Saturday, the 1st of a month, 1 January) */
-  period: string;
-  end: string;
-  /** the period holding today */
-  inProgress: boolean;
-  /** false = the period ends before the first rating ever received: no survey yet, a gap (not 0) on the chart */
-  measured: boolean;
-}
-
 export interface NpsTrend {
-  granularity: PeriodGranularity;
-  from: string;
-  to: string;
-  /** the first rating ever received (unfiltered); null without any */
-  firstRatingDate: string | null;
+  grain: NpsGrain;
   /** NPS target (the line at 90) */
   target: number;
   /** CSAT target (the line at 95) */
   csatTarget: number;
   minResponders: number;
-  /** every period of the window (lib/periods.ts: 30 days / 12 weeks / 12 months / 5 years ending today) */
-  points: NpsTrendPoint[];
+  /** from the first period WITH ratings to the end of the range (no empty months before the first rating) */
+  points: ({ period: string } & NpsCounts)[];
 }
 
 /**
- * NPS and CSAT per day / week (Saturday..Friday, named by its Saturday) / month / year over the shared period window
- * ending today (business time zone), for the scoped filters (from the response view -- v_process_nps_trend is per
- * company only). The page's date range does not apply: the window is fixed by the granularity. Every period is present;
- * the ones that end before the first rating are `measured: false` (NPS and CSAT are ratios: a gap, not 0).
+ * NPS and CSAT per week (Saturday..Friday, named by its Saturday) / month / year for the active filters (from the response
+ * view -- v_process_nps_trend is per company only). A week cut by the range counts only the ratings inside the range,
+ * so the bars always add up to the period's responders.
  */
-export async function fetchNpsTrend(pool: Pool, g: PeriodGranularity, today: string, f: Filters): Promise<NpsTrend> {
-  const w = periodWindow(g, today);
-  const where = npsWhere({ dateFrom: w.from, dateTo: w.to }, f);
-  const [[rows], [first]] = await Promise.all([
-    pool.query(`SELECT ${periodBucketSql(g, ratingDate)} AS p, ${COUNT_COLUMNS} FROM v_process_nps_response f WHERE ${where.sql} GROUP BY p`, where.params),
-    pool.query('SELECT MIN(rating_date) AS first_date FROM v_process_nps_response'),
-  ]);
-  const firstRatingDate = asDate((first as Record<string, unknown>[])[0]?.first_date);
+export async function fetchNpsTrend(pool: Pool, q: NpsQuery, f: Filters): Promise<NpsTrend> {
+  const periods = periodsBetween(q.dateFrom, q.dateTo, q.grain);
+  if (q.grain === 'week' && periods.length > MAX_WEEKLY_POINTS) {
+    throw new NpsQueryError(`A weekly trend covers at most ${MAX_WEEKLY_POINTS} weeks: choose Monthly or Yearly`);
+  }
+  const w = npsWhere(q, f);
+  const expr = GRAIN_EXPR[q.grain];
+  const [rows] = await pool.query(`SELECT ${expr} AS p, ${COUNT_COLUMNS} FROM v_process_nps_response f WHERE ${w.sql} GROUP BY ${expr}`, w.params);
+  const byPeriod = new Map((rows as Record<string, unknown>[]).map((r) => [Number(r.p), r]));
   const min = minResponders();
+  const first = periods.findIndex((p) => byPeriod.has(p));
   return {
-    granularity: g,
-    from: w.from,
-    to: w.to,
-    firstRatingDate,
+    grain: q.grain,
     target: NPS_SCALE.target,
     csatTarget: CSAT_SCALE.target,
     minResponders: min,
-    points: fillPeriods(w, byPeriod(rows as Record<string, unknown>[]), (p, r) => ({
-      period: p.start,
-      end: p.end,
-      inProgress: p.inProgress,
-      measured: firstRatingDate !== null && p.end >= firstRatingDate,
-      ...toCounts(r, min),
-    })),
+    points: (first < 0 ? [] : periods.slice(first)).map((p) => ({ period: periodLabel(p), ...toCounts(byPeriod.get(p), min) })),
   };
 }
 

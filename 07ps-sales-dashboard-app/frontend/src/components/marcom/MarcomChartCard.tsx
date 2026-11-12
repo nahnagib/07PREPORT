@@ -14,30 +14,25 @@ export const ChartSizeContext = createContext<{ width?: number }>({});
  * card; the surrounding MarcomChartCard scrolls horizontally when `minWidth` exceeds the viewport
  * instead of squashing the chart.
  */
-/** The chart's box: at least `height` tall, and it grows with the card (the card body is a flex column) so a card
- * stretched to its row has no empty band under the chart (2026-11-10). A fixed export size (ChartSizeContext) wins. */
 export function ChartBox({ height = 300, children }: { height?: number; children: (size: { width: number; height: number }) => React.ReactNode }) {
   const fixed = useContext(ChartSizeContext).width;
   const ref = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ width: fixed ?? 0, height });
+  const [width, setWidth] = useState(fixed ?? 0);
 
   useEffect(() => {
     if (fixed !== undefined) return undefined;
     const el = ref.current;
     if (!el) return undefined;
-    const measure = (w: number, h: number) => setSize({ width: Math.floor(w), height: Math.max(height, Math.floor(h)) });
-    const rect = el.getBoundingClientRect();
-    measure(rect.width, rect.height);
+    setWidth(Math.floor(el.getBoundingClientRect().width));
     if (typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver((entries) => measure(entries[0].contentRect.width, entries[0].contentRect.height));
+    const ro = new ResizeObserver((entries) => setWidth(Math.floor(entries[0].contentRect.width)));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [fixed, height]);
+  }, [fixed]);
 
-  const h = fixed !== undefined ? height : size.height;
   return (
-    <div ref={ref} style={fixed !== undefined ? { width: '100%', height } : { width: '100%', flex: 1, minHeight: height }}>
-      {size.width > 0 ? children({ width: size.width, height: h }) : null}
+    <div ref={ref} style={{ width: '100%', height }}>
+      {width > 0 ? children({ width, height }) : null}
     </div>
   );
 }
@@ -107,8 +102,8 @@ export function MarcomChartCard(p: MarcomChartCardProps) {
   else {
     body = (
       <>
-        <div role={p.interactive ? 'group' : 'img'} aria-label={p.summary} style={{ overflowX: 'auto', flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ minWidth: p.minWidth, flex: 1, display: 'flex', flexDirection: 'column' }}>{p.children}</div>
+        <div role={p.interactive ? 'group' : 'img'} aria-label={p.summary} style={{ overflowX: 'auto' }}>
+          <div style={{ minWidth: p.minWidth }}>{p.children}</div>
         </div>
         {p.table && <DataTableView table={p.table} hidden />}
       </>

@@ -1,4 +1,3 @@
-import { periodAxisLabel } from '../periods';
 import type { NpsBand, NpsCounts, NpsFollowupStage, NpsFollowupStatus, NpsManualPeriod, NpsReachSource, NpsResponseRate, NpsTrend } from '../api';
 
 /**
@@ -62,18 +61,25 @@ export function npsBreakdown(counts: Pick<NpsCounts, 'promotersPct' | 'detractor
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/** "2026-10-03" (a week, named by its Saturday) -> "04 Oct", "2026-10" -> "Oct 2026", "2026" -> "2026" (fixed names: browsers disagree on "Sep"). */
+export function periodLabel(period: string): string {
+  const [y, m, d] = period.split('-');
+  if (d) return `${d} ${MONTHS[Number(m) - 1]}`;
+  if (m) return `${MONTHS[Number(m) - 1]} ${y}`;
+  return y;
+}
+
 const round2 = (v: number | null) => (v === null ? null : Math.round(v * 100) / 100);
 
 /**
  * Trend points for ComboChart: responders (bars), NPS and CSAT (lines), the same values faded where the period is below
- * the minimum number of responders (separate, muted series). A period before the first rating (not measured) is a gap:
- * no bar and no line point, never a 0.
+ * the minimum number of responders (separate, muted series).
  */
-export function trendPoints(trend: Pick<NpsTrend, 'points' | 'granularity'>) {
+export function trendPoints(trend: Pick<NpsTrend, 'points'>) {
   return trend.points.map((p) => ({
-    label: periodAxisLabel(p.period, trend.granularity),
+    label: periodLabel(p.period),
     period: p.period,
-    responders: p.measured ? p.responders : null,
+    responders: p.responders,
     nps: p.belowMinimum ? null : round2(p.nps),
     npsSmall: p.belowMinimum ? round2(p.nps) : null,
     csat: p.belowMinimum ? null : round2(p.csat),
@@ -210,8 +216,6 @@ export function manualSubtitle(periods: NpsManualPeriod[], reachStart: string | 
 
 /** The mark on a card whose figure includes manual or estimated reach. */
 /** A reach figure split by source: "Measured (from 03 Oct): 1,222 · Meta manual: 1,141 · Estimate: 1,113 · Total: 3,476". */
-export const MANUAL_MARK = 'incl. manual/est.';
-
 export function sourceSplit(split: Record<NpsReachSource, number>, reachStart: string | null): string {
   return [
     `Measured${reachStart ? ` (from ${dayMonth(reachStart.slice(0, 10))})` : ''}: ${count(split.etl)}`,

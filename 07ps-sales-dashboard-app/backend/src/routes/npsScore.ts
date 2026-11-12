@@ -15,9 +15,7 @@ import {
   fetchNpsResponseRate,
   fetchNpsTrend,
   parseNpsQuery,
-  todayLocal,
 } from '../measures/npsScore';
-import { parseGranularity, PeriodQueryError } from '../lib/periods';
 
 /**
  * NPS Score (Process department; measures/npsScore.ts), permission page `nps_score`:
@@ -27,10 +25,9 @@ import { parseGranularity, PeriodQueryError } from '../lib/periods';
  *                               source's last sync, whether the caller may see the detractor list, process freshness
  *   GET /nps-score/overview?dateFrom=&dateTo=
  *                               NPS, CSAT, responders, promoters / passives / detractors (# and %)
- *   GET /nps-score/trend?granularity=day|week|month|year (default week)
- *                               NPS, CSAT and responders per period for the active filters over the shared period window
- *                               ending today (lib/periods.ts; weeks = Saturday..Friday, named by their Saturday); the
- *                               page's date range does not apply. Periods before the first rating are measured: false
+ *   GET /nps-score/trend?dateFrom=&dateTo=&grain=week|month|year
+ *                               NPS, CSAT and responders per period for the active filters, from the first period
+ *                               with ratings (weeks = Saturday..Friday, named by their Saturday)
  *   GET /nps-score/response-rate?dateFrom=&dateTo=
  *                               responders / (Delivered + Read): company and date only, with a weekly series; the same
  *                               role restriction as /reach. Delivered + Read = the /reach cards (measures/npsReachCounts.ts):
@@ -60,7 +57,7 @@ function handle(fn: Handler) {
     try {
       res.json(await fn(req));
     } catch (err) {
-      if (err instanceof NpsQueryError || err instanceof PeriodQueryError) {
+      if (err instanceof NpsQueryError) {
         res.status(400).json({ error: err.message });
         return;
       }
@@ -79,7 +76,7 @@ npsScoreRouter.get(
 
 npsScoreRouter.get('/overview', handle((req) => fetchNpsOverview(pool, query(req), scoped(req))));
 
-npsScoreRouter.get('/trend', handle((req) => fetchNpsTrend(pool, parseGranularity(req.query.granularity), todayLocal(), scoped(req))));
+npsScoreRouter.get('/trend', handle((req) => fetchNpsTrend(pool, query(req), scoped(req))));
 
 npsScoreRouter.get('/reach', handle((req) => fetchNpsReach(pool, query(req), scoped(req), req.userContext!)));
 

@@ -26,11 +26,9 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { useInvoicesEngineOverview, usePeriodTrend, useRefreshStatus } from '../../../../lib/hooks';
-import type { InvoicePeriodClassBreakdown, InvoiceStats, InvoicesEngineKpis, InvoicesEngineScope, InvoicesEngineTrend, PeriodGranularity } from '../../../../lib/api';
-import { DEFAULT_GRANULARITY, formatChange, usePeriodWindow } from '../../../../lib/periods';
-import { PeriodTrendSelector } from '../../../../components/PeriodTrendSelector';
-import { formatCompactNumber, formatCurrency, formatTimestamp, formatVariance, formatVolume, DISPLAY_LOCALE } from '../../../../lib/format';
+import { useInvoicesEngineOverview, useRefreshStatus } from '../../../../lib/hooks';
+import type { InvoiceStats, InvoicesEngineKpis, InvoicesEngineScope, InvoiceYearClassBreakdown } from '../../../../lib/api';
+import { formatCurrency, formatTimestamp, formatVariance, formatVolume, DISPLAY_LOCALE } from '../../../../lib/format';
 import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 
 // Value-tier labels (renamed from the bare A/B/C/D codes the ETL/warehouse still store -- see
@@ -99,6 +97,18 @@ function formatLines(value: number | null | undefined): string {
 
 function formatVolumeOrDash(value: number | null): string {
   return value === null ? '—' : formatVolume(value);
+}
+
+/** Y-axis tick formatter for currency values: millions with an "M" suffix, one decimal place
+ * unless it rounds to a whole number -- same convention as Revenue Trend's chart axes. */
+function formatMillions(value: number): string {
+  const fixed = (value / 1_000_000).toFixed(1);
+  return `${fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed}M`;
+}
+
+function formatThousands(value: number): string {
+  const fixed = (value / 1_000).toFixed(1);
+  return `${fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed}K`;
 }
 
 function formatPlainNumber(value: number): string {
@@ -259,16 +269,12 @@ interface SalesTrendTableRow extends Record<string, unknown> {
   label: string;
   invoiceSalesValue: string;
   invoiceCount: number;
-  change: string;
 }
-function salesTrendTableColumns(changeLabel: string): Column<SalesTrendTableRow>[] {
-  return [
-    { key: 'label', header: 'Period / Class' },
-    { key: 'invoiceSalesValue', header: 'Invoice Sales Value', align: 'right' },
-    { key: 'invoiceCount', header: '# of Invoices', align: 'right' },
-    { key: 'change', header: `Value change ${changeLabel}`, align: 'right' },
-  ];
-}
+const salesTrendTableColumns: Column<SalesTrendTableRow>[] = [
+  { key: 'label', header: 'Year / Class' },
+  { key: 'invoiceSalesValue', header: 'Invoice Sales Value', align: 'right' },
+  { key: 'invoiceCount', header: '# of Invoices', align: 'right' },
+];
 
 interface InvoicesTrendTableRow extends Record<string, unknown> {
   id: string;
@@ -278,7 +284,7 @@ interface InvoicesTrendTableRow extends Record<string, unknown> {
   avgVolumePerInvoice: string;
 }
 const invoicesTrendTableColumns: Column<InvoicesTrendTableRow>[] = [
-  { key: 'label', header: 'Period' },
+  { key: 'label', header: 'Year' },
   { key: 'avgSalesPerInvoice', header: 'Avg Sales per Invoice', align: 'right' },
   { key: 'avgLinesPerInvoice', header: 'Avg Lines per Invoice', align: 'right' },
   { key: 'avgVolumePerInvoice', header: 'Avg Volume per Invoice', align: 'right' },
@@ -341,14 +347,11 @@ function ExportPdfButton({ onClick, downloading, disabled }: { onClick: () => vo
  *
  * Three page-specific interactions, all backed by real backend re-queries (not just client-side
  * re-rendering of an already-fetched payload):
- *   1. Sales Trend, drill-down mode ON: clicking a period re-renders the chart itself into that
- *      period's Invoice Class breakdown (drilledPeriod) -- scoped to the chart only.
- *   2. Sales Trend, drill-down mode OFF, on Yearly: clicking a year (bar or line point) sets it as the page's
+ *   1. Sales Trend, drill-down mode ON: clicking a year re-renders the chart itself into that
+ *      year's Invoice Class breakdown (drilledYear) -- scoped to the chart only.
+ *   2. Sales Trend, drill-down mode OFF: clicking a year (bar or line point) sets it as the page's
  *      Year filter (selectedYear) -- every other visual re-fetches scoped to it, while Sales Trend
- *      itself keeps showing the full series with that year highlighted/dimmed. On Daily / Weekly / Monthly a click
- *      sets nothing (a day or week is not a page filter).
- * The Sales Trend and the Invoices Trend follow the page's one period selector (Daily / Weekly / Monthly / Yearly,
- * lib/periods.ts), shown on both charts; only the two trends reload when it changes.
+ *      itself keeps showing the full series with that year highlighted/dimmed.
  *   3. Invoices Classification: clicking a segment sets it as the page's Invoice Class filter
  *      (selectedInvoiceClass) -- same re-fetch/self-exclusion pattern, mirrored the other way
  *      around (every visual except the donut itself narrows).
@@ -378,7 +381,7 @@ export default function InvoicesEnginePage() {
   // sourced from a different chart. All reset on Reset Filters, same as every other page-local UI
   // state on filter reset.
   const [drillMode, setDrillMode] = useState(false);
-  const [drilledPeriod, setDrilledPeriod] = useState<string | null>(null);
+  const [drilledYear, setDrilledYear] = useState<number | null>(null);
   const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [selectedInvoiceClass, setSelectedInvoiceClass] = useState<string | null>(null);
 
@@ -386,18 +389,6 @@ export default function InvoicesEnginePage() {
 
   const filterOptions = useScopedFilterOptions();
   const overview = useInvoicesEngineOverview(token, anchorDate, effectiveFilters, scope, authError, retryAuth);
-  const [granularity, setGranularity] = useState<PeriodGranularity>(DEFAULT_GRANULARITY);
-  const win = usePeriodWindow(granularity);
-  const trend = usePeriodTrend<InvoicesEngineTrend>(token, 'invoices-engine', anchorDate, effectiveFilters, granularity, authError, retryAuth, {
-    selectedYear,
-    selectedInvoiceClass,
-  });
-  const trendData = trend.data?.granularity === granularity ? trend.data : null;
-  const trendLoading = trend.loading || (trend.data !== null && !trendData);
-  function changeGranularity(g: PeriodGranularity) {
-    setGranularity(g);
-    setDrilledPeriod(null); // a drilled period belongs to the old axis
-  }
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
@@ -441,14 +432,13 @@ export default function InvoicesEnginePage() {
 
   function handleSalesTrendCategoryClick(label: string) {
     if (drillMode) {
-      if (drilledPeriod == null) {
-        const p = trendData?.salesTrend.byPeriod.find((x) => win.label(x.start) === label);
-        if (p) setDrilledPeriod(p.start);
+      if (drilledYear == null) {
+        const year = Number(label);
+        if (!Number.isNaN(year)) setDrilledYear(year);
       }
-      // Already drilled into one period's class breakdown -- no further drill level defined here.
+      // Already drilled into one year's class breakdown -- no further drill level defined here.
       return;
     }
-    if (granularity !== 'year') return; // only a year is a page filter
     const year = Number(label);
     if (Number.isNaN(year)) return;
     setSelectedYear((prev) => (prev === year ? null : year));
@@ -471,7 +461,7 @@ export default function InvoicesEnginePage() {
       // Mutually exclusive per spec: entering drill-down clears any active Year page-filter (its
       // own click behavior takes over instead); leaving it clears the in-chart drill.
       if (next) setSelectedYear(null);
-      else setDrilledPeriod(null);
+      else setDrilledYear(null);
       return next;
     });
   }
@@ -482,34 +472,27 @@ export default function InvoicesEnginePage() {
   const data = overview.data;
   const kpis = data?.kpis;
 
-  const drilledPeriodData: InvoicePeriodClassBreakdown | undefined =
-    drillMode && drilledPeriod != null ? trendData?.salesTrend.byPeriodClass.find((p) => p.start === drilledPeriod) : undefined;
-  const salesByPeriod = trendData?.salesTrend.byPeriod ?? [];
-  const salesTooltipTitle = win.tooltipTitle(salesByPeriod);
+  const drilledYearData: InvoiceYearClassBreakdown | undefined =
+    drillMode && drilledYear != null ? data?.salesTrend.byYearClass.find((y) => y.year === drilledYear) : undefined;
 
-  const salesTrendPoints = drilledPeriodData
-    ? drilledPeriodData.classes.map((c) => ({
+  const salesTrendPoints = drilledYearData
+    ? drilledYearData.classes.map((c) => ({
         label: INVOICE_CLASS_LABELS[c.invoiceClass] ?? c.invoiceClass,
         invoiceSalesValue: c.invoiceSalesValue,
         invoiceCount: c.invoiceCount,
-        change: null as number | null,
       }))
-    : salesByPeriod.map((p) => ({
-        label: win.label(p.start),
-        invoiceSalesValue: p.invoiceSalesValue,
-        invoiceCount: p.invoiceCount,
-        change: p.invoiceSalesValueChangePct,
+    : (data?.salesTrend.byYear ?? []).map((y) => ({
+        label: y.label,
+        invoiceSalesValue: y.invoiceSalesValue,
+        invoiceCount: y.invoiceCount,
       }));
 
-  // Averages per invoice are ratios: a period without invoices is a gap (null), not 0.
-  const invoicesTrendSource = trendData?.invoicesTrend ?? [];
-  const invoicesTrendPoints = invoicesTrendSource.map((p) => ({
-    label: win.label(p.start),
-    avgSalesPerInvoice: p.avgSalesPerInvoice,
-    avgLinesPerInvoice: p.avgLinesPerInvoice,
-    avgVolumePerInvoice: p.avgVolumePerInvoice,
+  const invoicesTrendPoints = (data?.invoicesTrend ?? []).map((y) => ({
+    label: y.label,
+    avgSalesPerInvoice: y.avgSalesPerInvoice ?? 0,
+    avgLinesPerInvoice: y.avgLinesPerInvoice ?? 0,
+    avgVolumePerInvoice: y.avgVolumePerInvoice ?? 0,
   }));
-  const salesColumns = salesTrendTableColumns(win.changeLabel);
 
   // Invoices Classification (donut/legend/detail table) excludes Unclassified -- those lines'
   // orders were never actually invoiced (a quotation, or a cancelled/pending order), so they carry
@@ -537,23 +520,19 @@ export default function InvoicesEnginePage() {
     { id: 'lmtd', period: 'LMTD', count: kpis?.lmtd.invoiceCount != null ? kpis.lmtd.invoiceCount.toLocaleString(DISPLAY_LOCALE) : '—' },
   ];
 
-  const salesTrendTableRows: SalesTrendTableRow[] = drilledPeriodData
-    ? salesTrendPoints.map((p) => ({ id: p.label, label: p.label, invoiceSalesValue: formatCurrency(p.invoiceSalesValue), invoiceCount: p.invoiceCount, change: '—' }))
-    : salesByPeriod.map((p) => ({
-        id: p.start,
-        label: `${win.title(p.start)}${p.inProgress ? ' (in progress)' : ''}`,
-        invoiceSalesValue: formatCurrency(p.invoiceSalesValue),
-        invoiceCount: p.invoiceCount,
-        change: formatChange(p.invoiceSalesValueChangePct, granularity) ?? '—',
-      }));
+  const salesTrendTableRows: SalesTrendTableRow[] = salesTrendPoints.map((p) => ({
+    id: p.label,
+    label: p.label,
+    invoiceSalesValue: formatCurrency(p.invoiceSalesValue),
+    invoiceCount: p.invoiceCount,
+  }));
 
-  const dash = (v: number | null, f: (n: number) => string) => (v === null ? '—' : f(v));
-  const invoicesTrendTableRows: InvoicesTrendTableRow[] = invoicesTrendSource.map((p) => ({
-    id: p.start,
-    label: `${win.title(p.start)}${p.inProgress ? ' (in progress)' : ''}`,
-    avgSalesPerInvoice: dash(p.avgSalesPerInvoice, formatCurrency),
-    avgLinesPerInvoice: dash(p.avgLinesPerInvoice, formatLines),
-    avgVolumePerInvoice: dash(p.avgVolumePerInvoice, formatVolume),
+  const invoicesTrendTableRows: InvoicesTrendTableRow[] = invoicesTrendPoints.map((p) => ({
+    id: p.label,
+    label: p.label,
+    avgSalesPerInvoice: formatCurrency(p.avgSalesPerInvoice),
+    avgLinesPerInvoice: formatLines(p.avgLinesPerInvoice),
+    avgVolumePerInvoice: formatVolume(p.avgVolumePerInvoice),
   }));
 
   const classificationTableRows: ClassificationTableRow[] = classificationSegments.map((s) => ({
@@ -653,38 +632,36 @@ export default function InvoicesEnginePage() {
                 title="Sales Trend"
                 {...vh('promotion.invoicesEngine.salesTrend')}
                 style={{ minHeight: 380 }}
-                tableColumns={trend.error ? undefined : salesColumns}
-                tableRows={trend.error ? undefined : salesTrendTableRows}
+                tableColumns={overview.error ? undefined : salesTrendTableColumns}
+                tableRows={overview.error ? undefined : salesTrendTableRows}
                 getRowId={(row) => row.id}
-                wrapHeader
                 headerActions={
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <PeriodTrendSelector value={granularity} onChange={changeGranularity} label="Sales Trend period" />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <DrillToggle active={drillMode} onToggle={toggleDrillMode} />
-                    {!trend.error && (
+                    {!overview.error && (
                       <ExportPdfButton
                         downloading={downloadingPdf === 'salesTrend'}
                         disabled={salesTrendTableRows.length === 0}
-                        onClick={() => handleDownloadTablePdf('salesTrend', `Sales Trend · ${win.name}`, salesColumns, salesTrendTableRows)}
+                        onClick={() => handleDownloadTablePdf('salesTrend', 'Sales Trend', salesTrendTableColumns, salesTrendTableRows)}
                       />
                     )}
                   </div>
                 }
               >
-                {trendLoading ? (
+                {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
-                ) : trend.error ? (
-                  <ErrorState message={trend.error} onRetry={trend.retry} />
+                ) : overview.error ? (
+                  <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
                   <>
-                    {drilledPeriodData && (
+                    {drilledYearData && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                         <span style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
-                          Showing {win.title(drilledPeriodData.start)} by Invoice Class
+                          Showing {drilledYearData.year} by Invoice Class
                         </span>
                         <button
                           type="button"
-                          onClick={() => setDrilledPeriod(null)}
+                          onClick={() => setDrilledYear(null)}
                           style={{
                             fontSize: 11,
                             fontWeight: 600,
@@ -696,7 +673,7 @@ export default function InvoicesEnginePage() {
                             textDecoration: 'underline',
                           }}
                         >
-                          Back to all periods
+                          Back to all years
                         </button>
                       </div>
                     )}
@@ -706,20 +683,15 @@ export default function InvoicesEnginePage() {
                       points={salesTrendPoints}
                       bars={[{ key: 'invoiceSalesValue', name: 'Invoice Sales Value', color: 'var(--ps-color-accent)' }]}
                       lines={[{ key: 'invoiceCount', name: '# of Invoices', color: 'var(--ps-color-last-year)', yAxisId: 'right' }]}
-                      leftAxisFormatter={formatCompactNumber}
-                      rightAxisFormatter={formatCompactNumber}
+                      leftAxisFormatter={formatMillions}
+                      rightAxisFormatter={formatThousands}
                       tooltipFormatters={{
-                        invoiceSalesValue: (v, p) => {
-                          const change = typeof p?.change === 'number' ? formatChange(p.change, granularity) : null;
-                          return change ? `${formatCurrency(v)} (${change})` : formatCurrency(v);
-                        },
+                        invoiceSalesValue: (v) => formatCurrency(v),
                         invoiceCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                       }}
-                      tooltipLabelFormatter={drilledPeriodData ? undefined : salesTooltipTitle}
-                      inProgressLabel={drilledPeriodData ? null : win.inProgressLabel(salesByPeriod)}
                       onCategoryClick={handleSalesTrendCategoryClick}
                       onAreaClick={handleSalesTrendAreaClick}
-                      highlightedCategory={!drilledPeriodData && granularity === 'year' && selectedYear != null ? String(selectedYear) : null}
+                      highlightedCategory={!drilledYearData && selectedYear != null ? String(selectedYear) : null}
                     />
                   </>
                 )}
@@ -782,27 +754,23 @@ export default function InvoicesEnginePage() {
                 title="Invoices Trend"
                 {...vh('promotion.invoicesEngine.invoicesTrend')}
                 style={{ minHeight: 380 }}
-                tableColumns={trend.error ? undefined : invoicesTrendTableColumns}
-                tableRows={trend.error ? undefined : invoicesTrendTableRows}
+                tableColumns={overview.error ? undefined : invoicesTrendTableColumns}
+                tableRows={overview.error ? undefined : invoicesTrendTableRows}
                 getRowId={(row) => row.id}
-                wrapHeader
                 headerActions={
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <PeriodTrendSelector value={granularity} onChange={changeGranularity} label="Invoices Trend period" />
-                    {!trend.error && (
-                      <ExportPdfButton
-                        downloading={downloadingPdf === 'invoicesTrend'}
-                        disabled={invoicesTrendTableRows.length === 0}
-                        onClick={() => handleDownloadTablePdf('invoicesTrend', `Invoices Trend · ${win.name}`, invoicesTrendTableColumns, invoicesTrendTableRows)}
-                      />
-                    )}
-                  </div>
+                  !overview.error && (
+                    <ExportPdfButton
+                      downloading={downloadingPdf === 'invoicesTrend'}
+                      disabled={invoicesTrendTableRows.length === 0}
+                      onClick={() => handleDownloadTablePdf('invoicesTrend', 'Invoices Trend', invoicesTrendTableColumns, invoicesTrendTableRows)}
+                    />
+                  )
                 }
               >
-                {trendLoading ? (
+                {overview.loading ? (
                   <LoadingSkeleton variant="chart" />
-                ) : trend.error ? (
-                  <ErrorState message={trend.error} onRetry={trend.retry} />
+                ) : overview.error ? (
+                  <ErrorState message={overview.error} onRetry={overview.retry} />
                 ) : (
                   <ComboChart
                     title="Invoices Trend"
@@ -813,16 +781,13 @@ export default function InvoicesEnginePage() {
                       { key: 'avgLinesPerInvoice', name: 'Avg Lines per Invoice', color: 'var(--ps-color-success)', yAxisId: 'right' },
                       { key: 'avgVolumePerInvoice', name: 'Avg Volume per Invoice', color: 'var(--ps-color-watch)', yAxisId: 'right' },
                     ]}
-                    leftAxisFormatter={formatCompactNumber}
+                    leftAxisFormatter={formatThousands}
                     rightAxisFormatter={formatPlainNumber}
                     tooltipFormatters={{
                       avgSalesPerInvoice: (v) => formatCurrency(v),
                       avgLinesPerInvoice: (v) => formatLines(v),
                       avgVolumePerInvoice: (v) => formatVolume(v),
                     }}
-                    connectNulls={false}
-                    tooltipLabelFormatter={win.tooltipTitle(invoicesTrendSource)}
-                    inProgressLabel={win.inProgressLabel(invoicesTrendSource)}
                   />
                 )}
               </ChartPanel>
@@ -1047,8 +1012,8 @@ function DrillToggle({ active, onToggle }: { active: boolean; onToggle: () => vo
       aria-pressed={active}
       title={
         active
-          ? 'Drill-down mode on — click a period to break it out by Invoice Class'
-          : 'Enable drill-down mode (Period → Invoice Class)'
+          ? 'Drill-down mode on — click a year to break it out by Invoice Class'
+          : 'Enable drill-down mode (Year → Invoice Class)'
       }
       style={{
         display: 'inline-flex',

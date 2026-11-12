@@ -18,6 +18,7 @@ import { useNpsScore } from '../../../../lib/hooks';
 import type {
   NpsDetractor,
   NpsFollowupSummary,
+  NpsGrain,
   NpsMeta,
   NpsOverview,
   NpsPage,
@@ -25,9 +26,7 @@ import type {
   NpsResponseRate,
   NpsScope,
   NpsTrend,
-  PeriodGranularity,
 } from '../../../../lib/api';
-import { DEFAULT_GRANULARITY } from '../../../../lib/periods';
 import { formatNumber, formatTimestamp } from '../../../../lib/format';
 import {
   GROUPS,
@@ -83,10 +82,9 @@ function NpsScoreBody() {
   const allowed = canView('nps_score');
   const { effectiveFilters, onFiltersChange, anchorDate, onAnchorDateChange, dateFromDate, dateToDate, onDateRangeChange } = useFilterState();
   const filterOptions = useScopedFilterOptions();
-  // The shared period selector (lib/periods.ts), Weekly on every load. The Responders Trend has its own (same choices,
-  // independent of the Satisfaction Trend). The trends use the fixed window ending today, not the page's date range.
-  const [granularity, setGranularity] = useState<PeriodGranularity>(DEFAULT_GRANULARITY);
-  const [respondersGranularity, setRespondersGranularity] = useState<PeriodGranularity>(DEFAULT_GRANULARITY);
+  const [grain, setGrain] = useState<NpsGrain>('month');
+  // The Responders Trend has its own Weekly / Monthly / Yearly switch (same choices, independent of the Satisfaction Trend).
+  const [respondersGrain, setRespondersGrain] = useState<NpsGrain>('month');
   const [listPages, setListPages] = useState(1);
 
   const period = useMemo(() => npsPeriod(dateFromDate, dateToDate), [dateFromDate, dateToDate]);
@@ -95,10 +93,9 @@ function NpsScoreBody() {
 
   const meta = useNpsScore<NpsMeta>(token, authError, retryAuth, 'meta', scope, undefined, allowed);
   const overview = useNpsScore<NpsOverview>(token, authError, retryAuth, 'overview', scope, undefined, allowed);
-  const trend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { granularity }, allowed);
-  // Only fetched when it differs from the Satisfaction Trend's granularity; otherwise both charts share one response.
-  const respondersOwnTrend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { granularity: respondersGranularity },
-    allowed && respondersGranularity !== granularity);
+  const trend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { grain }, allowed);
+  // Only fetched when it differs from the Satisfaction Trend's grain; otherwise both charts share one response.
+  const respondersOwnTrend = useNpsScore<NpsTrend>(token, authError, retryAuth, 'trend', scope, { grain: respondersGrain }, allowed && respondersGrain !== grain);
   const reach = useNpsScore<ReachData>(token, authError, retryAuth, 'reach', scope, undefined, allowed);
   const rate = useNpsScore<NpsResponseRate>(token, authError, retryAuth, 'response-rate', scope, undefined, allowed);
   const followup = useNpsScore<NpsFollowupSummary>(token, authError, retryAuth, 'followup-summary', scope, undefined, allowed);
@@ -171,9 +168,8 @@ function NpsScoreBody() {
 
             {/* Row 4: trend */}
             <section className="ps-nps-trends" aria-label="Trends">
-              <NpsTrendChart state={trend} granularity={granularity} onGranularityChange={setGranularity} />
-              <RespondersTrend state={respondersGranularity === granularity ? trend : respondersOwnTrend} granularity={respondersGranularity}
-                onGranularityChange={setRespondersGranularity} />
+              <NpsTrendChart state={trend} grain={grain} onGrainChange={setGrain} />
+              <RespondersTrend state={respondersGrain === grain ? trend : respondersOwnTrend} grain={respondersGrain} onGrainChange={setRespondersGrain} />
             </section>
 
             {/* Row 5: reasons and follow-up (live from the follow-up cases) */}

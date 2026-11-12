@@ -81,10 +81,6 @@ export function InsightCard({
         background: accentBg ? statusBgVar[status] : 'var(--ps-card-bg)',
         border: `1px solid ${accentBg ? statusBorderVar[status] : 'var(--ps-color-border)'}`,
         height: '100%',
-        // stretched to its row (e.g. the 2x2 rates beside a chart): the content sits in the middle, no empty bottom band
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
       }}
     >
       {Icon && (

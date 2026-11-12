@@ -18,6 +18,7 @@ import {
   npsScore,
   npsWhere,
   parseNpsQuery,
+  periodsBetween,
   toCounts,
   todayLocal,
 } from '../npsScore';
@@ -89,18 +90,26 @@ describe('colour bands (config/npsThresholds.ts): inclusive at the lower end', (
 });
 
 describe('parseNpsQuery', () => {
-  it('defaults to this year in Tripoli (1 January -> today)', () => {
+  it('defaults to this year in Tripoli (1 January -> today), monthly', () => {
     expect(todayLocal(NOW)).toBe('2026-10-18');
-    expect(parseNpsQuery({}, NOW)).toMatchObject({ dateFrom: '2026-01-01', dateTo: '2026-10-18', page: 1, pageSize: 100 });
+    expect(parseNpsQuery({}, NOW)).toMatchObject({ dateFrom: '2026-01-01', dateTo: '2026-10-18', grain: 'month', page: 1, pageSize: 100 });
     // 31 December 22:30 UTC is already 1 January in Tripoli: the YTD starts over
     expect(parseNpsQuery({}, new Date('2026-12-31T22:30:00Z'))).toMatchObject({ dateFrom: '2027-01-01', dateTo: '2027-01-01' });
+    expect(parseNpsQuery({ grain: 'week' }, NOW).grain).toBe('week');
   });
 
   it('400s on bad values', () => {
     for (const q of [{ dateFrom: '2026-13-01' }, { dateTo: '18/10/2026' }, { dateFrom: '2026-10-10', dateTo: '2026-10-01' },
-      { page: '0' }, { pageSize: '1000' }]) {
+      { page: '0' }, { pageSize: '1000' }, { grain: 'day' }]) {
       expect(() => parseNpsQuery(q, NOW), JSON.stringify(q)).toThrow(NpsQueryError);
     }
+  });
+
+  it('periods of a range at each grain', () => {
+    expect(periodsBetween('2025-11-15', '2026-02-01', 'month')).toEqual([202511, 202512, 202601, 202602]);
+    // weeks: Saturday..Friday, named by their Saturday; the first week starts before the range
+    expect(periodsBetween('2025-12-30', '2026-01-14', 'week')).toEqual([20251227, 20260103, 20260110]);
+    expect(periodsBetween('2024-06-01', '2026-01-02', 'year')).toEqual([2024, 2025, 2026]);
   });
 });
 
@@ -131,29 +140,23 @@ describe('SQL', () => {
     expect(queries[0].params).toContain(1);
   });
 
-  it('trend: every period of the shared window (12 months to today), gaps before the first rating, targets 90 / 95', async () => {
-    const { pool, queries } = fakePool((sql) => (sql.includes('MIN(rating_date)') ? [{ first_date: '2026-08-14' }]
-      : [{ p: '2026-08-01', promoters: 5, passives: 3, detractors: 2 }, { p: '2026-10-01', promoters: 1, passives: 0, detractors: 0 }]));
-    const t = await fetchNpsTrend(pool, 'month', '2026-10-18', {});
-    expect([t.from, t.to, t.firstRatingDate, t.points.length]).toEqual(['2025-11-01', '2026-10-18', '2026-08-14', 12]);
-    expect(t.points.slice(-4).map((p) => [p.period, p.measured, p.responders, p.nps, p.inProgress])).toEqual([
-      ['2026-07-01', false, 0, null, false], ['2026-08-01', true, 10, 30, false], ['2026-09-01', true, 0, null, false], ['2026-10-01', true, 1, 100, true]]);
-    expect(t.points[9].csat).toBe(80);
+  it('trend: from the first period WITH ratings (no empty months before it), empty later periods kept, targets 90 / 95', async () => {
+    const { pool, queries } = fakePool(() => [{ p: 202608, promoters: 5, passives: 3, detractors: 2 }, { p: 202610, promoters: 1, passives: 0, detractors: 0 }]);
+    const t = await fetchNpsTrend(pool, parseNpsQuery({ dateFrom: '2026-01-01', dateTo: '2026-10-31' }, NOW), {});
+    expect(t.points.map((p) => [p.period, p.responders, p.nps])).toEqual([['2026-08', 10, 30], ['2026-09', 0, null], ['2026-10', 1, 100]]);
+    expect(t.points[0].csat).toBe(80);
     expect([t.target, t.csatTarget]).toEqual([90, 95]);
-    expect(queries[0].sql).toContain("DATE_FORMAT(STR_TO_DATE(CAST(f.RatingDateKey AS CHAR), '%Y%m%d'), '%Y-%m-01')");
-    expect(queries[0].params.slice(0, 2)).toEqual([20251101, 20261018]);
-    const none = await fetchNpsTrend(fakePool(() => []).pool, 'year', '2026-10-18', {});
-    expect(none.points.map((p) => [p.period, p.measured])).toEqual([['2022-01-01', false], ['2023-01-01', false], ['2024-01-01', false], ['2025-01-01', false], ['2026-01-01', false]]);
+    expect(queries[0].sql).toContain('GROUP BY FLOOR(f.RatingDateKey / 100)');
+    const none = await fetchNpsTrend(fakePool(() => []).pool, parseNpsQuery({}, NOW), {});
+    expect(none.points).toEqual([]);
   });
 
-  it('trend by week: grouped by the Saturday of the rating date (the Collections week), 12 weeks ending this week', async () => {
-    const { pool, queries } = fakePool((sql) => (sql.includes('MIN(rating_date)') ? [{ first_date: '2026-10-03' }] : [{ p: '2026-10-03', promoters: 2, passives: 0, detractors: 0 }]));
-    const t = await fetchNpsTrend(pool, 'week', '2026-10-18', {});
-    expect(t.points).toHaveLength(12);
-    expect(t.points.slice(-3).map((p) => [p.period, p.end, p.measured, p.responders])).toEqual([
-      ['2026-10-03', '2026-10-09', true, 2], ['2026-10-10', '2026-10-16', true, 0], ['2026-10-17', '2026-10-23', true, 0]]);
-    expect(t.points[t.points.length - 4].measured).toBe(false); // the week of 26 Sep ends before the first rating: a gap
+  it('trend by week: grouped by the Saturday of the rating date (the Collections week), labelled by that Saturday', async () => {
+    const { pool, queries } = fakePool(() => [{ p: 20261003, promoters: 2, passives: 0, detractors: 0 }]);
+    const t = await fetchNpsTrend(pool, parseNpsQuery({ dateFrom: '2026-10-01', dateTo: '2026-10-18', grain: 'week' }, NOW), {});
+    expect(t.points.map((p) => [p.period, p.responders])).toEqual([['2026-10-03', 2], ['2026-10-10', 0], ['2026-10-17', 0]]);
     expect(queries[0].sql).toContain('DAYOFWEEK(');
+    await expect(fetchNpsTrend(pool, parseNpsQuery({ dateFrom: '2010-01-01', dateTo: '2026-10-31', grain: 'week' }, NOW), {})).rejects.toThrow(NpsQueryError);
   });
 
   it('detractors: level 1 only, with the comments of the same response, paged', async () => {

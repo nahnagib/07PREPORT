@@ -4,13 +4,11 @@ import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import { parsePipelineAnchor } from '../measures/filters';
-import { parseGranularity, PeriodQueryError } from '../lib/periods';
 import {
   AGING_BUCKET_KEYS,
   AGING_CATEGORIES,
   computePipelineTrendOverview,
   fetchAgingDetails,
-  fetchPipelineTrendPeriods,
   type AgingBucketKey,
   type AgingCategory,
 } from '../measures/pipelineTrend';
@@ -18,8 +16,7 @@ import {
 /**
  * Pipeline Trend page KPI endpoint. Same middleware chain and scoping discipline as every other
  * page. No page-filter/scope query params, just anchorDate + the standard 5 sidebar filters; the
- * one drill-down (aging bucket -> its open records) has its own endpoint below. /trend?granularity=day|week|month|year
- * (default week): the Opportunities / Quotations / Sales Orders charts over that period window (lib/periods.ts).
+ * one drill-down (aging bucket -> its open records) has its own endpoint below.
  */
 export const pipelineTrendRouter = Router();
 
@@ -58,18 +55,6 @@ pipelineTrendRouter.get('/aging-details', async (req, res, next) => {
     const rows = await fetchAgingDetails(pool, anchor, filters, category as AgingCategory, bucket as AgingBucketKey);
     res.json({ anchorDate: anchor.toISOString().slice(0, 10), category, bucket, rows });
   } catch (err) {
-    next(err);
-  }
-});
-
-pipelineTrendRouter.get('/trend', async (req, res, next) => {
-  try {
-    res.json(await fetchPipelineTrendPeriods(pool, parsePipelineAnchor(req.query.anchorDate), parseGranularity(req.query.granularity), req.scopedFilters!));
-  } catch (err) {
-    if (err instanceof PeriodQueryError) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
     next(err);
   }
 });

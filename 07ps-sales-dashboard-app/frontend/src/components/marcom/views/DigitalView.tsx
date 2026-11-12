@@ -44,8 +44,7 @@ export function DigitalView({ data, refreshing }: Props) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {data.meta.brandNeedsReview ? <Note tone="info"><span data-testid="brand-review">{t('p3.needsReview', { n: data.meta.brandNeedsReview })}</span></Note> : null}
-      {/* Followers, CTR and Engagement Rate side by side from 1366 px (340 px minimum): no card alone on a half-empty row */}
-      <Grid min={340}>
+      <Grid min={440}>
         {/* 1 ---------------------------------------------------------------------------- */}
         <MarcomChartCard
           visual="digital.followers" title={t('p3.followers')} refreshing={refreshing}

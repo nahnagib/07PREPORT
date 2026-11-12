@@ -113,20 +113,6 @@ export function formatCompactMoney(currency: string, value: number): string {
   return `${currency} ${compactNumber(value)}`;
 }
 
-/** Short axis number at any scale, at most 4 digits so a narrow axis never clips it: "160M", "2.4M", "580K", "1.5K",
- * "840" -- for trend axes whose periods range from a day to a year. */
-export function formatCompactNumber(value: number): string {
-  const abs = Math.abs(value);
-  const short = (n: number, unit: string) => {
-    const fixed = Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1);
-    return `${fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed}${unit}`;
-  };
-  if (abs >= 1_000_000_000) return short(value / 1_000_000_000, 'B');
-  if (abs >= 1_000_000) return short(value / 1_000_000, 'M');
-  if (abs >= 1_000) return short(value / 1_000, 'K');
-  return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
-}
-
 export function formatCompactVolume(value: number): string {
   return compactNumber(value);
 }

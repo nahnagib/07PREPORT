@@ -14,7 +14,6 @@ import { exportSvgAsImage } from '../chartExport';
 import { chartTooltipProps } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 import { DISPLAY_LOCALE } from '../locale';
-import { doneKey, inProgressIndex, inProgressKey, inProgressTitle, withInProgressSegment } from './inProgressSegment';
 
 export interface TrendPoint {
   label: string;
@@ -53,11 +52,6 @@ export interface TrendChartProps {
    * for callers that already show the title in their own surrounding chart-card chrome (e.g.
    * @07ps/ui's ChartPanel), so the title isn't rendered twice. Defaults to true. */
   showTitle?: boolean;
-  /** The label of the current, partial period (the last point): its actual line segment is dashed and its tooltip says
-   * "Period in progress". Unset = no period in progress. */
-  inProgressLabel?: string | null;
-  /** Tooltip title for a point's label. Defaults to "Month: <label>". */
-  tooltipLabelFormatter?: (label: string) => string;
 }
 
 function defaultFormatter(v: number): string {
@@ -95,17 +89,11 @@ export function TrendChart({
   lastYearColor = 'var(--ps-color-last-year)',
   targetColor = 'var(--ps-neutral-granite)',
   showTitle = true,
-  inProgressLabel = null,
-  tooltipLabelFormatter = (label: string) => `Month: ${label}`,
 }: TrendChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const tooltipFormatter = tooltipValueFormatter ?? valueFormatter;
   const showLastYear = points.some((p) => p.lastYear !== undefined && p.lastYear !== null);
-  // No target on any point (e.g. a Daily / Weekly trend: targets are monthly) = no target line and no legend entry.
-  const showTarget = points.some((p) => p.target !== undefined && p.target !== null);
-  const ipIndex = inProgressIndex(points, inProgressLabel);
-  const data = withInProgressSegment(points, ['actual'], ipIndex);
 
   // Recharts' Legend onClick payload type varies across its own overloads (Payload['dataKey'] is
   // typed as `DataKey<any>`, which can technically be a function) -- narrowed here to the string
@@ -153,7 +141,7 @@ export function TrendChart({
       </div>
       <div ref={containerRef}>
         <ResponsiveContainer width="100%" height={height}>
-          <ComposedChart data={data} margin={{ top: 4, right: 12, left: -8, bottom: 0 }}>
+          <ComposedChart data={points} margin={{ top: 4, right: 12, left: -8, bottom: 0 }}>
             <CartesianGrid stroke="var(--ps-color-border)" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--ps-color-muted-text)' }} axisLine={{ stroke: 'var(--ps-color-border)' }} tickLine={false} />
             <YAxis
@@ -165,7 +153,7 @@ export function TrendChart({
             />
             <Tooltip {...chartTooltipProps}
               formatter={(value: number, name: string) => [tooltipFormatter(value), name]}
-              labelFormatter={(label: string) => inProgressTitle(String(label), inProgressLabel, tooltipLabelFormatter)}
+              labelFormatter={(label: string) => `Month: ${label}`}
             />
             <Legend onClick={handleLegendClick} wrapperStyle={{ fontSize: 12, cursor: 'pointer' }} />
             <Line
@@ -173,24 +161,12 @@ export function TrendChart({
               dataKey="actual"
               name={actualLabel}
               stroke={color}
-              strokeOpacity={ipIndex < 0 ? 1 : 0}
               strokeWidth={2.5}
-              dot={ipIndex < 0 ? { r: 3 } : false}
+              dot={{ r: 3 }}
               activeDot={{ r: 5 }}
               hide={!!hidden.actual}
               isAnimationActive={false}
             />
-            {ipIndex >= 0 && (
-              <Line type="monotone" dataKey={doneKey('actual')} stroke={color} strokeWidth={2.5} dot={{ r: 3 }} activeDot={false}
-                legendType="none" tooltipType="none" hide={!!hidden.actual} isAnimationActive={false} />
-            )}
-            {ipIndex >= 0 && (
-              <Line type="monotone" dataKey={inProgressKey('actual')} stroke={color} strokeWidth={2.5} strokeDasharray="6 4"
-                dot={(props: { cx?: number; cy?: number; index?: number }) => props.index === ipIndex && props.cx != null && props.cy != null
-                  ? <circle key="ip" cx={props.cx} cy={props.cy} r={3.5} fill="var(--ps-color-surface, #fff)" stroke={color} strokeWidth={2} />
-                  : <g key={`n${props.index}`} />}
-                activeDot={false} legendType="none" tooltipType="none" hide={!!hidden.actual} isAnimationActive={false} />
-            )}
             {showLastYear && (
               <Line
                 type="monotone"
@@ -205,19 +181,17 @@ export function TrendChart({
                 connectNulls
               />
             )}
-            {showTarget && (
-              <Line
-                type="monotone"
-                dataKey="target"
-                name={targetLabel}
-                stroke={targetColor}
-                strokeWidth={2}
-                strokeDasharray="5 4"
-                dot={false}
-                hide={!!hidden.target}
-                isAnimationActive={false}
-              />
-            )}
+            <Line
+              type="monotone"
+              dataKey="target"
+              name={targetLabel}
+              stroke={targetColor}
+              strokeWidth={2}
+              strokeDasharray="5 4"
+              dot={false}
+              hide={!!hidden.target}
+              isAnimationActive={false}
+            />
             <Brush dataKey="label" height={20} stroke="var(--ps-color-accent)" travellerWidth={8} />
           </ComposedChart>
         </ResponsiveContainer>

@@ -4,21 +4,18 @@ import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import { dateOnlyUTC } from '../measures/filters';
-import { computeCustomerGrowthOverview, fetchCustomersTrend, type CustomerGrowthScope } from '../measures/customerGrowth';
-import { parseGranularity, PeriodQueryError } from '../lib/periods';
+import { computeCustomerGrowthOverview, type CustomerGrowthScope } from '../measures/customerGrowth';
 
 /**
  * Customer Growth page KPI endpoint. Same middleware chain and scoping discipline as
  * routes/invoicesEngine.ts -- every query goes through resolveScopedFilters before any measures
  * function runs.
  *
- * /overview: the Zone A KPI panels, Rates, Customers
+ * One /overview endpoint: the page needs the Zone A KPI panels, Rates, Customers Trend, Customers
  * Contribution, Customers Category Performance, and the Details view's Customers Table on a single
  * load. `selectedYear` is optional and comes from a Customers Trend bar click (page-filter mode,
  * not drill-down) -- see measures/customerGrowth.ts's header comment for exactly which query
  * honors it and which (Customers Trend itself) deliberately ignores it.
- * /trend?granularity=day|week|month|year (default week): the Customers Trend over that period window (lib/periods.ts);
- * the Year page-filter is a click on its Yearly view.
  */
 export const customerGrowthRouter = Router();
 
@@ -69,19 +66,6 @@ customerGrowthRouter.get('/overview', async (req, res, next) => {
       ...overview,
     });
   } catch (err) {
-    next(err);
-  }
-});
-
-customerGrowthRouter.get('/trend', async (req, res, next) => {
-  try {
-    const scope: CustomerGrowthScope = { category: parseSelectedCategory(req.query.selectedCategory) };
-    res.json(await fetchCustomersTrend(pool, parseAnchorDate(req.query.anchorDate), parseGranularity(req.query.granularity), req.scopedFilters!, scope));
-  } catch (err) {
-    if (err instanceof PeriodQueryError) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
     next(err);
   }
 });

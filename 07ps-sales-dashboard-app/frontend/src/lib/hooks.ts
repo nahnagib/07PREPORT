@@ -51,9 +51,6 @@ import {
   type AgingBucketKey,
   type AgingCategory,
   type AgingDetails,
-  fetchPeriodTrend,
-  type PeriodGranularity,
-  type PeriodTrendPath,
 } from './api';
 import { fetchPeopleOverview, type PeopleOverview } from './salesPeoplePerformance';
 
@@ -445,42 +442,6 @@ export function useRevenueTrendOverview(
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters)]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  return { ...state, retry: makeRetry(token, retryAuth, load) };
-}
-
-/**
- * The trend of a page's period selector (GET <path>/trend?granularity=, backend lib/periods.ts) -- ONE hook for every
- * trend page, so switching Daily / Weekly / Monthly / Yearly reloads only the trend charts, never the page's KPI cards.
- * `extra` carries a page's own selections (e.g. the Invoices Engine class / year page-filter).
- */
-export function usePeriodTrend<T>(
-  token: string | null,
-  path: PeriodTrendPath,
-  anchorDate: string,
-  filters: TachometerFilters,
-  granularity: PeriodGranularity,
-  authError: string | null,
-  retryAuth: () => void,
-  extra: Record<string, string | number | null | undefined> = {},
-) {
-  const dataVersion = useDataVersion();
-  const latest = useLatestRequest();
-  const [state, setState] = useState<AsyncState<T>>({ data: null, loading: true, error: null });
-
-  const load = useCallback(() => {
-    if (authGate(token, authError, setState)) return;
-    setState((s) => ({ ...s, loading: true, error: null }));
-    const isCurrent = latest.begin();
-    fetchPeriodTrend<T>(token as string, path, anchorDate, filters, granularity, extra)
-      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
-      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataVersion, token, authError, path, anchorDate, granularity, JSON.stringify(filters), JSON.stringify(extra)]);
 
   useEffect(() => {
     load();

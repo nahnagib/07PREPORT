@@ -4,17 +4,15 @@ import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import { dateOnlyUTC } from '../measures/filters';
-import { computeRevenueTrendFigures, fetchRevenueTrendPeriods } from '../measures/revenueTrend';
-import { parseGranularity, PeriodQueryError } from '../lib/periods';
+import { computeRevenueTrendFigures, fetchRevenueTrendSeries } from '../measures/revenueTrend';
 
 /**
  * Revenue Trend page KPI endpoint. Same middleware chain and scoping discipline as
  * routes/tachometer.ts and routes/criticalNumber.ts -- every query goes through
  * resolveScopedFilters before any measures function runs.
  *
- * /overview: the six MTD/YTD variance KPI cards and the Performance Details rows.
- * /trend?granularity=day|week|month|year (default week): the Value / Volume / ASP trend points of that period window
- * (lib/periods.ts), so switching the period selector reloads only the three charts.
+ * One /overview endpoint: the page needs the monthly Value/Volume/ASP series (for the three MoM
+ * line charts) and the six MTD/YTD variance KPI cards on a single load.
  */
 export const revenueTrendRouter = Router();
 
@@ -40,27 +38,18 @@ revenueTrendRouter.get('/overview', async (req, res, next) => {
     const filters = req.scopedFilters!;
     const anchor = parseAnchorDate(req.query.anchorDate);
 
-    const { kpis, performanceDetails } = await computeRevenueTrendFigures(pool, anchor, filters);
+    const [series, { kpis, performanceDetails }] = await Promise.all([
+      fetchRevenueTrendSeries(pool, anchor, filters),
+      computeRevenueTrendFigures(pool, anchor, filters),
+    ]);
 
     res.json({
       anchorDate: anchor.toISOString().slice(0, 10),
+      series,
       kpis,
       performanceDetails,
     });
   } catch (err) {
-    next(err);
-  }
-});
-
-revenueTrendRouter.get('/trend', async (req, res, next) => {
-  try {
-    const trend = await fetchRevenueTrendPeriods(pool, parseAnchorDate(req.query.anchorDate), parseGranularity(req.query.granularity), req.scopedFilters!);
-    res.json(trend);
-  } catch (err) {
-    if (err instanceof PeriodQueryError) {
-      res.status(400).json({ error: err.message });
-      return;
-    }
     next(err);
   }
 });

@@ -16,7 +16,6 @@ import { exportSvgAsImage } from '../chartExport';
 import { chartTooltipProps } from '../chartTooltip';
 import { useCanExport } from '../exportPermission';
 import { DISPLAY_LOCALE } from '../locale';
-import { doneKey, inProgressIndex, inProgressKey, inProgressTitle, withInProgressSegment } from './inProgressSegment';
 
 export interface ComboBarSeries {
   key: string;
@@ -57,9 +56,6 @@ export interface ComboChartProps {
    * context such as a percentage of its total. Falls back to the axis formatter for that series. */
   tooltipFormatters?: Record<string, (value: number, point?: ComboChartPoint) => string>;
   height?: number;
-  /** Grow with the card: the chart takes every pixel the card body has left (at least `height`), so a card stretched to
-   * its row's height has no empty band under the chart. Needs a parent with a definite height (ChartPanel in a grid row). */
-  fill?: boolean;
   /** The whole plot area becomes clickable (pointer cursor) and invokes this with the clicked
    * point's `label` -- fires whether the click lands on a bar, a line point, or elsewhere in that
    * category's column, since Recharts resolves the nearest category from the click's X position
@@ -82,9 +78,6 @@ export interface ComboChartProps {
   topPadding?: number;
   /** Tooltip title for a point's label (default: the label itself), e.g. a full period name plus a count. */
   tooltipLabelFormatter?: (label: string) => string;
-  /** The label of the current, partial period (the last point): its bars are lighter with a dashed outline, its line
-   * segments dashed, and its tooltip says "Period in progress". Unset = no period in progress. */
-  inProgressLabel?: string | null;
 }
 
 function defaultFormatter(v: number): string {
@@ -112,20 +105,16 @@ export function ComboChart({
   rightAxisFormatter = defaultFormatter,
   tooltipFormatters,
   height = 300,
-  fill = false,
   onCategoryClick,
   onAreaClick,
   highlightedCategory = null,
   connectNulls = true,
   topPadding,
   tooltipLabelFormatter,
-  inProgressLabel = null,
 }: ComboChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const hasRightAxis = lines.some((l) => (l.yAxisId ?? 'right') === 'right');
-  const ipIndex = inProgressIndex(points, inProgressLabel);
-  const data = withInProgressSegment(points, lines.map((l) => l.key), ipIndex);
 
   const handleChartClick = (state: any) => {
     if (!onCategoryClick) return;
@@ -151,7 +140,7 @@ export function ComboChart({
   };
 
   return (
-    <div style={fill ? { width: '100%', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : { width: '100%' }}>
+    <div style={{ width: '100%' }}>
       <div
         style={{
           display: 'flex',
@@ -180,10 +169,10 @@ export function ComboChart({
         </button>
         )}
       </div>
-      <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default', ...(fill ? { flex: 1, minHeight: height } : {}) }}>
-        <ResponsiveContainer width="100%" height={fill ? '100%' : height}>
+      <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default' }}>
+        <ResponsiveContainer width="100%" height={height}>
           <ComposedChart
-            data={data}
+            data={points}
             margin={{ top: topPadding ?? (lines.some((l) => l.labelFormatter) ? 24 : 4), right: hasRightAxis ? 8 : 24, left: 0, bottom: 0 }}
             onClick={handleChartClick}
           >
@@ -214,7 +203,7 @@ export function ComboChart({
               />
             )}
             <Tooltip {...chartTooltipProps}
-              labelFormatter={tooltipLabelFormatter || ipIndex >= 0 ? (label: unknown) => inProgressTitle(String(label), inProgressLabel, tooltipLabelFormatter) : undefined}
+              labelFormatter={tooltipLabelFormatter ? (label: unknown) => tooltipLabelFormatter(String(label)) : undefined}
               formatter={(value: number, name: string, item: any) => {
                 const dataKey = item?.dataKey as string;
                 const isRightAxis = item?.payload && lines.some((l) => l.key === dataKey && (l.yAxisId ?? 'right') === 'right');
@@ -235,18 +224,16 @@ export function ComboChart({
                 hide={!!hidden[b.key]}
                 isAnimationActive={false}
               >
-                {points.map((p, i) => {
+                {points.map((p) => {
                   const isSelected = highlightedCategory === p.label;
                   const dimmed = highlightedCategory != null && !isSelected;
-                  const inProgress = i === ipIndex;
                   return (
                     <Cell
                       key={p.label}
                       fill={b.color}
-                      fillOpacity={dimmed ? 0.35 : inProgress ? 0.45 : 1}
-                      stroke={isSelected ? 'var(--ps-color-gold)' : inProgress ? b.color : 'none'}
-                      strokeWidth={isSelected || inProgress ? (isSelected ? 2 : 1.5) : 0}
-                      strokeDasharray={inProgress && !isSelected ? '4 3' : undefined}
+                      fillOpacity={dimmed ? 0.35 : 1}
+                      stroke={isSelected ? 'var(--ps-color-gold)' : 'none'}
+                      strokeWidth={isSelected ? 2 : 0}
                     />
                   );
                 })}
@@ -260,9 +247,8 @@ export function ComboChart({
                 dataKey={l.key}
                 name={l.name}
                 stroke={l.color}
-                strokeOpacity={ipIndex < 0 ? 1 : 0}
                 strokeWidth={2}
-                dot={ipIndex < 0 ? { r: 3 } : false}
+                dot={{ r: 3 }}
                 hide={!!hidden[l.key]}
                 isAnimationActive={false}
                 connectNulls={connectNulls}
@@ -278,17 +264,6 @@ export function ComboChart({
                 ) : null}
               </Line>
             ))}
-            {ipIndex >= 0 && lines.flatMap((l) => [
-              <Line key={doneKey(l.key)} yAxisId={l.yAxisId ?? 'right'} type="monotone" dataKey={doneKey(l.key)} stroke={l.color} strokeWidth={2}
-                dot={{ r: 3 }} activeDot={false} legendType="none" tooltipType="none" hide={!!hidden[l.key]} isAnimationActive={false}
-                connectNulls={connectNulls} />,
-              <Line key={inProgressKey(l.key)} yAxisId={l.yAxisId ?? 'right'} type="monotone" dataKey={inProgressKey(l.key)} stroke={l.color}
-                strokeWidth={2} strokeDasharray="6 4" activeDot={false} legendType="none" tooltipType="none" hide={!!hidden[l.key]}
-                isAnimationActive={false} connectNulls={false}
-                dot={(props: { cx?: number; cy?: number; index?: number }) => props.index === ipIndex && props.cx != null && props.cy != null
-                  ? <circle key="ip" cx={props.cx} cy={props.cy} r={3.5} fill="var(--ps-color-surface, #fff)" stroke={l.color} strokeWidth={2} />
-                  : <g key={`n${props.index}`} />} />,
-            ])}
           </ComposedChart>
         </ResponsiveContainer>
       </div>

@@ -27,13 +27,18 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { usePeriodTrend, useRevenueTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
+import { useRevenueTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
 import styles from './page.module.css';
-import type { PeriodGranularity, RevenueTrendPeriodPoint, RevenueTrendPeriods, RevenueTrendPerformanceRow, RevenueTrendVarianceCard } from '../../../../lib/api';
-import { DEFAULT_GRANULARITY, formatChange, usePeriodWindow, type PeriodWindowView } from '../../../../lib/periods';
-import { PeriodTrendSelector } from '../../../../components/PeriodTrendSelector';
-import { formatAsp, formatCompactNumber, formatCurrency, formatTimestamp, formatVariance, formatVolume, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
+import type { RevenueTrendMonthPoint, RevenueTrendPerformanceRow, RevenueTrendVarianceCard } from '../../../../lib/api';
+import { formatAsp, formatCurrency, formatTimestamp, formatVariance, formatVolume, toSemanticStatus, DISPLAY_LOCALE } from '../../../../lib/format';
 import { vh } from '../../../../lib/visualHelp';
+
+/** Y-axis tick formatter: currency/volume in millions with an "M" suffix (e.g. "5M", "0.3M"),
+ * one decimal place unless it rounds to a whole number. */
+function formatMillions(value: number): string {
+  const fixed = (value / 1_000_000).toFixed(1);
+  return `${fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed}M`;
+}
 
 /** ASP y-axis: plain, unprefixed number -- full LYD/2-decimal precision is reserved for the
  * hover tooltip (formatAsp), per the chart spec. */
@@ -106,49 +111,27 @@ const PERFORMANCE_PDF_COLUMNS: PerformanceTablePdfColumn[] = [
 ];
 
 interface TrendTableRow extends Record<string, unknown> {
-  period: string;
+  month: string;
   actual: string;
   lastYear: string;
   target: string;
-  change: string;
 }
 
-/** Period / Actual / Same period LY / Target (Monthly and Yearly only) / change against the previous period (DoD / WoW /
- * MoM / YoY, following the granularity). */
-function trendTableColumns(win: PeriodWindowView, hasTarget: boolean): Column<TrendTableRow>[] {
-  return [
-    { key: 'period', header: 'Period' },
-    { key: 'actual', header: 'Actual', align: 'right' },
-    { key: 'lastYear', header: 'Same period LY', align: 'right' },
-    ...(hasTarget ? [{ key: 'target', header: 'Target', align: 'right' } as Column<TrendTableRow>] : []),
-    { key: 'change', header: `Change ${win.changeLabel}`, align: 'right' },
-  ];
-}
+const trendTableColumns: Column<TrendTableRow>[] = [
+  { key: 'month', header: 'Month' },
+  { key: 'actual', header: 'Actual', align: 'right' },
+  { key: 'lastYear', header: 'Y-1', align: 'right' },
+  { key: 'target', header: 'Target', align: 'right' },
+];
 
 function toTableRows(
-  points: RevenueTrendPeriodPoint[],
-  win: PeriodWindowView,
-  pick: (p: RevenueTrendPeriodPoint) => { actual: number | null; lastYear: number | null; target: number | null; change: number | null },
+  series: RevenueTrendMonthPoint[],
+  pick: (p: RevenueTrendMonthPoint) => { actual: number | null; lastYear: number | null; target: number | null },
   formatter: (v: number | null) => string,
 ): TrendTableRow[] {
-  return points.map((p) => {
-    const { actual, lastYear, target, change } = pick(p);
-    return {
-      period: `${win.title(p.start)}${p.inProgress ? ' (in progress)' : ''}`,
-      actual: formatter(actual),
-      lastYear: formatter(lastYear),
-      target: formatter(target),
-      change: formatChange(change, win.granularity) ?? '—',
-    };
-  });
-}
-
-/** The chart points of one measure: actual, the same period last year and (Monthly / Yearly) the target. ASP is null
- * where nothing was sold, so its line shows a gap instead of a fake 0. */
-function toTrendPoints(points: RevenueTrendPeriodPoint[], win: PeriodWindowView, pick: (p: RevenueTrendPeriodPoint) => [number | null, number | null, number | null]): TrendPoint[] {
-  return points.map((p) => {
-    const [actual, lastYear, target] = pick(p);
-    return { label: win.label(p.start), actual: actual as number, lastYear, target };
+  return series.map((p) => {
+    const { actual, lastYear, target } = pick(p);
+    return { month: p.label, actual: formatter(actual), lastYear: formatter(lastYear), target: formatter(target) };
   });
 }
 
@@ -204,32 +187,20 @@ export default function RevenueTrendPage() {
 
   const filterOptions = useScopedFilterOptions();
   const overview = useRevenueTrendOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
-  // The period selector: Weekly on every load, per page (not saved). Only the three trends reload when it changes.
-  const [granularity, setGranularity] = useState<PeriodGranularity>(DEFAULT_GRANULARITY);
-  const win = usePeriodWindow(granularity);
-  const trend = usePeriodTrend<RevenueTrendPeriods>(token, 'revenue-trend', anchorDate, effectiveFilters, granularity, authError, retryAuth);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
 
   const roleLabel = user?.role.label ?? user?.fullName;
   const lastRefreshLabel = refreshStatus.data ? formatTimestamp(refreshStatus.data.lastRefreshTime) : undefined;
-  // Show the points of the granularity just asked for (a slow previous response never relabels the axis).
-  const series = trend.data?.granularity === granularity ? trend.data.points : [];
-  const hasTarget = trend.data?.hasTarget ?? false;
-  const inProgressLabel = win.inProgressLabel(series);
-  const tooltipTitle = win.tooltipTitle(series);
-  const tableColumns = trendTableColumns(win, hasTarget);
+  const series = overview.data?.series ?? [];
 
-  const valuePoints = toTrendPoints(series, win, (p) => [p.value, p.lastYearValue, p.targetValue]);
-  const volumePoints = toTrendPoints(series, win, (p) => [p.volume, p.lastYearVolume, p.targetVolume]);
-  const aspPoints = toTrendPoints(series, win, (p) => [p.asp, p.lastYearAsp, p.targetAsp]);
+  const valuePoints: TrendPoint[] = series.map((p) => ({ label: p.label, actual: p.value, lastYear: p.lastYearValue, target: p.targetValue }));
+  const volumePoints: TrendPoint[] = series.map((p) => ({ label: p.label, actual: p.volume, lastYear: p.lastYearVolume, target: p.targetVolume }));
+  const aspPoints: TrendPoint[] = series.map((p) => ({ label: p.label, actual: p.asp ?? 0, lastYear: p.lastYearAsp, target: p.targetAsp }));
 
-  const money = (v: number | null) => (v === null ? '—' : formatCurrency(v));
-  const qty = (v: number | null) => (v === null ? '—' : formatVolume(v));
-  const valueTableRows = toTableRows(series, win, (p) => ({ actual: p.value, lastYear: p.lastYearValue, target: p.targetValue, change: p.valueChangePct }), money);
-  const volumeTableRows = toTableRows(series, win, (p) => ({ actual: p.volume, lastYear: p.lastYearVolume, target: p.targetVolume, change: p.volumeChangePct }), qty);
-  const aspTableRows = toTableRows(series, win, (p) => ({ actual: p.asp, lastYear: p.lastYearAsp, target: p.targetAsp, change: p.aspChangePct }), formatAspOrDash);
-  const trendLoading = trend.loading || (trend.data !== null && trend.data.granularity !== granularity);
+  const valueTableRows = toTableRows(series, (p) => ({ actual: p.value, lastYear: p.lastYearValue, target: p.targetValue }), (v) => (v === null ? '—' : formatCurrency(v)));
+  const volumeTableRows = toTableRows(series, (p) => ({ actual: p.volume, lastYear: p.lastYearVolume, target: p.targetVolume }), (v) => (v === null ? '—' : formatVolume(v)));
+  const aspTableRows = toTableRows(series, (p) => ({ actual: p.asp, lastYear: p.lastYearAsp, target: p.targetAsp }), formatAspOrDash);
 
   const kpis = overview.data?.kpis;
 
@@ -274,15 +245,15 @@ export default function RevenueTrendPage() {
     }
   }
 
-  // Exports every period of the window -- the same columns / rows the expanded table view renders, so the PDF always
-  // matches it exactly.
+  // Exports the full series (every month, not just what's visible without scrolling) -- same
+  // trendTableColumns/rows the expanded table view renders, so the PDF always matches it exactly.
   async function handleDownloadTablePdf(key: string, title: string, rows: TrendTableRow[]) {
     setDownloadingPdf(key);
     try {
       await exportRowsAsPdf({
-        title: `${title} · ${win.name}`,
-        columns: tableColumns.map((c) => ({ header: c.header, align: c.align })),
-        rows: rows.map((row) => tableColumns.map((c) => String(row[c.key as keyof TrendTableRow] ?? ''))),
+        title,
+        columns: trendTableColumns.map((c) => ({ header: c.header, align: c.align })),
+        rows: rows.map((row) => [row.month, row.actual, row.lastYear, row.target]),
         fileName: `${title.toLowerCase().replace(/\s+/g, '-')}`,
       });
     } finally {
@@ -310,49 +281,35 @@ export default function RevenueTrendPage() {
           lastRefreshTime={lastRefreshLabel}
         />
 
-        <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)' }}>
-          <div
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 'var(--ps-space-3, 16px)' }}
-          >
-            <span style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }} data-testid="trend-window">
-              Trends: the {win.windowLabel}
-              {hasTarget ? '' : ' · target shown on Monthly and Yearly only'}
-            </span>
-            <PeriodTrendSelector value={granularity} onChange={setGranularity} label="Revenue Trend period" />
-          </div>
-          <div className={styles.trends}>
+        <main className={styles.trends} style={{ flex: 1, padding: 'var(--ps-space-4, 24px)' }}>
           <div className={styles.charts}>
             <ChartPanel<TrendTableRow>
-              title="Value trend"
-              {...vh('promotion.revenueTrend.valueTrend')}
+              title="MoM Value"
+              {...vh('promotion.revenueTrend.momValue')}
               style={{ minHeight: 360 }}
-              tableColumns={trend.error ? undefined : tableColumns}
-              tableRows={trend.error ? undefined : valueTableRows}
-              getRowId={(row) => row.period}
+              tableColumns={overview.error ? undefined : trendTableColumns}
+              tableRows={overview.error ? undefined : valueTableRows}
+              getRowId={(row) => row.month}
               headerActions={
-                !trend.error && (
+                !overview.error && (
                   <ExportPdfButton
                     downloading={downloadingPdf === 'value'}
                     disabled={valueTableRows.length === 0}
-                    onClick={() => handleDownloadTablePdf('value', 'Value trend', valueTableRows)}
+                    onClick={() => handleDownloadTablePdf('value', 'MoM Value', valueTableRows)}
                   />
                 )
               }
             >
-              {trendLoading ? (
+              {overview.loading ? (
                 <LoadingSkeleton variant="chart" />
-              ) : trend.error ? (
-                <ErrorState message={trend.error} onRetry={trend.retry} />
+              ) : overview.error ? (
+                <ErrorState message={overview.error} onRetry={overview.retry} />
               ) : (
                 <TrendChart
-                  title="Value trend"
+                  title="MoM Value"
                   showTitle={false}
                   points={valuePoints}
-                  actualLabel="Value"
-                  lastYearLabel="Same period LY"
-                  inProgressLabel={inProgressLabel}
-                  tooltipLabelFormatter={tooltipTitle}
-                  valueFormatter={formatCompactNumber}
+                  valueFormatter={formatMillions}
                   tooltipValueFormatter={(v) => formatCurrency(v)}
                   lastYearColor={chartColors.lastYear}
                   targetColor={chartColors.target}
@@ -361,36 +318,32 @@ export default function RevenueTrendPage() {
             </ChartPanel>
 
             <ChartPanel<TrendTableRow>
-              title="Volume trend"
-              {...vh('promotion.revenueTrend.volumeTrend')}
+              title="MoM Volume"
+              {...vh('promotion.revenueTrend.momVolume')}
               style={{ minHeight: 360 }}
-              tableColumns={trend.error ? undefined : tableColumns}
-              tableRows={trend.error ? undefined : volumeTableRows}
-              getRowId={(row) => row.period}
+              tableColumns={overview.error ? undefined : trendTableColumns}
+              tableRows={overview.error ? undefined : volumeTableRows}
+              getRowId={(row) => row.month}
               headerActions={
-                !trend.error && (
+                !overview.error && (
                   <ExportPdfButton
                     downloading={downloadingPdf === 'volume'}
                     disabled={volumeTableRows.length === 0}
-                    onClick={() => handleDownloadTablePdf('volume', 'Volume trend', volumeTableRows)}
+                    onClick={() => handleDownloadTablePdf('volume', 'MoM Volume', volumeTableRows)}
                   />
                 )
               }
             >
-              {trendLoading ? (
+              {overview.loading ? (
                 <LoadingSkeleton variant="chart" />
-              ) : trend.error ? (
-                <ErrorState message={trend.error} onRetry={trend.retry} />
+              ) : overview.error ? (
+                <ErrorState message={overview.error} onRetry={overview.retry} />
               ) : (
                 <TrendChart
-                  title="Volume trend"
+                  title="MoM Volume"
                   showTitle={false}
                   points={volumePoints}
-                  actualLabel="Volume"
-                  lastYearLabel="Same period LY"
-                  inProgressLabel={inProgressLabel}
-                  tooltipLabelFormatter={tooltipTitle}
-                  valueFormatter={formatCompactNumber}
+                  valueFormatter={formatMillions}
                   tooltipValueFormatter={(v) => formatVolume(v)}
                   lastYearColor={chartColors.lastYear}
                   targetColor={chartColors.target}
@@ -399,35 +352,31 @@ export default function RevenueTrendPage() {
             </ChartPanel>
 
             <ChartPanel<TrendTableRow>
-              title="ASP trend"
-              {...vh('promotion.revenueTrend.aspTrend')}
+              title="MoM ASP"
+              {...vh('promotion.revenueTrend.momAsp')}
               style={{ minHeight: 360 }}
-              tableColumns={trend.error ? undefined : tableColumns}
-              tableRows={trend.error ? undefined : aspTableRows}
-              getRowId={(row) => row.period}
+              tableColumns={overview.error ? undefined : trendTableColumns}
+              tableRows={overview.error ? undefined : aspTableRows}
+              getRowId={(row) => row.month}
               headerActions={
-                !trend.error && (
+                !overview.error && (
                   <ExportPdfButton
                     downloading={downloadingPdf === 'asp'}
                     disabled={aspTableRows.length === 0}
-                    onClick={() => handleDownloadTablePdf('asp', 'ASP trend', aspTableRows)}
+                    onClick={() => handleDownloadTablePdf('asp', 'MoM ASP', aspTableRows)}
                   />
                 )
               }
             >
-              {trendLoading ? (
+              {overview.loading ? (
                 <LoadingSkeleton variant="chart" />
-              ) : trend.error ? (
-                <ErrorState message={trend.error} onRetry={trend.retry} />
+              ) : overview.error ? (
+                <ErrorState message={overview.error} onRetry={overview.retry} />
               ) : (
                 <TrendChart
-                  title="ASP trend"
+                  title="MoM ASP"
                   showTitle={false}
                   points={aspPoints}
-                  actualLabel="ASP"
-                  lastYearLabel="Same period LY"
-                  inProgressLabel={inProgressLabel}
-                  tooltipLabelFormatter={tooltipTitle}
                   valueFormatter={formatPlainNumber}
                   tooltipValueFormatter={(v) => formatAsp(v)}
                   lastYearColor={chartColors.lastYear}
@@ -438,15 +387,25 @@ export default function RevenueTrendPage() {
 
           </div>
 
-          {/* Row 2, always under the charts; paired Value / Volume / ASP to line up under their chart (page.module.css) */}
-          <div className={styles.cards} data-testid="variance-cards">
-            <div className={styles.ytd}><VarianceCard title="Value Variance to YTD Target" card={kpis?.valueVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
-            <div className={styles.mtd}><VarianceCard title="Value Variance to MTD Target" card={kpis?.valueVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
-            <div className={styles.ytd}><VarianceCard title="Volume Variance to YTD Target" card={kpis?.volumeVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
-            <div className={styles.mtd}><VarianceCard title="Volume Variance to MTD Target" card={kpis?.volumeVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
-            <div className={styles.ytd}><VarianceCard title="ASP Variance to YTD Target" card={kpis?.aspVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
-            <div className={styles.mtd}><VarianceCard title="ASP Variance to MTD Target" card={kpis?.aspVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
-          </div>
+          <div className={styles.cards}>
+            <div className={styles.ytd}>
+              <VarianceCard title="Value Variance to YTD Target" card={kpis?.valueVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+            </div>
+            <div className={styles.mtd}>
+              <VarianceCard title="Value Variance to MTD Target" card={kpis?.valueVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+            </div>
+            <div className={styles.ytd}>
+              <VarianceCard title="Volume Variance to YTD Target" card={kpis?.volumeVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+            </div>
+            <div className={styles.mtd}>
+              <VarianceCard title="Volume Variance to MTD Target" card={kpis?.volumeVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+            </div>
+            <div className={styles.ytd}>
+              <VarianceCard title="ASP Variance to YTD Target" card={kpis?.aspVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+            </div>
+            <div className={styles.mtd}>
+              <VarianceCard title="ASP Variance to MTD Target" card={kpis?.aspVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
+            </div>
           </div>
 
           {!overview.loading && !overview.error && (

@@ -20,8 +20,6 @@ const PERF_DETAILS = (what: string): VisualHelpEntry => ({
 });
 const ODOO = 'Click a name / number to open it in Odoo (new tab)';
 const GRID = ['Search all columns with the search box', 'Filter any column using the boxes under the headers', 'Sort by clicking a column header (Shift-click to add a second sort)', 'Pin a column so it stays visible', 'Export the rows to CSV / Excel or PDF, or copy them', 'Move between pages with Previous / Next'];
-/** Every trend with the shared Daily / Weekly / Monthly / Yearly selector (lib/periods.ts). */
-const PERIOD_TREND_NOTE = 'Daily = last 30 days, Weekly = last 12 weeks (Saturday to Friday), Monthly = last 12 months, Yearly = last 5 years. The last period is still in progress (lighter bar / dashed line). Data refreshes every 30 minutes.';
 const NPS_LEVELS = '★★★ = Promoter (NPS 9–10) · ★★ = Passive (7–8) · ★ = Detractor (0–6)';
 const NPS = 'NPS = % Promoters − % Detractors, % = count ÷ Responders × 100';
 const CSAT = 'CSAT = (Passives + Promoters) ÷ Responders × 100';
@@ -134,23 +132,14 @@ export const VISUAL_HELP = {
   },
   'promotion.criticalNumber.details': PERF_DETAILS('daily, monthly and yearly counters, working days and missing value'),
   // ---- Revenue Trend --------------------------------------------------------------------------------------------------
-  'promotion.revenueTrend.valueTrend': {
-    help: {
-      definition: 'Sales value (LYD) per day / week / month / year, with the same period last year and, on Monthly and Yearly, the target.',
-      notes: PERIOD_TREND_NOTE,
-    },
+  'promotion.revenueTrend.momValue': {
+    help: { definition: 'Sales value (LYD) per month this year, with the same month last year and the month target.', },
   },
-  'promotion.revenueTrend.volumeTrend': {
-    help: {
-      definition: 'Invoiced quantity per day / week / month / year, with the same period last year and, on Monthly and Yearly, the target.',
-      notes: PERIOD_TREND_NOTE,
-    },
+  'promotion.revenueTrend.momVolume': {
+    help: { definition: 'Invoiced quantity per month this year, with the same month last year and the month target.', },
   },
-  'promotion.revenueTrend.aspTrend': {
-    help: {
-      definition: 'Average selling price per period, with the same period last year and, on Monthly and Yearly, the target ASP.',
-      notes: `ASP = the period's sales value / its quantity (never an average of daily ASPs); no sales = a gap. ${PERIOD_TREND_NOTE}`,
-    },
+  'promotion.revenueTrend.momAsp': {
+    help: { definition: 'Average selling price per month this year, with last year and the target ASP.', },
   },
   'promotion.revenueTrend.varianceCard': {
     help: {
@@ -589,14 +578,14 @@ export const VISUAL_HELP = {
   },
   'process.npsScore.satisfactionTrend': {
     help: { definition: 'NPS and CSAT per period (lines) with responders (bars). Muted points have fewer responders than the minimum.', formula: [NPS, CSAT] },
-    interactions: ['Switch day / week / month / year'],
+    interactions: ['Switch week / month / year'],
   },
   'process.npsScore.respondersTrend': {
     help: { definition: 'Responders per period (bars) with Promoters, Passives and Detractors (lines).', },
-    interactions: ['Switch day / week / month / year'],
+    interactions: ['Switch week / month / year'],
   },
   'process.npsScore.reach': {
-    help: { definition: 'WhatsApp feedback messages by message date and company: Delivered, Read, Not Delivered and Error. Measured from 03 Oct 2026; 12 Jul – 02 Oct is the approved manual reach (12 Jul – 12 Aug estimated, 13 Aug – 02 Oct from Meta exports; 13–31 Aug Delivered/Read estimated), spread evenly over the days. Cards that include manual or estimated reach display "incl. manual/est.". Their tooltips give the measured, Meta manual and estimated counts.' },
+    help: { definition: 'WhatsApp feedback messages by message date and company: Delivered, Read, Not Delivered and Error. Measured from 03 Oct 2026; 12 Jul – 02 Oct is the approved manual reach (12 Jul – 12 Aug estimated, 13 Aug – 02 Oct from Meta exports; 13–31 Aug Delivered/Read estimated), spread evenly over the days. Card tooltips show the measured, Meta manual and estimated figures.' },
   },
   'process.npsScore.errors': {
     help: { definition: 'Messages that failed, by the error WhatsApp returned. Before 03 Oct the failed messages come from the manual reach without a reason: "Unclassified (Meta manual)".' },

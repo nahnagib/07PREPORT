@@ -1,44 +1,40 @@
 import { vh } from '../../lib/visualHelp';
 import React from 'react';
-import { ChartPanel, ComboChart, EmptyState, ErrorState, LoadingSkeleton, type ComboChartPoint } from '@07ps/ui';
-import type { NpsTrend, PeriodGranularity } from '../../lib/api';
+import { Button, ChartPanel, ComboChart, EmptyState, ErrorState, LoadingSkeleton, type ComboChartPoint } from '@07ps/ui';
+import type { NpsGrain, NpsTrend } from '../../lib/api';
 import { formatNumber } from '../../lib/format';
-import { GROUPS, GROUP_COLOR, RESPONDERS_TREND_INFO, TREND_INFO, fmt2, pct, trendPoints } from '../../lib/nps/view';
-import { periodAxisLabel, periodWindowView } from '../../lib/periods';
-import { PeriodTrendSelector } from '../PeriodTrendSelector';
+import { GROUPS, GROUP_COLOR, RESPONDERS_TREND_INFO, TREND_INFO, fmt2, pct, periodLabel, trendPoints } from '../../lib/nps/view';
 
 export type TrendState = { data: NpsTrend | null; loading: boolean; error: string | null; retry: () => void };
+const GRAIN_LABEL: Record<NpsGrain, string> = { week: 'Weekly', month: 'Monthly', year: 'Yearly' };
 
-/** The data of the granularity just asked for: a slower previous response never relabels the axis. */
-function TrendBody({ state, granularity, children }: { state: TrendState; granularity: PeriodGranularity; children: (data: NpsTrend) => React.ReactNode }) {
+function TrendBody({ state, children }: { state: TrendState; children: (data: NpsTrend) => React.ReactNode }) {
   if (state.error) return <ErrorState message={state.error} onRetry={state.retry} />;
-  if (!state.data || state.loading || state.data.granularity !== granularity) return <LoadingSkeleton variant="chart" />;
-  if (!state.data.points.some((p) => p.measured && p.responders > 0)) return <EmptyState message="No ratings in this period for these filters." />;
+  if (!state.data || state.loading) return <LoadingSkeleton variant="chart" />;
+  if (!state.data.points.length) return <EmptyState message="No ratings for these filters and dates." />;
   return <>{children(state.data)}</>;
 }
 
-/** Tooltip title ("Wk of 03 Oct 2026", "Not surveyed yet" before the first rating) and the in-progress period. */
-function periodProps(data: NpsTrend) {
-  const win = periodWindowView(data.granularity);
-  const title = new Map(data.points.map((p) => [
-    periodAxisLabel(p.period, data.granularity),
-    p.measured ? win.title(p.period) : `${win.title(p.period)} · before the first rating`,
-  ]));
-  return {
-    tooltipLabelFormatter: (label: string) => title.get(label) ?? label,
-    inProgressLabel: win.inProgressLabel(data.points.map((p) => ({ start: p.period, inProgress: p.inProgress }))),
-    connectNulls: false,
-  };
+function GrainSwitch({ grain, onGrainChange, label }: { grain: NpsGrain; onGrainChange: (grain: NpsGrain) => void; label: string }) {
+  return (
+    <div className="ps-nps-switch" role="group" aria-label={label}>
+      {(Object.keys(GRAIN_LABEL) as NpsGrain[]).map((g) => (
+        <Button key={g} variant={grain === g ? 'primary' : 'secondary'} onClick={() => onGrainChange(g)} aria-pressed={grain === g}>
+          {GRAIN_LABEL[g]}
+        </Button>
+      ))}
+    </div>
+  );
 }
 
-export function NpsTrendChart({ state, granularity, onGranularityChange }: {
-  state: TrendState; granularity: PeriodGranularity; onGranularityChange: (g: PeriodGranularity) => void;
+export function NpsTrendChart({ state, grain, onGrainChange }: {
+  state: TrendState; grain: NpsGrain; onGrainChange: (grain: NpsGrain) => void;
 }) {
   return (
     <ChartPanel {...vh("process.npsScore.satisfactionTrend")} title="Satisfaction Trend" wrapHeader
-      headerActions={<PeriodTrendSelector value={granularity} onChange={onGranularityChange} label="Satisfaction Trend period" />}>
-      <TrendBody state={state} granularity={granularity}>{(data) => (
-        <ComboChart title="Satisfaction Trend" showTitle={false} points={trendPoints(data)} {...periodProps(data)}
+      headerActions={<GrainSwitch grain={grain} onGrainChange={onGrainChange} label="Satisfaction Trend period" />}>
+      <TrendBody state={state}>{(data) => (
+        <ComboChart title="Satisfaction Trend" showTitle={false} points={trendPoints(data)}
           bars={[{ key: 'responders', name: 'Responders', color: 'var(--ps-color-last-year)' }]}
           lines={[
             { key: 'nps', name: 'NPS', color: 'var(--ps-color-accent)', yAxisId: 'right', labelFormatter: (v) => fmt2(v) },
@@ -53,25 +49,22 @@ export function NpsTrendChart({ state, granularity, onGranularityChange }: {
 }
 
 /**
- * Same style as the Satisfaction Trend, with its own Daily / Weekly / Monthly / Yearly selector: total responders as bars,
- * Promoters, Passives and Detractors as three lines on the same axis. Periods before the first rating are gaps.
+ * Same style as the Satisfaction Trend, with its own Weekly / Monthly / Yearly switch: total responders as bars,
+ * Promoters, Passives and Detractors as three lines on the same axis.
  */
-export function RespondersTrend({ state, granularity, onGranularityChange }: {
-  state: TrendState; granularity: PeriodGranularity; onGranularityChange: (g: PeriodGranularity) => void;
+export function RespondersTrend({ state, grain, onGrainChange }: {
+  state: TrendState; grain: NpsGrain; onGrainChange: (grain: NpsGrain) => void;
 }) {
   return (
     <ChartPanel {...vh("process.npsScore.respondersTrend")} title="Responders Trend" wrapHeader
-      headerActions={<PeriodTrendSelector value={granularity} onChange={onGranularityChange} label="Responders Trend period" />}>
-      <TrendBody state={state} granularity={granularity}>{(data) => {
+      headerActions={<GrainSwitch grain={grain} onGrainChange={onGrainChange} label="Responders Trend period" />}>
+      <TrendBody state={state}>{(data) => {
         const points = data.points.map((p) => ({
-          label: periodAxisLabel(p.period, data.granularity),
-          responders: p.measured ? p.responders : null,
-          promoters: p.measured ? p.promoters : null,
-          passives: p.measured ? p.passives : null,
-          detractors: p.measured ? p.detractors : null,
+          label: periodLabel(p.period), responders: p.responders,
+          promoters: p.promoters, passives: p.passives, detractors: p.detractors,
         }));
         return (
-          <ComboChart title="Responders Trend" showTitle={false} points={points} {...periodProps(data)}
+          <ComboChart title="Responders Trend" showTitle={false} points={points}
             bars={[{ key: 'responders', name: 'Responders', color: 'var(--ps-color-last-year)' }]}
             lines={GROUPS.map((g) => ({ key: g.key, name: g.label, color: GROUP_COLOR[g.key], yAxisId: 'left' as const }))}
             leftAxisFormatter={(v) => formatNumber(v)}

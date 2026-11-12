@@ -1,7 +1,7 @@
-import { periodBucketSql, periodEndIso, periodStartIso, periodWindow, PERIOD_COUNT, PERIOD_GRANULARITIES, shiftPeriod, type PeriodGranularity } from '../lib/periods';
+import { weekStartIso, weekStartSql } from '../lib/businessWeek';
 /**
  * Collections trend (Receivables and Collections page, next to the Receivables trend): money collected from customers
- * per day / week / month / year (the shared period selector, lib/periods.ts), from fact_finance_collection through v_finance_collection_trend (migrations 0040 + 0042,
+ * per day / week / month, from fact_finance_collection through v_finance_collection_trend (migrations 0040 + 0042,
  * loaded by the finance ETL, departments/finance/collections.py).
  *
  * A collection is the portion of a posted inbound customer payment applied to a customer invoice
@@ -30,10 +30,10 @@ import { allocateCredits, type AllocatableLine } from './creditAllocation';
 import { COMPANY_CURRENCY, DebtQueryError, linesSource, parseDebtQuery, type DebtQuery } from './debtReport';
 import type { Filters } from './filters';
 
-export type CollectionGrain = PeriodGranularity;
-export const COLLECTION_GRAINS: readonly CollectionGrain[] = PERIOD_GRANULARITIES;
-/** Default range per grain: the shared period window (lib/periods.ts), ending with the current period (business time zone). */
-export const DEFAULT_PERIODS: Record<CollectionGrain, number> = PERIOD_COUNT;
+export type CollectionGrain = 'day' | 'week' | 'month';
+export const COLLECTION_GRAINS: readonly CollectionGrain[] = ['day', 'week', 'month'];
+/** Default range per grain: periods ending with the current one (business time zone). */
+export const DEFAULT_PERIODS: Record<CollectionGrain, number> = { day: 30, week: 12, month: 12 };
 const MAX_PERIODS = 400;
 const DRILL_LIMIT = 1000;
 export const BUSINESS_TIME_ZONE = 'Africa/Tripoli';
@@ -45,8 +45,6 @@ export interface CollectionsQuery {
   grain: CollectionGrain;
   from: string;
   to: string;
-  /** today in the business time zone: the period holding it is in progress */
-  today: string;
   debt: DebtQuery;
 }
 
@@ -59,14 +57,33 @@ export function addDays(iso: string, n: number): string {
   d.setUTCDate(d.getUTCDate() + n);
   return toIso(d);
 }
+function addMonths(iso: string, n: number): string {
+  const d = toDate(iso);
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + n);
+  return toIso(d);
+}
+
 export function todayIn(timeZone = BUSINESS_TIME_ZONE, now = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
-/** First day of the period holding `iso`: the day, the Saturday of its week (Saturday..Friday), the 1st of its month, 1 January. */
-export const periodStart = (iso: string, grain: CollectionGrain): string => periodStartIso(iso, grain);
-export const periodEnd = (start: string, grain: CollectionGrain): string => periodEndIso(start, grain);
-const nextStart = (start: string, grain: CollectionGrain): string => shiftPeriod(start, grain, 1);
+/** First day of the period holding `iso`: the day, the Saturday of its week (Saturday..Friday), the 1st of its month. */
+export function periodStart(iso: string, grain: CollectionGrain): string {
+  if (grain === 'day') return iso;
+  if (grain === 'month') return `${iso.slice(0, 7)}-01`;
+  return weekStartIso(iso);
+}
+
+export function periodEnd(start: string, grain: CollectionGrain): string {
+  if (grain === 'day') return start;
+  if (grain === 'week') return addDays(start, 6);
+  return addDays(addMonths(start, 1), -1);
+}
+
+function nextStart(start: string, grain: CollectionGrain): string {
+  return grain === 'month' ? addMonths(start, 1) : addDays(start, grain === 'week' ? 7 : 1);
+}
 
 export interface Period {
   start: string;
@@ -83,20 +100,23 @@ export function periodsBetween(from: string, to: string, grain: CollectionGrain)
 
 export function parseCollectionsQuery(q: Record<string, unknown>, today = todayIn()): CollectionsQuery {
   const grain = (q.grain ?? 'week') as CollectionGrain;
-  if (!COLLECTION_GRAINS.includes(grain)) throw new DebtQueryError('grain must be day, week, month or year');
+  if (!COLLECTION_GRAINS.includes(grain)) throw new DebtQueryError('grain must be day, week or month');
   for (const k of ['from', 'to'] as const) {
     if (q[k] !== undefined && q[k] !== '' && (typeof q[k] !== 'string' || !ISO.test(q[k] as string))) throw new DebtQueryError(`${k} must be YYYY-MM-DD`);
   }
-  // default = the shared window: the last 30 days / 12 weeks / 12 months / 5 years through today
-  const window = periodWindow(grain, today);
-  const to = (q.to as string) || window.to;
-  const from = (q.from as string) || window.from;
+  const to = (q.to as string) || periodEnd(periodStart(today, grain), grain);
+  let from = q.from as string;
+  if (!from) {
+    const last = periodStart(to, grain);
+    const n = DEFAULT_PERIODS[grain] - 1;
+    from = grain === 'month' ? addMonths(last, -n) : addDays(last, -n * (grain === 'week' ? 7 : 1));
+  }
   if (from > to) throw new DebtQueryError('from must be on or before to');
   periodsBetween(from, to, grain); // 400 at most
   const currency = typeof q.currency === 'string' && q.currency ? q.currency : null;
   if (currency && !/^[A-Z]{3}$/.test(currency)) throw new DebtQueryError('currency must be a 3-letter code');
   const allCurrencies = !currency && (q.allCurrencies === 'true' || q.allCurrencies === '1' || q.allCurrencies === true);
-  return { currency, allCurrencies, grain, from, to, today, debt: parseDebtQuery(q) };
+  return { currency, allCurrencies, grain, from, to, debt: parseDebtQuery(q) };
 }
 
 // ---- SQL --------------------------------------------------------------------------------------------------------------
@@ -105,6 +125,11 @@ interface Sql {
   params: unknown[];
 }
 
+const PERIOD_SQL: Record<CollectionGrain, string> = {
+  day: 'v.payment_date',
+  week: weekStartSql('v.payment_date'),
+  month: "DATE_FORMAT(v.payment_date, '%Y-%m-01')",
+};
 
 function inList(column: string, values: readonly unknown[] | undefined, out: string[], params: unknown[]): void {
   if (!values || values.length === 0) return;
@@ -166,8 +191,6 @@ async function rows(pool: Pool, sql: string, params: unknown[]): Promise<Row[]> 
 export interface CollectionPoint {
   periodStart: string;
   periodEnd: string;
-  /** the period holding today: its payments are still coming in */
-  inProgress: boolean;
   collected: number;
   appliedOverdue: number;
   appliedNotDue: number;
@@ -205,14 +228,14 @@ export async function fetchCollectionsTrend(pool: Pool, cq: CollectionsQuery, f:
   const periods = periodsBetween(cq.from, cq.to, cq.grain);
   const meta = (await rows(pool, "SELECT DATE_FORMAT(MIN(payment_date), '%Y-%m-%d') AS first, DATE_FORMAT(MAX(loaded_at_utc), '%Y-%m-%dT%H:%i:%sZ') AS loaded FROM fact_finance_collection", []))[0] ?? {};
   const empty = (p: Period): CollectionPoint => ({
-    periodStart: p.start, periodEnd: p.end, inProgress: p.start <= cq.today && cq.today <= p.end, collected: 0, appliedOverdue: 0, appliedNotDue: 0, appliedOther: 0, unapplied: 0, payments: 0,
+    periodStart: p.start, periodEnd: p.end, collected: 0, appliedOverdue: 0, appliedNotDue: 0, appliedOther: 0, unapplied: 0, payments: 0,
     startOverdue: null, collectedOnStartOverdue: null, collectionRate: null,
   });
   if (!currency) return { currency, allCurrencies: all, currencies, grain: cq.grain, from: cq.from, to: cq.to, points: periods.map(empty), firstPaymentDate: meta.first ?? null, loadedAt: meta.loaded ?? null };
   const s = collectionSource(cq, f, all ? null : currency);
   const r = await rows(
     pool,
-    `SELECT ${periodBucketSql(cq.grain, 'v.payment_date')} AS p, SUM(${amountSql('amount', all)}) AS collected,
+    `SELECT DATE_FORMAT(${PERIOD_SQL[cq.grain]}, '%Y-%m-%d') AS p, SUM(${amountSql('amount', all)}) AS collected,
             SUM(${amountSql('applied_overdue', all)}) AS overdue, SUM(${amountSql('applied_not_due', all)}) AS not_due,
             0 AS other, 0 AS unapplied, COUNT(DISTINCT v.payment_id) AS payments
      ${s.sql} GROUP BY p`,
