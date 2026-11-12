@@ -153,11 +153,12 @@ describe.skipIf(!RUN)('NPS Score on the real warehouse (read-only)', () => {
     expect(body.totals.csat).toBeCloseTo(csat(want), 9);
   });
 
-  it.each(['week', 'month', 'year'])('the %s trend adds up to the overview, and each period is its own counts', async (grain) => {
-    const want = await factCounts();
-    const { status, body } = await get(`/nps-score/trend?dateFrom=2026-01-01&dateTo=2026-12-31&grain=${grain}`);
+  it.each(['day', 'week', 'month', 'year'])('the %s trend adds up to the overview of its window, and each period is its own counts', async (granularity) => {
+    const { status, body } = await get(`/nps-score/trend?granularity=${granularity}`);
     expect(status).toBe(200);
-    for (const k of ['promoters', 'passives', 'detractors', 'responders']) expect(sum(body.points, k), k).toBe(want[k as keyof typeof want]);
+    expect(body.points).toHaveLength(({ day: 30, week: 12, month: 12, year: 5 } as Record<string, number>)[granularity]);
+    const want = (await get(`/nps-score/overview?dateFrom=${body.from}&dateTo=${body.to}`)).body.totals;
+    for (const k of ['promoters', 'passives', 'detractors', 'responders']) expect(sum(body.points, k), k).toBe(want[k]);
     for (const p of body.points.filter((x: Json) => x.responders > 0)) expect(p.nps).toBeCloseTo(nps(p), 9);
   });
 
@@ -266,10 +267,11 @@ describe.skipIf(!RUN)('NPS page consistency, YTD, default B2B + B2C filter and a
     expect(o.promoters + o.passives + o.detractors).toBe(o.responders);
     expect(o.promoters + o.passives + o.detractors - o.detractors).toBe(o.promoters + o.passives);
     expect(o.nps).toBeCloseTo((100 * o.promoters) / o.responders - (100 * o.detractors) / o.responders, 9);
-    for (const grain of ['week', 'month', 'year']) {
-      const t = (await get(`/nps-score/trend?${q}&grain=${grain}`)).body;
-      expect(sum(t.points, 'responders'), grain).toBe(o.responders);
-      expect(t.points[0]?.responders ?? 0, `${grain} starts at the first period with ratings`).toBeGreaterThan(0);
+    for (const granularity of ['day', 'week', 'month', 'year']) {
+      const t = (await get(`/nps-score/trend?granularity=${granularity}${filters}`)).body;
+      const ow = (await get(`/nps-score/overview?dateFrom=${t.from}&dateTo=${t.to}${filters}`)).body.totals;
+      expect(sum(t.points, 'responders'), granularity).toBe(ow.responders);
+      for (const p of t.points.filter((x: Json) => !x.measured)) expect(p.responders, `${granularity} ${p.period} is before the first rating`).toBe(0);
     }
     // Detractors box = detractor list = follow-up cases (+ Historical shown apart)
     const list = (await get(`/nps-score/detractors?${q}&pageSize=500`)).body;

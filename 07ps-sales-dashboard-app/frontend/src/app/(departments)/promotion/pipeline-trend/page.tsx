@@ -23,25 +23,24 @@ import {
 } from '@07ps/ui';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
-import { usePipelineTrendAgingDetails, usePipelineTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
+import { usePeriodTrend, usePipelineTrendAgingDetails, usePipelineTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
 import type {
   AgingBucketKey,
   AgingBuckets,
   AgingCategory,
   AgingDetailRow,
   AgingDistribution,
-  MonthComparisonPoint,
+  PeriodComparisonPoint,
+  PeriodGranularity,
+  PipelineTrendPeriods,
   QuotationRates,
 } from '../../../../lib/api';
-import { formatCurrency, formatPercent, formatTimestamp, DISPLAY_LOCALE } from '../../../../lib/format';
+import { DEFAULT_GRANULARITY, formatChange, usePeriodWindow, type PeriodWindowView } from '../../../../lib/periods';
+import { PeriodTrendSelector } from '../../../../components/PeriodTrendSelector';
+import { formatCompactNumber, formatCurrency, formatPercent, formatTimestamp, DISPLAY_LOCALE } from '../../../../lib/format';
 import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 import { formatWinLossRatio } from '../../../../lib/winLoss';
 import { stageFilterOptions } from '../../../../lib/pipelineStages';
-
-function formatMillions(value: number): string {
-  const fixed = (value / 1_000_000).toFixed(1);
-  return `${fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed}M`;
-}
 
 function formatPlainNumber(value: number): string {
   return value.toLocaleString(DISPLAY_LOCALE, { maximumFractionDigits: 0 });
@@ -56,11 +55,12 @@ function formatRatio(rates?: QuotationRates): string {
   return rates ? formatWinLossRatio(rates.wonQuotations, rates.lostQuotations) : '—';
 }
 
-function toMonthChartPoints(series: MonthComparisonPoint[]) {
+function toPeriodChartPoints(series: PeriodComparisonPoint[], win: PeriodWindowView) {
   return series.map((p) => ({
-    label: p.label,
-    countYtd: p.countYtd,
-    valueYtd: p.valueYtd,
+    label: win.label(p.start),
+    count: p.count,
+    value: p.value,
+    countChange: p.countChangePct,
   }));
 }
 
@@ -109,11 +109,11 @@ function agingDetailColumns(category: AgingCategory, rows: AgingDetailRow[]): Da
   ];
 }
 
-const MONTH_CHART_BARS = [
-  { key: 'countYtd', name: '#YTD', color: 'var(--ps-color-accent)' },
+const PERIOD_CHART_BARS = [
+  { key: 'count', name: 'Count', color: 'var(--ps-color-accent)' },
 ];
-const MONTH_CHART_LINES = [
-  { key: 'valueYtd', name: 'Value YTD', color: 'var(--ps-color-gold)', yAxisId: 'right' as const },
+const PERIOD_CHART_LINES = [
+  { key: 'value', name: 'Value', color: 'var(--ps-color-gold)', yAxisId: 'right' as const },
 ];
 
 // ---------------------------------------------------------------------------
@@ -177,23 +177,28 @@ function toAgingTableRows(aging?: AgingDistribution): AgingTableRow[] {
   return [row('opportunities', 'Opportunities', aging.opportunities), row('quotations', 'Quotations', aging.quotations)];
 }
 
-interface MonthTableRow extends Record<string, unknown> {
+interface PeriodTableRow extends Record<string, unknown> {
   id: string;
-  month: string;
-  countYtd: number;
-  valueYtd: string;
+  period: string;
+  count: number;
+  value: string;
+  change: string;
 }
-const monthTableColumns: Column<MonthTableRow>[] = [
-  { key: 'month', header: 'Month' },
-  { key: 'countYtd', header: '#YTD', align: 'right' },
-  { key: 'valueYtd', header: 'Value YTD', align: 'right' },
-];
-function toMonthTableRows(series: MonthComparisonPoint[]): MonthTableRow[] {
+function periodTableColumns(changeLabel: string): Column<PeriodTableRow>[] {
+  return [
+    { key: 'period', header: 'Period' },
+    { key: 'count', header: 'Count', align: 'right' },
+    { key: 'value', header: 'Value', align: 'right' },
+    { key: 'change', header: `Count change ${changeLabel}`, align: 'right' },
+  ];
+}
+function toPeriodTableRows(series: PeriodComparisonPoint[], win: PeriodWindowView): PeriodTableRow[] {
   return series.map((p) => ({
-    id: p.label,
-    month: p.label,
-    countYtd: p.countYtd,
-    valueYtd: formatCurrency(p.valueYtd),
+    id: p.start,
+    period: `${win.title(p.start)}${p.inProgress ? ' (in progress)' : ''}`,
+    count: p.count,
+    value: formatCurrency(p.value),
+    change: formatChange(p.countChangePct, win.granularity) ?? '—',
   }));
 }
 
@@ -258,6 +263,13 @@ export default function PipelineTrendPage() {
 
   const filterOptions = useScopedFilterOptions();
   const overview = usePipelineTrendOverview(token, anchorDate, effectiveFilters, authError, retryAuth);
+  // The Opportunities / Quotations / Sales Orders charts follow one period selector (Weekly on every load).
+  const [granularity, setGranularity] = useState<PeriodGranularity>(DEFAULT_GRANULARITY);
+  const win = usePeriodWindow(granularity);
+  const trend = usePeriodTrend<PipelineTrendPeriods>(token, 'pipeline-trend', anchorDate, effectiveFilters, granularity, authError, retryAuth);
+  const trendData = trend.data?.granularity === granularity ? trend.data : null;
+  const trendLoading = trend.loading || (trend.data !== null && !trendData);
+  const periodColumns = periodTableColumns(win.changeLabel);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
   const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null);
   const [agingSelection, setAgingSelection] = useState<AgingSelection | null>(null);
@@ -293,9 +305,9 @@ export default function PipelineTrendPage() {
   const lastRefreshLabel = refreshStatus.data ? formatTimestamp(refreshStatus.data.lastRefreshTime) : undefined;
   const data = overview.data;
 
-  const opportunitiesPoints = toMonthChartPoints(data?.opportunitiesByMonth ?? []);
-  const quotationsPoints = toMonthChartPoints(data?.quotationsByMonth ?? []);
-  const salesOrdersPoints = toMonthChartPoints(data?.salesOrdersByMonth ?? []);
+  const opportunitiesSeries = trendData?.opportunities.points ?? [];
+  const quotationsSeries = trendData?.quotations.points ?? [];
+  const salesOrdersSeries = trendData?.salesOrders.points ?? [];
 
   const agingPoints = data
     ? [toAgingPercentPoint('Opportunities', data.aging.opportunities), toAgingPercentPoint('Quotations', data.aging.quotations)]
@@ -303,9 +315,9 @@ export default function PipelineTrendPage() {
 
   const rateTableRows = toRateTableRows(data?.quotationRates);
   const agingTableRows = toAgingTableRows(data?.aging);
-  const opportunitiesTableRows = toMonthTableRows(data?.opportunitiesByMonth ?? []);
-  const quotationsTableRows = toMonthTableRows(data?.quotationsByMonth ?? []);
-  const salesOrdersTableRows = toMonthTableRows(data?.salesOrdersByMonth ?? []);
+  const opportunitiesTableRows = toPeriodTableRows(opportunitiesSeries, win);
+  const quotationsTableRows = toPeriodTableRows(quotationsSeries, win);
+  const salesOrdersTableRows = toPeriodTableRows(salesOrdersSeries, win);
 
   return (
     <PermissionGuard pageKey="pipeline_trend">
@@ -420,38 +432,48 @@ export default function PipelineTrendPage() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
-              <MonthComboPanel
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                <span style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }} data-testid="trend-window">Trends: the {win.windowLabel}</span>
+                <PeriodTrendSelector value={granularity} onChange={setGranularity} label="Pipeline Trend period" />
+              </div>
+              <PeriodComboPanel
                 title="Opportunities"
                 helpId="promotion.pipelineTrend.opportunities"
-                points={opportunitiesPoints}
-                loading={overview.loading}
-                error={overview.error ?? undefined}
-                onRetry={overview.retry}
+                series={opportunitiesSeries}
+                win={win}
+                columns={periodColumns}
+                loading={trendLoading}
+                error={trend.error ?? undefined}
+                onRetry={trend.retry}
                 tableRows={opportunitiesTableRows}
                 downloading={downloadingPdf === 'opportunities'}
-                onDownloadPdf={() => handleDownloadTablePdf('opportunities', 'Opportunities', monthTableColumns, opportunitiesTableRows)}
+                onDownloadPdf={() => handleDownloadTablePdf('opportunities', `Opportunities · ${win.name}`, periodColumns, opportunitiesTableRows)}
               />
-              <MonthComboPanel
+              <PeriodComboPanel
                 title="Quotations"
                 helpId="promotion.pipelineTrend.quotations"
-                points={quotationsPoints}
-                loading={overview.loading}
-                error={overview.error ?? undefined}
-                onRetry={overview.retry}
+                series={quotationsSeries}
+                win={win}
+                columns={periodColumns}
+                loading={trendLoading}
+                error={trend.error ?? undefined}
+                onRetry={trend.retry}
                 tableRows={quotationsTableRows}
                 downloading={downloadingPdf === 'quotations'}
-                onDownloadPdf={() => handleDownloadTablePdf('quotations', 'Quotations', monthTableColumns, quotationsTableRows)}
+                onDownloadPdf={() => handleDownloadTablePdf('quotations', `Quotations · ${win.name}`, periodColumns, quotationsTableRows)}
               />
-              <MonthComboPanel
+              <PeriodComboPanel
                 title="Sales Orders"
                 helpId="promotion.pipelineTrend.salesOrders"
-                points={salesOrdersPoints}
-                loading={overview.loading}
-                error={overview.error ?? undefined}
-                onRetry={overview.retry}
+                series={salesOrdersSeries}
+                win={win}
+                columns={periodColumns}
+                loading={trendLoading}
+                error={trend.error ?? undefined}
+                onRetry={trend.retry}
                 tableRows={salesOrdersTableRows}
                 downloading={downloadingPdf === 'salesOrders'}
-                onDownloadPdf={() => handleDownloadTablePdf('salesOrders', 'Sales Orders', monthTableColumns, salesOrdersTableRows)}
+                onDownloadPdf={() => handleDownloadTablePdf('salesOrders', `Sales Orders · ${win.name}`, periodColumns, salesOrdersTableRows)}
               />
             </div>
 
@@ -546,10 +568,12 @@ function RateTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MonthComboPanel({
+function PeriodComboPanel({
   title,
   helpId,
-  points,
+  series,
+  win,
+  columns,
   loading,
   error,
   onRetry,
@@ -559,20 +583,23 @@ function MonthComboPanel({
 }: {
   title: string;
   helpId: VisualHelpId;
-  points: ReturnType<typeof toMonthChartPoints>;
+  series: PeriodComparisonPoint[];
+  win: PeriodWindowView;
+  columns: Column<PeriodTableRow>[];
   loading: boolean;
   error?: string;
   onRetry: () => void;
-  tableRows: MonthTableRow[];
+  tableRows: PeriodTableRow[];
   downloading: boolean;
   onDownloadPdf: () => void;
 }) {
+  const points = toPeriodChartPoints(series, win);
   return (
-    <ChartPanel<MonthTableRow>
+    <ChartPanel<PeriodTableRow>
       title={title}
       {...vh(helpId)}
       style={{ minHeight: 260 }}
-      tableColumns={error ? undefined : monthTableColumns}
+      tableColumns={error ? undefined : columns}
       tableRows={error ? undefined : tableRows}
       getRowId={(row) => row.id}
       headerActions={
@@ -588,14 +615,19 @@ function MonthComboPanel({
           title={title}
           showTitle={false}
           points={points}
-          bars={MONTH_CHART_BARS}
-          lines={MONTH_CHART_LINES}
+          bars={PERIOD_CHART_BARS}
+          lines={PERIOD_CHART_LINES}
           leftAxisFormatter={formatPlainNumber}
-          rightAxisFormatter={formatMillions}
+          rightAxisFormatter={formatCompactNumber}
           tooltipFormatters={{
-            countYtd: (v) => v.toLocaleString(DISPLAY_LOCALE),
-            valueYtd: (v) => formatCurrency(v),
+            count: (v, p) => {
+              const change = typeof p?.countChange === 'number' ? formatChange(p.countChange, win.granularity) : null;
+              return change ? `${v.toLocaleString(DISPLAY_LOCALE)} (${change})` : v.toLocaleString(DISPLAY_LOCALE);
+            },
+            value: (v) => formatCurrency(v),
           }}
+          tooltipLabelFormatter={win.tooltipTitle(series)}
+          inProgressLabel={win.inProgressLabel(series)}
           height={220}
         />
       )}

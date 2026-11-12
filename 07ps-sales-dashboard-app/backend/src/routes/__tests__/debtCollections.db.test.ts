@@ -186,7 +186,7 @@ describe.skipIf(!RUN)('Collections on the real warehouse (read-only)', () => {
   });
 
   it('bad parameters are a 400', async () => {
-    expect((await get('/debt-report/collections-trend?grain=year')).status).toBe(400);
+    expect((await get('/debt-report/collections-trend?grain=quarter')).status).toBe(400);
     expect((await get('/debt-report/collections-drilldown?currency=LYD&period=x')).status).toBe(400);
   });
 });

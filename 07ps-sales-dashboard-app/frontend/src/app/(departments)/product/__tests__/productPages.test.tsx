@@ -83,6 +83,7 @@ vi.mock('../../../../lib/hooks', () => ({
   },
   useRefreshStatus: () => ({ data: mocked.refresh, loading: false, error: null }),
   useRevenueTrendOverview: () => ({ data: null, loading: true, error: null, retry: () => {} }),
+  usePeriodTrend: () => ({ data: null, loading: true, error: null, retry: () => {} }),
 }));
 
 const PAGES: [string, () => React.ReactElement][] = [

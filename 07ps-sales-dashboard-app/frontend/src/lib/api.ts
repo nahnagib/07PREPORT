@@ -1821,24 +1821,72 @@ export function fetchCriticalNumberMissingTrend(
 }
 
 // ---------------------------------------------------------------------------
+// The shared period selector of every time trend (backend lib/periods.ts): Daily / Weekly / Monthly / Yearly, a fixed
+// window of 30 days / 12 weeks (Saturday..Friday) / 12 months / 5 years ending with the current (in-progress) period.
+// Each trend page has its own GET <page>/trend?granularity= endpoint, all fetched through fetchPeriodTrend.
+// ---------------------------------------------------------------------------
+
+export type PeriodGranularity = 'day' | 'week' | 'month' | 'year';
+
+export interface TrendPeriodPoint {
+  /** yyyy-mm-dd, the period's first day (its key) */
+  start: string;
+  end: string;
+  /** the current period, still partial */
+  inProgress: boolean;
+}
+
+export interface TrendWindow {
+  granularity: PeriodGranularity;
+  from: string;
+  to: string;
+}
+
+export type PeriodTrendPath = 'revenue-trend' | 'invoices-engine' | 'customer-growth' | 'pipeline-trend' | 'activity-momentum';
+
+export function fetchPeriodTrend<T>(
+  token: string,
+  path: PeriodTrendPath,
+  anchorDate: string,
+  filters: TachometerFilters,
+  granularity: PeriodGranularity,
+  extra: Record<string, string | number | null | undefined> = {},
+): Promise<T> {
+  const params = new URLSearchParams(buildQuery(anchorDate, filters));
+  params.set('granularity', granularity);
+  for (const [k, v] of Object.entries(extra)) if (v !== null && v !== undefined && v !== '') params.set(k, String(v));
+  return request(`/${path}/trend?${params.toString()}`, token);
+}
+
+// ---------------------------------------------------------------------------
 // Revenue Trend (backend/src/routes/revenueTrend.ts) -- same throwaway/validation warehouse,
 // same 5-dimension filter shape as Tachometer/Critical Number (reuses TachometerFilters/
 // buildQuery rather than forking a parallel type).
 // ---------------------------------------------------------------------------
 
-export interface RevenueTrendMonthPoint {
-  month: number;
-  year: number;
-  label: string;
+/** One period of the Value / Volume / ASP trends (backend lib/periods.ts window). ASP = the period's value / volume;
+ * null when nothing was sold (a gap). Targets only on Monthly / Yearly (null on Daily / Weekly). */
+export interface RevenueTrendPeriodPoint extends TrendPeriodPoint {
   value: number;
-  lastYearValue: number;
-  targetValue: number;
   volume: number;
-  lastYearVolume: number;
-  targetVolume: number;
   asp: number | null;
+  lastYearValue: number;
+  lastYearVolume: number;
   lastYearAsp: number | null;
+  targetValue: number | null;
+  targetVolume: number | null;
   targetAsp: number | null;
+  /** against the previous period of the same granularity (DoD / WoW / MoM / YoY) */
+  valueChangePct: number | null;
+  volumeChangePct: number | null;
+  aspChangePct: number | null;
+}
+
+export interface RevenueTrendPeriods extends TrendWindow {
+  hasTarget: boolean;
+  points: RevenueTrendPeriodPoint[];
+  /** the window's totals (the same fetchValueVolume as the KPI cards): the points add up to them */
+  totals: { value: number; volume: number; asp: number | null };
 }
 
 export interface RevenueTrendVarianceCard {
@@ -1872,7 +1920,6 @@ export interface RevenueTrendPerformanceRow {
 
 export interface RevenueTrendOverview {
   anchorDate: string;
-  series: RevenueTrendMonthPoint[];
   kpis: RevenueTrendKpis;
   performanceDetails: RevenueTrendPerformanceRow[];
 }
@@ -1905,11 +1952,10 @@ export interface InvoicesEngineKpis {
   lmtd: InvoiceStats;
 }
 
-export interface InvoiceYearPoint {
-  year: number;
-  label: string;
+export interface InvoicePeriodPoint extends TrendPeriodPoint {
   invoiceSalesValue: number;
   invoiceCount: number;
+  invoiceSalesValueChangePct: number | null;
 }
 
 export interface InvoiceYearClassSlice {
@@ -1918,19 +1964,23 @@ export interface InvoiceYearClassSlice {
   invoiceCount: number;
 }
 
-export interface InvoiceYearClassBreakdown {
-  year: number;
-  label: string;
+export interface InvoicePeriodClassBreakdown {
+  start: string;
   classes: InvoiceYearClassSlice[];
 }
 
-export interface InvoiceYearEfficiencyPoint {
-  year: number;
-  label: string;
+export interface InvoicePeriodEfficiencyPoint extends TrendPeriodPoint {
   invoiceCount: number;
   avgSalesPerInvoice: number | null;
   avgLinesPerInvoice: number | null;
   avgVolumePerInvoice: number | null;
+}
+
+/** GET /invoices-engine/trend: the Sales Trend (by period and by period + class) and the Invoices Trend. */
+export interface InvoicesEngineTrend extends TrendWindow {
+  salesTrend: { byPeriod: InvoicePeriodPoint[]; byPeriodClass: InvoicePeriodClassBreakdown[] };
+  invoicesTrend: InvoicePeriodEfficiencyPoint[];
+  totals: { invoiceSalesValue: number };
 }
 
 export interface InvoiceClassificationSlice {
@@ -1944,8 +1994,6 @@ export interface InvoicesEngineOverview {
   selectedYear: number | null;
   selectedInvoiceClass: string | null;
   kpis: InvoicesEngineKpis;
-  salesTrend: { byYear: InvoiceYearPoint[]; byYearClass: InvoiceYearClassBreakdown[] };
-  invoicesTrend: InvoiceYearEfficiencyPoint[];
   classification: InvoiceClassificationSlice[];
 }
 
@@ -2000,6 +2048,19 @@ export interface CustomerGrowthRates {
   customerGrowthPct: number | null;
   retentionRatePct: number | null;
   churnRatePct: number | null;
+}
+
+export interface CustomerPeriodPoint extends TrendPeriodPoint {
+  totalSalesValue: number;
+  /** distinct customers buying in the period (not additive across periods) */
+  customerCount: number;
+  totalSalesValueChangePct: number | null;
+}
+
+/** GET /customer-growth/trend */
+export interface CustomersTrend extends TrendWindow {
+  points: CustomerPeriodPoint[];
+  totals: { totalSalesValue: number; customerCount: number };
 }
 
 export interface CustomerYearPoint {
@@ -2058,7 +2119,6 @@ export interface CustomerGrowthOverview {
   selectedCategory: string | null;
   kpis: CustomerGrowthKpis;
   rates: CustomerGrowthRates;
-  customersTrend: CustomerYearPoint[];
   customersContribution: CustomersContribution;
   categoryPerformance: CategoryPerformanceRow[];
   customersTable: CustomerTableRow[];
@@ -2341,11 +2401,23 @@ export interface QuotationRates {
   wonLostRatio: number | null;
 }
 
-export interface MonthComparisonPoint {
-  month: number;
-  label: string;
-  countYtd: number;
-  valueYtd: number;
+export interface PeriodComparisonPoint extends TrendPeriodPoint {
+  count: number;
+  value: number;
+  countChangePct: number | null;
+  valueChangePct: number | null;
+}
+
+export interface PeriodComparisonSeries {
+  points: PeriodComparisonPoint[];
+  totals: { count: number; value: number };
+}
+
+/** GET /pipeline-trend/trend: the Opportunities / Quotations / Sales Orders charts */
+export interface PipelineTrendPeriods extends TrendWindow {
+  opportunities: PeriodComparisonSeries;
+  quotations: PeriodComparisonSeries;
+  salesOrders: PeriodComparisonSeries;
 }
 
 export interface AgingBuckets {
@@ -2363,9 +2435,6 @@ export interface AgingDistribution {
 export interface PipelineTrendOverview {
   anchorDate: string;
   quotationRates: QuotationRates;
-  opportunitiesByMonth: MonthComparisonPoint[];
-  quotationsByMonth: MonthComparisonPoint[];
-  salesOrdersByMonth: MonthComparisonPoint[];
   aging: AgingDistribution;
 }
 
@@ -2443,10 +2512,16 @@ export interface LostReasonSlice {
   count: number;
 }
 
-export interface NewOpportunitiesMonthPoint {
-  month: number;
-  label: string;
-  countYtd: number;
+export interface NewOpportunitiesPeriodPoint extends TrendPeriodPoint {
+  count: number;
+  changePct: number | null;
+}
+
+/** GET /activity-momentum/trend: the New Opportunities chart */
+export interface NewOpportunitiesTrend extends TrendWindow {
+  points: NewOpportunitiesPeriodPoint[];
+  /** opportunities created in the window (the points add up to it) */
+  total: number;
 }
 
 export interface ActivityOpportunityRow {
@@ -2475,7 +2550,6 @@ export interface ActivityMomentumOverview {
   counts: OpportunityActivityCounts;
   rates: ActivityRates;
   lostByReason: LostReasonSlice[];
-  newOpportunitiesByMonth: NewOpportunitiesMonthPoint[];
   opportunities: ActivityOpportunityRow[];
 }
 
@@ -2994,10 +3068,12 @@ export function buildDebtReportQuery(scope: DebtReportScope, extra: Record<strin
 export type DebtReportEndpoint = 'meta' | 'overview' | 'trend' | 'customers' | 'drilldown' | 'aging' | 'collections-trend' | 'collections-drilldown';
 
 /** GET /debt-report/collections-trend (backend measures/debtCollections.ts) */
-export type CollectionGrain = 'day' | 'week' | 'month';
+export type CollectionGrain = PeriodGranularity;
 export interface CollectionPoint {
   periodStart: string;
   periodEnd: string;
+  /** the period holding today: its payments are still coming in */
+  inProgress: boolean;
   /** Payment portions applied to invoices issued before payment day = overdue + not due. */
   collected: number;
   appliedOverdue: number;
@@ -3058,8 +3134,6 @@ export function fetchDebtReport<T>(token: string, endpoint: DebtReportEndpoint, 
 // -- NPS Score (Process; backend routes/npsScore.ts, measures/npsScore.ts, config/npsThresholds.ts) -----------------
 export type NpsEndpoint = 'meta' | 'overview' | 'trend' | 'detractors' | 'reach' | 'response-rate' | 'followup-summary';
 export type NpsBand = 'red' | 'yellow' | 'green';
-/** week = Saturday..Friday, named by its Saturday (the Collections week) */
-export type NpsGrain = 'week' | 'month' | 'year';
 /** A visual's bands: yellow from `yellowFrom`, green from `greenFrom` (both inclusive), the target, the drawn scale. */
 export interface NpsBandScale {
   yellowFrom: number;
@@ -3102,15 +3176,23 @@ export interface NpsOverview {
   totals: NpsCounts & { withComment: number };
   minResponders: number;
 }
-export interface NpsTrend {
-  grain: NpsGrain;
+export interface NpsTrendPoint extends NpsCounts {
+  /** yyyy-mm-dd, the period's first day (a week = Saturday..Friday, named by its Saturday) */
+  period: string;
+  end: string;
+  inProgress: boolean;
+  /** false = the period ends before the first rating ever received: a gap on the chart, not 0 */
+  measured: boolean;
+}
+/** GET /nps-score/trend?granularity= : the shared window ending today (the page's date range does not apply) */
+export interface NpsTrend extends TrendWindow {
+  firstRatingDate: string | null;
   /** NPS target line (90) */
   target: number;
   /** CSAT target line (95) */
   csatTarget: number;
   minResponders: number;
-  /** from the first period with ratings to the end of the range */
-  points: ({ period: string } & NpsCounts)[];
+  points: NpsTrendPoint[];
 }
 /** responders / (Delivered + Read): company and date only, from the first reach day (backend measures/npsScore.ts) */
 export interface NpsResponseRate {

@@ -15,7 +15,6 @@ import {
   npsPeriod,
   pct,
   periodCaption,
-  periodLabel,
   manualSubtitle,
   rateFraction,
   sourceSplit,
@@ -51,22 +50,26 @@ describe('NPS Score view helpers', () => {
     expect(smallSample(counts({ responders: 30 }))).toBeNull();
   });
 
-  it('trend: no target series; a period below the minimum moves NPS and CSAT to the faded series', () => {
+  it('trend: no target series; a period below the minimum moves NPS and CSAT to the faded series; before the first rating = a gap', () => {
+    const at = (period: string, measured: boolean, c: Parameters<typeof counts>[0]) => ({ period, end: period, inProgress: false, measured, ...counts(c) });
     const points = trendPoints({
+      granularity: 'month',
       points: [
-        { period: '2026-09', ...counts({}) },
-        { period: '2026-10', ...counts({ responders: 177, nps: 64.97175141, csat: 94.915254 }) },
-        { period: '2026-11', ...counts({ responders: 3, nps: 33.333, csat: 66.6667, belowMinimum: true }) },
+        at('2026-08-01', false, {}),
+        at('2026-09-01', true, {}),
+        at('2026-10-01', true, { responders: 177, nps: 64.97175141, csat: 94.915254 }),
+        at('2026-11-01', true, { responders: 3, nps: 33.333, csat: 66.6667, belowMinimum: true }),
       ],
     });
     expect(points.map((p) => [p.label, p.responders, p.nps, p.npsSmall, p.csat, p.csatSmall])).toEqual([
+      ['Aug 2026', null, null, null, null, null],
       ['Sep 2026', 0, null, null, null, null],
       ['Oct 2026', 177, 64.97, null, 94.92, null],
       ['Nov 2026', 3, null, 33.33, null, 66.67],
     ]);
     expect(points.every((p) => !('target' in p) && !('csatTarget' in p))).toBe(true);
-    // a week is labelled by its Sunday
-    expect([periodLabel('2026-10-04'), periodLabel('2026')]).toEqual(['04 Oct', '2026']);
+    // a week is labelled by its Saturday (Saturday..Friday)
+    expect(trendPoints({ granularity: 'week', points: [at('2026-10-03', true, {})] })[0].label).toBe('03 Oct');
   });
 
   it('is on the Process hub, next to the Kaizen Board, gated by nps_score', () => {
