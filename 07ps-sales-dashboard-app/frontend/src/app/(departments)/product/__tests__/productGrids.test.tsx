@@ -167,6 +167,8 @@ describe('Product tables use the standard grid, volume first, and every product 
     expect(full.sheets.map((sh) => sh.name)).toEqual(['Summary', 'Stars', 'Cash Cows', 'Strategic', 'Dogs']);
     expect(full.sheets[0].headers).toEqual(['Class', 'Products', 'Volume (Unit)', 'Value (LYD)', 'Profit (LYD)']);
     expect(full.sheets[0].rows.map((r) => r[0])).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Total (Active)', undefined, 'Period', 'Compared with', 'Company filter']);
+    const meta = Object.fromEntries(full.sheets[0].rows.filter((r) => typeof r[0] === 'string' && r.length === 2).map((r) => [r[0], r[1]]));
+    expect(meta).toEqual({ Period: 'Last 12 Months · 7 Nov 2025 – 7 Nov 2026', 'Compared with': '6 Nov 2024 – 6 Nov 2025', 'Company filter': 'Majaal + Tika' });
     expect(full.sheets[1].headers).toEqual(['Product', 'Vendor', 'Class', 'Value (LYD)', 'Volume (Unit)', 'Volume prior period (Unit)', 'Growth %', 'Qty on hand (Unit)', 'Profit (LYD)', 'GP%', 'Missing cost data']);
     expect(full.sheets[1].rows).toHaveLength(3); // every Stars product (the panel shows the top 10)
     access.profit = false;

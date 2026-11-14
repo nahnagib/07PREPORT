@@ -174,7 +174,7 @@ export default function BcgMatrixPage() {
       ...(profit.export ? [classified.reduce((t, r) => t + (r.bcgProfit ?? 0), 0)] : [])];
     const meta: TableExportCell[][] = [
       [],
-      ['Period', `${pLabel}${period ? ` · ${periodDates(period)}` : ''}`],
+      ['Period', period && period.isDefault ? `${pLabel} · ${periodDates(period)}` : pLabel],
       ['Compared with', period ? periodDates({ from: period.priorFrom, to: period.priorTo }) : ''],
       ['Company filter', companyLabel],
     ];

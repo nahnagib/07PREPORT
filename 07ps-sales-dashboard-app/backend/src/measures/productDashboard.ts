@@ -120,7 +120,7 @@ export interface ProductDashboardRow {
   stockAgeOldestDays: number | null;
   /** 'layers' (Odoo stock.valuation.layer) or 'quant_in_date' (no open layer). */
   stockAgeSource: string | null;
-  /** On Hand units / value per aging bucket, split by receipt layer (config stock.aging_buckets order). */
+  /** On Hand units / value per aging bucket holding stock (config stock.aging_buckets order; a bucket not listed = 0). */
   agingBuckets: AgingBucketAmount[];
   lifecycleSegment: 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued' | 'Never sold';
   firstSaleDate: string | null;
@@ -325,7 +325,8 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     onHandValue: num(p.OnHandValue),
     stockAgeOldestDays: numOrNull(p.StockAgeOldestDays),
     stockAgeSource: str(p.StockAgeSource),
-    agingBuckets: buckets.map((b) => ({ ...b, qty: num(p[`AgeQty_${b.key}`]), value: num(p[`AgeValue_${b.key}`]) })),
+    // only the buckets holding stock (consumers look a bucket up by key, missing = 0): a quarter of the response before
+    agingBuckets: buckets.map((b) => ({ ...b, qty: num(p[`AgeQty_${b.key}`]), value: num(p[`AgeValue_${b.key}`]) })).filter((b) => b.qty !== 0 || b.value !== 0),
     lifecycleSegment: String(p.LifecycleSegment) as ProductDashboardRow['lifecycleSegment'],
     firstSaleDate: isoDate(p.FirstSaleDate),
     lastSaleDate: isoDate(p.LastSaleDate),
