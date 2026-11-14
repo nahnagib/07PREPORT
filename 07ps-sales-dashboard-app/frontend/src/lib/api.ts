@@ -2564,8 +2564,9 @@ export function fetchActivityMomentumOverview(
 // ---------------------------------------------------------------------------
 // Product pages (BCG Matrix, Stock Velocity, PIM Contribution, Product Lifecycle) --
 // backend/src/routes/productDashboard.ts over the ETL's pre-aggregated product tables
-// (data/etl/src/sales_pipeline/product_dashboard.py). Every metric is the rolling LAST 12 MONTHS (the API's
-// `period`, backend lib/last12Months.ts; no date range, 2026-11-14); stock / lifecycle / status are as of the last ETL run.
+// (data/etl/src/sales_pipeline/product_dashboard.py). Every metric follows the Date filter (default the rolling Last 12
+// Months; the API's `period`, backend lib/last12Months.ts). Filters: Company and Date only (2026-11-14, round 2).
+// Profit data (profit, GP%, cost, missingCost) is absent from the response without View on `profit_data`.
 // ---------------------------------------------------------------------------
 
 export type ProductDashboardPage = 'bcg-matrix' | 'stock-velocity' | 'pim-contribution' | 'product-lifecycle';
@@ -2618,7 +2619,8 @@ export interface ProductDashboardRow {
   valuePrior: number;
   volumePrior: number;
   avgUnitPrice: number | null;
-  grossProfitPct: number | null;
+  /** PROFIT DATA (absent without profit access): GP% of the period, every line costed; else null. */
+  grossProfitPct?: number | null;
   stockQty: number;
   stockValue: number;
   inTransitQty: number;
@@ -2644,25 +2646,22 @@ export interface ProductDashboardRow {
   parts: ProductCompanyPart[];
   firstSaleDate: string | null;
   lastSaleDate: string | null;
-  /** Unclassified / Dormant / Active / NonActive (ETL); null before migration 0073 + a product refresh. */
-  productStatus: ProductStatus | null;
-  /** BCG class on the last 12 months, Active products only; null = not Active. */
-  bcgClass: string | null;
-  bcgClassPrior12M: string | null;
-  /** The data behind bcgClass (the last 12 months, fully costed days): volume, value, profit, GP%. */
+  /** Status in the period: Unclassified / Dormant (ETL), Active (sold in the period) or NonActive. */
+  productStatus: ProductStatus;
+  /** BCG class of the period (Active products only; null otherwise). */
+  bcgClass: BcgClassKey | null;
+  /** Units / sales value of the period, company-wide (the class's volume). */
   bcgVolume?: number | null;
   bcgValue?: number | null;
+  /** PROFIT DATA (absent without profit access): profit / GP% of the fully costed sales; missingCost = some sales without
+   * a standard cost in Odoo (GP% counted as low). */
   bcgProfit?: number | null;
   bcgGrossProfitPct?: number | null;
-  /** 'Last 12 Months' or 'Last 12 Months (costed sales)'; null = no profit data. */
-  bcgDataPeriod?: string | null;
-  /** Last sale date of that data. */
+  missingCost?: boolean | null;
+  /** Last sale date in the period. */
   bcgDataAsOf?: string | null;
   bcgMovement: BcgMovement | null;
   bcgExcludedCategory: boolean;
-  /** Company-wide GP% (ETL) of the last 12 months / the 12 months before. */
-  grossProfitPctL12M: number | null;
-  grossProfitPctPrior12M: number | null;
   negativeStockRows: number;
 }
 
@@ -2676,7 +2675,8 @@ export interface ProductStatusSummary {
   nonActive: { count: number; withStock: number; zeroStock: number; stockUnits: number; stockValue: number };
   dormant: { count: number };
   unclassified: { count: number };
-  bcg: { classes: { key: BcgClassKey; count: number; units: number; profit: number }[]; notClassified: number };
+  /** Stars + Cash Cows + Strategic + Dogs = active.count. profit / missingCost: profit access only. */
+  bcg: { classes: { key: BcgClassKey; count: number; units: number; value: number; profit?: number }[]; missingCost?: number };
 }
 
 export interface AgingBucketAmount {
@@ -2691,12 +2691,15 @@ export interface ProductDashboardOverview {
   view: 'BMH' | 'Majaal' | 'Tika';
   asOfDate: string | null;
   builtAtUtc: string | null;
-  /** Always the last 12 months (from .. to, both included) and the 12 months before (priorFrom .. priorTo). */
-  period: { from: string; to: string; days: number; priorFrom: string; priorTo: string; label: string };
+  /** The Date filter's period (both ends included) and the prior period of the same length; isDefault = Last 12 Months. */
+  period: { from: string; to: string; days: number; priorFrom: string; priorTo: string; isDefault: boolean; label: string };
+  /** The caller may see profit data; without it every profit field is absent. */
+  profitAccess: boolean;
   lookbackDays: number;
   thresholds: {
     days_of_inventory?: { lookback_days?: number; overstock_days?: Record<string, number>; stockout_risk_days?: Record<string, number> };
-    bcg?: { volume_threshold?: Record<string, number>; profit_threshold_pct?: number; movement_stable_band_pct?: number; excluded_categories?: string[] };
+    /** The BCG class thresholds never reach the client (server-side only). */
+    bcg?: { movement_stable_band_pct?: number };
     lifecycle?: { new_first_sale_within_days?: number; trend_window_days?: number; growth_threshold_pct?: number; discontinued_no_sales_days?: number };
     [key: string]: unknown;
   };
@@ -2714,6 +2717,9 @@ export interface ProductDashboardScope {
   channelKeys?: number[];
   salesTeamKeys?: string[];
   salespersonKeys?: number[];
+  /** The Date filter; absent = the Last 12 Months. */
+  fromDate?: string;
+  toDate?: string;
 }
 
 /** One query param per selected key (segmentKeys=1&segmentKeys=2), like every other page: the backend parses each value
@@ -2723,6 +2729,8 @@ export function buildProductDashboardQuery(scope: ProductDashboardScope): string
   for (const key of ['segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys'] as const) {
     (scope[key] ?? []).forEach((v) => params.append(key, String(v)));
   }
+  if (scope.fromDate) params.set('fromDate', scope.fromDate);
+  if (scope.toDate) params.set('toDate', scope.toDate);
   if (scope.company && scope.company !== 'All') params.set('company', scope.company);
   return params.toString();
 }

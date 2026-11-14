@@ -1,26 +1,25 @@
 /**
- * BCG class on each Active product's LAST 12 MONTHS (2026-11-14; was the latest costed calendar window), with the
- * threshold rule of the config (bcg block of
- * data/etl/config/product_dashboard.json, served in etl_sales_product_dashboard_meta.ConfigJson):
- *   high volume = Qty >= the company's volume_threshold (Majaal 3,500 / Tika 25,000); high profit = GP% >= profit_threshold_pct (35%)
+ * BCG class of each Active product on the SELECTED PERIOD (2026-11-14, round 2), with the threshold rule of the config
+ * (bcg block of data/etl/config/product_dashboard.json, served in etl_sales_product_dashboard_meta.ConfigJson):
+ *   high volume = units sold in the period >= the company's volume_threshold (Majaal 3,500 / Tika 25,000 a year), scaled
+ *                 to the period length for a custom range (x days / 365; the default Last 12 Months uses it as is)
+ *   high profit = GP% >= profit_threshold_pct (35%); GP% = (Value - CostValue) / Value of the fully costed sales days
  *   Stars = high / high · Cash Cows = high volume, low GP% · Strategic = low volume, high GP% · Dogs = low / low
- * GP% = (Value - CostValue) / Value and Profit = Value - CostValue, from the product sales table (after every exclusion).
- *
- * Window = lib/last12Months.ts. When every sales day of the window is fully costed the whole window is used; otherwise
- * the fully costed days only ("Last 12 Months (costed sales)"). No costed day = Unclassified (no cost); costed days with
- * zero revenue = Unclassified (zero revenue): both are "Not classified" on the BCG Matrix page.
- * Company-wide like the ETL class: the Customer Group / Channel / Branch / Salesperson filters never reclassify.
+ * Every Active product gets one of the 4 classes: a product without cost data (no fully costed sales day, or zero revenue
+ * on them) has no GP%, which counts as LOW (Cash Cows or Dogs), and is flagged missingCost (profit-access users only).
+ * The thresholds stay server-side: the API never sends them (productDashboard.ts publicThresholds).
+ * Company-wide: the role scope never reclassifies.
  */
 import type { Pool, RowDataPacket } from 'mysql2/promise';
-
-export const UNCLASSIFIED_NO_COST = 'Unclassified (no cost)';
-export const UNCLASSIFIED_ZERO_REVENUE = 'Unclassified (zero revenue)';
 
 /** The bcg thresholds of data/etl/config/product_dashboard.json. Used only when the ETL snapshot of the config
  * (etl_sales_product_dashboard_meta.ConfigJson) lacks them -- a snapshot written while the thresholds were removed. */
 export const DEFAULT_BCG_THRESHOLDS = { volume_threshold: { Majaal: 3500, Tika: 25000, Athena: 3500 }, profit_threshold_pct: 35 };
 
-/** The served thresholds with the bcg thresholds always present (the config snapshot's own values win). */
+export const BCG_CLASS_KEYS = ['Stars', 'Cash Cows', 'Strategic', 'Dogs'] as const;
+export type BcgClassKey = (typeof BCG_CLASS_KEYS)[number];
+
+/** The config thresholds with the bcg values always present (the config snapshot's own values win). Server-side only. */
 export function withBcgThresholds(thresholds: Record<string, unknown>): Record<string, unknown> {
   const bcg = (thresholds.bcg ?? {}) as {
     volume_threshold?: Record<string, number>;
@@ -37,27 +36,6 @@ export function withBcgThresholds(thresholds: Record<string, unknown>): Record<s
   };
 }
 
-export interface BcgWindowRow {
-  k: string;
-  company: string;
-  /** Every sales day of the window is fully costed. */
-  complete: boolean;
-  /** Fully costed days only; null = none. */
-  totals: { value: number; qty: number; cost: number; lastDate: string } | null;
-}
-
-export interface BcgLatest {
-  bcgClass: string;
-  volume: number | null;
-  value: number | null;
-  profit: number | null;
-  grossProfitPct: number | null;
-  /** 'Last 12 Months' or 'Last 12 Months (costed sales)'; null = no profit data. */
-  dataPeriod: string | null;
-  /** Latest sale date included in the profit calculation. */
-  dataAsOf: string | null;
-}
-
 export interface BcgRule {
   volume: Record<string, number>;
   profitPct: number;
@@ -71,40 +49,60 @@ export function bcgRule(thresholds: Record<string, unknown>): BcgRule {
   return { volume, profitPct: typeof bcg.profit_threshold_pct === 'number' ? bcg.profit_threshold_pct : 35 };
 }
 
-export function classify(company: string, qty: number, grossProfitPct: number, rule: BcgRule): string {
-  const threshold = rule.volume[company.trim().toUpperCase()] ?? Number.POSITIVE_INFINITY;
+/** `volumeScale` multiplies the yearly volume threshold (period days / 365 for a custom range, 1 by default).
+ * A null GP% (no cost data) is LOW. */
+export function classify(company: string, qty: number, grossProfitPct: number | null, rule: BcgRule, volumeScale = 1): BcgClassKey {
+  const threshold = (rule.volume[company.trim().toUpperCase()] ?? Number.POSITIVE_INFINITY) * volumeScale;
   const highVolume = qty >= threshold;
-  const highProfit = grossProfitPct >= rule.profitPct;
+  const highProfit = grossProfitPct !== null && grossProfitPct >= rule.profitPct;
   if (highVolume) return highProfit ? 'Stars' : 'Cash Cows';
   return highProfit ? 'Strategic' : 'Dogs';
 }
 
-/** Each product's class, profit and date from its last-12-months row. */
-export function last12MonthsBcg(rows: BcgWindowRow[], rule: BcgRule, label = 'Last 12 Months'): Map<string, BcgLatest> {
-  const out = new Map<string, BcgLatest>();
-  for (const row of rows) {
-    if (!row.totals) {
-      out.set(row.k, { bcgClass: UNCLASSIFIED_NO_COST, volume: null, value: null, profit: null, grossProfitPct: null, dataPeriod: null, dataAsOf: null });
-      continue;
-    }
-    const { value, qty, cost, lastDate } = row.totals;
-    const profit = value - cost;
-    const gp = value === 0 ? null : (profit / value) * 100;
-    out.set(row.k, {
-      bcgClass: gp === null ? UNCLASSIFIED_ZERO_REVENUE : classify(row.company, qty, gp, rule),
-      volume: qty,
-      value,
-      profit,
-      grossProfitPct: gp,
-      dataPeriod: row.complete ? label : `${label} (costed sales)`,
-      dataAsOf: lastDate,
-    });
-  }
-  return out;
+export interface BcgPeriodRow {
+  k: string;
+  company: string;
+  /** Every sale of the period. */
+  qty: number;
+  value: number;
+  /** The fully costed sales days only; null = none. */
+  costed: { value: number; cost: number } | null;
+  /** Every sales day of the period is fully costed. */
+  complete: boolean;
+  lastDate: string | null;
+  /** At least one sale with quantity > 0 in the period: the product is Active. */
+  sold: boolean;
+}
+
+export interface BcgResult {
+  bcgClass: BcgClassKey;
+  /** Units / sales value of the period (all sales). */
+  volume: number;
+  value: number;
+  /** Value - cost of the fully costed days; null = no cost data. */
+  profit: number | null;
+  grossProfitPct: number | null;
+  /** Some (or every) sale of the period has no standard cost in Odoo, or GP% is undefined (zero revenue). */
+  missingCost: boolean;
+  dataAsOf: string | null;
+}
+
+export function classifyPeriod(row: BcgPeriodRow, rule: BcgRule, volumeScale = 1): BcgResult {
+  const profit = row.costed ? row.costed.value - row.costed.cost : null;
+  const gp = row.costed && row.costed.value !== 0 ? ((row.costed.value - row.costed.cost) / row.costed.value) * 100 : null;
+  return {
+    bcgClass: classify(row.company, row.qty, gp, rule, volumeScale),
+    volume: row.qty,
+    value: row.value,
+    profit,
+    grossProfitPct: gp,
+    missingCost: !row.complete || gp === null,
+    dataAsOf: row.lastDate,
+  };
 }
 
 /** One row per product sold in [from, to], company-wide, after every exclusion. */
-export async function fetchBcgLast12Months(pool: Pool, from: string, to: string, excludedCompanies: string[]): Promise<BcgWindowRow[]> {
+export async function fetchBcgPeriod(pool: Pool, from: string, to: string, excludedCompanies: string[]): Promise<BcgPeriodRow[]> {
   const [rows] = await pool.query<RowDataPacket[]>(
     `WITH daily AS (
        SELECT d.*,
@@ -116,12 +114,13 @@ export async function fetchBcgLast12Months(pool: Pool, from: string, to: string,
        WHERE d.OrderDate BETWEEN ? AND ? AND d.Company NOT IN (?) AND d.Lines > 0
      )
      SELECT ProductCompanyKey AS k, MAX(Company) AS company,
-            SUM(CASE WHEN fullyCosted = 1 THEN Value END) AS value,
-            SUM(CASE WHEN fullyCosted = 1 THEN Qty END) AS qty,
-            SUM(CASE WHEN fullyCosted = 1 THEN CostValue END) AS cost,
+            SUM(Qty) AS qty, SUM(Value) AS value,
+            SUM(CASE WHEN fullyCosted = 1 THEN Value END) AS costedValue,
+            SUM(CASE WHEN fullyCosted = 1 THEN CostValue END) AS costedCost,
             SUM(1 - fullyCosted) AS incompleteDays,
             SUM(fullyCosted = 1 AND (CostedQty <> 0 OR CostValue <> 0)) AS costedRows,
-            DATE_FORMAT(MAX(CASE WHEN fullyCosted = 1 THEN OrderDate END), '%Y-%m-%d') AS lastDate
+            SUM(CASE WHEN Qty > 0 THEN 1 ELSE 0 END) AS soldRows,
+            DATE_FORMAT(MAX(OrderDate), '%Y-%m-%d') AS lastDate
      FROM daily
      GROUP BY ProductCompanyKey`,
     [from, to, excludedCompanies],
@@ -129,9 +128,11 @@ export async function fetchBcgLast12Months(pool: Pool, from: string, to: string,
   return rows.map((r) => ({
     k: String(r.k),
     company: String(r.company ?? ''),
-    complete: Number(r.incompleteDays) === 0,
-    totals: Number(r.costedRows) > 0 && r.lastDate
-      ? { value: Number(r.value), qty: Number(r.qty), cost: Number(r.cost), lastDate: String(r.lastDate) }
-      : null,
+    qty: Number(r.qty) || 0,
+    value: Number(r.value) || 0,
+    costed: Number(r.costedRows) > 0 ? { value: Number(r.costedValue) || 0, cost: Number(r.costedCost) || 0 } : null,
+    complete: Number(r.incompleteDays) === 0 && Number(r.costedRows) > 0,
+    lastDate: r.lastDate ? String(r.lastDate) : null,
+    sold: Number(r.soldRows) > 0,
   }));
 }

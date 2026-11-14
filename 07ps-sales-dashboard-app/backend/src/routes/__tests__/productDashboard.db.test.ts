@@ -10,13 +10,10 @@ import type { AddressInfo } from 'node:net';
  *
  * The real routers (one per page, routes/productDashboard.ts), scope middleware (resolveScopedFilters, the SAME parser
  * the Promotion routes use) and pool; only the signed-in admin is faked. Filter matrix, for EVERY Product page and
- * EVERY filter (company, Customer Group, Distribution Channel, Branch = sales team, Salesperson; no date range -- always the
- * last 12 months since 2026-11-14):
- *   - a single value narrows the totals (value, lines, volume) below the unfiltered ones;
- *   - two values sent as repeated params (what the frontend sends) give exactly the sum of the two single values --
- *     each filter partitions the sales rows, so this proves both values reached the SQL (a value dropped by the parser
- *     would break the sum);
- *   - the old comma-joined form ("1,2") is NOT a valid multi-value request (it must never be what the client sends).
+ * filter (2026-11-14, round 2: Company and Date only):
+ *   - Customer Group / Channel / Branch / Salesperson params change nothing (dropped by the route);
+ *   - Majaal and Tika narrow the totals and add up to the whole; a shorter date range has fewer lines;
+ *   - the status cards reconcile (Total = the 4 statuses, the 4 BCG classes = Active).
  * Stock-only numbers (stock, days of inventory, band) have no customer: they are not compared, as agreed.
  */
 const RUN = process.env.PRODUCT_TEST_DB === '1';
@@ -89,20 +86,12 @@ describe.skipIf(!RUN)('Product pages filter matrix (real warehouse, read-only)',
   for (const page of PAGES) {
     describe(page, () => {
       for (const key of ['segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys'] as const) {
-        it(`${key}: one value narrows the totals, two values = the sum of both`, async () => {
-          const [a, b] = filters[key];
-          expect(b, `${key} needs two values in the data`).toBeDefined();
+        it(`${key}: ignored (the Product pages filter on Company and Date only)`, async () => {
+          const [a] = filters[key];
           const all = await totals(page, '');
           const ta = await totals(page, many(key, [a]));
-          const tb = await totals(page, many(key, [b]));
-          const tab = await totals(page, many(key, [a, b]));
-          expect(ta.value, `${key}=${a} narrows value`).toBeLessThan(all.value);
-          expect(ta.lines, `${key}=${a} narrows lines`).toBeLessThan(all.lines);
-          expect(tb.lines).toBeLessThan(all.lines);
-          close(tab.value, ta.value + tb.value, `${key}=[${a},${b}] value = sum`);
-          expect(tab.lines, `${key}=[${a},${b}] lines = sum`).toBe(ta.lines + tb.lines);
-          close(tab.volume, ta.volume + tb.volume, `${key}=[${a},${b}] volume = sum`);
-          expect(tab.lines).toBeGreaterThan(ta.lines);
+          expect(ta.lines, `${key}=${a} changes nothing`).toBe(all.lines);
+          close(ta.value, all.value, `${key}=${a} value unchanged`);
         });
       }
 
@@ -116,11 +105,12 @@ describe.skipIf(!RUN)('Product pages filter matrix (real warehouse, read-only)',
         expect(m.products + t.products).toBe(all.products);
       });
 
-      it('no date range: fromDate / toDate are ignored, the window is always the last 12 months', async () => {
+      it('date range: a shorter range has fewer sales lines than the default Last 12 Months', async () => {
         const all = await totals(page, '');
         const year = new Date().getFullYear();
         const q1 = await totals(page, `fromDate=${year}-01-01&toDate=${year}-03-31`);
-        expect(q1.lines).toBe(all.lines);
+        expect(q1.lines).toBeGreaterThan(0);
+        expect(q1.lines).toBeLessThan(all.lines);
       });
 
       it('status cards: Total SKUs = the 4 statuses, the 5 BCG cards = Active', async () => {
@@ -129,15 +119,9 @@ describe.skipIf(!RUN)('Product pages filter matrix (real warehouse, read-only)',
         const s = body.statusSummary;
         expect(s, body.statusSummaryError).toBeTruthy();
         expect(s.total).toBe(s.active.count + s.nonActive.count + s.dormant.count + s.unclassified.count);
-        expect(s.bcg.classes.reduce((t: number, c: Json) => t + c.count, 0) + s.bcg.notClassified).toBe(s.active.count);
+        expect(s.bcg.classes.reduce((t: number, c: Json) => t + c.count, 0)).toBe(s.active.count);
       });
 
-      it('the comma-joined form is not a multi-value request (the client never sends it)', async () => {
-        const [a, b] = filters.segmentKeys;
-        const joined = await totals(page, `segmentKeys=${a},${b}`);
-        const both = await totals(page, many('segmentKeys', [a, b]));
-        expect(joined.lines).not.toBe(both.lines);
-      });
     });
   }
 });

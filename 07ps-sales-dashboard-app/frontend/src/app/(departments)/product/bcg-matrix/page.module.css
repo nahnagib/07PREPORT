@@ -10,48 +10,24 @@
   }
 }
 
-/* Rows 1-3 (2026-11-14): Total SKUs = 1 card, Product Status = 4 equal cards, BCG Matrix = 5 equal cards, full width.
-   Phones stack the cards; tablets use 2 columns, then the full count on wide screens. */
-.statusRows {
-  display: flex;
-  flex-direction: column;
+/* The app's KPI row (same grid as Stock Velocity / Receivables): equal cards, wrapping on small screens. */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
   gap: var(--ps-space-3, 16px);
 }
 
-.rowTitle {
-  font-size: 13px;
+/* Same card width as .kpiGrid, but a single card keeps its normal width instead of stretching across the row. */
+.kpiGridFill {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: var(--ps-space-3, 16px);
+}
+
+/* Section titles as on the other pages (14px, bold). */
+.sectionTitle {
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.3px;
   color: var(--ps-color-text);
   margin: 0 0 8px;
-}
-
-.rowTotal,
-.rowStatus,
-.rowBcg {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--ps-space-3, 16px);
-}
-
-@media (min-width: 600px) {
-  .rowStatus,
-  .rowBcg {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1000px) {
-  .rowStatus {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-  .rowBcg {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 1280px) {
-  .rowBcg {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
 }

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'mysql2/promise';
 import { DateTime } from 'luxon';
-import { computeProductDashboard, resolvePeriod, summarizeProductStatus, type StatusInput } from '../productDashboard';
+import { computeProductDashboard, publicThresholds, resolvePeriod, summarizeProductStatus, withoutProfit, type StatusInput } from '../productDashboard';
 import { last12MonthsRange } from '../../lib/last12Months';
 
 // Every Product page number is the last 12 months as of "today" (2026-11-14 here).
@@ -47,17 +47,29 @@ const sale = (k: string, uom: string, value: number, qty: number, lines = 1, ext
   linesPrior: 0, ...extra,
 });
 
-/** One row of the last-12-months BCG query: product, value, qty, cost, last sale date, uncosted days. */
-const win = (k: string, value: number, qty: number, cost: number, lastDate = '2026-06-30', uncosted = 0) => ({
-  k, company: k.split('|')[0], value, qty, cost, incompleteDays: uncosted, costedRows: 1, lastDate,
+/** One row of the period BCG query: product, value, qty, cost of the costed days, last sale date. `uncostedDays` > 0 =
+ * some sales days without a standard cost; costed: false = no costed day at all. */
+const win = (k: string, value: number, qty: number, cost: number, opts: { lastDate?: string; uncostedDays?: number; costed?: boolean; costedValue?: number; sold?: boolean } = {}) => ({
+  k, company: k.split('|')[0], qty, value,
+  costedValue: opts.costed === false ? null : (opts.costedValue ?? value), costedCost: opts.costed === false ? null : cost,
+  incompleteDays: opts.uncostedDays ?? 0, costedRows: opts.costed === false ? 0 : 1, soldRows: opts.sold === false ? 0 : 1,
+  lastDate: opts.lastDate ?? '2026-06-30',
 });
 
-describe('resolvePeriod / last12MonthsRange (one window for every Product page)', () => {
-  it('is today - 12 months (same day) to today, both included, and the 12 months before', () => {
-    const now = DateTime.fromISO('2026-11-14T10:00:00', { zone: 'Africa/Tripoli' });
-    expect(resolvePeriod(now)).toEqual({
-      from: '2025-11-14', to: '2026-11-14', days: 366, priorFrom: '2024-11-14', priorTo: '2025-11-13', label: 'Last 12 Months',
+describe('resolvePeriod (the Date filter; default Last 12 Months)', () => {
+  const now = DateTime.fromISO('2026-11-14T10:00:00', { zone: 'Africa/Tripoli' });
+  it('no dates: today - 12 months (same day) to today, both included; the prior period has the same length', () => {
+    expect(resolvePeriod(undefined, undefined, now)).toEqual({
+      from: '2025-11-14', to: '2026-11-14', days: 366, priorFrom: '2024-11-13', priorTo: '2025-11-13', isDefault: true, label: 'Last 12 Months',
     });
+  });
+
+  it('a custom range: its own dates (To capped at today), the same number of days just before, labelled as custom', () => {
+    expect(resolvePeriod('2026-01-01', '2026-03-31', now)).toEqual({
+      from: '2026-01-01', to: '2026-03-31', days: 90, priorFrom: '2025-10-03', priorTo: '2025-12-31', isDefault: false, label: 'Custom range',
+    });
+    expect(resolvePeriod('2026-10-01', '2027-01-01', now)).toMatchObject({ to: '2026-11-14', days: 45 });
+    expect(resolvePeriod('2025-11-14', '2026-11-14', now)).toMatchObject({ isDefault: true, label: 'Last 12 Months' });
   });
 
   it('uses the app timezone date and handles Feb 29', () => {
@@ -141,23 +153,33 @@ describe('computeProductDashboard', () => {
     });
   });
 
-  it('volume / revenue of the last 12 months and the 12 months before follow the filters; class (company-wide) and movement do not', async () => {
+  it('the period and the prior period of the same length drive volume, revenue, class and movement', async () => {
     const { pool, calls } = makePool(
       [sale('Majaal|1', 'Unit', 900, 90, 1, { valuePrior: 400, qtyPrior: 40 }),
        sale('Majaal|1', 'm2', 100, 10, 1)],
-      [product('Majaal|1', 'Majaal', { ValueYTD: 99999, QtyYTD: 9999, BcgClassYTD: 'Dogs', BcgMovement: 'Improved', ProductStatus: 'Active' })],
+      [product('Majaal|1', 'Majaal', { ValueYTD: 99999, QtyYTD: 9999, BcgClassYTD: 'Dogs', BcgMovement: 'Drop', ProductStatus: 'NonActive', IsActive: 1 })],
       META, [], [],
       [win('Majaal|1', 50000, 4000, 20000)], // company-wide: 4,000 units >= 3,500, GP 60% -> Stars
     );
     const out = await computeProductDashboard(pool, { filters: { segmentKeys: [1] } });
-    expect(out.products[0]).toMatchObject({ value: 1000, volume: 100, valuePrior: 400, volumePrior: 40, bcgClass: 'Stars', bcgMovement: 'Improved' });
+    // the period's own status / class / movement (the ETL's stored values are not used): +150% -> Improved
+    expect(out.products[0]).toMatchObject({ value: 1000, volume: 100, valuePrior: 400, volumePrior: 40, productStatus: 'Active', bcgClass: 'Stars', bcgMovement: 'Improved' });
     const salesCall = calls.find((c) => c.sql.includes('SUM(CASE'))!;
     expect(salesCall.params).toContain('2025-11-14'); // last 12 months
-    expect(salesCall.params).toContain('2024-11-14'); // the 12 months before
+    expect(salesCall.params).toContain('2024-11-13'); // the 366 days before
     expect(salesCall.params).toContain('2025-11-13');
-    expect(salesCall.params).not.toContain('2026-01-01'); // no calendar YTD
     const bcgCall = calls.find((c) => c.sql.includes('AS fullyCosted'))!;
     expect(bcgCall.params.slice(0, 2)).toEqual(['2025-11-14', '2026-11-14']);
+  });
+
+  it('a custom range: the BCG volume threshold scales with its length (x days / 365)', async () => {
+    const rows = [product('Majaal|1', 'Majaal', { IsActive: 1 }), product('Majaal|2', 'Majaal', { IsActive: 1 })];
+    const windows = [win('Majaal|1', 10000, 900, 1000), win('Majaal|2', 10000, 800, 1000)]; // 90 days: threshold 3,500 x 90/365 = 863
+    const { pool, calls } = makePool([], rows, META, [], [], windows);
+    const out = await computeProductDashboard(pool, { fromDate: '2026-01-01', toDate: '2026-03-31' });
+    expect(out.period).toMatchObject({ from: '2026-01-01', to: '2026-03-31', isDefault: false, label: 'Custom range' });
+    expect(out.products.map((r) => r.bcgClass)).toEqual(['Stars', 'Strategic']);
+    expect(calls.find((c) => c.sql.includes('AS fullyCosted'))!.params.slice(0, 2)).toEqual(['2026-01-01', '2026-03-31']);
   });
 
   it('every product links to its Odoo product.product form in its own company (ODOO_URL), never a guessed host', async () => {
@@ -264,122 +286,137 @@ describe('computeProductDashboard', () => {
     });
   });
 
-  it('BCG: config thresholds on each Active product\'s last 12 months, with its profit and the date of that data', async () => {
-    const active = { ProductStatus: 'Active' };
+  it('BCG: every Active product in one of the 4 classes; no cost data = low GP% (Cash Cows / Dogs), flagged', async () => {
     const { pool } = makePool(
       [],
       [
-        ...['1', '2', '4', '5', '8'].map((i) => product(`Majaal|${i}`, 'Majaal', active)),
-        product('Majaal|6', 'Majaal', { ProductStatus: 'NonActive' }), // not sold in the window: no class
-        product('Tika|7', 'Tika', active),
-        product('Majaal|10', 'Majaal', { ProductStatus: 'NonActive' }), // a window row but not Active: never classified
+        ...['1', '2', '4', '5', '8', '9'].map((i) => product(`Majaal|${i}`, 'Majaal', { IsActive: 1 })),
+        product('Majaal|6', 'Majaal', { IsActive: 1 }), // not sold in the period: Non Active, no class
+        product('Tika|7', 'Tika', { IsActive: 1 }),
+        product('Majaal|10', 'Majaal', { ProductStatus: 'Dormant', IsActive: 0 }), // archived: never classified
       ],
       META, [], [],
       [
-        win('Majaal|1', 7000, 3500, 4550, '2026-11-10'),               // volume = threshold -> High; GP 35% -> High -> Stars
-        win('Majaal|2', 2000, 200, 1800, '2026-10-01', 5),             // some uncosted days: the costed days only, GP 10% -> Dogs
-        { ...win('Majaal|4', 500, 50, 0, '2026-11-01', 50), costedRows: 0 }, // never costed
-        win('Majaal|5', 900, 30, 300, '2026-11-02'),                   // low volume, GP 66.7% -> Strategic
-        win('Tika|7', 30000, 24999, 1000, '2026-11-03'),               // under the Tika 25,000 -> Strategic
-        win('Majaal|8', 0, 10, 80, '2026-11-01'),                      // recorded cost, undefined margin
-        win('Majaal|10', 9000, 9000, 1000, '2026-11-01'),
+        win('Majaal|1', 7000, 3500, 4550, { lastDate: '2026-11-10' }), // volume = threshold -> High; GP 35% -> High -> Stars
+        win('Majaal|2', 2000, 200, 1800, { uncostedDays: 5 }),          // some uncosted days: GP of the costed days 10% -> Dogs, flagged
+        win('Majaal|4', 500, 50, 0, { costed: false }),                  // never costed: low GP -> Dogs, flagged
+        win('Majaal|9', 90000, 9000, 0, { costed: false }),              // never costed, high volume -> Cash Cows, flagged
+        win('Majaal|5', 900, 30, 300),                                   // low volume, GP 66.7% -> Strategic
+        win('Tika|7', 30000, 24999, 1000),                               // under the Tika 25,000 -> Strategic
+        win('Majaal|8', 0, 10, 80, { costedValue: 0 }),                  // zero revenue: GP undefined -> low -> Dogs, flagged
+        win('Majaal|10', 9000, 9000, 1000),
       ],
     );
     const out = await computeProductDashboard(pool, { company: 'All' });
     const by = Object.fromEntries(out.products.map((r) => [r.productCompanyKey, r]));
-    expect(by['Majaal|1']).toMatchObject({ bcgClass: 'Stars', bcgProfit: 2450, bcgVolume: 3500, bcgDataPeriod: 'Last 12 Months', bcgDataAsOf: '2026-11-10' });
-    expect(by['Majaal|2']).toMatchObject({ bcgClass: 'Dogs', bcgProfit: 200, bcgDataPeriod: 'Last 12 Months (costed sales)' });
-    expect(by['Majaal|4']).toMatchObject({ bcgClass: 'Unclassified (no cost)', bcgProfit: null, bcgDataPeriod: null });
+    expect(by['Majaal|1']).toMatchObject({ productStatus: 'Active', bcgClass: 'Stars', bcgProfit: 2450, bcgVolume: 3500, missingCost: false, bcgDataAsOf: '2026-11-10' });
+    expect(by['Majaal|2']).toMatchObject({ bcgClass: 'Dogs', bcgProfit: 200, missingCost: true });
+    expect(by['Majaal|4']).toMatchObject({ bcgClass: 'Dogs', bcgProfit: null, bcgGrossProfitPct: null, missingCost: true });
+    expect(by['Majaal|9']).toMatchObject({ bcgClass: 'Cash Cows', missingCost: true });
     expect(by['Majaal|5'].bcgClass).toBe('Strategic');
-    expect(by['Majaal|6']).toMatchObject({ bcgClass: null, bcgProfit: null });
+    expect(by['Majaal|6']).toMatchObject({ productStatus: 'NonActive', bcgClass: null, bcgProfit: null });
     expect(by['Tika|7'].bcgClass).toBe('Strategic');
-    expect(by['Majaal|8']).toMatchObject({ bcgClass: 'Unclassified (zero revenue)', bcgProfit: -80, bcgGrossProfitPct: null });
-    expect(by['Majaal|10']).toMatchObject({ bcgClass: null, bcgProfit: null });
-    // the cards: 6 Active = Stars 1 + Strategic 2 + Dogs 1 + Not classified 2 (no cost, zero revenue)
-    expect(out.statusSummary?.active.count).toBe(6);
-    expect(out.statusSummary?.bcg.classes.map((c) => [c.key, c.count])).toEqual([['Stars', 1], ['Cash Cows', 0], ['Strategic', 2], ['Dogs', 1]]);
-    expect(out.statusSummary?.bcg.notClassified).toBe(2);
+    expect(by['Majaal|8']).toMatchObject({ bcgClass: 'Dogs', bcgGrossProfitPct: null, missingCost: true });
+    expect(by['Majaal|10']).toMatchObject({ productStatus: 'Dormant', bcgClass: null }); // archived: sold, but never classified
+    // the cards: 7 Active = Stars 1 + Cash Cows 1 + Strategic 2 + Dogs 3; 4 with missing cost
+    expect(out.statusSummary?.active.count).toBe(7);
+    expect(out.statusSummary?.bcg.classes.map((c) => [c.key, c.count])).toEqual([['Stars', 1], ['Cash Cows', 1], ['Strategic', 2], ['Dogs', 3]]);
+    expect(out.statusSummary?.bcg.missingCost).toBe(4);
+    expect(out.statusSummary?.dormant.count).toBe(1);
   });
 
-  it('BCG thresholds fall back to the config values when the ETL snapshot of the config has none', async () => {
-    const meta = [{ AsOfDate: '2026-11-11', LookbackDays: 90, ConfigJson: '{"bcg":{"movement_stable_band_pct":10}}' }];
-    const { pool } = makePool([], [product('Majaal|1', 'Majaal')], meta, [], [], [win('Majaal|1', 8000, 4000, 4000)]);
+  it('the BCG thresholds never leave the server', async () => {
+    const meta = [{ AsOfDate: '2026-11-11', LookbackDays: 90, ConfigJson: '{"bcg":{"movement_stable_band_pct":10,"volume_threshold":{"Majaal":3500},"profit_threshold_pct":35}}' }];
+    const { pool } = makePool([], [product('Majaal|1', 'Majaal', { IsActive: 1 })], meta, [], [], [win('Majaal|1', 8000, 4000, 4000)]);
     const out = await computeProductDashboard(pool, { company: 'Majaal' });
-    expect(out.thresholds.bcg).toEqual({ movement_stable_band_pct: 10, volume_threshold: { Majaal: 3500, Tika: 25000, Athena: 3500 }, profit_threshold_pct: 35 });
-    expect(out.products[0].bcgClass).toBe('Stars'); // 4,000 >= 3,500 and GP 50%; no ProductStatus yet -> sold in the window = Active
+    expect(out.thresholds.bcg).toEqual({ movement_stable_band_pct: 10 });
+    expect(JSON.stringify(out)).not.toMatch(/3500|volume_threshold|profit_threshold/);
+    expect(out.products[0].bcgClass).toBe('Stars'); // 4,000 >= 3,500 and GP 50%, applied server-side
+    expect(publicThresholds({ bcg: { volume_threshold: { A: 1 }, profit_threshold_pct: 1 } })).toEqual({ bcg: {} });
+  });
+
+  it('without profit access every profit field is absent from the rows and the cards (withoutProfit)', async () => {
+    const { pool } = makePool([sale('Majaal|1', 'Unit', 100, 10, 1, { costValue: 60, uncostedQty: 0 })], [product('Majaal|1', 'Majaal', { IsActive: 1 })], META, [], [],
+      [win('Majaal|1', 100, 10, 60, { uncostedDays: 1 })]);
+    const full = await computeProductDashboard(pool, {});
+    expect(full.profitAccess).toBe(true);
+    expect(full.products[0]).toMatchObject({ grossProfitPct: 40, bcgProfit: 40, bcgGrossProfitPct: 40, missingCost: true, bcgClass: 'Strategic' });
+    const stripped = withoutProfit(full);
+    expect(stripped.profitAccess).toBe(false);
+    for (const key of ['grossProfitPct', 'bcgProfit', 'bcgGrossProfitPct', 'missingCost']) expect(stripped.products[0]).not.toHaveProperty(key);
+    expect(stripped.products[0]).toMatchObject({ bcgClass: 'Strategic', value: 100, volume: 10 }); // the class and sales stay
+    expect(stripped.statusSummary?.bcg).not.toHaveProperty('missingCost');
+    expect(stripped.statusSummary?.bcg.classes.every((c) => !('profit' in c))).toBe(true);
+    expect(JSON.stringify(stripped)).not.toMatch(/[Pp]rofit"|grossProfit|missingCost/);
   });
 
   describe('Total SKUs / Product Status cards (statusSummary)', () => {
     const rows = [
-      product('Majaal|1', 'Majaal', { ProductStatus: 'Active', QtyYTD: 100, ValueYTD: 1000 }),
-      product('Majaal|2', 'Majaal', { ProductStatus: 'NonActive', OnHandQty: 5, OnHandValue: 50 }),
-      product('Majaal|3', 'Majaal', { ProductStatus: 'NonActive', OnHandQty: 0 }),
-      product('Majaal|4', 'Majaal', { ProductStatus: 'Dormant', OnProductPages: 0 }),
-      product('Majaal|5', 'Majaal', { ProductStatus: 'Unclassified', OnProductPages: 0 }),
-      product('Majaal|6', 'Majaal', { ProductStatus: 'Active', OnProductPages: 0, QtyYTD: 0, ValueYTD: 0 }), // excluded product that sold
-      product('Tika|7', 'Tika', { ProductStatus: 'Active', QtyYTD: 7, ValueYTD: 70 }),
+      product('Majaal|1', 'Majaal', { ProductStatus: 'Active', IsActive: 1 }),
+      product('Majaal|2', 'Majaal', { ProductStatus: 'Active', IsActive: 1, OnHandQty: 5, OnHandValue: 50 }), // not sold in the period
+      product('Majaal|3', 'Majaal', { ProductStatus: 'NonActive', IsActive: 1, OnHandQty: 0 }),
+      product('Majaal|4', 'Majaal', { ProductStatus: 'Dormant', IsActive: 0, OnProductPages: 0 }),
+      product('Majaal|5', 'Majaal', { ProductStatus: 'Unclassified', IsActive: 1, OnProductPages: 0 }),
+      product('Majaal|6', 'Majaal', { ProductStatus: 'Active', IsActive: 1, OnProductPages: 0 }), // Products-sheet excluded: no product sales
+      product('Tika|7', 'Tika', { ProductStatus: 'NonActive', IsActive: 1 }),
     ];
+    const windows = [win('Majaal|1', 1000, 4000, 100), win('Tika|7', 70, 7, 0, { costed: false })];
 
-    it('counts every product (OnProductPages 0 too) once; the pages list only OnProductPages = 1', async () => {
-      const { pool } = makePool([], rows, META, [], [], [win('Majaal|1', 1000, 4000, 100)]);
+    it('the period decides Active / Non Active; every product counted once; the pages list only OnProductPages = 1', async () => {
+      const { pool } = makePool([], rows, META, [], [], windows);
       const out = await computeProductDashboard(pool, {});
       expect(out.products.map((p) => p.productCompanyKey)).toEqual(['Majaal|1', 'Majaal|2', 'Majaal|3', 'Tika|7']);
       expect(out.statusSummaryError).toBeNull();
       expect(out.statusSummary).toMatchObject({
         total: 7,
-        active: { count: 3, units: 107, value: 1070 },
-        nonActive: { count: 2, withStock: 1, zeroStock: 1, stockUnits: 5, stockValue: 50 },
+        active: { count: 2, units: 4007, value: 1070 },
+        nonActive: { count: 3, withStock: 1, zeroStock: 2, stockUnits: 5, stockValue: 50 },
         dormant: { count: 1 },
         unclassified: { count: 1 },
       });
-      expect(out.statusSummary?.bcg.classes.find((c) => c.key === 'Stars')).toMatchObject({ count: 1, units: 4000, profit: 900 });
-      expect(out.statusSummary?.bcg.notClassified).toBe(2); // Majaal|6 (no sales on the pages) and Tika|7 (no profit data)
+      expect(out.statusSummary?.bcg.classes.find((c) => c.key === 'Stars')).toMatchObject({ count: 1, units: 4000, value: 1000, profit: 900 });
+      expect(out.statusSummary?.bcg.classes.find((c) => c.key === 'Dogs')).toMatchObject({ count: 1, units: 7 }); // Tika|7: no cost
     });
 
     it('company view: that company only', async () => {
-      const { pool } = makePool([], rows);
+      const { pool } = makePool([], rows, META, [], [], windows);
       const out = await computeProductDashboard(pool, { company: 'Tika' });
       expect(out.statusSummary).toMatchObject({ total: 1, active: { count: 1 } });
     });
 
-    it('before migration 0073 (no ProductStatus): no cards, a clear message, the pages still work', async () => {
-      const { pool } = makePool([], [product('Majaal|1', 'Majaal')]);
+    it('before migration 0073 (no ProductStatus): archived = Dormant, the rest by the period', async () => {
+      const { pool } = makePool([], [product('Majaal|1', 'Majaal', { IsActive: 1 }), product('Majaal|2', 'Majaal', { IsActive: 0 })], META, [], [], [win('Majaal|1', 10, 1, 5)]);
       const out = await computeProductDashboard(pool, {});
-      expect(out.products).toHaveLength(1);
-      expect(out.statusSummary).toBeNull();
-      expect(out.statusSummaryError).toMatch(/migration 0073/);
+      expect(out.statusSummary).toMatchObject({ total: 2, active: { count: 1 }, dormant: { count: 1 } });
     });
 
     it('a row without a known status fails the check (reported, never silently miscounted)', async () => {
-      const { pool } = makePool([], [product('Majaal|1', 'Majaal', { ProductStatus: 'Active' }), product('Majaal|2', 'Majaal', { ProductStatus: 'Weird' })]);
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const out = await computeProductDashboard(pool, {});
+      const out = await computeProductDashboard(makePool([], [product('Majaal|1', 'Majaal', { ProductStatus: 'Weird', IsActive: 1 })]).pool, {});
       errors.mockRestore();
-      expect(out.statusSummary).toBeNull();
-      expect(out.statusSummaryError).toMatch(/unknown ProductStatus "Weird"/);
+      // an unknown ETL status is treated by the period (NonActive): the check passes
+      expect(out.statusSummary).toMatchObject({ total: 1, nonActive: { count: 1 } });
     });
   });
 
   describe('summarizeProductStatus reconciliation', () => {
-    const input = (status: string, over: Partial<StatusInput> = {}): StatusInput => ({ status, onHandQty: 0, onHandValue: 0, unitsL12M: 0, valueL12M: 0, bcg: null, ...over });
+    const input = (status: string | null, bcg: StatusInput['bcg'] = null, over: Partial<StatusInput> = {}): StatusInput => ({ status, onHandQty: 0, onHandValue: 0, bcg, ...over });
+    const cls = (bcgClass: 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs', missingCost = false) => ({ bcgClass, volume: 10, value: 100, profit: missingCost ? null : 5, missingCost });
 
-    it('Total = Unclassified + Dormant + Active + Non Active, and the 5 BCG cards = Active', () => {
+    it('Total = Unclassified + Dormant + Active + Non Active, and Stars + Cash Cows + Strategic + Dogs = Active', () => {
       const out = summarizeProductStatus([
-        input('Active', { bcg: { bcgClass: 'Stars', volume: 10, profit: 5 } }),
-        input('Active', { bcg: { bcgClass: 'Dogs', volume: 1, profit: -1 } }),
-        input('Active', { bcg: { bcgClass: 'Unclassified (no cost)', volume: null, profit: null } }),
-        input('Active'),
-        input('NonActive', { onHandQty: 3, onHandValue: 30 }),
-        input('Dormant'),
-        input('Unclassified'),
+        input('Active', cls('Stars')), input('Active', cls('Dogs', true)), input('Active', cls('Cash Cows', true)), input('Active', cls('Strategic')),
+        input('NonActive', null, { onHandQty: 3, onHandValue: 30 }), input('Dormant'), input('Unclassified'),
       ]);
       expect(out.total).toBe(out.active.count + out.nonActive.count + out.dormant.count + out.unclassified.count);
-      expect(out.bcg.classes.reduce((t, c) => t + c.count, 0) + out.bcg.notClassified).toBe(out.active.count);
-      expect([out.total, out.active.count, out.bcg.notClassified]).toEqual([7, 4, 2]);
+      expect(out.bcg.classes.reduce((t, c) => t + c.count, 0)).toBe(out.active.count);
+      expect([out.total, out.active.count, out.bcg.missingCost]).toEqual([7, 4, 2]);
+      expect(out.bcg).not.toHaveProperty('notClassified');
     });
 
-    it('throws on a row with no status', () => {
-      expect(() => summarizeProductStatus([input('Active'), { ...input('Active'), status: null }])).toThrow(/Product status check failed/);
+    it('throws on a row with no status, or an Active product without a class', () => {
+      expect(() => summarizeProductStatus([input(null)])).toThrow(/Product status check failed/);
+      expect(() => summarizeProductStatus([input('Active')])).toThrow(/has no BCG class/);
     });
   });
 

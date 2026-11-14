@@ -51,6 +51,11 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   { key: 'stock_velocity', label: 'Stock Velocity', group: 'dashboard', actions: DASHBOARD },
   { key: 'pim_contribution', label: 'PIM Contribution', group: 'dashboard', actions: DASHBOARD },
   { key: 'product_lifecycle', label: 'Product Lifecycle', group: 'dashboard', actions: DASHBOARD },
+  // Profit data (2026-11-14): profit, profit margin, GP%, cost / unit cost and the "missing cost" flags, on every page and
+  // export. Not a page (like nps_comments): View lets the API send those fields (routes/productDashboard.ts withoutProfit)
+  // and shows them; Export also puts them in the CSV / PDF / Excel exports. No role has it until an admin grants it (Roles
+  // matrix, or a user's personal override); the Admin role has it implicitly.
+  { key: 'profit_data', label: 'Profit data (profit, GP%, cost)', group: 'dashboard', actions: DASHBOARD },
   // Process department. kaizen_board = the dashboard + read-only card details (the QR page);
   // kaizen_cards = data entry: View opens the cards list, Edit also covers closing a card, Delete is
   // a soft delete, Export is the Excel download. Seeded for the Excellence Manager role (0027).

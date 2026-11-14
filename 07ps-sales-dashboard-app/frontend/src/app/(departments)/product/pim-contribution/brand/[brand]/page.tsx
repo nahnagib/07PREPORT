@@ -13,7 +13,7 @@ import { RefreshFooter } from '../../../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../../../lib/format';
 import { useAuth } from '../../../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../../../lib/hooks';
-import { Last12MonthsNote } from '../../../../../../components/product/Last12MonthsNote';
+import { PeriodNote, periodLabel } from '../../../../../../components/product/PeriodNote';
 import { Card, DataGrid, KpiTile, LoadingSkeleton, ErrorState, VisualInfoIcons, type DataGridColumn } from '@07ps/ui';
 import {
   toProductFacts,
@@ -31,7 +31,7 @@ import {
   MOVEMENT_LABEL,
   type ProductFact,
 } from '../../../../../../lib/materialsAnalogy/shared';
-import { ProductName } from '../../../../../../components/product/ProductUi';
+import { ProductName, useProfitAccess } from '../../../../../../components/product/ProductUi';
 
 const gpText = (v: number | null) => (v === null ? 'no cost' : `${v.toFixed(1)}%`);
 
@@ -60,7 +60,7 @@ const PRODUCT_COLUMNS: DataGridColumn<BrandRow>[] = [
 
 /**
  * Brand page (/product/pim-contribution/brand/[brand]) -- one partner brand: a header with its KPI tiles (Volume in
- * Unit, volume vs prior 12 months, Revenue, GP%, SKUs in catalogue, SKUs sold), then every product of the brand in a
+ * Unit, volume vs prior period, Revenue, GP%, SKUs in catalogue, SKUs sold), then every product of the brand in a
  * sortable, searchable table (sticky header, CSV + PDF export), highest volume first. The Brand is the product's main
  * vendor in Odoo, matched case-insensitively on the brand's Odoo names (PARTNER_BRANDS). The FilterBar is the Product
  * pages' one (company, Customer Group, channel, branch, salesperson, date range -- shared with PIM Contribution);
@@ -87,6 +87,9 @@ export default function BrandPage() {
   );
 
   const overview = useProductDashboard(token, authError, retryAuth, 'pim-contribution', scope);
+  // GP% is profit data: column and card only with View on profit_data (the API leaves it out otherwise)
+  const profit = useProfitAccess(overview.data?.profitAccess);
+  const productColumns = useMemo(() => (profit.view ? PRODUCT_COLUMNS : PRODUCT_COLUMNS.filter((c) => c.key !== 'grossProfitPct')), [profit.view]);
   const filtered = useMemo(() => filterByPageFilters(toProductFacts(overview.data), urlFilters), [overview.data, urlFilters]);
   const brandRows = useMemo(() => (partnerBrand ? filtered.filter((r) => isBrandOf(partnerBrand, r)) : []), [filtered, partnerBrand]);
   const rows = brandRows;
@@ -117,7 +120,7 @@ export default function BrandPage() {
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)', minWidth: 0 }}>
 
-          <Last12MonthsNote period={overview.data?.period} />
+          <PeriodNote period={overview.data?.period} />
           <BackLink />
           {overview.loading && !overview.data ? (
             <LoadingSkeleton variant="chart" />
@@ -140,25 +143,25 @@ export default function BrandPage() {
                   <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--ps-color-text)', margin: 0 }}>{partnerBrand.requested}</h1>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 16 }}>
-                  {scopeLabel} · {overview.data?.period.label ?? 'Last 12 Months'} · brand = main vendor in Odoo ({partnerBrand.odooNames.join(' + ')})
+                  {scopeLabel} · {periodLabel(overview.data?.period)} · brand = main vendor in Odoo ({partnerBrand.odooNames.join(' + ')})
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
-                  <KpiTile label="Volume (Last 12 Months)" value={fmtUnits(stats?.volume ?? 0)} status="neutral" />
+                  <KpiTile label="Volume (period)" value={fmtUnits(stats?.volume ?? 0)} status="neutral" />
                   <KpiTile
-                    label="Volume vs prior 12 months"
+                    label="Volume vs prior period"
                     value={stats?.volumeDeltaPct === null || stats?.volumeDeltaPct === undefined ? '—' : fmtPct(stats.volumeDeltaPct)}
                     variance={stats ? `LY ${fmtUnits(stats.volumePrior)}` : undefined}
                     status={stats?.volumeDeltaPct === null || stats?.volumeDeltaPct === undefined ? 'neutral' : stats.volumeDeltaPct >= 0 ? 'success' : 'alert'}
                   />
                   <KpiTile
-                    label="Revenue (Last 12 Months)"
+                    label="Revenue (period)"
                     value={fmtLYD(stats?.revenue ?? 0)}
-                    variance={stats?.deltaPct === null || stats?.deltaPct === undefined ? undefined : `${fmtPct(stats.deltaPct)} vs prior 12 months`}
+                    variance={stats?.deltaPct === null || stats?.deltaPct === undefined ? undefined : `${fmtPct(stats.deltaPct)} vs prior period`}
                     status="neutral"
                   />
-                  <KpiTile label="GP%" value={stats?.gp === null || stats?.gp === undefined ? '—' : `${stats.gp.toFixed(1)}%`} variance="revenue-weighted, costed products" status="neutral" />
+                  {profit.view && <KpiTile label="GP%" value={stats?.gp === null || stats?.gp === undefined ? '—' : `${stats.gp.toFixed(1)}%`} variance="revenue-weighted, costed products" status="neutral" />}
                   <KpiTile label="SKUs in catalogue" value={String(stats?.skuCount ?? 0)} status="neutral" />
-                  <KpiTile label="SKUs sold (Last 12 Months)" value={String(stats?.skuSold ?? 0)} status="neutral" />
+                  <KpiTile label="SKUs sold (period)" value={String(stats?.skuSold ?? 0)} status="neutral" />
                 </div>
               </div>
 
@@ -168,7 +171,7 @@ export default function BrandPage() {
                 </div>
                 <div data-testid="brand-product-table">
                   <DataGrid
-                    columns={PRODUCT_COLUMNS}
+                    columns={productColumns}
                     rows={[...rows].sort((a, b) => b.volume - a.volume) as BrandRow[]}
                     getRowId={(r) => r.id}
                     fileName={`brand-${brandSlug}-products`}

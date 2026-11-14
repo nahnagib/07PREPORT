@@ -8,11 +8,10 @@ import type { ProductDashboardOverview, ProductDashboardRow } from '../../api';
 const fact = (over: Partial<ProductFact>): ProductFact => ({
   id: 'Majaal|1', odooUrl: null, ProductKey: '1', ProductName: 'P', OdooProductName: 'P', Company: 'Majaal', Category: 'C', Brand: null, SubBrand: null,
   Family: null, Size: null, SKU: null, IsActive: 1, value: 0, volume: 0, volumeByUom: [], uom: 'Unit', velocity: null, orderDays: 0,
-  valuePrior: 0, volumePrior: 0, avgUnitPrice: null, grossProfitPct: null, productStatus: null, bcg_class: null, bcg_class_P12M: null, bcg_movement: null,
-  bcgExcludedCategory: false, total_value_L12M: 0, total_value_P12M: 0, total_quantity_L12M: 0, total_quantity_P12M: 0,
-  avg_unit_price_L12M: null, perc_gross_profit_L12M: null, quantity_growth_pct: null, stockQty: 0, stockValue: 0, inTransitQty: 0,
+  valuePrior: 0, volumePrior: 0, avgUnitPrice: null, grossProfitPct: null, productStatus: 'Active', bcg_class: null, bcg_movement: null,
+  bcgExcludedCategory: false, quantity_growth_pct: null, stockQty: 0, stockValue: 0, inTransitQty: 0,
   inTransitValue: 0, avgDailySales: 0, daysOfInventory: null, stockBand: 'Normal', stockAgeDays: null, stockAgeBucket: null, lifecycle: 'Mature', firstSaleDate: null,
-  lastSaleDate: null, daysSinceLastSale: null, Companies: ['Majaal'], parts: [], bcgVolume: null, bcgProfit: null, bcgGrossProfitPct: null, bcgDataPeriod: null, bcgDataAsOf: null,
+  lastSaleDate: null, daysSinceLastSale: null, Companies: ['Majaal'], parts: [], bcgVolume: null, bcgValue: null, bcgProfit: null, bcgGrossProfitPct: null, missingCost: null, bcgDataAsOf: null,
   onHandQty: 0, onHandValue: 0, stockAgeOldestDays: null, agingBuckets: [], ...over,
 });
 

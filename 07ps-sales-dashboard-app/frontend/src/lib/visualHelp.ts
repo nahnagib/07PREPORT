@@ -427,29 +427,28 @@ export const VISUAL_HELP = {
   // App-wide rule: the "?" shows only where there is a formula (classes, ratios, Days on Hand, GP%, growth, the Stable
   // band) -- one short line; self-explanatory charts only have their "i". Volume = invoiced quantity, added up as "Unit".
   'product.bcgMatrix.matrix': {
-    // the page puts the config thresholds in the formula line (shared.ts bcgClassRule)
+    // no thresholds on screen: they stay on the server (2026-11-14)
     help: {
-      definition: 'BCG class of each Active product, on last-12-months volume and GP%, vs company thresholds.',
-      formula: 'High volume = Volume ≥ Majaal 3,500 / Tika 25,000 units · High profit = GP% ≥ 35%',
+      definition: 'BCG class of each Active product, on volume and margin of the selected period.',
+      formula: 'Stars = high volume, high margin · Cash Cows = high volume, low margin · Strategic = low volume, high margin · Dogs = low volume, low margin',
       notes:
-        'The class, profit and data date use the last 12 months. When some sales days of the window have no standard cost, only the fully costed days are used. ' +
-        'Profit is sales value minus cost. Active products with missing profit or an undefined margin appear under Not classified. ' +
-        'Stars: protect availability, keep investing, support growth, monitor. ' +
-        'Cash Cows: review pricing, discounts, cost structure, supplier terms and channel profitability. ' +
-        'Strategic: protect profitability, look for ways to grow volume, avoid unnecessary discounting. ' +
-        'Dogs: review before deciding to retain, improve, reposition or discontinue; a Dog is not an automatic discontinue.',
+        'Every product sold in the period is in one of the 4 classes. A product without cost data counts as low margin. ' +
+        'Stars: high volume, high margin. Protect availability, keep investing, support growth, monitor. ' +
+        'Cash Cows: high volume, low margin. Review pricing, discounts, cost structure, supplier terms and channel profitability. ' +
+        'Strategic: low volume, high margin. Protect profitability, look for ways to grow volume, avoid unnecessary discounting. ' +
+        'Dogs: low volume, low margin. Review before deciding to retain, improve, reposition or discontinue; a Dog is not an automatic discontinue.',
     },
-    interactions: ['Click a product to open it in Odoo', 'Hover a product for its figures and the date of its profit data', 'Export a class to CSV or PDF'],
+    interactions: ['Click a product to open it in Odoo', 'Hover a product for its figures', 'Export the whole BCG to Excel, or a class to CSV or PDF'],
   },
   'product.bcgMatrix.movement': {
     // the page puts the config band and "new" window in the formula line (shared.ts movementRule)
-    help: { definition: 'Volume of the last 12 months vs the 12 months before, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior 12 months · archived Odoo products are left out' },
+    help: { definition: 'Volume of the selected period vs the prior period of the same length, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior period · archived Odoo products are left out' },
     interactions: ['Click a slice to list its products', 'Click a product to open it in Odoo', 'Hover a product for its figures', 'Export the list to CSV or PDF'],
   },
   'product.bcgMatrix.productDetail': {
     help: {
-      definition: 'Per product: BCG Class, Profit and its data date, growth, GP% and Quantity On Hand.',
-      formula: 'Vol Growth = (Volume last 12 months − prior 12 months) ÷ prior 12 months · GP% = (Value − Qty × standard cost) ÷ Value · Quantity On Hand = Odoo Quantity On Hand of the product in its company (every internal location)',
+      definition: 'Per product: status, BCG class, volume, value, growth and Quantity On Hand.',
+      formula: 'Vol Growth = (Volume − Volume prior period) ÷ Volume prior period · Quantity On Hand = Odoo Quantity On Hand of the product in its company (every internal location)',
     },
     interactions: ['Click a product to open it in Odoo', ...GRID],
   },
@@ -465,7 +464,7 @@ export const VISUAL_HELP = {
   },
   'product.stockVelocity.kpiFast': {
     // the page puts the config values in the formula line (shared.ts moverRuleText)
-    help: { definition: 'Fast movers.', formula: 'Sales Velocity = Quantity Sold ÷ days in the last 12 months. Fast ≥ 150% of the category median · Slow ≤ 50%' },
+    help: { definition: 'Fast movers.', formula: 'Sales Velocity = Quantity Sold ÷ days in the selected period. Fast ≥ 150% of the category median · Slow ≤ 50%' },
   },
   'product.stockVelocity.kpiInStock': {
     help: { definition: 'SKUs with finished goods on hand.', formula: 'Finished-goods Quantity On Hand > 0; in-transit and raw materials not included' },
@@ -474,11 +473,11 @@ export const VISUAL_HELP = {
     help: { definition: 'Total Value of the finished goods on hand, at cost (LYD).', formula: 'Finished goods only; in-transit (shown separately) and raw materials not included' },
   },
   'product.stockVelocity.isr': {
-    help: { definition: 'Inventory to Sales Ratio.', formula: 'ISR = Total Value on hand (LYD at cost) ÷ Sales Value (LYD) in the last 12 months · target ≤ 15%' },
+    help: { definition: 'Inventory to Sales Ratio.', formula: 'ISR = Total Value on hand (LYD at cost) ÷ Sales Value (LYD) in the selected period · target ≤ 15%' },
   },
   'product.stockVelocity.movers': {
     // the page puts the config values in the formula line (shared.ts moverRuleText)
-    help: { definition: 'SKUs sold in the last 12 months, against their category median.', formula: 'Sales Velocity = Quantity Sold ÷ days in the last 12 months. Fast ≥ 150% of the category median · Slow ≤ 50%' },
+    help: { definition: 'SKUs sold in the selected period, against their category median.', formula: 'Sales Velocity = Quantity Sold ÷ days in the selected period. Fast ≥ 150% of the category median · Slow ≤ 50%' },
     interactions: ['Hover a segment for its SKUs, Quantity Sold and Sales Value', 'Click a segment to list its products', 'Hover a product for the standard inventory figures, its Mover Group and Category Median Velocity', 'Click a product to open it in Odoo', 'Export movers data: every SKU of the visual (CSV with the group summary, or PDF)'],
   },
   'product.stockVelocity.aging': {
@@ -498,7 +497,7 @@ export const VISUAL_HELP = {
     interactions: ['Hover a bar for its SKUs, Quantity On Hand and Total Value', 'Click a class to list its products', 'Hover a product for the standard inventory figures and its excess quantity / value', 'Click a product to open it in Odoo', 'Export overstock data: every overstocked SKU (CSV with the BCG Class summary, or PDF)'],
   },
   'product.stockVelocity.frequency': {
-    help: { definition: 'SKUs by how often they sell.', formula: 'Average gap = days in the last 12 months ÷ selling days (Daily ≤ 2 · Weekly 3–7 · Monthly 8–30 · Quarterly 31–90 · Rarely > 90)' },
+    help: { definition: 'SKUs by how often they sell.', formula: 'Average gap = days in the selected period ÷ selling days (Daily ≤ 2 · Weekly 3–7 · Monthly 8–30 · Quarterly 31–90 · Rarely > 90)' },
     interactions: ['Hover a bar for its SKUs, Quantity Sold and Sales Value', 'Click a bar to list its products', 'Click a product to open it in Odoo', ...GRID],
   },
   'product.stockVelocity.stockOutRisk': {
@@ -525,7 +524,7 @@ export const VISUAL_HELP = {
     help: { definition: 'Average selling price at the level you are on.', formula: 'ASP = value ÷ units' },
   },
   'product.pimContribution.brands': {
-    help: { definition: 'Units of each partner brand, last 12 months vs the 12 months before.' },
+    help: { definition: 'Units of each partner brand, selected period vs the prior period.' },
     interactions: ['Click a brand to open its page'],
   },
   'product.productLifecycle.pareto': {

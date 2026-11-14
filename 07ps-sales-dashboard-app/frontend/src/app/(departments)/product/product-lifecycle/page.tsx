@@ -11,7 +11,7 @@ import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../lib/format';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
-import { Last12MonthsNote } from '../../../../components/product/Last12MonthsNote';
+import { PeriodNote } from '../../../../components/product/PeriodNote';
 import {
   Card,
   ChartPanel,
@@ -44,7 +44,7 @@ import { ProductName } from '../../../../components/product/ProductUi';
 
 const SEGMENTS = LIFECYCLE_SEGMENTS;
 interface TableRow extends ProductFact, Record<string, unknown> {
-  /** Volume of the last 12 months vs the 12 months before, %; null = nothing sold before. */
+  /** Volume of the period vs the prior period, %; null = nothing sold before. */
   growth: number | null;
 }
 
@@ -78,7 +78,7 @@ export default function ProductLifecyclePage() {
   const newRows = filtered.filter((r) => r.lifecycle === 'New');
   const freshPct = filtered.length ? (newRows.length / filtered.length) * 100 : 0;
 
-  // ---- Pareto on volume: units sold in the last 12 months per lifecycle segment (added up as Unit), the same period last year,
+  // ---- Pareto on volume: units sold in the period per lifecycle segment (added up as Unit), the same period last year,
   // and the cumulative share of the units ----
   const bySeg = new Map<string, { units: number; unitsLY: number; n: number }>();
   SEGMENTS.forEach((s) => bySeg.set(s, { units: 0, unitsLY: 0, n: 0 }));
@@ -104,10 +104,10 @@ export default function ProductLifecyclePage() {
     .sort((a, b) => b.volume - a.volume);
   const columns: DataGridColumn<TableRow>[] = [
     { key: 'ProductName', header: 'Product Name', width: 260, render: (row) => <ProductName name={row.ProductName} href={row.odooUrl} />, rawValue: (row) => row.ProductName },
-    { key: 'volume', header: 'Volume (Last 12 Months)', align: 'right', render: (row) => <strong>{fmtVolume(row)}</strong>, rawValue: (row) => row.volume },
+    { key: 'volume', header: 'Volume (period)', align: 'right', render: (row) => <strong>{fmtVolume(row)}</strong>, rawValue: (row) => row.volume },
     {
       key: 'growth',
-      header: 'Volume vs prior 12 months',
+      header: 'Volume vs prior period',
       align: 'right',
       rawValue: (row) => (row.growth === null ? '' : Math.round(row.growth * 10) / 10),
       sortValue: (row) => row.growth ?? Number.NEGATIVE_INFINITY,
@@ -130,7 +130,7 @@ export default function ProductLifecyclePage() {
       rawValue: (row) => (row.daysSinceLastSale === null ? 'never sold' : row.daysSinceLastSale),
       sortValue: (row) => row.daysSinceLastSale ?? Number.POSITIVE_INFINITY,
     },
-    { key: 'value', header: 'Value (Last 12 Months)', align: 'right', render: (row) => fmtLYD(row.value), rawValue: (row) => row.value },
+    { key: 'value', header: 'Value (period)', align: 'right', render: (row) => fmtLYD(row.value), rawValue: (row) => row.value },
   ];
 
   return (
@@ -175,7 +175,7 @@ export default function ProductLifecyclePage() {
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
 
-          <Last12MonthsNote period={overview.data?.period} />
+          <PeriodNote period={overview.data?.period} />
           {overview.loading && !overview.data ? (
             <LoadingSkeleton variant="chart" />
           ) : overview.error ? (
@@ -192,7 +192,7 @@ export default function ProductLifecyclePage() {
             <KpiTile
               label="Discontinued"
               value={String(discRows.length)}
-              variance={`${fmtUnits(sum(discRows, (r) => r.volumePrior))} sold in the prior 12 months`}
+              variance={`${fmtUnits(sum(discRows, (r) => r.volumePrior))} sold in the prior period`}
               status="alert"
             />
             <KpiTile label="Portfolio Freshness" value={`${freshPct.toFixed(1)}%`} variance={`${newRows.length} SKUs first sold in the last 180 days`} status="neutral" />
@@ -205,10 +205,10 @@ export default function ProductLifecyclePage() {
             <ComboChart
               showTitle={false}
               points={paretoPoints}
-              bars={[{ key: 'units', name: 'Units sold (Last 12 Months)', color: 'var(--ps-color-accent)' }]}
+              bars={[{ key: 'units', name: 'Units sold (period)', color: 'var(--ps-color-accent)' }]}
               leftAxisFormatter={(v) => fmtNum(v)}
               lines={[
-                { key: 'unitsLY', name: 'Prior 12 Months', color: 'var(--ps-color-last-year)', yAxisId: 'left' },
+                { key: 'unitsLY', name: 'Prior period', color: 'var(--ps-color-last-year)', yAxisId: 'left' },
                 { key: 'cumPct', name: 'Cumulative %', color: 'var(--ps-color-gold)', yAxisId: 'right' },
               ]}
               rightAxisFormatter={(v) => `${v.toFixed(0)}%`}

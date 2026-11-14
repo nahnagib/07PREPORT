@@ -45,7 +45,7 @@ export interface ProductFact {
   Size: string | null;
   SKU: string | null;
   IsActive: number | null;
-  // -- period: always the last 12 months (no date range, 2026-11-14) --
+  // -- period: the Date filter (default the Last 12 Months); valuePrior / volumePrior = the prior period, same length --
   value: number;
   /** Invoiced quantity of the period, added up as "Unit" across UoMs. */
   volume: number;
@@ -57,27 +57,23 @@ export interface ProductFact {
   valuePrior: number;
   volumePrior: number;
   avgUnitPrice: number | null;
+  /** PROFIT DATA: null without profit access (the API leaves it out). */
   grossProfitPct: number | null;
-  /** Unclassified / Dormant / Active / NonActive (ETL); null before migration 0073 + a product refresh. */
-  productStatus: ProductStatus | null;
-  // -- BCG (last 12 months vs the 12 months before; Active products only) --
+  /** Status in the period: Unclassified / Dormant / Active / NonActive. */
+  productStatus: ProductStatus;
+  // -- BCG of the period (Active products only) --
   bcg_class: string | null;
-  bcg_class_P12M: string | null;
-  /** The data the class is computed on: the last 12 months (fully costed days). */
+  /** The class's volume / value (company-wide, the period). */
   bcgVolume: number | null;
+  bcgValue: number | null;
+  /** PROFIT DATA: null without profit access. missingCost = some sales without a standard cost (GP% counted as low). */
   bcgProfit: number | null;
   bcgGrossProfitPct: number | null;
-  /** 'Last 12 Months' or 'Last 12 Months (costed sales)'; null = no profit data. */
-  bcgDataPeriod: string | null;
+  missingCost: boolean | null;
   bcgDataAsOf: string | null;
   bcg_movement: BcgMovement | null;
   bcgExcludedCategory: boolean;
-  total_value_L12M: number;
-  total_value_P12M: number;
-  total_quantity_L12M: number;
-  total_quantity_P12M: number;
-  avg_unit_price_L12M: number | null;
-  perc_gross_profit_L12M: number | null;
+  /** Volume growth vs the prior period, %; null = nothing sold then. */
   quantity_growth_pct: number | null;
   // -- stock & lifecycle (as of the last ETL run) --
   stockQty: number;
@@ -133,24 +129,17 @@ export function toProductFacts(data: ProductDashboardOverview | null | undefined
     valuePrior: r.valuePrior,
     volumePrior: r.volumePrior,
     avgUnitPrice: r.avgUnitPrice,
-    grossProfitPct: r.grossProfitPct,
-    productStatus: r.productStatus ?? null,
+    grossProfitPct: r.grossProfitPct ?? null,
+    productStatus: r.productStatus,
     bcg_class: r.bcgClass,
-    bcg_class_P12M: r.bcgClassPrior12M,
     bcgVolume: r.bcgVolume ?? null,
+    bcgValue: r.bcgValue ?? null,
     bcgProfit: r.bcgProfit ?? null,
     bcgGrossProfitPct: r.bcgGrossProfitPct ?? null,
-    bcgDataPeriod: r.bcgDataPeriod ?? null,
+    missingCost: r.missingCost ?? null,
     bcgDataAsOf: r.bcgDataAsOf ?? null,
     bcg_movement: r.bcgMovement,
     bcgExcludedCategory: r.bcgExcludedCategory,
-    // the period IS the last 12 months; valuePrior / volumePrior = the 12 months before
-    total_value_L12M: r.value,
-    total_value_P12M: r.valuePrior,
-    total_quantity_L12M: r.volume,
-    total_quantity_P12M: r.volumePrior,
-    avg_unit_price_L12M: r.volume ? r.value / r.volume : null,
-    perc_gross_profit_L12M: r.grossProfitPctL12M,
     quantity_growth_pct: r.volumePrior > 0 ? ((r.volume - r.volumePrior) / r.volumePrior) * 100 : null,
     stockQty: r.stockQty,
     stockValue: r.stockValue,
@@ -264,60 +253,34 @@ export const BCG_COLOR: Record<string, string> = {
   [UNCLASSIFIED_ZERO_REVENUE]: 'var(--ps-color-neutral-text)',
 };
 
-/** BCG class definitions from the ETL's own thresholds (config/product_dashboard.json, served as overview.thresholds). */
-export interface BcgThresholds {
-  volume: Record<string, number>;
-  profitPct: number | null;
-  /** Product Movement: Stable band (± %) and "New" = first sale within these days. */
+/** Product Movement values of the config (served as overview.thresholds). The BCG class thresholds never reach the client
+ * (server-side only, 2026-11-14): the class definitions below have no numbers. */
+export interface MovementConfig {
+  /** Stable band (± %) and "New" = first sale within these days. */
   movementBandPct: number | null;
   newWithinDays: number | null;
 }
-export function bcgThresholds(thresholds: Record<string, unknown> | undefined): BcgThresholds {
-  const bcg = (thresholds?.bcg ?? {}) as { volume_threshold?: Record<string, number>; profit_threshold_pct?: number; movement_stable_band_pct?: number };
+export function movementConfig(thresholds: Record<string, unknown> | undefined): MovementConfig {
+  const bcg = (thresholds?.bcg ?? {}) as { movement_stable_band_pct?: number };
   const lifecycle = (thresholds?.lifecycle ?? {}) as { new_first_sale_within_days?: number };
-  const volume = Object.fromEntries(Object.entries(bcg.volume_threshold ?? {}).filter(([company]) => isProductPageCompany(company)));
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
-  return {
-    volume,
-    profitPct: num(bcg.profit_threshold_pct),
-    movementBandPct: num(bcg.movement_stable_band_pct),
-    newWithinDays: num(lifecycle.new_first_sale_within_days),
-  };
+  return { movementBandPct: num(bcg.movement_stable_band_pct), newWithinDays: num(lifecycle.new_first_sale_within_days) };
 }
 
-/** "Majaal 3,500 / Tika 25,000 units" -- the config volume thresholds. */
-const volumeValues = (t: BcgThresholds) => {
-  const parts = Object.entries(t.volume).map(([company, v]) => `${company} ${v.toLocaleString('en-US')}`);
-  return parts.length ? `${parts.join(' / ')} units` : 'the company threshold';
-};
-const gpRule = (t: BcgThresholds) => (t.profitPct === null ? 'the GP% threshold' : `${t.profitPct}%`);
 /** The Product Movement rule in one line, with the config values (the "?" of the Product Movement donut). */
-export function movementRule(t: BcgThresholds): string {
+export function movementRule(t: MovementConfig): string {
   const band = t.movementBandPct === null ? 'X%' : `${t.movementBandPct}%`;
   const days = t.newWithinDays === null ? 'N days' : `${t.newWithinDays} days`;
-  return `Improved > +${band} · Drop < −${band} · Stable within ±${band} · New = first sale ≤ ${days} or none in the prior 12 months · archived Odoo products are left out`;
+  return `Improved > +${band} · Drop < −${band} · Stable within ±${band} · New = first sale ≤ ${days} or none in the prior period · archived Odoo products are left out`;
 }
 
-/** The BCG class rule in one line, with the config thresholds (the "?" of the BCG page). */
-export function bcgClassRule(t: BcgThresholds): string {
-  return `High volume = Volume ≥ ${volumeValues(t)} · High profit = GP% ≥ ${gpRule(t)}`;
-}
-export function bcgClassDefinition(cls: string, t: BcgThresholds): string {
-  switch (cls) {
-    case 'Stars':
-      return `Volume ≥ ${volumeValues(t)}, GP% ≥ ${gpRule(t)}`;
-    case 'Cash Cows':
-      return `Volume ≥ ${volumeValues(t)}, GP% < ${gpRule(t)}`;
-    case 'Strategic':
-      return `Volume < ${volumeValues(t)}, GP% ≥ ${gpRule(t)}`;
-    case 'Dogs':
-      return `Volume < ${volumeValues(t)}, GP% < ${gpRule(t)}`;
-    case UNCLASSIFIED_ZERO_REVENUE:
-      return 'Gross profit margin is undefined at zero revenue';
-    default:
-      return 'No sale with a standard cost in the database, so profit cannot be calculated';
-  }
-}
+/** Each class in words, no thresholds (they stay on the server). Products without cost data count as low margin. */
+export const BCG_DEFINITION: Record<BcgClass, string> = {
+  Stars: 'High volume, high margin.',
+  'Cash Cows': 'High volume, low margin.',
+  Strategic: 'Low volume, high margin.',
+  Dogs: 'Low volume, low margin.',
+};
 /** What to do with each class (category info / tooltips). A Dog is NOT an automatic discontinue. */
 export const BCG_RECOMMENDATION: Record<BcgClass, string> = {
   Stars: 'Protect availability, keep investing, support growth, monitor.',
@@ -453,7 +416,7 @@ export interface FoundBrandStats extends PartnerBrand {
   revenue: number;
   revenuePrior: number;
   deltaPct: number | null;
-  /** Units sold in the last 12 months (added up across UoMs), the 12 months before, and the change. */
+  /** Units sold in the period (added up across UoMs), the prior period, and the change. */
   volume: number;
   volumePrior: number;
   volumeDeltaPct: number | null;
@@ -464,7 +427,7 @@ export interface FoundBrandStats extends PartnerBrand {
   companySplit: BrandCompanySplit[];
 }
 
-/** Brand stats for the last 12 months (volume added up as Unit and its change vs the 12 months before, value,
+/** Brand stats for the period (volume added up as Unit and its change vs the prior period, value,
  * revenue-weighted GP%), highest volume first. SKU Count = catalog rows of the brand; SKUs Sold = those with sales in
  * the period. */
 export function computeBrandStats(rows: ProductFact[]): { found: FoundBrandStats[]; notFound: PartnerBrand[] } {

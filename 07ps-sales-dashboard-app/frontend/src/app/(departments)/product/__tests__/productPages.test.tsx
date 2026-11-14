@@ -16,6 +16,8 @@ interface FilterBarSeen {
   showCompanyDimension?: boolean;
   showTransactionDimensions?: boolean;
   showDateRange?: boolean;
+  dateFromDate?: string;
+  dateToDate?: string;
 }
 
 const mocked = vi.hoisted(() => ({
@@ -33,7 +35,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('../../../../lib/AuthProvider', () => ({
-  useAuth: () => ({ user: null, token: 't', error: null, retryAuth: () => {}, logout: () => {}, isSalesperson: false, canView: () => true }),
+  useAuth: () => ({ user: null, token: 't', error: null, retryAuth: () => {}, logout: () => {}, isSalesperson: false, canView: () => true, can: () => true }),
 }));
 vi.mock('../../../../components/AppHeader', () => ({ AppHeader: () => null }));
 vi.mock('../../../../components/BottomNavBar', () => ({ BottomNavBar: () => null }));
@@ -101,26 +103,26 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe('Product pages: Promotion FilterBar, B2B + B2C default, Product-page options', () => {
+describe('Product pages: standard FilterBar with Company and Date only', () => {
   it('the shared default is Customer Group B2B + B2C', () => {
     expect(DEFAULT_FILTERS.segmentKeys).toEqual([1, 2]);
   });
 
-  it.each(PAGES)('%s sends the default Customer Group [1, 2] and no date range (always the last 12 months)', (_name, page) => {
+  it.each(PAGES)('%s sends Company and Date only: no Customer Group / Channel / Branch / Salesperson, no dates by default (Last 12 Months)', (_name, page) => {
     render(page());
     const last = mocked.scopes[mocked.scopes.length - 1];
-    expect(last.scope).toMatchObject({ segmentKeys: [1, 2] });
-    expect(last.scope).not.toHaveProperty('fromDate');
-    expect(last.scope).not.toHaveProperty('toDate');
+    for (const key of ['segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys', 'fromDate', 'toDate']) expect(last.scope).not.toHaveProperty(key);
   });
 
-  it.each(PAGES)('%s shows company and transaction filters without a date range, without Athena / Backoffice / Inter Company', (_name, page) => {
+  it.each(PAGES)('%s shows only Company (no Athena) and the Date range, defaulting to the Last 12 Months', (_name, page) => {
     render(page());
     const bar = mocked.filterBars[mocked.filterBars.length - 1];
-    // the FilterBar defaults, as on Promotion (company + transaction filters), but no date range: last 12 months
-    expect([bar.showCompanyDimension, bar.showTransactionDimensions, bar.showDateRange]).toEqual([undefined, undefined, false]);
+    expect([bar.showCompanyDimension, bar.showTransactionDimensions, bar.showDateRange]).toEqual([undefined, false, undefined]);
     expect(bar.businessUnits.map((u) => u.company_name)).toEqual(['Majaal', 'Tika']);
-    expect(bar.customerGroups.map((g) => g.segment_name)).toEqual(['B2B', 'B2C']);
+    const to = new Date();
+    const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    expect(bar.dateToDate).toBe(iso(to));
+    expect(bar.dateFromDate?.slice(0, 4)).toBe(String(to.getFullYear() - 1));
   });
 
   it.each(PAGES)('%s: Reset brings the shared filters back to their defaults', (_name, page) => {
@@ -143,7 +145,9 @@ describe('FilterBar parity with Promotion (Revenue Trend)', () => {
    * Inter Company) and it adds its own second row (+ a Reset that also clears that row). */
   const NARROWED = ['businessUnits', 'customerGroups'];
   // ... and has no date range (always the last 12 months, 2026-11-14)
-  const PRODUCT_ONLY = ['secondRow', 'onReset', 'isPristine', 'showDateRange'];
+  // ... and shows Company + its own Date range only (2026-11-14): no transaction filters, dates default to the Last 12 Months
+  const PRODUCT_ONLY = ['secondRow', 'onReset', 'isPristine', 'showTransactionDimensions'];
+  const OWN_DATES = ['dateFromDate', 'dateToDate', 'onDateRangeChange'];
   const promotionProps = () => {
     mocked.filterBars.length = 0;
     render(<RevenueTrendPage />);
@@ -160,7 +164,7 @@ describe('FilterBar parity with Promotion (Revenue Trend)', () => {
     const productKeys = Object.keys(product).filter((k) => !PRODUCT_ONLY.includes(k));
     expect(productKeys).toEqual(Object.keys(promo)); // same props, same order
     for (const key of Object.keys(promo)) {
-      if (NARROWED.includes(key)) continue;
+      if (NARROWED.includes(key) || OWN_DATES.includes(key)) continue;
       expect(product[key], key).toBe(promo[key]);
     }
     expect(product.showLastOrderInfo).toBeUndefined(); // the default (on), as on Promotion

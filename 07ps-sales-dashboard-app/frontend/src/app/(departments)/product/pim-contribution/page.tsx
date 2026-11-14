@@ -12,7 +12,7 @@ import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../lib/format';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
-import { Last12MonthsNote } from '../../../../components/product/Last12MonthsNote';
+import { PeriodNote } from '../../../../components/product/PeriodNote';
 import {
   ChartPanel,
   Card,
@@ -41,7 +41,7 @@ import {
   type FoundBrandStats,
   type PartnerBrand,
 } from '../../../../lib/materialsAnalogy/shared';
-import { ProductName, ltrLabel } from '../../../../components/product/ProductUi';
+import { ProductName, ltrLabel, useProfitAccess } from '../../../../components/product/ProductUi';
 
 type MaterialsAnalogyFact = ProductFact;
 
@@ -167,6 +167,8 @@ export default function PimContributionPage() {
 
   // Company view (one company) or all companies side by side; a product is always one Odoo product in one company.
   const overview = useProductDashboard(token, authError, retryAuth, 'pim-contribution', productScope);
+  // GP% is profit data: shown only with View on profit_data (the API leaves it out otherwise)
+  const profit = useProfitAccess(overview.data?.profitAccess);
   const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const [category, setCategory] = useState<string[]>([]);
   const [bcgClass, setBcgClass] = useState<'All' | (typeof BCG_CLASSES)[number]>('All');
@@ -254,9 +256,9 @@ export default function PimContributionPage() {
   // migrated onto the live `useBrandPerformanceOverview` (backend/src/measures/
   // materialsAnalogyBrandPerformance.ts) since data.json was confirmed the root cause of
   // undercounted SKU Count/revenue/volume for every partner brand (~32% sample of the real
-  // catalog). `perc_gross_profit_L12M` is coerced null -> 0 here (not inside computeBrandStats,
+  // catalog). `grossProfitPct` is coerced null -> 0 here (not inside computeBrandStats,
   // which stays untouched) -- a no-sales live row has no GP baseline to report, and its
-  // total_value_L12M is already 0, so the coercion doesn't change the weighted-GP total. ----
+  // value is already 0, so the coercion doesn't change the weighted-GP total. ----
   const { found: foundBrandStats, notFound: notFoundBrands } = useMemo(() => computeBrandStats(filtered), [filtered]);
 
   return (
@@ -301,7 +303,7 @@ export default function PimContributionPage() {
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
 
-          <Last12MonthsNote period={overview.data?.period} />
+          <PeriodNote period={overview.data?.period} />
           {overview.loading && !overview.data ? (
             <LoadingSkeleton variant="chart" />
           ) : overview.error ? (
@@ -312,6 +314,7 @@ export default function PimContributionPage() {
               found={foundBrandStats}
               notFound={notFoundBrands}
               onSelectBrand={(b) => router.push(buildBrandHref(b.requested, { category, bcgClass }))}
+              showGp={profit.view}
             />
 
           <ChartPanel {...vh('product.pimContribution.categories')}
@@ -339,7 +342,7 @@ export default function PimContributionPage() {
                   labelDirection="ltr"
                 />
               ) : (
-                <p style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>No sales in the last 12 months.</p>
+                <p style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>No sales in the period.</p>
               )}
             </div>
           </ChartPanel>
@@ -389,10 +392,10 @@ export default function PimContributionPage() {
               {isLeaf ? (
                 leafRow ? (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
-                    <LeafStat label="Volume (Last 12 Months)" value={fmtUnits(leafRow.volume)} />
-                    <LeafStat label="Revenue (Last 12 Months)" value={fmtLYD(leafRow.value)} />
+                    <LeafStat label="Volume (period)" value={fmtUnits(leafRow.volume)} />
+                    <LeafStat label="Revenue (period)" value={fmtLYD(leafRow.value)} />
                     <LeafStat label="ASP" value={leafRow.avgUnitPrice === null ? '—' : fmtLYD(leafRow.avgUnitPrice)} />
-                    <LeafStat label="GP%" value={leafRow.grossProfitPct === null ? 'no cost' : `${leafRow.grossProfitPct.toFixed(1)}%`} />
+                    {profit.view && <LeafStat label="GP%" value={leafRow.grossProfitPct === null ? 'no cost' : `${leafRow.grossProfitPct.toFixed(1)}%`} />}
                   </div>
                 ) : null
               ) : (
@@ -500,10 +503,13 @@ function BrandPerformanceSection({
   found,
   notFound,
   onSelectBrand,
+  showGp,
 }: {
   found: FoundBrandStats[];
   notFound: PartnerBrand[];
   onSelectBrand: (b: FoundBrandStats) => void;
+  /** GP% is profit data (profit_data View). */
+  showGp: boolean;
 }) {
   return (
     <div id="brand-performance">
@@ -511,12 +517,12 @@ function BrandPerformanceSection({
         Brand Performance <VisualInfoIcons title="Brand Performance" {...vh('product.pimContribution.brands')} />
       </div>
       <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 16 }}>
-        Named partner brands · last 12 months · sorted by volume · synced to the filters above
+        Named partner brands · the period · sorted by volume · synced to the filters above
       </div>
 
       <div className="ps-brand-grid" data-testid="brand-grid">
         {found.map((b) => (
-          <BrandCard key={b.requested} b={b} onClick={() => onSelectBrand(b)} />
+          <BrandCard key={b.requested} b={b} showGp={showGp} onClick={() => onSelectBrand(b)} />
         ))}
         {notFound.map((b) => (
           <UnassignedBrandCard key={b.requested} b={b} />
@@ -527,12 +533,12 @@ function BrandPerformanceSection({
 }
 
 /** One consolidated brand card (redesign) -- canonical name + company-split badges in the header,
- * Revenue (last 12 months) + delta as the large primary stat (Section 3.6-style KPI typography, 30px bold),
+ * Revenue (the period) + delta as the large primary stat (Section 3.6-style KPI typography, 30px bold),
  * the other 4 metrics as a compact secondary row (16px bold) so the hierarchy reads Revenue
  * first, everything else supporting -- all inside one bounded Card rather than a header floating
  * above 5 separate same-sized boxes. Whole card is clickable (same `.ps-card-clickable`/keyboard
  * pattern as GaugeCard's own drill-down cards) to navigate to that brand's product list. */
-function BrandCard({ b, onClick }: { b: FoundBrandStats; onClick: () => void }) {
+function BrandCard({ b, onClick, showGp }: { b: FoundBrandStats; onClick: () => void; showGp: boolean }) {
   return (
     <Card
       aria-label={`${b.requested} brand performance, view products`}
@@ -578,9 +584,9 @@ function BrandCard({ b, onClick }: { b: FoundBrandStats; onClick: () => void }) 
           <div style={{ fontSize: 30, fontWeight: 700, color: 'var(--ps-color-text)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
             {fmtUnits(b.volume)}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>Volume (Last 12 Months)</div>
+          <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 4 }}>Volume (period)</div>
           <div style={{ fontSize: 12, fontWeight: 600, marginTop: 2, color: b.volumeDeltaPct === null ? 'var(--ps-color-muted-text)' : b.volumeDeltaPct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)' }}>
-            {b.volumeDeltaPct === null ? 'no sales in prior 12 months' : `${fmtPct(b.volumeDeltaPct)} vs prior 12 months`}
+            {b.volumeDeltaPct === null ? 'no sales in the prior period' : `${fmtPct(b.volumeDeltaPct)} vs prior period`}
           </div>
         </div>
         {/* Secondary metrics as a 2x2 grid (not an inline row) -- at 4-per-row card widths (~230px)
@@ -588,10 +594,10 @@ function BrandCard({ b, onClick }: { b: FoundBrandStats; onClick: () => void }) 
             shrinking text past a readable size or truncating values, so the secondary group stacks
             below Revenue instead, keeping every stat's own text at full size. */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-          <SecondaryStat label="Revenue (Last 12 Months)" value={fmtLYD(b.revenue)} />
-          <SecondaryStat label="GP%" value={b.gp === null ? '—' : `${b.gp.toFixed(1)}%`} />
+          <SecondaryStat label="Revenue (period)" value={fmtLYD(b.revenue)} />
+          {showGp && <SecondaryStat label="GP%" value={b.gp === null ? '—' : `${b.gp.toFixed(1)}%`} />}
           <SecondaryStat label="SKUs in catalog" value={String(b.skuCount)} />
-          <SecondaryStat label="SKUs sold in last 12 months" value={String(b.skuSold)} />
+          <SecondaryStat label="SKUs sold in the period" value={String(b.skuSold)} />
         </div>
       </div>
     </Card>
