@@ -1,4 +1,4 @@
-import type { AgingBucketAmount, BcgMovement, LifecycleSegment, ProductCompanyPart, ProductDashboardOverview, ProductDashboardRow, StockBand, UomQty } from '../api';
+import type { AgingBucketAmount, BcgMovement, LifecycleSegment, ProductCompanyPart, ProductStatus, ProductDashboardOverview, ProductDashboardRow, StockBand, UomQty } from '../api';
 
 /**
  * Product pages (BCG Matrix / Stock Velocity / PIM Contribution / Product Lifecycle) -- shared types,
@@ -45,7 +45,7 @@ export interface ProductFact {
   Size: string | null;
   SKU: string | null;
   IsActive: number | null;
-  // -- period (follows the date range; default calendar YTD) --
+  // -- period: always the last 12 months (no date range, 2026-11-14) --
   value: number;
   /** Invoiced quantity of the period, added up as "Unit" across UoMs. */
   volume: number;
@@ -58,24 +58,26 @@ export interface ProductFact {
   volumePrior: number;
   avgUnitPrice: number | null;
   grossProfitPct: number | null;
-  // -- BCG (calendar YTD vs LYTD, as of the last ETL run) --
-  bcg_class_YTD: string | null;
-  bcg_class_LYTD: string | null;
-  /** The data the class is computed on: the product's latest fully costed window (calendar YTD, else its latest year). */
+  /** Unclassified / Dormant / Active / NonActive (ETL); null before migration 0073 + a product refresh. */
+  productStatus: ProductStatus | null;
+  // -- BCG (last 12 months vs the 12 months before; Active products only) --
+  bcg_class: string | null;
+  bcg_class_P12M: string | null;
+  /** The data the class is computed on: the last 12 months (fully costed days). */
   bcgVolume: number | null;
   bcgProfit: number | null;
   bcgGrossProfitPct: number | null;
-  /** 'YTD 2026' or '2025'; null = no profit data in the database. */
+  /** 'Last 12 Months' or 'Last 12 Months (costed sales)'; null = no profit data. */
   bcgDataPeriod: string | null;
   bcgDataAsOf: string | null;
   bcg_movement: BcgMovement | null;
   bcgExcludedCategory: boolean;
-  total_value_YTD: number;
-  total_value_LYTD: number;
-  total_quantity_YTD: number;
-  total_quantity_LYTD: number;
-  avg_unit_price_YTD: number | null;
-  perc_gross_profit_YTD: number | null;
+  total_value_L12M: number;
+  total_value_P12M: number;
+  total_quantity_L12M: number;
+  total_quantity_P12M: number;
+  avg_unit_price_L12M: number | null;
+  perc_gross_profit_L12M: number | null;
   quantity_growth_pct: number | null;
   // -- stock & lifecycle (as of the last ETL run) --
   stockQty: number;
@@ -132,8 +134,9 @@ export function toProductFacts(data: ProductDashboardOverview | null | undefined
     volumePrior: r.volumePrior,
     avgUnitPrice: r.avgUnitPrice,
     grossProfitPct: r.grossProfitPct,
-    bcg_class_YTD: r.bcgClassYTD,
-    bcg_class_LYTD: r.bcgClassLYTD,
+    productStatus: r.productStatus ?? null,
+    bcg_class: r.bcgClass,
+    bcg_class_P12M: r.bcgClassPrior12M,
     bcgVolume: r.bcgVolume ?? null,
     bcgProfit: r.bcgProfit ?? null,
     bcgGrossProfitPct: r.bcgGrossProfitPct ?? null,
@@ -141,13 +144,14 @@ export function toProductFacts(data: ProductDashboardOverview | null | undefined
     bcgDataAsOf: r.bcgDataAsOf ?? null,
     bcg_movement: r.bcgMovement,
     bcgExcludedCategory: r.bcgExcludedCategory,
-    total_value_YTD: r.valueYTD,
-    total_value_LYTD: r.valueLYTD,
-    total_quantity_YTD: r.volumeYTD,
-    total_quantity_LYTD: r.volumeLYTD,
-    avg_unit_price_YTD: r.volumeYTD ? r.valueYTD / r.volumeYTD : null,
-    perc_gross_profit_YTD: r.grossProfitPctYTD,
-    quantity_growth_pct: r.volumeLYTD > 0 ? ((r.volumeYTD - r.volumeLYTD) / r.volumeLYTD) * 100 : null,
+    // the period IS the last 12 months; valuePrior / volumePrior = the 12 months before
+    total_value_L12M: r.value,
+    total_value_P12M: r.valuePrior,
+    total_quantity_L12M: r.volume,
+    total_quantity_P12M: r.volumePrior,
+    avg_unit_price_L12M: r.volume ? r.value / r.volume : null,
+    perc_gross_profit_L12M: r.grossProfitPctL12M,
+    quantity_growth_pct: r.volumePrior > 0 ? ((r.volume - r.volumePrior) / r.volumePrior) * 100 : null,
     stockQty: r.stockQty,
     stockValue: r.stockValue,
     inTransitQty: r.inTransitQty,
@@ -171,8 +175,8 @@ export function toProductFacts(data: ProductDashboardOverview | null | undefined
 }
 
 /** Rows that belong in a BCG quadrant: one of the 4 classes, not a packaging/raw-material category. */
-export function isBcgClassified(r: ProductFact): r is ProductFact & { bcg_class_YTD: BcgClass } {
-  return !r.bcgExcludedCategory && BCG_CLASSES.includes(r.bcg_class_YTD as BcgClass);
+export function isBcgClassified(r: ProductFact): r is ProductFact & { bcg_class: BcgClass } {
+  return !r.bcgExcludedCategory && BCG_CLASSES.includes(r.bcg_class as BcgClass);
 }
 
 // ---- Formatters (Libyan Dinar ISO code is LYD) ----
@@ -291,7 +295,7 @@ const gpRule = (t: BcgThresholds) => (t.profitPct === null ? 'the GP% threshold'
 export function movementRule(t: BcgThresholds): string {
   const band = t.movementBandPct === null ? 'X%' : `${t.movementBandPct}%`;
   const days = t.newWithinDays === null ? 'N days' : `${t.newWithinDays} days`;
-  return `Improved > +${band} · Drop < −${band} · Stable within ±${band} · New = first sale ≤ ${days} or no LYTD · archived Odoo products are left out`;
+  return `Improved > +${band} · Drop < −${band} · Stable within ±${band} · New = first sale ≤ ${days} or none in the prior 12 months · archived Odoo products are left out`;
 }
 
 /** The BCG class rule in one line, with the config thresholds (the "?" of the BCG page). */
@@ -384,7 +388,7 @@ export interface PimFilters {
 
 /** The company itself is applied by the API (company view vs all companies); `company` here only drops rows of
  * another company if a company-view response is mixed with an older one. */
-export function filterByPageFilters<T extends { Company: string; Companies?: string[]; Category: string | null; bcg_class_YTD: string | null }>(
+export function filterByPageFilters<T extends { Company: string; Companies?: string[]; Category: string | null; bcg_class: string | null }>(
   rows: T[],
   filters: PimFilters,
 ): T[] {
@@ -392,7 +396,7 @@ export function filterByPageFilters<T extends { Company: string; Companies?: str
     (r) =>
       (filters.company === 'All' || (r.Companies ?? [r.Company]).includes(filters.company)) &&
       (filters.category.length === 0 || (r.Category !== null && filters.category.includes(r.Category))) &&
-      (filters.bcgClass === 'All' || r.bcg_class_YTD === filters.bcgClass),
+      (filters.bcgClass === 'All' || r.bcg_class === filters.bcgClass),
   );
 }
 
@@ -449,7 +453,7 @@ export interface FoundBrandStats extends PartnerBrand {
   revenue: number;
   revenuePrior: number;
   deltaPct: number | null;
-  /** Units sold in the period (added up across UoMs), the same period last year, and the change. */
+  /** Units sold in the last 12 months (added up across UoMs), the 12 months before, and the change. */
   volume: number;
   volumePrior: number;
   volumeDeltaPct: number | null;
@@ -460,7 +464,7 @@ export interface FoundBrandStats extends PartnerBrand {
   companySplit: BrandCompanySplit[];
 }
 
-/** Brand stats for the selected period (volume added up as Unit and its change vs the same period last year, value,
+/** Brand stats for the last 12 months (volume added up as Unit and its change vs the 12 months before, value,
  * revenue-weighted GP%), highest volume first. SKU Count = catalog rows of the brand; SKUs Sold = those with sales in
  * the period. */
 export function computeBrandStats(rows: ProductFact[]): { found: FoundBrandStats[]; notFound: PartnerBrand[] } {

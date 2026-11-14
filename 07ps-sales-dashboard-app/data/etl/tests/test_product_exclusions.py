@@ -16,6 +16,11 @@ HEADERS = {
 }
 
 
+
+def on_pages(dim: "pd.DataFrame") -> "pd.DataFrame":
+    """The Product pages' rows: Dim_ProductDashboard also holds every other product (OnProductPages = 0, 2026-11-14)."""
+    return dim[dim["OnProductPages"].eq(1)] if "OnProductPages" in dim.columns else dim
+
 def _write(path: Path, customers=(), categories=(), products=()) -> Path:
     with pd.ExcelWriter(path) as xl:
         pd.DataFrame([["Read me"]], columns=["Product pages – exclusions list"]).to_excel(xl, sheet_name="Instructions", index=False)
@@ -182,7 +187,7 @@ def test_category_exclusion_includes_sub_categories_and_products_keep_wins() -> 
     lines = [_line("Tika", i, "2026-09-01", 1, 10) for i in (1, 2, 3, 4, 5)]
     ex = _rules(categories=[["All", 39, "Exclude"]], products=[["Tika", 3, "Keep"], ["All", 5, "Exclude"]])
     out = _build(lines, dim, ex)
-    assert set(out["Dim_ProductDashboard"]["ProductKey"]) == {"3", "4"}
+    assert set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductKey"]) == {"3", "4"}
     assert out["Fact_ProductSalesDaily"]["Value"].sum() == 20
 
 
@@ -195,11 +200,11 @@ def test_category_and_product_rules_are_company_scoped() -> None:
     )
     lines = [_line("Majaal", 1, "2026-09-01", 1, 10), _line("Tika", 2, "2026-09-01", 1, 20), _line("Majaal", 4, "2026-09-01", 1, 5)]
     out = _build(lines, dim, _rules(categories=[["Tika", 1, "Exclude"]]))
-    keys = set(out["Dim_ProductDashboard"]["ProductCompanyKey"])
+    keys = set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductCompanyKey"])
     assert keys == {"Majaal|1", "Majaal|4"}                             # the Tika root row leaves Majaal's root products alone
     assert out["Fact_ProductSalesDaily"]["Value"].sum() == 15
     out = _build(lines, dim, _rules(products=[["Majaal", 2, "Exclude"]]))
-    assert "Tika|2" in set(out["Dim_ProductDashboard"]["ProductCompanyKey"])  # a Majaal product row never touches Tika
+    assert "Tika|2" in set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductCompanyKey"])  # a Majaal product row never touches Tika
 
 
 def test_excluded_product_stock_is_left_out_too() -> None:
@@ -209,7 +214,7 @@ def test_excluded_product_stock_is_left_out_too() -> None:
                          "LocationName": "WH", "OnHandQty": 500, "InventoryValue": 50, "StockClass": "FinishedGoods"}])
     out = ProductDashboardBuilder(ProductDashboardConfig.load(CONFIG), "2026-09-29", _rules(categories=[["Tika", 39, "Exclude"]])).build(
         sales, dim, inv, line_costs=pd.Series([1.0]))
-    assert out["Dim_ProductDashboard"].empty and out["Fact_ProductSalesDaily"].empty
+    assert out["Dim_ProductDashboard"].pipe(on_pages).empty and out["Fact_ProductSalesDaily"].empty
 
 
 # ---------------------------------------------------------------- automatic exclusions (2026-11-11)
@@ -240,7 +245,7 @@ def test_archived_products_are_excluded_everywhere_with_their_stock_and_listed_w
                         _inv("Majaal", 4, 10, 100)])
     b = _builder()
     out = b.build(pd.DataFrame(lines), dim, inv, line_costs=pd.Series([1.0] * 3))
-    assert set(out["Dim_ProductDashboard"]["ProductCompanyKey"]) == {"Majaal|4"}   # BCG / Detail / PIM / Stock visuals read this
+    assert set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductCompanyKey"]) == {"Majaal|4"}   # BCG / Detail / PIM / Stock visuals read this
     assert out["Fact_ProductSalesDaily"]["Value"].sum() == 10
     report = b.exclusion_report()
     assert report["products_excluded"]["archived"] == {"total": 3, "by_company": {"Majaal": 2, "Tika": 1}}
@@ -267,7 +272,7 @@ def test_sub_categories_follow_parent_path_even_when_the_parent_has_no_product_a
     lines = [_line("Tika", i, "2026-09-01", 1, 10) for i in (2, 3, 5)]
     b = _builder(_rules(categories=[["All", 39, "Exclude"]], products=[["Tika", 3, "Keep"]]))
     out = b.build(pd.DataFrame(lines), dim, None, line_costs=pd.Series([1.0] * 3), categories=CATEGORIES)
-    assert set(out["Dim_ProductDashboard"]["ProductKey"]) == {"3", "5"}
+    assert set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductKey"]) == {"3", "5"}
     assert b.exclusion_report()["products_excluded"] == {"file_category": {"total": 1, "by_company": {"Tika": 1}}}
 
 
@@ -281,7 +286,7 @@ def test_a_dedicated_raw_materials_category_is_excluded_automatically_with_its_s
     lines = [_line("Tika", i, "2026-09-01", 1, 10) for i in (1, 2, 3, 5)]
     b = _builder(_rules(products=[["Tika", 3, "Keep"]]))
     out = b.build(pd.DataFrame(lines), dim, None, line_costs=pd.Series([1.0] * 4), categories=CATEGORIES)
-    assert set(out["Dim_ProductDashboard"]["ProductKey"]) == {"3", "5"}
+    assert set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductKey"]) == {"3", "5"}
     assert b.exclusion_report()["products_excluded"]["raw_material"]["total"] == 2
 
 
@@ -395,7 +400,7 @@ def test_a_company_row_wins_over_the_all_row_of_the_same_product_for_that_compan
     lines = [_line("Majaal", 5, "2026-09-01", 1, 10), _line("Tika", 5, "2026-09-01", 1, 20),
              _line("Majaal", 6, "2026-09-01", 1, 30), _line("Tika", 6, "2026-09-01", 1, 40)]
     out = _build(lines, dim, ex)
-    assert set(out["Dim_ProductDashboard"]["ProductCompanyKey"]) == {"Tika|5", "Tika|6"}
+    assert set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductCompanyKey"]) == {"Tika|5", "Tika|6"}
 
 
 def test_a_product_id_not_in_odoo_or_of_another_company_is_a_warning_with_its_row(tmp_path) -> None:
@@ -425,7 +430,7 @@ def test_active_no_keeps_nothing_only_keep_with_active_yes_keeps_an_archived_or_
     b = _builder(ex)
     out = b.build(pd.DataFrame([_line("Tika", i, "2026-09-01", 1, 10) for i in (1, 2, 3, 4)]), dim, None, line_costs=pd.Series([1.0] * 4),
                   categories=CATEGORIES)
-    assert set(out["Dim_ProductDashboard"]["ProductKey"]) == {"3", "4"}
+    assert set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductKey"]) == {"3", "4"}
     assert b.exclusion_report()["products_excluded"] == {"archived": {"total": 1, "by_company": {"Tika": 1}},
                                                          "file_category": {"total": 1, "by_company": {"Tika": 1}}}
 

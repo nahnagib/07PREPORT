@@ -170,7 +170,7 @@ def conform_sales_from_mirror(ctx: RunContext) -> TaskResult:
 
 
 def write_sales_from_mirror(ctx: RunContext) -> TaskResult:
-    from departments.sales.jobs import KEY_DIMS, MART_TABLES, cf
+    from departments.sales.jobs import KEY_DIMS, MART_TABLES, cf, fit_to_table
     from etl_platform import quality as q
 
     if ctx.state.get("skip_sales_build"):
@@ -187,7 +187,7 @@ def write_sales_from_mirror(ctx: RunContext) -> TaskResult:
             target = target_table(table, mode)
             cols = [c["name"] for c in insp.get_columns(target)]
             df = result.tables[table]
-            df = df[[c for c in df.columns if c in cols]].copy()
+            df = fit_to_table(table, df, cols).copy()
             cs = replace_changed(conn, target, df, stamp_column="_run_id", stamp_value=ctx.run_uid)
             changes[table] = {k: v for k, v in cs.summary().items() if k != "deleted_keys" or v}
             written += cs.written + len(cs.deleted)

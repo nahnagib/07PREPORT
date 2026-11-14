@@ -85,10 +85,10 @@
   },
 
   "bcg": {
-    "_comment": "Unchanged from the existing BCGMatrixBuilder. YTD invoiced quantity vs company threshold; GP% = (Value - Qty x standard cost) / Value. Products without a standard cost are 'Unclassified (no cost)'. Categories / products / customers left out of every Product page are in the input file ProductExclusions.xlsx (no longer here; product_pages_excluded_category_ids is read only when that file is missing).",
+    "_comment": "Last-12-months invoiced quantity (2026-11-14: rolling last 12 months, no longer calendar YTD) vs company threshold, Active products only (sold in the last 12 months); GP% = (Value - Qty x standard cost) / Value. Products without a standard cost are 'Unclassified (no cost)'. Categories / products / customers left out of every Product page are in the input file ProductExclusions.xlsx (no longer here; product_pages_excluded_category_ids is read only when that file is missing).",
     "volume_threshold": { "Majaal": 3500, "Tika": 25000, "Athena": 3500 },
     "profit_threshold_pct": 35,
-    "_movement_comment": "Product Movement is on VOLUME: QtyYTD vs QtyLYTD (same calendar dates). Discontinued = archived in Odoo; New = first sale within lifecycle.new_first_sale_within_days or no LYTD volume; Improved / Drop = volume growth above +band / below -band; Stable = within the band.",
+    "_movement_comment": "Product Movement is on VOLUME: last 12 months vs the 12 months before. Discontinued = archived in Odoo; New = first sale within lifecycle.new_first_sale_within_days or no volume in the prior 12 months; Improved / Drop = volume growth above +band / below -band; Stable = within the band.",
     "movement_stable_band_pct": 10
   },
 

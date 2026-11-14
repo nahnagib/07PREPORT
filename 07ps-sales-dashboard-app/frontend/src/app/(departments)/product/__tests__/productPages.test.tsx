@@ -106,17 +106,19 @@ describe('Product pages: Promotion FilterBar, B2B + B2C default, Product-page op
     expect(DEFAULT_FILTERS.segmentKeys).toEqual([1, 2]);
   });
 
-  it.each(PAGES)('%s sends the default Customer Group [1, 2] and the date range to the API on first load', (_name, page) => {
+  it.each(PAGES)('%s sends the default Customer Group [1, 2] and no date range (always the last 12 months)', (_name, page) => {
     render(page());
     const last = mocked.scopes[mocked.scopes.length - 1];
-    expect(last.scope).toMatchObject({ segmentKeys: [1, 2], fromDate: '2026-01-01', toDate: '2026-11-07' });
+    expect(last.scope).toMatchObject({ segmentKeys: [1, 2] });
+    expect(last.scope).not.toHaveProperty('fromDate');
+    expect(last.scope).not.toHaveProperty('toDate');
   });
 
-  it.each(PAGES)('%s shows company, transaction filters and date range, without Athena / Backoffice / Inter Company', (_name, page) => {
+  it.each(PAGES)('%s shows company and transaction filters without a date range, without Athena / Backoffice / Inter Company', (_name, page) => {
     render(page());
     const bar = mocked.filterBars[mocked.filterBars.length - 1];
-    // the FilterBar defaults, as on Promotion: company + transaction filters + date range all shown
-    expect([bar.showCompanyDimension, bar.showTransactionDimensions, bar.showDateRange]).toEqual([undefined, undefined, undefined]);
+    // the FilterBar defaults, as on Promotion (company + transaction filters), but no date range: last 12 months
+    expect([bar.showCompanyDimension, bar.showTransactionDimensions, bar.showDateRange]).toEqual([undefined, undefined, false]);
     expect(bar.businessUnits.map((u) => u.company_name)).toEqual(['Majaal', 'Tika']);
     expect(bar.customerGroups.map((g) => g.segment_name)).toEqual(['B2B', 'B2C']);
   });
@@ -140,7 +142,8 @@ describe('FilterBar parity with Promotion (Revenue Trend)', () => {
   /** The only differences a Product page may have: its two option lists are narrowed (no Athena; no Backoffice /
    * Inter Company) and it adds its own second row (+ a Reset that also clears that row). */
   const NARROWED = ['businessUnits', 'customerGroups'];
-  const PRODUCT_ONLY = ['secondRow', 'onReset', 'isPristine'];
+  // ... and has no date range (always the last 12 months, 2026-11-14)
+  const PRODUCT_ONLY = ['secondRow', 'onReset', 'isPristine', 'showDateRange'];
   const promotionProps = () => {
     mocked.filterBars.length = 0;
     render(<RevenueTrendPage />);

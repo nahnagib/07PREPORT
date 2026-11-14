@@ -12,7 +12,8 @@ import { standardFilterBarProps } from '../standardFilterBarProps';
  * FilterProvider state -- so the Customer Group default (B2B + B2C) applies on first load and after Reset, as on
  * Promotion. The Product-only filters (Category, Stock Band, BCG Class, Lifecycle Segment) go in FilterBar.secondRow.
  * Product-page rules on top: Athena is never offered (isProductPageCompany), nor Backoffice / Inter Company in Customer
- * Group (isProductPageSegment: their lines are not real sales and the ETL drops them from every Product table).
+ * Group (isProductPageSegment: their lines are not real sales and the ETL drops them from every Product table), and no
+ * date range: the Product pages are always the last 12 months (2026-11-14).
  *
  * `scope` is what useProductDashboard sends: the company view (one company selected, else every company side by side)
  * and the Customer Group / Channel / Branch / Salesperson keys (the API applies them, and the salesperson lock).
@@ -20,7 +21,7 @@ import { standardFilterBarProps } from '../standardFilterBarProps';
 export function useProductFilters(refresh?: RefreshStatus | null) {
   const { isSalesperson } = useAuth();
   const state = useFilterState();
-  const { effectiveFilters, dateFromDate, dateToDate, resetFilters, isAtDefaults } = state;
+  const { effectiveFilters, resetFilters, isAtDefaults } = state;
   const filterOptions = useScopedFilterOptions();
 
   const businessUnits = useMemo(
@@ -46,16 +47,15 @@ export function useProductFilters(refresh?: RefreshStatus | null) {
       channelKeys: effectiveFilters.channelKeys,
       salesTeamKeys: effectiveFilters.salesTeamKeys,
       salespersonKeys: effectiveFilters.salespersonKeys,
-      fromDate: dateFromDate,
-      toDate: dateToDate,
     }),
-    [companyView, effectiveFilters, dateFromDate, dateToDate],
+    [companyView, effectiveFilters],
   );
 
-  const filterBarProps = standardFilterBarProps({ state, options: filterOptions, isSalesperson, refresh, businessUnits, customerGroups });
+  // No date range (2026-11-14): every Product page is the last 12 months, shown under the header (Last12MonthsNote).
+  const filterBarProps = { ...standardFilterBarProps({ state, options: filterOptions, isSalesperson, refresh, businessUnits, customerGroups }), showDateRange: false };
 
   /** Reset props for a page with its own second-row filters (Category, Stock Band, ...): Reset does exactly what it does
-   * on Promotion (the shared filters back to B2B + B2C and calendar YTD) AND clears those; it is enabled when either is
+   * on Promotion (the shared filters back to B2B + B2C) AND clears those; it is enabled when either is
    * changed. */
   const withLocalReset = (resetLocal: () => void, localPristine: boolean) => ({
     onReset: () => {

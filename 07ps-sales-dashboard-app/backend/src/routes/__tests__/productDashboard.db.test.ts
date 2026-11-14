@@ -10,8 +10,9 @@ import type { AddressInfo } from 'node:net';
  *
  * The real routers (one per page, routes/productDashboard.ts), scope middleware (resolveScopedFilters, the SAME parser
  * the Promotion routes use) and pool; only the signed-in admin is faked. Filter matrix, for EVERY Product page and
- * EVERY filter (company, Customer Group, Distribution Channel, Branch = sales team, Salesperson, date range):
- *   - a single value narrows the totals (value, lines, Volume YTD) below the unfiltered ones;
+ * EVERY filter (company, Customer Group, Distribution Channel, Branch = sales team, Salesperson; no date range -- always the
+ * last 12 months since 2026-11-14):
+ *   - a single value narrows the totals (value, lines, volume) below the unfiltered ones;
  *   - two values sent as repeated params (what the frontend sends) give exactly the sum of the two single values --
  *     each filter partitions the sales rows, so this proves both values reached the SQL (a value dropped by the parser
  *     would break the sum);
@@ -43,7 +44,7 @@ let base = '';
 let pool: typeof import('../../db/pool').pool;
 const PAGES = ['bcg-matrix', 'stock-velocity', 'pim-contribution', 'product-lifecycle'] as const;
 
-interface Totals { value: number; lines: number; volumeYTD: number; products: number }
+interface Totals { value: number; lines: number; volume: number; products: number }
 async function totals(page: string, qs: string): Promise<Totals> {
   const res = await fetch(`${base}/product-dashboard/${page}/overview${qs ? `?${qs}` : ''}`);
   expect(res.status, `${page}?${qs}`).toBe(200);
@@ -51,7 +52,7 @@ async function totals(page: string, qs: string): Promise<Totals> {
   return {
     value: Number(body.totals.value),
     lines: Number(body.totals.lines),
-    volumeYTD: (body.products as Json[]).reduce((t, p) => t + Number(p.volumeYTD), 0),
+    volume: (body.products as Json[]).reduce((t, p) => t + Number(p.volume), 0),
     products: (body.products as Json[]).length,
   };
 }
@@ -61,7 +62,7 @@ const close = (a: number, b: number, what: string) => expect(Math.abs(a - b), wh
 /** The two biggest values of a filter key in the period (so both narrow the data and neither is empty). */
 async function topTwo(column: string): Promise<(string | number)[]> {
   const [rows] = await pool.query(
-    `SELECT ${column} AS k, SUM(d.Lines) n FROM v_sales_product_daily d WHERE OrderDate >= MAKEDATE(YEAR(CURDATE()), 1) AND ${column} IS NOT NULL
+    `SELECT ${column} AS k, SUM(d.Lines) n FROM v_sales_product_daily d WHERE OrderDate >= CURDATE() - INTERVAL 12 MONTH AND ${column} IS NOT NULL
        AND Company <> 'Athena' GROUP BY ${column} ORDER BY n DESC LIMIT 2`,
   );
   return (rows as Json[]).map((r) => (typeof r.k === 'string' ? r.k : Number(r.k)));
@@ -100,7 +101,7 @@ describe.skipIf(!RUN)('Product pages filter matrix (real warehouse, read-only)',
           expect(tb.lines).toBeLessThan(all.lines);
           close(tab.value, ta.value + tb.value, `${key}=[${a},${b}] value = sum`);
           expect(tab.lines, `${key}=[${a},${b}] lines = sum`).toBe(ta.lines + tb.lines);
-          close(tab.volumeYTD, ta.volumeYTD + tb.volumeYTD, `${key}=[${a},${b}] Volume YTD = sum`);
+          close(tab.volume, ta.volume + tb.volume, `${key}=[${a},${b}] volume = sum`);
           expect(tab.lines).toBeGreaterThan(ta.lines);
         });
       }
@@ -115,12 +116,20 @@ describe.skipIf(!RUN)('Product pages filter matrix (real warehouse, read-only)',
         expect(m.products + t.products).toBe(all.products);
       });
 
-      it('date range: a shorter range has fewer sales lines than calendar YTD', async () => {
+      it('no date range: fromDate / toDate are ignored, the window is always the last 12 months', async () => {
         const all = await totals(page, '');
         const year = new Date().getFullYear();
         const q1 = await totals(page, `fromDate=${year}-01-01&toDate=${year}-03-31`);
-        expect(q1.lines).toBeGreaterThan(0);
-        expect(q1.lines).toBeLessThan(all.lines);
+        expect(q1.lines).toBe(all.lines);
+      });
+
+      it('status cards: Total SKUs = the 4 statuses, the 5 BCG cards = Active', async () => {
+        const res = await fetch(`${base}/product-dashboard/${page}/overview`);
+        const body: Json = await res.json();
+        const s = body.statusSummary;
+        expect(s, body.statusSummaryError).toBeTruthy();
+        expect(s.total).toBe(s.active.count + s.nonActive.count + s.dormant.count + s.unclassified.count);
+        expect(s.bcg.classes.reduce((t: number, c: Json) => t + c.count, 0) + s.bcg.notClassified).toBe(s.active.count);
       });
 
       it('the comma-joined form is not a multi-value request (the client never sends it)', async () => {

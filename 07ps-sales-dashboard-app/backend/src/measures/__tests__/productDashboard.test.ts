@@ -1,7 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'mysql2/promise';
 import { DateTime } from 'luxon';
-import { computeProductDashboard, resolvePeriod } from '../productDashboard';
+import { computeProductDashboard, resolvePeriod, summarizeProductStatus, type StatusInput } from '../productDashboard';
+import { last12MonthsRange } from '../../lib/last12Months';
+
+// Every Product page number is the last 12 months as of "today" (2026-11-14 here).
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-14T10:00:00Z'));
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 /** Mocks pool.query by SQL text (same convention as the other measure tests). */
 const META = [{ AsOfDate: '2026-09-29', LookbackDays: 90,
@@ -18,7 +28,7 @@ function makePool(salesRows: unknown[], productRows: unknown[], meta: unknown[] 
     }
     if (sql.includes('COUNT(DISTINCT d.OrderDate)')) return [orderDayRows];
     if (sql.includes('SELECT DISTINCT d.ProductCompanyKey')) return [soldRows];
-    if (sql.includes('AS win')) return [bcgWindows];
+    if (sql.includes('AS fullyCosted')) return [bcgWindows];
     if (sql.includes('FROM v_sales_product_daily')) return [salesRows];
     if (sql.includes('FROM v_sales_product_dashboard')) return [productRows];
     if (sql.includes('FROM etl_sales_product_dashboard_meta')) return [meta];
@@ -34,25 +44,26 @@ const product = (key: string, company: string, extra: Record<string, unknown> = 
 });
 const sale = (k: string, uom: string, value: number, qty: number, lines = 1, extra: Record<string, unknown> = {}) => ({
   k, uom, value, qty, lineCount: lines, costValue: 0, uncostedQty: qty, valuePrior: 0, qtyPrior: 0, icValue: 0,
-  linesPrior: 0, valueYTD: 0, qtyYTD: 0, valueLYTD: 0, qtyLYTD: 0, ...extra,
+  linesPrior: 0, ...extra,
 });
 
-/** One row of the BCG window query: product, window ('YTD' or a year), value, qty, cost, last sale date, uncosted qty. */
-const win = (k: string, w: string, value: number, qty: number, cost: number, lastDate = '2025-06-30', uncosted = 0) => ({
-  k, company: k.split('|')[0], win: w, value, qty, cost, incompleteDays: uncosted, costedRows: 1, lastDate,
+/** One row of the last-12-months BCG query: product, value, qty, cost, last sale date, uncosted days. */
+const win = (k: string, value: number, qty: number, cost: number, lastDate = '2026-06-30', uncosted = 0) => ({
+  k, company: k.split('|')[0], value, qty, cost, incompleteDays: uncosted, costedRows: 1, lastDate,
 });
 
-describe('resolvePeriod', () => {
-  const now = DateTime.fromISO('2026-09-29T10:00:00', { zone: 'Africa/Tripoli' });
-
-  it('defaults to calendar YTD and counts days inclusively', () => {
-    const p = resolvePeriod(undefined, undefined, now);
-    expect(p).toMatchObject({ from: '2026-01-01', to: '2026-09-29', days: 272, priorFrom: '2025-01-01', priorTo: '2025-09-29' });
+describe('resolvePeriod / last12MonthsRange (one window for every Product page)', () => {
+  it('is today - 12 months (same day) to today, both included, and the 12 months before', () => {
+    const now = DateTime.fromISO('2026-11-14T10:00:00', { zone: 'Africa/Tripoli' });
+    expect(resolvePeriod(now)).toEqual({
+      from: '2025-11-14', to: '2026-11-14', days: 366, priorFrom: '2024-11-14', priorTo: '2025-11-13', label: 'Last 12 Months',
+    });
   });
 
-  it('caps the end at today and never lets from pass to', () => {
-    expect(resolvePeriod('2026-09-01', '2027-01-01', now)).toMatchObject({ from: '2026-09-01', to: '2026-09-29', days: 29 });
-    expect(resolvePeriod('2026-10-05', '2026-09-10', now)).toMatchObject({ from: '2026-09-10', to: '2026-09-10', days: 1 });
+  it('uses the app timezone date and handles Feb 29', () => {
+    // 23:30 UTC on 28 Feb is already 1 Mar in Tripoli (UTC+2)
+    expect(last12MonthsRange(DateTime.fromISO('2025-02-28T23:30:00Z'))).toMatchObject({ from: '2024-03-01', to: '2025-03-01' });
+    expect(last12MonthsRange(DateTime.fromISO('2028-02-29T10:00:00', { zone: 'Africa/Tripoli' }))).toMatchObject({ from: '2027-02-28', to: '2028-02-29' });
   });
 });
 
@@ -69,13 +80,13 @@ describe('computeProductDashboard', () => {
       [product('Majaal|101', 'Majaal'), product('Majaal|102', 'Majaal'), product('Majaal|103', 'Majaal'), product('Tika|201', 'Tika')],
     );
 
-    const out = await computeProductDashboard(pool, { fromDate: '2026-09-01', toDate: '2026-09-10' });
+    const out = await computeProductDashboard(pool, {});
     const byKey = Object.fromEntries(out.products.map((p) => [p.productCompanyKey, p]));
 
-    expect(out.period.days).toBe(10);
-    expect(byKey['Majaal|101']).toMatchObject({ value: 1000, volume: 100, uom: 'UNIT', velocity: 10 });
+    expect(out.period).toMatchObject({ from: '2025-11-14', to: '2026-11-14', days: 366, label: 'Last 12 Months' });
+    expect(byKey['Majaal|101']).toMatchObject({ value: 1000, volume: 100, uom: 'UNIT', velocity: 100 / 366 });
     // two units of measure: added up as "Unit" (2026-11-07), the split kept for reference
-    expect(byKey['Majaal|102']).toMatchObject({ volume: 15, uom: 'Unit', velocity: 1.5 });
+    expect(byKey['Majaal|102']).toMatchObject({ volume: 15, uom: 'Unit', velocity: 15 / 366 });
     expect(byKey['Majaal|102'].volumeByUom).toEqual([{ uom: 'm2', qty: 10 }, { uom: 'UNIT', qty: 5 }]);
     expect(byKey['Majaal|103']).toMatchObject({ value: 0, volume: 0, lines: 0 });
     expect(byKey['Majaal|101']).toMatchObject({ productKey: '101', brand: 'Unassigned' }); // Odoo product id; empty Odoo brand
@@ -91,7 +102,7 @@ describe('computeProductDashboard', () => {
       META, [], [{ k: 'Majaal|101' }, { k: 'Majaal|102' }], // 102 sold in the period, to someone else
     );
 
-    const out = await computeProductDashboard(pool, { fromDate: '2026-01-01', toDate: '2026-01-31', filters: { salespersonKeys: [42] } });
+    const out = await computeProductDashboard(pool, { filters: { salespersonKeys: [42] } });
 
     const salesCall = calls.find((c) => c.sql.includes('v_sales_product_daily'))!;
     expect(salesCall.sql).toContain('d.SalespersonKey IN (?)');
@@ -130,20 +141,23 @@ describe('computeProductDashboard', () => {
     });
   });
 
-  it('Volume / Revenue YTD and LYTD follow the filters (calendar windows); class (company-wide) and movement do not', async () => {
+  it('volume / revenue of the last 12 months and the 12 months before follow the filters; class (company-wide) and movement do not', async () => {
     const { pool, calls } = makePool(
-      [sale('Majaal|1', 'Unit', 10, 1, 1, { valueYTD: 900, qtyYTD: 90, valueLYTD: 400, qtyLYTD: 40 }),
-       sale('Majaal|1', 'm2', 0, 0, 0, { valueYTD: 100, qtyYTD: 10 })],
-      [product('Majaal|1', 'Majaal', { ValueYTD: 99999, QtyYTD: 9999, BcgClassYTD: 'Dogs', BcgMovement: 'Improved' })],
+      [sale('Majaal|1', 'Unit', 900, 90, 1, { valuePrior: 400, qtyPrior: 40 }),
+       sale('Majaal|1', 'm2', 100, 10, 1)],
+      [product('Majaal|1', 'Majaal', { ValueYTD: 99999, QtyYTD: 9999, BcgClassYTD: 'Dogs', BcgMovement: 'Improved', ProductStatus: 'Active' })],
       META, [], [],
-      [win('Majaal|1', 'YTD', 50000, 4000, 20000)], // company-wide: 4,000 units >= 3,500, GP 60% -> Stars
+      [win('Majaal|1', 50000, 4000, 20000)], // company-wide: 4,000 units >= 3,500, GP 60% -> Stars
     );
-    const out = await computeProductDashboard(pool, { fromDate: '2026-03-01', toDate: '2026-03-31', filters: { segmentKeys: [1] } });
-    expect(out.products[0]).toMatchObject({ valueYTD: 1000, volumeYTD: 100, valueLYTD: 400, volumeLYTD: 40, bcgClassYTD: 'Stars', bcgMovement: 'Improved' });
+    const out = await computeProductDashboard(pool, { filters: { segmentKeys: [1] } });
+    expect(out.products[0]).toMatchObject({ value: 1000, volume: 100, valuePrior: 400, volumePrior: 40, bcgClass: 'Stars', bcgMovement: 'Improved' });
     const salesCall = calls.find((c) => c.sql.includes('SUM(CASE'))!;
-    const today = DateTime.now().setZone('Africa/Tripoli');
-    expect(salesCall.params).toContain(`${today.year}-01-01`);
-    expect(salesCall.params).toContain(`${today.year - 1}-01-01`);
+    expect(salesCall.params).toContain('2025-11-14'); // last 12 months
+    expect(salesCall.params).toContain('2024-11-14'); // the 12 months before
+    expect(salesCall.params).toContain('2025-11-13');
+    expect(salesCall.params).not.toContain('2026-01-01'); // no calendar YTD
+    const bcgCall = calls.find((c) => c.sql.includes('AS fullyCosted'))!;
+    expect(bcgCall.params.slice(0, 2)).toEqual(['2025-11-14', '2026-11-14']);
   });
 
   it('every product links to its Odoo product.product form in its own company (ODOO_URL), never a guessed host', async () => {
@@ -192,7 +206,7 @@ describe('computeProductDashboard', () => {
 
     it('all companies: one row per company product, never combined ("Majaal + Tika" never appears)', async () => {
       const { pool, calls } = makePool(sales, products);
-      const out = await computeProductDashboard(pool, { fromDate: '2026-01-01', toDate: '2026-01-10' });
+      const out = await computeProductDashboard(pool, {});
       expect(out.view).toBe('BMH');
       const cemair = out.products.filter((p) => p.productName === 'Cemair');
       expect(cemair.map((p) => [p.productCompanyKey, p.company, p.value, p.stockQty])).toEqual([
@@ -208,11 +222,11 @@ describe('computeProductDashboard', () => {
 
     it('order days per product come from the distinct order dates in the period (Sales Frequency)', async () => {
       const { pool, calls } = makePool(sales, products, META, [{ k: 'Majaal|301', orderDays: 7 }]);
-      const out = await computeProductDashboard(pool, { fromDate: '2026-01-01', toDate: '2026-01-10', company: 'Majaal' });
+      const out = await computeProductDashboard(pool, { company: 'Majaal' });
       expect(out.products.find((p) => p.productCompanyKey === 'Majaal|301')?.orderDays).toBe(7);
       expect(out.products.find((p) => p.productCompanyKey === 'Majaal|303')?.orderDays).toBe(0);
       const call = calls.find((c) => c.sql.includes('COUNT(DISTINCT d.OrderDate)'))!;
-      expect(call.params).toEqual(['2026-01-01', '2026-01-10', 'Majaal', ['Athena']]);
+      expect(call.params).toEqual(['2025-11-14', '2026-11-14', 'Majaal', ['Athena']]);
     });
 
     it('Athena is excluded in SQL from both the sales and the product rows', async () => {
@@ -228,7 +242,7 @@ describe('computeProductDashboard', () => {
 
     it('company view: only that company, from the daily table filtered by Company', async () => {
       const { pool, calls } = makePool(sales.filter((r) => r.k.startsWith('Tika|')), products);
-      const out = await computeProductDashboard(pool, { fromDate: '2026-01-01', toDate: '2026-01-10', company: 'TIKA' });
+      const out = await computeProductDashboard(pool, { company: 'TIKA' });
       expect(out.view).toBe('Tika');
       const salesCall = calls.find((c) => c.sql.includes('v_sales_product_daily'))!;
       expect(salesCall.sql).toContain('d.Company = ?');
@@ -250,45 +264,123 @@ describe('computeProductDashboard', () => {
     });
   });
 
-  it('BCG: config thresholds on each product\'s latest fully costed data, with its profit and the date of that data', async () => {
+  it('BCG: config thresholds on each Active product\'s last 12 months, with its profit and the date of that data', async () => {
+    const active = { ProductStatus: 'Active' };
     const { pool } = makePool(
       [],
-      ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((i) => product(`${i === '7' ? 'Tika' : 'Majaal'}|${i}`, i === '7' ? 'Tika' : 'Majaal')),
+      [
+        ...['1', '2', '4', '5', '8'].map((i) => product(`Majaal|${i}`, 'Majaal', active)),
+        product('Majaal|6', 'Majaal', { ProductStatus: 'NonActive' }), // not sold in the window: no class
+        product('Tika|7', 'Tika', active),
+        product('Majaal|10', 'Majaal', { ProductStatus: 'NonActive' }), // a window row but not Active: never classified
+      ],
       META, [], [],
       [
-        win('Majaal|1', 'YTD', 7000, 3500, 4550, '2026-11-10'),         // volume = threshold -> High; GP 35% -> High -> Stars
-        win('Majaal|1', '2025', 100, 10, 90),                            // older year never used when YTD is costed
-        win('Majaal|2', 'YTD', 1000, 100, 500, '2026-10-01', 5),          // YTD has an uncosted line ...
-        win('Majaal|2', '2025', 2000, 200, 1800, '2025-12-20'),          // ... so the latest costed year: GP 10% -> Dogs
-        win('Majaal|2', '2024', 9000, 9000, 1000),
-        win('Majaal|3', '2023', 10000, 5000, 9000, '2023-06-30'),        // only sold in 2023: Cash Cows on 2023 data
-        { ...win('Majaal|4', 'YTD', 500, 50, 0, '2026-11-01', 50), costedRows: 0 }, // never costed
-        win('Majaal|5', 'YTD', 900, 30, 300, '2026-11-02'),              // low volume, GP 66.7% -> Strategic
-        win('Tika|7', 'YTD', 30000, 24999, 1000, '2026-11-03'),          // under the Tika 25,000 -> Strategic
-        win('Majaal|8', 'YTD', 0, 10, 80, '2026-11-01'),                // recorded cost, undefined margin
-        win('Majaal|9', '2025', 1000, 100, 1000, '2025-11-03', 5),      // only costed subtotal, genuine zero profit
+        win('Majaal|1', 7000, 3500, 4550, '2026-11-10'),               // volume = threshold -> High; GP 35% -> High -> Stars
+        win('Majaal|2', 2000, 200, 1800, '2026-10-01', 5),             // some uncosted days: the costed days only, GP 10% -> Dogs
+        { ...win('Majaal|4', 500, 50, 0, '2026-11-01', 50), costedRows: 0 }, // never costed
+        win('Majaal|5', 900, 30, 300, '2026-11-02'),                   // low volume, GP 66.7% -> Strategic
+        win('Tika|7', 30000, 24999, 1000, '2026-11-03'),               // under the Tika 25,000 -> Strategic
+        win('Majaal|8', 0, 10, 80, '2026-11-01'),                      // recorded cost, undefined margin
+        win('Majaal|10', 9000, 9000, 1000, '2026-11-01'),
       ],
     );
-    const out = await computeProductDashboard(pool, { company: 'All', fromDate: '2026-03-01', toDate: '2026-03-31' });
+    const out = await computeProductDashboard(pool, { company: 'All' });
     const by = Object.fromEntries(out.products.map((r) => [r.productCompanyKey, r]));
-    expect(by['Majaal|1']).toMatchObject({ bcgClassYTD: 'Stars', bcgProfit: 2450, bcgVolume: 3500, bcgDataAsOf: '2026-11-10' });
-    expect(by['Majaal|1'].bcgDataPeriod).toMatch(/^YTD \d{4}$/);
-    expect(by['Majaal|2']).toMatchObject({ bcgClassYTD: 'Dogs', bcgProfit: 200, bcgDataPeriod: '2025', bcgDataAsOf: '2025-12-20' });
-    expect(by['Majaal|3']).toMatchObject({ bcgClassYTD: 'Cash Cows', bcgProfit: 1000, bcgDataPeriod: '2023', bcgDataAsOf: '2023-06-30' });
-    expect(by['Majaal|4']).toMatchObject({ bcgClassYTD: 'Unclassified (no cost)', bcgProfit: null, bcgDataPeriod: null });
-    expect(by['Majaal|5'].bcgClassYTD).toBe('Strategic');
-    expect(by['Majaal|6']).toMatchObject({ bcgClassYTD: null, bcgProfit: null });   // never sold: no class
-    expect(by['Tika|7'].bcgClassYTD).toBe('Strategic');
-    expect(by['Majaal|8']).toMatchObject({ bcgClassYTD: 'Unclassified (zero revenue)', bcgProfit: -80, bcgGrossProfitPct: null });
-    expect(by['Majaal|9']).toMatchObject({ bcgClassYTD: 'Dogs', bcgProfit: 0, bcgDataPeriod: '2025 (costed sales)', bcgDataAsOf: '2025-11-03' });
+    expect(by['Majaal|1']).toMatchObject({ bcgClass: 'Stars', bcgProfit: 2450, bcgVolume: 3500, bcgDataPeriod: 'Last 12 Months', bcgDataAsOf: '2026-11-10' });
+    expect(by['Majaal|2']).toMatchObject({ bcgClass: 'Dogs', bcgProfit: 200, bcgDataPeriod: 'Last 12 Months (costed sales)' });
+    expect(by['Majaal|4']).toMatchObject({ bcgClass: 'Unclassified (no cost)', bcgProfit: null, bcgDataPeriod: null });
+    expect(by['Majaal|5'].bcgClass).toBe('Strategic');
+    expect(by['Majaal|6']).toMatchObject({ bcgClass: null, bcgProfit: null });
+    expect(by['Tika|7'].bcgClass).toBe('Strategic');
+    expect(by['Majaal|8']).toMatchObject({ bcgClass: 'Unclassified (zero revenue)', bcgProfit: -80, bcgGrossProfitPct: null });
+    expect(by['Majaal|10']).toMatchObject({ bcgClass: null, bcgProfit: null });
+    // the cards: 6 Active = Stars 1 + Strategic 2 + Dogs 1 + Not classified 2 (no cost, zero revenue)
+    expect(out.statusSummary?.active.count).toBe(6);
+    expect(out.statusSummary?.bcg.classes.map((c) => [c.key, c.count])).toEqual([['Stars', 1], ['Cash Cows', 0], ['Strategic', 2], ['Dogs', 1]]);
+    expect(out.statusSummary?.bcg.notClassified).toBe(2);
   });
 
   it('BCG thresholds fall back to the config values when the ETL snapshot of the config has none', async () => {
     const meta = [{ AsOfDate: '2026-11-11', LookbackDays: 90, ConfigJson: '{"bcg":{"movement_stable_band_pct":10}}' }];
-    const { pool } = makePool([], [product('Majaal|1', 'Majaal')], meta, [], [], [win('Majaal|1', 'YTD', 8000, 4000, 4000)]);
+    const { pool } = makePool([], [product('Majaal|1', 'Majaal')], meta, [], [], [win('Majaal|1', 8000, 4000, 4000)]);
     const out = await computeProductDashboard(pool, { company: 'Majaal' });
     expect(out.thresholds.bcg).toEqual({ movement_stable_band_pct: 10, volume_threshold: { Majaal: 3500, Tika: 25000, Athena: 3500 }, profit_threshold_pct: 35 });
-    expect(out.products[0].bcgClassYTD).toBe('Stars'); // 4,000 >= 3,500 and GP 50%
+    expect(out.products[0].bcgClass).toBe('Stars'); // 4,000 >= 3,500 and GP 50%; no ProductStatus yet -> sold in the window = Active
+  });
+
+  describe('Total SKUs / Product Status cards (statusSummary)', () => {
+    const rows = [
+      product('Majaal|1', 'Majaal', { ProductStatus: 'Active', QtyYTD: 100, ValueYTD: 1000 }),
+      product('Majaal|2', 'Majaal', { ProductStatus: 'NonActive', OnHandQty: 5, OnHandValue: 50 }),
+      product('Majaal|3', 'Majaal', { ProductStatus: 'NonActive', OnHandQty: 0 }),
+      product('Majaal|4', 'Majaal', { ProductStatus: 'Dormant', OnProductPages: 0 }),
+      product('Majaal|5', 'Majaal', { ProductStatus: 'Unclassified', OnProductPages: 0 }),
+      product('Majaal|6', 'Majaal', { ProductStatus: 'Active', OnProductPages: 0, QtyYTD: 0, ValueYTD: 0 }), // excluded product that sold
+      product('Tika|7', 'Tika', { ProductStatus: 'Active', QtyYTD: 7, ValueYTD: 70 }),
+    ];
+
+    it('counts every product (OnProductPages 0 too) once; the pages list only OnProductPages = 1', async () => {
+      const { pool } = makePool([], rows, META, [], [], [win('Majaal|1', 1000, 4000, 100)]);
+      const out = await computeProductDashboard(pool, {});
+      expect(out.products.map((p) => p.productCompanyKey)).toEqual(['Majaal|1', 'Majaal|2', 'Majaal|3', 'Tika|7']);
+      expect(out.statusSummaryError).toBeNull();
+      expect(out.statusSummary).toMatchObject({
+        total: 7,
+        active: { count: 3, units: 107, value: 1070 },
+        nonActive: { count: 2, withStock: 1, zeroStock: 1, stockUnits: 5, stockValue: 50 },
+        dormant: { count: 1 },
+        unclassified: { count: 1 },
+      });
+      expect(out.statusSummary?.bcg.classes.find((c) => c.key === 'Stars')).toMatchObject({ count: 1, units: 4000, profit: 900 });
+      expect(out.statusSummary?.bcg.notClassified).toBe(2); // Majaal|6 (no sales on the pages) and Tika|7 (no profit data)
+    });
+
+    it('company view: that company only', async () => {
+      const { pool } = makePool([], rows);
+      const out = await computeProductDashboard(pool, { company: 'Tika' });
+      expect(out.statusSummary).toMatchObject({ total: 1, active: { count: 1 } });
+    });
+
+    it('before migration 0073 (no ProductStatus): no cards, a clear message, the pages still work', async () => {
+      const { pool } = makePool([], [product('Majaal|1', 'Majaal')]);
+      const out = await computeProductDashboard(pool, {});
+      expect(out.products).toHaveLength(1);
+      expect(out.statusSummary).toBeNull();
+      expect(out.statusSummaryError).toMatch(/migration 0073/);
+    });
+
+    it('a row without a known status fails the check (reported, never silently miscounted)', async () => {
+      const { pool } = makePool([], [product('Majaal|1', 'Majaal', { ProductStatus: 'Active' }), product('Majaal|2', 'Majaal', { ProductStatus: 'Weird' })]);
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const out = await computeProductDashboard(pool, {});
+      errors.mockRestore();
+      expect(out.statusSummary).toBeNull();
+      expect(out.statusSummaryError).toMatch(/unknown ProductStatus "Weird"/);
+    });
+  });
+
+  describe('summarizeProductStatus reconciliation', () => {
+    const input = (status: string, over: Partial<StatusInput> = {}): StatusInput => ({ status, onHandQty: 0, onHandValue: 0, unitsL12M: 0, valueL12M: 0, bcg: null, ...over });
+
+    it('Total = Unclassified + Dormant + Active + Non Active, and the 5 BCG cards = Active', () => {
+      const out = summarizeProductStatus([
+        input('Active', { bcg: { bcgClass: 'Stars', volume: 10, profit: 5 } }),
+        input('Active', { bcg: { bcgClass: 'Dogs', volume: 1, profit: -1 } }),
+        input('Active', { bcg: { bcgClass: 'Unclassified (no cost)', volume: null, profit: null } }),
+        input('Active'),
+        input('NonActive', { onHandQty: 3, onHandValue: 30 }),
+        input('Dormant'),
+        input('Unclassified'),
+      ]);
+      expect(out.total).toBe(out.active.count + out.nonActive.count + out.dormant.count + out.unclassified.count);
+      expect(out.bcg.classes.reduce((t, c) => t + c.count, 0) + out.bcg.notClassified).toBe(out.active.count);
+      expect([out.total, out.active.count, out.bcg.notClassified]).toEqual([7, 4, 2]);
+    });
+
+    it('throws on a row with no status', () => {
+      expect(() => summarizeProductStatus([input('Active'), { ...input('Active'), status: null }])).toThrow(/Product status check failed/);
+    });
   });
 
   it('serves Odoo On Hand and the aging buckets of the config', async () => {

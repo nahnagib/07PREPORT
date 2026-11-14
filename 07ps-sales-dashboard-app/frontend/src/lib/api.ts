@@ -2564,8 +2564,8 @@ export function fetchActivityMomentumOverview(
 // ---------------------------------------------------------------------------
 // Product pages (BCG Matrix, Stock Velocity, PIM Contribution, Product Lifecycle) --
 // backend/src/routes/productDashboard.ts over the ETL's pre-aggregated product tables
-// (data/etl/src/sales_pipeline/product_dashboard.py). Period metrics follow fromDate/toDate
-// (default calendar YTD); stock / lifecycle / BCG are as of the last ETL run.
+// (data/etl/src/sales_pipeline/product_dashboard.py). Every metric is the rolling LAST 12 MONTHS (the API's
+// `period`, backend lib/last12Months.ts; no date range, 2026-11-14); stock / lifecycle / status are as of the last ETL run.
 // ---------------------------------------------------------------------------
 
 export type ProductDashboardPage = 'bcg-matrix' | 'stock-velocity' | 'pim-contribution' | 'product-lifecycle';
@@ -2644,26 +2644,39 @@ export interface ProductDashboardRow {
   parts: ProductCompanyPart[];
   firstSaleDate: string | null;
   lastSaleDate: string | null;
-  bcgClassYTD: string | null;
-  bcgClassLYTD: string | null;
-  /** The data behind bcgClassYTD (the product's latest fully costed window): volume, value, profit, GP%. */
+  /** Unclassified / Dormant / Active / NonActive (ETL); null before migration 0073 + a product refresh. */
+  productStatus: ProductStatus | null;
+  /** BCG class on the last 12 months, Active products only; null = not Active. */
+  bcgClass: string | null;
+  bcgClassPrior12M: string | null;
+  /** The data behind bcgClass (the last 12 months, fully costed days): volume, value, profit, GP%. */
   bcgVolume?: number | null;
   bcgValue?: number | null;
   bcgProfit?: number | null;
   bcgGrossProfitPct?: number | null;
-  /** 'YTD 2026' or the calendar year used ('2025'); null = no profit data. */
+  /** 'Last 12 Months' or 'Last 12 Months (costed sales)'; null = no profit data. */
   bcgDataPeriod?: string | null;
   /** Last sale date of that data. */
   bcgDataAsOf?: string | null;
   bcgMovement: BcgMovement | null;
   bcgExcludedCategory: boolean;
-  valueYTD: number;
-  volumeYTD: number;
-  valueLYTD: number;
-  volumeLYTD: number;
-  grossProfitPctYTD: number | null;
-  grossProfitPctLYTD: number | null;
+  /** Company-wide GP% (ETL) of the last 12 months / the 12 months before. */
+  grossProfitPctL12M: number | null;
+  grossProfitPctPrior12M: number | null;
   negativeStockRows: number;
+}
+
+export type ProductStatus = 'Unclassified' | 'Dormant' | 'Active' | 'NonActive';
+export type BcgClassKey = 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs';
+
+/** Total SKUs / Product Status / BCG cards (company view; backend summarizeProductStatus checks both sums). */
+export interface ProductStatusSummary {
+  total: number;
+  active: { count: number; units: number; value: number };
+  nonActive: { count: number; withStock: number; zeroStock: number; stockUnits: number; stockValue: number };
+  dormant: { count: number };
+  unclassified: { count: number };
+  bcg: { classes: { key: BcgClassKey; count: number; units: number; profit: number }[]; notClassified: number };
 }
 
 export interface AgingBucketAmount {
@@ -2678,7 +2691,8 @@ export interface ProductDashboardOverview {
   view: 'BMH' | 'Majaal' | 'Tika';
   asOfDate: string | null;
   builtAtUtc: string | null;
-  period: { from: string; to: string; days: number; priorFrom: string; priorTo: string };
+  /** Always the last 12 months (from .. to, both included) and the 12 months before (priorFrom .. priorTo). */
+  period: { from: string; to: string; days: number; priorFrom: string; priorTo: string; label: string };
   lookbackDays: number;
   thresholds: {
     days_of_inventory?: { lookback_days?: number; overstock_days?: Record<string, number>; stockout_risk_days?: Record<string, number> };
@@ -2689,6 +2703,8 @@ export interface ProductDashboardOverview {
   products: ProductDashboardRow[];
   totals: { value: number; lines: number; volumeByUom: UomQty[] };
   intercompanyValue: number;
+  statusSummary: ProductStatusSummary | null;
+  statusSummaryError: string | null;
 }
 
 export interface ProductDashboardScope {
@@ -2698,8 +2714,6 @@ export interface ProductDashboardScope {
   channelKeys?: number[];
   salesTeamKeys?: string[];
   salespersonKeys?: number[];
-  fromDate?: string;
-  toDate?: string;
 }
 
 /** One query param per selected key (segmentKeys=1&segmentKeys=2), like every other page: the backend parses each value
@@ -2709,8 +2723,6 @@ export function buildProductDashboardQuery(scope: ProductDashboardScope): string
   for (const key of ['segmentKeys', 'channelKeys', 'salesTeamKeys', 'salespersonKeys'] as const) {
     (scope[key] ?? []).forEach((v) => params.append(key, String(v)));
   }
-  if (scope.fromDate) params.set('fromDate', scope.fromDate);
-  if (scope.toDate) params.set('toDate', scope.toDate);
   if (scope.company && scope.company !== 'All') params.set('company', scope.company);
   return params.toString();
 }

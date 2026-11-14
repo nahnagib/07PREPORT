@@ -6,7 +6,9 @@ information only) never are. Optional columns Reason, Added By, Added Date and N
   Categories  Company | Odoo Category ID | Action Exclude      | Active Yes/No | reference columns
   Products    Company | Odoo Product ID  | Action Exclude/Keep | Active Yes/No | reference columns
 
-Company = All, Majaal or Tika (a Tika row applies to Tika only). Matching is on the Odoo id only; names are reference.
+Company = All, Majaal or Tika (a Tika row applies to Tika only). Customers and Products match on the Odoo id only (names are
+reference). A Categories row matches the Odoo category with that id OR whose own name / full path ("All / Packaging") equals
+the "Category Name (reference)" text, case and surrounding spaces ignored (2026-11-14, ProductDashboardBuilder).
 Columns are found by their header name (any order, case and surrounding spaces ignored); the grey "(reference)" columns
 are never read for matching. Company / Action / Active are trimmed and case-insensitive. The id must be a whole positive
 number: 123, 123.0 or the text "123" all read as 123; blank, a decimal (123.5) or text is SKIPPED with its sheet and Excel
@@ -72,7 +74,7 @@ SHEET_BY_NAME = {s.name: s for s in SHEETS}
 
 def _empty_rules() -> pd.DataFrame:
     return pd.DataFrame({"Company": pd.Series(dtype=object), "OdooID": pd.Series(dtype="int64"), "Action": pd.Series(dtype=object),
-                         "Row": pd.Series(dtype="int64")})
+                         "Row": pd.Series(dtype="int64"), "Name": pd.Series(dtype=object)})
 
 
 @dataclass
@@ -238,7 +240,7 @@ class ProductExclusionsLoader:
         skipped = sorted(skipped + conflicts, key=lambda x: x["row"])
         for row in rows:  # Reason / Added By / Added Date / Notes: for the log only, never matched on
             log.debug("Product pages: %s %s %s %s %s", spec.name, row["Company"], row["OdooID"], row["Action"], row["Log"])
-        rules = pd.DataFrame([{k: row[k] for k in ("Company", "OdooID", "Action", "Row")} for row in rows]) if rows else _empty_rules()
+        rules = pd.DataFrame([{k: row[k] for k in ("Company", "OdooID", "Action", "Row", "Name")} for row in rows]) if rows else _empty_rules()
         if not rules.empty:
             rules["OdooID"] = rules["OdooID"].astype("int64")
             rules["Row"] = rules["Row"].astype("int64")

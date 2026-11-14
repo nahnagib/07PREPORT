@@ -32,7 +32,7 @@ export const NAV_ITEMS = [
   // (lib/materialsAnalogy/shared.ts) via the same @07ps/ui components/tokens every other report
   // uses, not standalone HTML anymore (those lived at public/reports/*.html and have been
   // removed). BCG Matrix is the module's product-classification page and deliberately listed
-  // first among the 4 (matches how the other 3 pages already treat bcg_class_YTD as a given
+  // first among the 4 (matches how the other 3 pages already treat bcg_class as a given
   // input) -- order here is render order (BottomNavBar/DepartmentHubPage both just .map() this
   // array), not a separate weight field. Moved from Promotion to Product, routes and all (now
   // under app/(departments)/product/*), per explicit request -- Sales/'nav_group' in

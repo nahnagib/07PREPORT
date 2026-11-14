@@ -53,7 +53,7 @@ describe('Product pages "?" and "i"', () => {
 
   it('Product Movement and the BCG classes are one line each, from the config values', () => {
     const t = bcgThresholds({ bcg: { movement_stable_band_pct: 10, volume_threshold: { Majaal: 3500, Tika: 25000 }, profit_threshold_pct: 35 }, lifecycle: { new_first_sale_within_days: 180 } });
-    expect(movementRule(t)).toBe('Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or no LYTD · archived Odoo products are left out');
+    expect(movementRule(t)).toBe('Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior 12 months · archived Odoo products are left out');
     expect(bcgClassRule(t)).toBe('High volume = Volume ≥ Majaal 3,500 / Tika 25,000 units · High profit = GP% ≥ 35%');
   });
 

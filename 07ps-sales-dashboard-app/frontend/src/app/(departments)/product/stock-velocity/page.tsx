@@ -11,6 +11,7 @@ import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../lib/format';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
+import { Last12MonthsNote } from '../../../../components/product/Last12MonthsNote';
 import {
   Card,
   ChartPanel,
@@ -85,13 +86,13 @@ import {
   type LegendItem,
 } from '../../../../components/product/InventoryVisual';
 
-/** Class buckets for the Overstock / Stock-out charts: the 4 BCG classes (the ETL's YTD class from the config thresholds,
+/** Class buckets for the Overstock / Stock-out charts: the 4 BCG classes (the last-12-months class of the Active products, config thresholds,
  * the BCG Matrix's own), products sold without a standard cost (Unclassified (no cost)), and products with no class.
  * Shown with the BCG Class names of every inventory visual, in the BCG page order (Stars / Cash Cows / Strategic / Dogs / Not classified). */
-const NO_SALES = 'No sales in period';
+const NO_SALES = 'No sales in last 12 months';
 const CLASS_BUCKETS = [...BCG_CLASSES, UNCLASSIFIED_NO_COST, UNCLASSIFIED_ZERO_REVENUE, NO_SALES] as const;
 type ClassBucket = (typeof CLASS_BUCKETS)[number];
-const bucketOf = (r: ProductFact): ClassBucket => (r.bcg_class_YTD ?? NO_SALES) as ClassBucket;
+const bucketOf = (r: ProductFact): ClassBucket => (r.bcg_class ?? NO_SALES) as ClassBucket;
 const bucketColor = (b: ClassBucket) => BCG_COLOR[b] ?? 'var(--ps-color-neutral-text)';
 const bucketName = (b: ClassBucket) => bcgClassName(b === NO_SALES ? null : b);
 
@@ -128,8 +129,8 @@ function countTooltip(unitsLabel: string, valueLabel: string) {
 }
 
 /**
- * Stock Velocity -- live data (useProductDashboard). Velocity = invoiced quantity in the selected period / days in the
- * period; stock, days on hand (DOH), stock band and stock age are as of the last ETL run (finished-goods internal
+ * Stock Velocity -- live data (useProductDashboard). Velocity = invoiced quantity in the last 12 months / days in the
+ * window (no date range, 2026-11-14); stock, days on hand (DOH), stock band and stock age are as of the last ETL run (finished-goods internal
  * locations, look-back and company thresholds from config/product_dashboard.json, read through overview.thresholds).
  * Volume is added up as "Unit" whatever the Odoo UoM; LYD is secondary. Filters: the Promotion FilterBar
  * (useProductFilters) plus Category and Stock Band. Stock itself has no customer: Customer Group / Channel / Branch /
@@ -174,13 +175,13 @@ export default function StockVelocityPage() {
   const overRule = `${dohRule(thresholds, 'overstock_days', '>')} DOH; stock with no sales in ${lookback} days counts as overstock`;
   const riskRule = `${dohRule(thresholds, 'stockout_risk_days', '<')} DOH`;
   const bands = isrBands(thresholds);
-  const isrRule = `ISR = inventory on hand (LYD at cost) ÷ net sales (LYD) in the period · target ≤ ${bands.targetPct}% · red from ${bands.redPct}%`;
+  const isrRule = `ISR = inventory on hand (LYD at cost) ÷ net sales (LYD) in the last 12 months · target ≤ ${bands.targetPct}% · red from ${bands.redPct}%`;
   const freqBuckets = frequencyBuckets(thresholds);
-  const freqRule = `Average gap = days in the period ÷ selling days (${freqBuckets.map((b) => frequencyLabel(freqBuckets, b.key)).join(' · ')})`;
+  const freqRule = `Average gap = days in the last 12 months ÷ selling days (${freqBuckets.map((b) => frequencyLabel(freqBuckets, b.key)).join(' · ')})`;
   const ageBuckets = agingBuckets(thresholds);
 
   // ---- KPIs ----
-  // DOH averaged over products weighted by their units sold in the period (stock with no sales has no DOH, no weight).
+  // DOH averaged over products weighted by their units sold in the last 12 months (stock with no sales has no DOH, no weight).
   const withDoh = filtered.filter((r) => r.daysOfInventory !== null && r.volume > 0);
   const dohWeight = sum(withDoh, (r) => r.volume);
   const avgDOH = dohWeight > 0 ? sum(withDoh, (r) => (r.daysOfInventory as number) * r.volume) / dohWeight : null;
@@ -199,7 +200,7 @@ export default function StockVelocityPage() {
   const isr = isrPct(inventoryValue, salesValue);
   const isrState = isrStatus(isr, bands);
 
-  // ---- Fast / Normal / Slow movers: each SKU's velocity (units sold per day in the period) against the MEDIAN velocity
+  // ---- Fast / Normal / Slow movers: each SKU's velocity (units sold per day in the last 12 months) against the MEDIAN velocity
   // of its own category in the same company (config stock.*_mover_vs_category_median_pct). Only SKUs that sold in the
   // period; discount pseudo-products (negative value) are not product movement. ----
   const rule = moverRule(thresholds);
@@ -266,7 +267,7 @@ export default function StockVelocityPage() {
   const legendOf = (points: CountPoint[]): LegendItem[] => points.map((p) => ({ key: p._cls as string, label: p.label, color: p._color, skus: p.skus }));
   const overstockPoints = classPoints(overRows, (r) => r.onHandQty, (r) => r.onHandValue, [NO_SALES]);
   const overstockDrillRows = overstockDrill ? overRows.filter((r) => bucketOf(r) === overstockDrill).sort((a, b) => b.stockQty - a.stockQty) : [];
-  // Stock-out risk: above-median sellers (units in the period) below the company minimum DOH; urgency = units ÷ (DOH + 1)
+  // Stock-out risk: above-median sellers (units in the last 12 months) below the company minimum DOH; urgency = units ÷ (DOH + 1)
   const medianVolume = median(filtered.map((r) => r.volume));
   const riskCandidates = riskRows.filter((r) => r.volume > medianVolume);
   const riskPoints = classPoints(riskCandidates, (r) => r.onHandQty, (r) => r.onHandValue);
@@ -276,7 +277,7 @@ export default function StockVelocityPage() {
 
   const classSummary = (title: string, rows: ProductFact[]) =>
     groupSummary(title, INV.bcgClass, CLASS_BUCKETS.map((c) => ({ label: bucketName(c), rows: rows.filter((r) => bucketOf(r) === c) })).filter((g) => g.rows.length > 0));
-  // Fast vs Slow Movers: every SKU sold in the period, its group and its category's median Sales Velocity
+  // Fast vs Slow Movers: every SKU sold in the last 12 months, its group and its category's median Sales Velocity
   const MOVERS_EXPORT: ExportColumn<ProductFact>[] = [
     ...STANDARD,
     { header: 'Category Median Velocity (Unit/day)', align: 'right', value: (r) => Math.round((medianVelocity.get(r.id) ?? 0) * 10000) / 10000, text: (r) => fmtVelocity(medianVelocity.get(r.id) ?? null) },
@@ -329,7 +330,7 @@ export default function StockVelocityPage() {
     return [{ label: 'Risk level / days until stock-out', value: `${x.level} · ${x.days === null ? `– ${NO_SALES_REASON}` : `${Math.round(x.days)} days`}`, color: RISK_COLOR[x.level] }];
   });
 
-  // ---- Sales Frequency: distinct selling days in the period -> average gap -> config buckets; bars = SKU counts ----
+  // ---- Sales Frequency: distinct selling days in the last 12 months -> average gap -> config buckets; bars = SKU counts ----
   const periodDays = overview.data?.period.days ?? 0;
   const sold = filtered.filter((r) => r.orderDays > 0 && r.value > 0);
   const frequencyGroups = freqBuckets.map((b) => {
@@ -402,6 +403,8 @@ export default function StockVelocityPage() {
         />
 
         <main style={{ flex: 1, padding: 'clamp(8px, calc(5vw - 12px), var(--ps-space-4, 24px))', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
+
+          <Last12MonthsNote period={overview.data?.period} />
           {overview.loading && !overview.data ? (
             <LoadingSkeleton variant="chart" />
           ) : overview.error ? (
@@ -415,7 +418,7 @@ export default function StockVelocityPage() {
                   help={withFormula(vh('product.stockVelocity.kpiOverstock'), overRule).help} />
                 <KpiTile label="Stock-Out Risk SKUs" value={fmtCount(riskRows.length)} variance={`${INV.qtySold} ${fmtQty(riskUnits)}`} status="alert"
                   help={withFormula(vh('product.stockVelocity.kpiStockOut'), riskRule).help} />
-                <KpiTile label="Fast Movers" value={fmtCount(moverRows.Fast.length)} variance={`Out of ${fmtCount(moving.length)} SKUs sold in the period`} status="success"
+                <KpiTile label="Fast Movers" value={fmtCount(moverRows.Fast.length)} variance={`Out of ${fmtCount(moving.length)} SKUs sold in the last 12 months`} status="success"
                   help={withFormula(vh('product.stockVelocity.kpiFast'), moverRuleText(rule)).help} />
                 <KpiTile label="SKUs in Stock" value={fmtCount(inStock.length)} variance="In finished-goods locations" status="neutral"
                   help={vh('product.stockVelocity.kpiInStock').help} />
@@ -440,7 +443,7 @@ export default function StockVelocityPage() {
                       size={320}
                     />
                     <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 4, textAlign: 'center' }}>
-                      {fmtMoney(inventoryValue)} on hand ÷ {fmtMoney(salesValue)} {INV.salesValue} in the period
+                      {fmtMoney(inventoryValue)} on hand ÷ {fmtMoney(salesValue)} {INV.salesValue} in the last 12 months
                     </div>
                   </div>
               </Card>
@@ -448,7 +451,7 @@ export default function StockVelocityPage() {
               <ChartPanel {...withFormula(vh('product.stockVelocity.movers'), moverRuleText(rule))} title="Fast vs Slow Movers" style={panelStyle} wrapHeader
                   headerActions={inventoryExport('movers', exportMoversData, exportMoversPdf)}
                 >
-                  <DrillBreadcrumb active={moversDrill ? `${moversDrill} movers` : null} rootLabel={`${fmtCount(moving.length)} SKUs sold in the period, by ${INV.velocity} against their category's median`} onReset={() => setMoversDrill(null)} />
+                  <DrillBreadcrumb active={moversDrill ? `${moversDrill} movers` : null} rootLabel={`${fmtCount(moving.length)} SKUs sold in the last 12 months, by ${INV.velocity} against their category's median`} onReset={() => setMoversDrill(null)} />
                   {moversDrill ? (
                     <ProductBarChart
                       key={moversDrill}
@@ -492,7 +495,7 @@ export default function StockVelocityPage() {
                   />
                 )}
               >
-                <DrillBreadcrumb active={frequencyDrill ? frequencyLabel(freqBuckets, frequencyDrill) : null} rootLabel={`${fmtCount(sold.length)} SKUs sold in the period · selling days ÷ ${periodDays} days`} onReset={() => setFrequencyDrill(null)} />
+                <DrillBreadcrumb active={frequencyDrill ? frequencyLabel(freqBuckets, frequencyDrill) : null} rootLabel={`${fmtCount(sold.length)} SKUs sold in the last 12 months · selling days ÷ ${periodDays} days`} onReset={() => setFrequencyDrill(null)} />
                 {frequencyDrill ? (
                   <div data-testid="sales-frequency-table">
                     <DataGrid

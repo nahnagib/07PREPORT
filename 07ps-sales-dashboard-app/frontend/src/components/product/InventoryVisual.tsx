@@ -34,7 +34,7 @@ export const INV = {
 /** The two reasons a figure does not apply -- the same words on every visual. */
 export const NO_SALES_REASON = 'No sales in period';
 export const NO_STOCK_REASON = 'No stock';
-export const NOT_CLASSIFIED = 'Not classified (no sales in period)';
+export const NOT_CLASSIFIED = 'Not classified (not sold in the last 12 months)';
 /** Sold, but never with a standard cost in the database: no profit, so no class. */
 export const NOT_CLASSIFIED_NO_PROFIT = 'Not classified (no profit data)';
 const na = (reason: string) => `– ${reason}`;
@@ -95,7 +95,7 @@ export function inventoryFields(r: ProductFact): InventoryLine[] {
 
 /** The one hover of the four inventory visuals: `extra` = the visual's own line(s), shown last. */
 export function InventoryHover({ r, extra }: { r: ProductFact; extra: InventoryLine[] }) {
-  const cls = r.bcg_class_YTD;
+  const cls = r.bcg_class;
   return (
     <ProductTooltip name={r.ProductName} company={r.Company} badges={<Pill color={bcgClassColor(cls)} label={bcgClassName(cls)} />}>
       <div data-testid="inventory-hover">
@@ -121,7 +121,7 @@ export function inventoryExportColumns(): ExportColumn<ProductFact>[] {
     { header: INV.productId, value: (r) => r.ProductKey },
     { header: INV.productName, value: (r) => ltrLabel(r.ProductName) },
     { header: INV.company, value: (r) => r.Company },
-    { header: INV.bcgClass, value: (r) => bcgClassName(r.bcg_class_YTD) },
+    { header: INV.bcgClass, value: (r) => bcgClassName(r.bcg_class) },
     { header: `${INV.qtyOnHand} (Units)`, align: 'right', value: (r) => round(r.onHandQty, 4), text: (r) => fmtQty(r.onHandQty) },
     { header: `${INV.totalValue} (LYD)`, align: 'right', value: (r) => round(r.onHandValue), text: (r) => fmtMoney(r.onHandValue) },
     { header: 'DOH (days)', align: 'right', value: (r) => round(r.daysOfInventory, 0), text: (r) => (r.daysOfInventory === null ? '–' : `${Math.round(r.daysOfInventory)}`) },

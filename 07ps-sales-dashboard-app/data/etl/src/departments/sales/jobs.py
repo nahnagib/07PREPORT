@@ -177,6 +177,16 @@ def _apply_customer_growth(ctx: RunContext, result: cf.Conformed, *, write: bool
             lines[col] = lines["CustomerKey"].map(by_key[col]).to_numpy()
 
 
+def fit_to_table(table: str, df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """The frame's columns that `table` has. dim_sales_product_dashboard without OnProductPages (migration 0073 not applied
+    yet): only the Product pages' own rows, so the archived / excluded products added for the status cards never show
+    up on the pages."""
+    if table == "dim_sales_product_dashboard" and "OnProductPages" in df.columns and "OnProductPages" not in cols:
+        log.warning("dim_sales_product_dashboard has no OnProductPages column (apply migration 0073): status rows not loaded")
+        df = df[pd.to_numeric(df["OnProductPages"], errors="coerce").fillna(1).ne(0)]
+    return df[[c for c in df.columns if c in cols]]
+
+
 def load_sales_marts(ctx: RunContext) -> TaskResult:
     result: cf.Conformed = ctx.state["conformed"]
     insp = inspect(ctx.engine)
@@ -189,7 +199,7 @@ def load_sales_marts(ctx: RunContext) -> TaskResult:
         extra = [c for c in df.columns if c not in cols]
         if extra:
             dropped[table] = extra
-        frames[table] = df[[c for c in df.columns if c in cols]]
+        frames[table] = fit_to_table(table, df, cols)
     if dropped:
         log.warning("Columns produced by the legacy transforms but not in the mart schema (not loaded): %s", dropped)
 

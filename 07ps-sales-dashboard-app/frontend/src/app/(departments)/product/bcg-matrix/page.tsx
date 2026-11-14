@@ -47,8 +47,9 @@ import {
   type BcgThresholds,
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
-import { NOT_CLASSIFIED_NO_PROFIT, bcgClassName } from '../../../../components/product/InventoryVisual';
-import type { BcgMovement } from '../../../../lib/api';
+import { bcgClassName } from '../../../../components/product/InventoryVisual';
+import { Last12MonthsNote } from '../../../../components/product/Last12MonthsNote';
+import type { BcgMovement, ProductStatusSummary } from '../../../../lib/api';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
 import {
   CompanyBadge,
@@ -69,7 +70,16 @@ const getDisplayName = (r: ProductFact) => r.ProductName;
 const fmtGp = (v: number | null) => (v === null ? '–' : `${v.toFixed(1)}%`);
 const fmtCount = (v: number) => v.toLocaleString('en-US');
 const NOT_CLASSIFIED = 'Not classified';
-const classLabel = (r: ProductFact) => r.bcgProfit === null ? NOT_CLASSIFIED_NO_PROFIT : bcgClassName(r.bcg_class_YTD);
+const classLabel = (r: ProductFact) => bcgClassName(r.bcg_class);
+/** Active = sold in the last 12 months (ETL ProductStatus); before migration 0073 a product with a class counts as Active. */
+const isActiveFact = (r: ProductFact) => (r.productStatus === null ? r.bcg_class !== null : r.productStatus === 'Active');
+const STATUS_LABEL: Record<'Active' | 'NonActive' | 'Dormant' | 'Unclassified', string> = {
+  Active: 'Active',
+  NonActive: 'Non Active',
+  Dormant: 'Dormant',
+  Unclassified: 'Unclassified',
+};
+const statusLabel = (r: ProductFact) => (r.productStatus ? STATUS_LABEL[r.productStatus] : '—');
 /** Profit of the class's data; "–" when the database has none (never zero-filled). */
 const fmtProfit = (v: number | null) => (v === null ? '–' : fmtLYD(v));
 /** The class volume: the units of the data the class is computed on. */
@@ -98,7 +108,7 @@ const CLASS_META: Record<BcgClass, { icon: string; status: SemanticStatus }> = {
 
 const CLASS_FILTER_OPTIONS = [...BCG_CLASSES, NOT_CLASSIFIED].map((label) => ({ value: label, label }));
 const classOrder = (row: BcgFact) => {
-  const index = BCG_CLASSES.indexOf(row.bcg_class_YTD as BcgClass);
+  const index = BCG_CLASSES.indexOf(row.bcg_class as BcgClass);
   return index < 0 || row.bcgProfit === null ? BCG_CLASSES.length : index;
 };
 
@@ -107,7 +117,7 @@ interface TableRow extends BcgFact, Record<string, unknown> {
   displayName: string;
 }
 
-/** Volume growth YTD vs LYTD; no LYTD volume = "New" for a new product, "—" otherwise. */
+/** Volume growth, last 12 months vs the 12 months before; none before = "New" for a new product, "—" otherwise. */
 const growthText = (r: BcgFact) => (r.quantity_growth_pct !== null ? fmtPct(r.quantity_growth_pct) : r.bcg_movement === 'New' ? 'New' : '—');
 /** One export shape for every product list on this page (each class panel, the movement drill-down and the whole
  * matrix): the CSV gets raw numbers, the PDF the formatted text. Company is its own column (one company per product).
@@ -117,6 +127,7 @@ const PRODUCT_EXPORT_COLUMNS: ExportColumn<BcgFact>[] = [
   { header: 'Company', value: (r) => r.Company },
   { header: 'Odoo ID', value: (r) => r.ProductKey },
   { header: 'Category', value: (r) => r.Category },
+  { header: 'Status', value: statusLabel },
   { header: 'BCG Class', value: classLabel },
   { header: 'Volume (profit data, Unit)', align: 'right', value: (r) => r.bcgVolume, text: (r) => (r.bcgVolume === null ? '–' : fmtNum(r.bcgVolume)) },
   { header: 'Profit (LYD)', align: 'right', value: (r) => r.bcgProfit ?? '–', text: (r) => fmtProfit(r.bcgProfit) },
@@ -124,20 +135,20 @@ const PRODUCT_EXPORT_COLUMNS: ExportColumn<BcgFact>[] = [
   { header: 'Profit data period', value: (r) => r.bcgDataPeriod, text: (r) => r.bcgDataPeriod ?? '–' },
   { header: 'Profit data as of', value: (r) => r.bcgDataAsOf, text: (r) => r.bcgDataAsOf ?? '–' },
   { header: 'Movement', value: (r) => (r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : null), text: (r) => (r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : '—') },
-  { header: 'Volume YTD (Unit)', align: 'right', value: (r) => r.total_quantity_YTD, text: (r) => fmtNum(r.total_quantity_YTD) },
-  { header: 'Volume LYTD (Unit)', align: 'right', value: (r) => r.total_quantity_LYTD, text: (r) => fmtNum(r.total_quantity_LYTD) },
+  { header: 'Volume Last 12 Months (Unit)', align: 'right', value: (r) => r.total_quantity_L12M, text: (r) => fmtNum(r.total_quantity_L12M) },
+  { header: 'Volume Prior 12 Months (Unit)', align: 'right', value: (r) => r.total_quantity_P12M, text: (r) => fmtNum(r.total_quantity_P12M) },
   { header: 'Vol Growth %', align: 'right', value: (r) => r.quantity_growth_pct, text: growthText },
   { header: 'Quantity On Hand (Units)', align: 'right', value: (r) => r.onHandQty, text: (r) => fmtNum(r.onHandQty) },
-  { header: 'GP%', align: 'right', value: (r) => r.perc_gross_profit_YTD, text: (r) => fmtGp(r.perc_gross_profit_YTD) },
-  { header: 'Revenue YTD (LYD)', align: 'right', value: (r) => r.total_value_YTD, text: (r) => fmtLYD(r.total_value_YTD) },
-  { header: 'Revenue LYTD (LYD)', align: 'right', value: (r) => r.total_value_LYTD, text: (r) => fmtLYD(r.total_value_LYTD) },
-  { header: 'ASP (LYD)', align: 'right', value: (r) => r.avg_unit_price_YTD, text: (r) => fmtLYD(r.avg_unit_price_YTD) },
+  { header: 'GP%', align: 'right', value: (r) => r.perc_gross_profit_L12M, text: (r) => fmtGp(r.perc_gross_profit_L12M) },
+  { header: 'Revenue Last 12 Months (LYD)', align: 'right', value: (r) => r.total_value_L12M, text: (r) => fmtLYD(r.total_value_L12M) },
+  { header: 'Revenue Prior 12 Months (LYD)', align: 'right', value: (r) => r.total_value_P12M, text: (r) => fmtLYD(r.total_value_P12M) },
+  { header: 'ASP (LYD)', align: 'right', value: (r) => r.avg_unit_price_L12M, text: (r) => fmtLYD(r.avg_unit_price_L12M) },
 ];
 
 function exportProducts(kind: 'csv' | 'pdf', title: string, subtitle: string, fileName: string, rows: BcgFact[], thresholds: BcgThresholds) {
   const columns = [...PRODUCT_EXPORT_COLUMNS, {
     header: 'BCG Class Rule',
-    value: (row: BcgFact) => bcgClassDefinition(row.bcg_class_YTD ?? '', thresholds),
+    value: (row: BcgFact) => bcgClassDefinition(row.bcg_class ?? '', thresholds),
   }];
   return kind === 'csv'
     ? exportProductCsv(fileName, columns, rows)
@@ -148,16 +159,20 @@ export default function BcgMatrixPage() {
   const { user, token, error: authError, retryAuth, logout } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
   // The Product pages' FilterBar (useProductFilters): company, Customer Group (B2B + B2C default), channel, branch,
-  // salesperson and date range from the app-wide FilterProvider. They narrow which products come back and the
-  // Volume / Revenue YTD and LYTD figures; they never reclassify a product's quadrant or movement (company-wide), and
-  // the date range never redefines what "YTD"/"LYTD" means -- every BCG number stays calendar YTD vs LYTD.
+  // salesperson from the app-wide FilterProvider (no date range: always the last 12 months, 2026-11-14). They narrow
+  // which products come back and their Volume / Revenue figures; they never reclassify a product's quadrant, movement
+  // or status (company-wide). The 3 card rows are the company view's whole catalog (statusSummary), never filtered.
   const refresh = useRefreshStatus(token, authError, retryAuth);
   const { anchorDate, onAnchorDateChange, scope: bcgScope, companyLabel, filterBarProps } = useProductFilters(refresh.data);
   const overview = useProductDashboard(token, authError, retryAuth, 'bcg-matrix', bcgScope);
   const allFacts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const eligible = useMemo(() => allFacts.filter((r) => !r.bcgExcludedCategory), [allFacts]);
-  const classified = useMemo(() => eligible.filter((r) => isBcgClassified(r) && r.bcgProfit !== null), [eligible]);
-  const unclassifiedCount = eligible.length - classified.length;
+  // BCG runs on Active products only (sold in the last 12 months).
+  const activeFacts = useMemo(() => eligible.filter(isActiveFact), [eligible]);
+  const classified = useMemo(() => activeFacts.filter((r) => isBcgClassified(r) && r.bcgProfit !== null), [activeFacts]);
+  const summary = overview.data?.statusSummary ?? null;
+  // the Not classified card's count (it also counts Active products kept off the pages by ProductExclusions.xlsx Products)
+  const unclassifiedCount = summary?.bcg.notClassified ?? activeFacts.length - classified.length;
   const movementRows = useMemo(() => eligible.filter((r) => r.bcg_movement !== null), [eligible]);
   const thresholds = useMemo(() => bcgThresholds(overview.data?.thresholds), [overview.data?.thresholds]);
 
@@ -170,24 +185,21 @@ export default function BcgMatrixPage() {
   // keys are translated via businessUnits (useProductFilters) and sent as the API's company
   // view; the rows that come back are already that company's (or every company's, side by side).
   const profitData = useMemo(() => {
-    const used = eligible.filter((r) => r.bcgDataAsOf);
-    const ytd = used.filter((r) => r.bcgDataPeriod?.startsWith('YTD'));
-    const older = used.filter((r) => !r.bcgDataPeriod?.startsWith('YTD'));
-    const years = older.map((r) => r.bcgDataPeriod?.slice(0, 4)).sort();
+    const used = activeFacts.filter((r) => r.bcgDataAsOf);
+    const partial = used.filter((r) => r.bcgDataPeriod?.endsWith('(costed sales)')).length;
     const latest = used.map((r) => r.bcgDataAsOf as string).sort().at(-1) ?? null;
-    return { latest, ytd: ytd.length, older: older.length, firstYear: years[0] ?? null, lastYear: years.at(-1) ?? null };
-  }, [eligible]);
-  // ---- KPI row + Section 1 matrix cells: one entry per BCG class, count + Volume YTD + delta vs
-  // LYTD + the cell's own top-10-by-volume list. A single computation feeds both the KPI
-  // card and its matching matrix cell so the two can never disagree about a class's total count. ----
+    return { latest, partial };
+  }, [activeFacts]);
+  // ---- Section 1 matrix cells: one entry per BCG class, count + volume + the cell's own top-10-by-volume list. The
+  // Row 3 KPI cards read the API's statusSummary (the same classes, checked against the Active count). ----
   const classStats = useMemo(
     () =>
       BCG_CLASSES.map((key) => {
-        const rows = classified.filter((r) => r.bcg_class_YTD === key);
+        const rows = classified.filter((r) => r.bcg_class === key);
         const volume = sum(rows, classVolume);
         const profit = sum(rows, (r) => r.bcgProfit ?? 0);
 
-        // Top N by volume (YTD quantity, added up as Unit) -- a direct ranked list (revision 5), not a scatter: at 10
+        // Top N by volume (last-12-months quantity, added up as Unit) -- a direct ranked list (revision 5), not a scatter: at 10
         // points max, most cells were mostly-empty axis space with a few tiny unlabeled dots, requiring a hover just
         // to learn what anything was. `barPct` anchors each row's size indicator at 0 (bar width = volume / this
         // cell's own top-of-list volume),
@@ -206,8 +218,8 @@ export default function BcgMatrixPage() {
   );
 
   // ---- Product Movement donut: New / Stable / Improved / Drop / Discontinued by SKU count, from the ETL's volume
-  // rule (QtyYTD vs QtyLYTD, company-wide; Discontinued = archived in Odoo). Every product with a movement counts,
-  // with or without a YTD class. ----
+  // rule (last 12 months vs the 12 months before, company-wide; Discontinued = archived in Odoo). Every product with a
+  // movement counts, with or without a class. ----
   const movementSegments: DonutSegment[] = MOVEMENTS.map((mv) => ({
     id: mv,
     label: MOVEMENT_LABEL[mv],
@@ -215,16 +227,16 @@ export default function BcgMatrixPage() {
     color: MOVEMENT_COLOR[mv],
   })).filter((s) => s.value > 0);
 
-  // ---- Product Movement drill-down: clicking a slice lists that movement's products, top N by Volume YTD on screen
-  // (Volume LYTD for Drop / Discontinued, where this year's volume can be 0), the full list in the CSV / PDF. ----
+  // ---- Product Movement drill-down: clicking a slice lists that movement's products, top N by last-12-months volume
+  // on screen (the prior 12 months for Drop / Discontinued, where the last 12 can be 0), the full list in CSV / PDF. ----
   const [movementDrill, setMovementDrill] = useState<BcgMovement | null>(null);
   const movementDrillData = useMemo(() => {
     if (!movementDrill) return null;
     const source = movementRows.filter((r) => r.bcg_movement === movementDrill);
     const lastYear = movementDrill === 'Drop' || movementDrill === 'Discontinued';
-    const allSorted = lastYear ? [...source].sort((a, b) => b.total_quantity_LYTD - a.total_quantity_LYTD) : byVolumeYTD(source);
+    const allSorted = lastYear ? [...source].sort((a, b) => b.total_quantity_P12M - a.total_quantity_P12M) : byVolumeL12M(source);
     const top = allSorted.slice(0, MOVEMENT_DRILL_TOP_N);
-    return { listRows: toListRows(top, lastYear ? 'LYTD' : 'YTD'), allSorted, moreCount: Math.max(0, allSorted.length - top.length), lastYear };
+    return { listRows: toListRows(top, lastYear ? 'P12M' : 'L12M'), allSorted, moreCount: Math.max(0, allSorted.length - top.length), lastYear };
   }, [movementDrill, movementRows]);
 
   const exportMovement = (kind: 'csv' | 'pdf') => {
@@ -243,26 +255,27 @@ export default function BcgMatrixPage() {
   const columns: DataGridColumn<TableRow>[] = [
     // volume first (the page is based on volume), then the product's attributes, then GP% and revenue
     { key: 'displayName', header: 'Product Name', width: 240, render: (row) => <ProductName name={row.displayName} href={row.odooUrl} />, rawValue: (row) => row.displayName },
-    { key: 'total_quantity_YTD', header: 'Volume YTD', align: 'right', render: (row) => <strong>{fmtNum(row.total_quantity_YTD)}</strong>, rawValue: (row) => row.total_quantity_YTD },
-    { key: 'total_quantity_LYTD', header: 'Volume LYTD', align: 'right', render: (row) => fmtNum(row.total_quantity_LYTD), rawValue: (row) => row.total_quantity_LYTD },
+    { key: 'productStatus', header: 'Status', render: (row) => statusLabel(row), rawValue: (row) => statusLabel(row) },
+    { key: 'total_quantity_L12M', header: 'Volume Last 12 Months', align: 'right', render: (row) => <strong>{fmtNum(row.total_quantity_L12M)}</strong>, rawValue: (row) => row.total_quantity_L12M },
+    { key: 'total_quantity_P12M', header: 'Volume Prior 12 Months', align: 'right', render: (row) => fmtNum(row.total_quantity_P12M), rawValue: (row) => row.total_quantity_P12M },
     {
       key: 'quantity_growth_pct',
       header: 'Vol Growth',
       align: 'right',
-      // Null means no LYTD baseline to compare against (a new product), not 0% -- see
+      // Null means no prior-12-months baseline to compare against (a new product), not 0% -- see
       // backend/src/measures/productDashboard.ts's header note. Sorts/exports as -Infinity so
       // "no baseline" rows fall to one end instead of masquerading as the lowest real growth.
-      // A discontinued row is ALSO null here (no YTD volume to divide by either) -- that's a
+      // A discontinued row is ALSO null here (no recent volume to divide by either) -- that's a
       // completely different situation from "New" (nothing to compare vs. nothing left to sell),
       // so it's checked first and labeled distinctly rather than folding into the "New" branch.
       rawValue: (row) => row.quantity_growth_pct ?? Number.NEGATIVE_INFINITY,
       render: (row) =>
         row.quantity_growth_pct === null ? (
-          <span title={`Volume YTD: ${fmtNum(row.total_quantity_YTD)} · No LYTD volume to compare against`} style={{ color: 'var(--ps-color-muted-text)', fontWeight: 700 }}>
+          <span title={`Volume last 12 months: ${fmtNum(row.total_quantity_L12M)} · No volume in the prior 12 months to compare against`} style={{ color: 'var(--ps-color-muted-text)', fontWeight: 700 }}>
             {growthText(row)}
           </span>
         ) : (
-          <span title={`Volume YTD: ${fmtNum(row.total_quantity_YTD)} · Volume LYTD: ${fmtNum(row.total_quantity_LYTD)}`} style={{ color: row.quantity_growth_pct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)', fontWeight: 700 }}>
+          <span title={`Volume last 12 months: ${fmtNum(row.total_quantity_L12M)} · prior 12 months: ${fmtNum(row.total_quantity_P12M)}`} style={{ color: row.quantity_growth_pct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)', fontWeight: 700 }}>
             {fmtPct(row.quantity_growth_pct)}
           </span>
         ),
@@ -275,14 +288,14 @@ export default function BcgMatrixPage() {
     // lost, just relocated to where the other per-product breakdowns already live.
     { key: 'Category', header: 'Category', render: (row) => <ProductName name={row.Category ?? '—'} />, rawValue: (row) => row.Category ?? '' },
     {
-      key: 'bcg_class_YTD',
+      key: 'bcg_class',
       header: 'BCG Class',
       rawValue: classLabel,
       sortValue: classOrder,
       filterOptions: CLASS_FILTER_OPTIONS,
       filterMatch: (row, value) => value === NOT_CLASSIFIED ? classOrder(row) === BCG_CLASSES.length : classLabel(row) === value,
       render: (row) => (
-        <span style={{ color: (row.bcg_class_YTD && BCG_COLOR[row.bcg_class_YTD]) || 'var(--ps-color-muted-text)', fontWeight: 700 }}>{classLabel(row)}</span>
+        <span style={{ color: (row.bcg_class && BCG_COLOR[row.bcg_class]) || 'var(--ps-color-muted-text)', fontWeight: 700 }}>{classLabel(row)}</span>
       ),
     },
     { key: 'bcgProfit', header: 'Profit (LYD)', align: 'right', render: (row) => fmtProfit(row.bcgProfit), rawValue: (row) => row.bcgProfit ?? '–', sortValue: (row) => row.bcgProfit ?? Number.NEGATIVE_INFINITY },
@@ -296,18 +309,18 @@ export default function BcgMatrixPage() {
         </span>
       ),
     },
-    { key: 'perc_gross_profit_YTD', header: 'GP%', align: 'right', render: (row) => fmtGp(row.perc_gross_profit_YTD), rawValue: (row) => row.perc_gross_profit_YTD ?? Number.NEGATIVE_INFINITY },
-    { key: 'total_value_YTD', header: 'Revenue YTD', align: 'right', render: (row) => fmtLYD(row.total_value_YTD), rawValue: (row) => row.total_value_YTD },
-    { key: 'total_value_LYTD', header: 'Revenue LYTD', align: 'right', render: (row) => fmtLYD(row.total_value_LYTD), rawValue: (row) => row.total_value_LYTD },
-    { key: 'avg_unit_price_YTD', header: 'ASP', align: 'right', render: (row) => fmtLYD(row.avg_unit_price_YTD), rawValue: (row) => row.avg_unit_price_YTD ?? Number.NEGATIVE_INFINITY },
+    { key: 'perc_gross_profit_L12M', header: 'GP%', align: 'right', render: (row) => fmtGp(row.perc_gross_profit_L12M), rawValue: (row) => row.perc_gross_profit_L12M ?? Number.NEGATIVE_INFINITY },
+    { key: 'total_value_L12M', header: 'Revenue Last 12 Months', align: 'right', render: (row) => fmtLYD(row.total_value_L12M), rawValue: (row) => row.total_value_L12M },
+    { key: 'total_value_P12M', header: 'Revenue Prior 12 Months', align: 'right', render: (row) => fmtLYD(row.total_value_P12M), rawValue: (row) => row.total_value_P12M },
+    { key: 'avg_unit_price_L12M', header: 'ASP', align: 'right', render: (row) => fmtLYD(row.avg_unit_price_L12M), rawValue: (row) => row.avg_unit_price_L12M ?? Number.NEGATIVE_INFINITY },
   ];
 
-  // ---- Row tooltip: full 7-field detail (Class, Revenue YTD, Volume YTD, ASP, GP%, Vol Growth,
+  // ---- Row tooltip: full detail (Class, Revenue, Volume of the last 12 months, ASP, GP%, Vol Growth,
   // Movement), same Class/Movement colored-pill treatment as the KPI cards and the same
   // colored-text convention the Product Detail table already uses for GP%/Vol Growth -- so the
   // tooltip reads as part of the same design system, not a separate plain-text summary. Shared by
   // all 4 matrix cells' list rows AND Section 3's movement drill-down (a Discontinued row has no
-  // bcg_class_YTD at all, hence the null-guard on the Class pill below -- every other field is
+  // bcg_class at all, hence the null-guard on the Class pill below -- every other field is
   // still populated for those rows). */
   const rowTooltipContent = (r: BcgFact, label: string) => (
     <ProductTooltip
@@ -315,26 +328,27 @@ export default function BcgMatrixPage() {
       company={r.Company}
       badges={
         <>
-          <Pill color={(r.bcg_class_YTD && BCG_COLOR[r.bcg_class_YTD]) || 'var(--ps-color-muted-text)'} label={classLabel(r)} />
+          <Pill color={(r.bcg_class && BCG_COLOR[r.bcg_class]) || 'var(--ps-color-muted-text)'} label={classLabel(r)} />
           {r.bcg_movement && <Pill color={MOVEMENT_COLOR[r.bcg_movement]} label={MOVEMENT_LABEL[r.bcg_movement]} />}
         </>
       }
     >
-      <TooltipRow label="BCG Class rule" value={bcgClassDefinition(r.bcg_class_YTD ?? '', thresholds)} />
+      <TooltipRow label="BCG Class rule" value={bcgClassDefinition(r.bcg_class ?? '', thresholds)} />
       <TooltipRow label="Volume (profit data)" value={r.bcgVolume === null ? '–' : fmtUnits(r.bcgVolume)} />
       <TooltipRow label="Profit" value={fmtProfit(r.bcgProfit)} />
       <TooltipRow label="GP% (profit data)" value={r.bcgGrossProfitPct === null ? '–' : fmtGp(r.bcgGrossProfitPct)} />
       <TooltipRow label="Profit data" value={r.bcgDataPeriod ? `${r.bcgDataPeriod} · as of ${r.bcgDataAsOf}` : '– no profit data'} />
-      <TooltipRow label="Volume YTD" value={fmtUnits(r.total_quantity_YTD)} />
-      <TooltipRow label="Volume LYTD" value={fmtUnits(r.total_quantity_LYTD)} />
+      <TooltipRow label="Status" value={statusLabel(r)} />
+      <TooltipRow label="Volume Last 12 Months" value={fmtUnits(r.total_quantity_L12M)} />
+      <TooltipRow label="Volume Prior 12 Months" value={fmtUnits(r.total_quantity_P12M)} />
       <TooltipRow
         label="Vol Growth"
         value={growthText(r)}
         valueColor={r.quantity_growth_pct === null ? 'var(--ps-color-muted-text)' : r.quantity_growth_pct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)'}
       />
-      <TooltipRow label="GP%" value={fmtGp(r.perc_gross_profit_YTD)} />
-      <TooltipRow label="Revenue YTD" value={fmtLYD(r.total_value_YTD)} />
-      <TooltipRow label="ASP" value={fmtLYD(r.avg_unit_price_YTD)} />
+      <TooltipRow label="GP%" value={fmtGp(r.perc_gross_profit_L12M)} />
+      <TooltipRow label="Revenue Last 12 Months" value={fmtLYD(r.total_value_L12M)} />
+      <TooltipRow label="ASP" value={fmtLYD(r.avg_unit_price_L12M)} />
       <TooltipRow label="Quantity On Hand" value={fmtUnits(r.onHandQty)} />
     </ProductTooltip>
   );
@@ -360,45 +374,8 @@ export default function BcgMatrixPage() {
         />
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
-          <div data-testid="bcg-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
-            {overview.loading ? (
-              [...BCG_CLASSES, NOT_CLASSIFIED].map((key) => <LoadingSkeleton key={key} variant="kpi" />)
-            ) : overview.error ? (
-              <ErrorState message={overview.error} onRetry={overview.retry} />
-            ) : (
-              // Single shared KpiTile/Card per card now (icon/accentColor/badgeLabel props) --
-              // no more separate outer accent+header wrapper stacking a SECOND, independently
-              // rounded Card underneath it. That double-rounding (wrapper clipping one radius,
-              // KpiTile's own Card independently rounding its own top corners a few pixels below)
-              // is what produced the corner-radius seam reported earlier; KpiTile itself now
-              // handles the wrapper/complementary-radius trick internally (see KpiTile.tsx), so
-              // this page just passes the extra props and gets one correctly-clipped card, same
-              // as Stock Velocity's plain 6-card row gets when it doesn't pass them at all.
-              <>
-                {classStats.map((s) => (
-                  <KpiTile
-                    key={s.key}
-                    label="Products"
-                    value={fmtCount(s.count)}
-                    variance={s.count ? `${fmtUnits(s.volume)} · profit ${fmtLYD(s.profit)}` : undefined}
-                    status={s.status}
-                    icon={s.icon}
-                    accentColor={BCG_COLOR[s.key]}
-                    badgeLabel={s.key}
-                  />
-                ))}
-                <KpiTile
-                  label="Products"
-                  value={fmtCount(unclassifiedCount)}
-                  variance="No profit data or gross margin unavailable"
-                  status="neutral"
-                  icon="–"
-                  accentColor="var(--ps-color-neutral-text)"
-                  badgeLabel="Not classified"
-                />
-              </>
-            )}
-          </div>
+          <Last12MonthsNote period={overview.data?.period} />
+          <StatusRows loading={overview.loading} error={overview.error} onRetry={overview.retry} summary={summary} summaryError={overview.data?.statusSummaryError ?? null} />
 
           <section aria-labelledby="bcg-heading">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 2 }}>
@@ -409,10 +386,8 @@ export default function BcgMatrixPage() {
             {!overview.loading && !overview.error && (
               <>
                 <div data-testid="bcg-profit-data" style={{ fontSize: 12, color: 'var(--ps-color-text)', fontWeight: 600, marginBottom: 2 }}>
-                  {profitData.latest ? `Profit data as of ${profitData.latest}` : 'No profit data for these products'}
-                  {profitData.older > 0
-                    ? ` · ${fmtCount(profitData.ytd)} on YTD data, ${fmtCount(profitData.older)} on earlier data (${profitData.firstYear === profitData.lastYear ? profitData.firstYear : `${profitData.firstYear}–${profitData.lastYear}`})`
-                    : ''}
+                  {profitData.latest ? `Active products · profit data of the last 12 months, as of ${profitData.latest}` : 'No profit data for the Active products'}
+                  {profitData.partial > 0 ? ` · ${fmtCount(profitData.partial)} on their fully costed sales only` : ''}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
                   {fmtCount(classified.length)} products classified · Top {MATRIX_CELL_TOP_N} per class by volume
@@ -446,8 +421,8 @@ export default function BcgMatrixPage() {
               </div>
               <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
                 {movementDrill
-                  ? `${MOVEMENT_LABEL[movementDrill]} SKUs, top ${MOVEMENT_DRILL_TOP_N} by Volume ${movementDrillData?.lastYear ? 'LYTD' : 'YTD'} · hover a row for full detail`
-                  : 'Volume YTD vs LYTD, by SKU count · click a slice to see its products'}
+                  ? `${MOVEMENT_LABEL[movementDrill]} SKUs, top ${MOVEMENT_DRILL_TOP_N} by volume of the ${movementDrillData?.lastYear ? 'prior 12 months' : 'last 12 months'} · hover a row for full detail`
+                  : 'Volume of the last 12 months vs the 12 months before, by SKU count · click a slice to see its products'}
               </div>
               {overview.loading ? (
                 <LoadingSkeleton variant="chart" />
@@ -456,7 +431,7 @@ export default function BcgMatrixPage() {
               ) : movementDrill && movementDrillData ? (
                 <>
                   <DrillBreadcrumb active={MOVEMENT_LABEL[movementDrill]} rootLabel="All Movements" onReset={() => setMovementDrill(null)} />
-                  <RankedProductList rows={movementDrillData.listRows} barColor={MOVEMENT_COLOR[movementDrill]} tooltipContent={rowTooltipContent} volumeHeader={movementDrillData.lastYear ? 'Units LYTD' : 'Units YTD'} />
+                  <RankedProductList rows={movementDrillData.listRows} barColor={MOVEMENT_COLOR[movementDrill]} tooltipContent={rowTooltipContent} volumeHeader={movementDrillData.lastYear ? 'Units Prior 12 Months' : 'Units Last 12 Months'} />
                   {movementDrillData.moreCount > 0 && (
                     <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
                       +{fmtNum(movementDrillData.moreCount)} more SKUs not shown -- export to CSV or PDF for the full list
@@ -510,16 +485,16 @@ export default function BcgMatrixPage() {
 }
 
 /** One row of a ranked product list -- shared shape for both the Section 1 matrix panels (top N
- * by Revenue YTD within one class) and Section 3's movement drill-down (top N within one movement
- * category, which spans every class -- including Discontinued, whose products have no YTD class
+ * by volume within one class) and Section 3's movement drill-down (top N within one movement
+ * category, which spans every class -- including Discontinued, whose products have no class
  * at all). `fact` stays the general nullable-class `BcgFact`, not `ClassifiedBcgFact`, so this one
  * row type and its tooltip work for both. `barPct` is 0-100, anchored at that list's OWN
  * top-of-list revenue (not a global/cross-list scale -- each list is fully self-contained). */
 interface MatrixListRow extends Record<string, unknown> {
   id: string;
   label: string;
-  revenueYTD: number;
-  /** The ranking volume: YTD, or LYTD in the Drop / Discontinued drill-down. */
+  revenue: number;
+  /** The ranking volume: last 12 months, or the prior 12 months in the Drop / Discontinued drill-down. */
   volume: number;
   barPct: number;
   fact: BcgFact;
@@ -530,19 +505,19 @@ function byVolume<T extends BcgFact>(rows: T[]): T[] {
   return [...rows].sort((a, b) => classVolume(b) - classVolume(a) || (b.bcgProfit ?? 0) - (a.bcgProfit ?? 0));
 }
 
-/** Highest Volume YTD first (the movement drill-down). */
-function byVolumeYTD<T extends BcgFact>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => b.total_quantity_YTD - a.total_quantity_YTD || b.total_value_YTD - a.total_value_YTD);
+/** Highest last-12-months volume first (the movement drill-down). */
+function byVolumeL12M<T extends BcgFact>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => b.total_quantity_L12M - a.total_quantity_L12M || b.total_value_L12M - a.total_value_L12M);
 }
 
-/** `window`: 'class' = the class data (panels), 'YTD' / 'LYTD' = the movement drill-down. */
-function toListRows(rows: BcgFact[], window: 'class' | 'YTD' | 'LYTD' = 'class'): MatrixListRow[] {
-  const vol = (r: BcgFact) => (window === 'LYTD' ? r.total_quantity_LYTD : window === 'YTD' ? r.total_quantity_YTD : classVolume(r));
+/** `window`: 'class' = the class data (panels), 'L12M' / 'P12M' = the movement drill-down. */
+function toListRows(rows: BcgFact[], window: 'class' | 'L12M' | 'P12M' = 'class'): MatrixListRow[] {
+  const vol = (r: BcgFact) => (window === 'P12M' ? r.total_quantity_P12M : window === 'L12M' ? r.total_quantity_L12M : classVolume(r));
   const max = Math.max(1, ...rows.map(vol));
   return rows.map((r, i) => ({
     id: `${r.id}-${i}`,
     label: getDisplayName(r),
-    revenueYTD: r.total_value_YTD,
+    revenue: r.total_value_L12M,
     volume: vol(r),
     barPct: (Math.max(0, vol(r)) / max) * 100,
     fact: r,
@@ -555,7 +530,7 @@ function withFormula(entry: ReturnType<typeof vh>, formula: string): ReturnType<
 }
 
 /** Ranked product list -- shared by the Section 1 matrix panels (one class's top N by Revenue
- * YTD) and Section 3's movement drill-down (one movement category's top N, spanning every class).
+ * the last 12 months) and Section 3's movement drill-down (one movement category's top N, spanning every class).
  * Reuses DataTable -- the same row/hover styling (`.ps-datatable-row`) the Product Detail table
  * below already uses -- rather than inventing a fourth list pattern in this module.
  *
@@ -645,7 +620,7 @@ function MatrixCell({
   icon: string;
   thresholds: BcgThresholds;
   rows: MatrixListRow[];
-  /** Every product in this class, same Volume-YTD-descending order as `rows` (the top-10 preview
+  /** Every product in this class, same volume-descending order as `rows` (the top-10 preview
    * slice) -- the export button ships this full list, not the on-screen preview. */
   allSorted: BcgFact[];
   moreCount: number;
@@ -705,6 +680,136 @@ function DrillBreadcrumb({ active, rootLabel, onReset }: { active: string | null
       ) : (
         <span>{rootLabel}</span>
       )}
+    </div>
+  );
+}
+
+/** Rows 1-3 of the page (2026-11-14): Total SKUs; Product Status (Active / Non Active / Dormant / Unclassified, each SKU
+ * in exactly one); BCG Matrix of the Active products. All from the API's statusSummary, whose two checks (Total = the 4
+ * statuses, the 5 BCG cards = Active) the backend enforces (summarizeProductStatus). */
+function StatusRows({
+  loading,
+  error,
+  onRetry,
+  summary,
+  summaryError,
+}: {
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  summary: ProductStatusSummary | null;
+  summaryError: string | null;
+}) {
+  const rowTitle = (id: string, text: string) => (
+    <h2 id={id} className={styles.rowTitle}>
+      {text}
+    </h2>
+  );
+  if (error) return <ErrorState message={error} onRetry={onRetry} />;
+  if (!loading && !summary) return <ErrorState message={summaryError ?? 'Product status is not available.'} onRetry={onRetry} />;
+  const s = summary;
+  const bcgMeta = (key: BcgClass) => CLASS_META[key];
+  return (
+    <div data-testid="bcg-kpis" className={styles.statusRows}>
+      <section aria-labelledby="row-total-skus">
+        {rowTitle('row-total-skus', 'Total SKUs')}
+        <div className={styles.rowTotal}>
+          {loading || !s ? (
+            <LoadingSkeleton variant="kpi" />
+          ) : (
+            <KpiTile
+              label="SKUs in Odoo (active + archived, every category)"
+              value={fmtCount(s.total)}
+              variance={`Active ${fmtCount(s.active.count)} · Non Active ${fmtCount(s.nonActive.count)} · Dormant ${fmtCount(s.dormant.count)} · Unclassified ${fmtCount(s.unclassified.count)}`}
+              status="neutral"
+              icon="📦"
+              accentColor="var(--ps-color-accent)"
+              badgeLabel="Total SKUs"
+            />
+          )}
+        </div>
+      </section>
+
+      <section aria-labelledby="row-product-status">
+        {rowTitle('row-product-status', 'Product Status')}
+        <div className={styles.rowStatus}>
+          {loading || !s ? (
+            [0, 1, 2, 3].map((i) => <LoadingSkeleton key={i} variant="kpi" />)
+          ) : (
+            <>
+              <KpiTile
+                label="SKUs sold in the last 12 months"
+                value={fmtCount(s.active.count)}
+                variance={`${fmtUnits(s.active.units)} · ${fmtLYD(s.active.value)}`}
+                status="success"
+                icon="✅"
+                accentColor="var(--ps-color-success)"
+                badgeLabel="Active"
+              />
+              <KpiTile
+                label="SKUs not sold in the last 12 months"
+                value={fmtCount(s.nonActive.count)}
+                variance={`${fmtCount(s.nonActive.withStock)} with stock · ${fmtCount(s.nonActive.zeroStock)} zero stock · stock ${fmtLYD(s.nonActive.stockValue)}`}
+                status="watch"
+                icon="⏸️"
+                accentColor="var(--ps-color-watch)"
+                badgeLabel="Non Active"
+              />
+              <KpiTile
+                label="SKUs archived in Odoo"
+                value={fmtCount(s.dormant.count)}
+                variance="Archived (not active) in Odoo"
+                status="alert"
+                icon="💤"
+                accentColor="var(--ps-color-alert)"
+                badgeLabel="Dormant"
+              />
+              <KpiTile
+                label="SKUs in excluded categories"
+                value={fmtCount(s.unclassified.count)}
+                variance="ProductExclusions.xlsx categories · raw materials"
+                status="neutral"
+                icon="🏷️"
+                accentColor="var(--ps-color-neutral-text)"
+                badgeLabel="Unclassified"
+              />
+            </>
+          )}
+        </div>
+      </section>
+
+      <section aria-labelledby="row-bcg">
+        {rowTitle('row-bcg', 'BCG Matrix (Active products · Last 12 Months)')}
+        <div className={styles.rowBcg}>
+          {loading || !s ? (
+            [...BCG_CLASSES, NOT_CLASSIFIED].map((key) => <LoadingSkeleton key={key} variant="kpi" />)
+          ) : (
+            <>
+              {s.bcg.classes.map((c) => (
+                <KpiTile
+                  key={c.key}
+                  label="Products"
+                  value={fmtCount(c.count)}
+                  variance={c.count ? `${fmtUnits(c.units)} · profit ${fmtLYD(c.profit)}` : undefined}
+                  status={bcgMeta(c.key).status}
+                  icon={bcgMeta(c.key).icon}
+                  accentColor={BCG_COLOR[c.key]}
+                  badgeLabel={c.key}
+                />
+              ))}
+              <KpiTile
+                label="Products"
+                value={fmtCount(s.bcg.notClassified)}
+                variance="No profit data or gross margin unavailable"
+                status="neutral"
+                icon="–"
+                accentColor="var(--ps-color-neutral-text)"
+                badgeLabel="Not classified"
+              />
+            </>
+          )}
+        </div>
+      </section>
     </div>
   );
 }

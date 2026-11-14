@@ -13,6 +13,7 @@ import { RefreshFooter } from '../../../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../../../lib/format';
 import { useAuth } from '../../../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../../../lib/hooks';
+import { Last12MonthsNote } from '../../../../../../components/product/Last12MonthsNote';
 import { Card, DataGrid, KpiTile, LoadingSkeleton, ErrorState, VisualInfoIcons, type DataGridColumn } from '@07ps/ui';
 import {
   toProductFacts,
@@ -48,7 +49,7 @@ const PRODUCT_COLUMNS: DataGridColumn<BrandRow>[] = [
   { key: 'Brand', header: 'Brand', rawValue: (r) => r.Brand ?? '' },
   { key: 'Company', header: 'Company', rawValue: (r) => r.Company },
   { key: 'Category', header: 'Category', render: (r) => <ProductName name={r.Category ?? '—'} />, rawValue: (r) => r.Category ?? '' },
-  { key: 'bcg_class_YTD', header: 'BCG Class', render: (r) => (r.bcg_class_YTD ? <span style={{ color: BCG_COLOR[r.bcg_class_YTD] ?? 'var(--ps-color-muted-text)', fontWeight: 700 }}>{r.bcg_class_YTD}</span> : '—'), rawValue: (r) => r.bcg_class_YTD ?? '' },
+  { key: 'bcg_class', header: 'BCG Class', render: (r) => (r.bcg_class ? <span style={{ color: BCG_COLOR[r.bcg_class] ?? 'var(--ps-color-muted-text)', fontWeight: 700 }}>{r.bcg_class}</span> : '—'), rawValue: (r) => r.bcg_class ?? '' },
   { key: 'bcg_movement', header: 'Movement', render: (r) => (r.bcg_movement ? <span style={{ color: MOVEMENT_COLOR[r.bcg_movement], fontWeight: 700 }}>{MOVEMENT_LABEL[r.bcg_movement]}</span> : '—'), rawValue: (r) => (r.bcg_movement ? MOVEMENT_LABEL[r.bcg_movement] : '') },
   { key: 'value', header: 'Revenue', align: 'right', render: (r) => fmtLYD(r.value), rawValue: (r) => r.value },
   { key: 'grossProfitPct', header: 'GP%', align: 'right', render: (r) => gpText(r.grossProfitPct), rawValue: (r) => (r.grossProfitPct === null ? '' : Math.round(r.grossProfitPct * 10) / 10), sortValue: (r) => r.grossProfitPct ?? Number.NEGATIVE_INFINITY },
@@ -59,7 +60,7 @@ const PRODUCT_COLUMNS: DataGridColumn<BrandRow>[] = [
 
 /**
  * Brand page (/product/pim-contribution/brand/[brand]) -- one partner brand: a header with its KPI tiles (Volume in
- * Unit, volume vs same period LY, Revenue, GP%, SKUs in catalogue, SKUs sold), then every product of the brand in a
+ * Unit, volume vs prior 12 months, Revenue, GP%, SKUs in catalogue, SKUs sold), then every product of the brand in a
  * sortable, searchable table (sticky header, CSV + PDF export), highest volume first. The Brand is the product's main
  * vendor in Odoo, matched case-insensitively on the brand's Odoo names (PARTNER_BRANDS). The FilterBar is the Product
  * pages' one (company, Customer Group, channel, branch, salesperson, date range -- shared with PIM Contribution);
@@ -71,7 +72,7 @@ export default function BrandPage() {
   const { user, logout, token, error: authError, retryAuth } = useAuth();
   const roleLabel = user?.role.label ?? user?.fullName;
   const refresh = useRefreshStatus(token, authError, retryAuth);
-  const { anchorDate, onAnchorDateChange, dateFromDate, dateToDate, scope, companyLabel, filterBarProps } = useProductFilters(refresh.data);
+  const { anchorDate, onAnchorDateChange, scope, companyLabel, filterBarProps } = useProductFilters(refresh.data);
 
   const brandSlug = Array.isArray(params?.brand) ? params.brand[0] : params?.brand ?? '';
   const partnerBrand = findPartnerBrandBySlug(brandSlug);
@@ -115,6 +116,8 @@ export default function BrandPage() {
         />
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)', minWidth: 0 }}>
+
+          <Last12MonthsNote period={overview.data?.period} />
           <BackLink />
           {overview.loading && !overview.data ? (
             <LoadingSkeleton variant="chart" />
@@ -137,25 +140,25 @@ export default function BrandPage() {
                   <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--ps-color-text)', margin: 0 }}>{partnerBrand.requested}</h1>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginBottom: 16 }}>
-                  {scopeLabel} · {dateFromDate} to {dateToDate} · brand = main vendor in Odoo ({partnerBrand.odooNames.join(' + ')})
+                  {scopeLabel} · {overview.data?.period.label ?? 'Last 12 Months'} · brand = main vendor in Odoo ({partnerBrand.odooNames.join(' + ')})
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
-                  <KpiTile label="Volume (period)" value={fmtUnits(stats?.volume ?? 0)} status="neutral" />
+                  <KpiTile label="Volume (Last 12 Months)" value={fmtUnits(stats?.volume ?? 0)} status="neutral" />
                   <KpiTile
-                    label="Volume vs same period LY"
+                    label="Volume vs prior 12 months"
                     value={stats?.volumeDeltaPct === null || stats?.volumeDeltaPct === undefined ? '—' : fmtPct(stats.volumeDeltaPct)}
                     variance={stats ? `LY ${fmtUnits(stats.volumePrior)}` : undefined}
                     status={stats?.volumeDeltaPct === null || stats?.volumeDeltaPct === undefined ? 'neutral' : stats.volumeDeltaPct >= 0 ? 'success' : 'alert'}
                   />
                   <KpiTile
-                    label="Revenue (period)"
+                    label="Revenue (Last 12 Months)"
                     value={fmtLYD(stats?.revenue ?? 0)}
-                    variance={stats?.deltaPct === null || stats?.deltaPct === undefined ? undefined : `${fmtPct(stats.deltaPct)} vs same period LY`}
+                    variance={stats?.deltaPct === null || stats?.deltaPct === undefined ? undefined : `${fmtPct(stats.deltaPct)} vs prior 12 months`}
                     status="neutral"
                   />
                   <KpiTile label="GP%" value={stats?.gp === null || stats?.gp === undefined ? '—' : `${stats.gp.toFixed(1)}%`} variance="revenue-weighted, costed products" status="neutral" />
                   <KpiTile label="SKUs in catalogue" value={String(stats?.skuCount ?? 0)} status="neutral" />
-                  <KpiTile label="SKUs sold (period)" value={String(stats?.skuSold ?? 0)} status="neutral" />
+                  <KpiTile label="SKUs sold (Last 12 Months)" value={String(stats?.skuSold ?? 0)} status="neutral" />
                 </div>
               </div>
 
@@ -169,7 +172,7 @@ export default function BrandPage() {
                     rows={[...rows].sort((a, b) => b.volume - a.volume) as BrandRow[]}
                     getRowId={(r) => r.id}
                     fileName={`brand-${brandSlug}-products`}
-                    filtersSummary={`Brand: ${partnerBrand.requested} · ${scopeLabel} · ${dateFromDate} to ${dateToDate}`}
+                    filtersSummary={`Brand: ${partnerBrand.requested} · ${scopeLabel} · ${overview.data ? `${overview.data.period.from} to ${overview.data.period.to}` : ''}`}
                   />
                 </div>
               </Card>
