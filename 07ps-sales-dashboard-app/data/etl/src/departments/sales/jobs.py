@@ -156,7 +156,8 @@ def _apply_customer_growth(ctx: RunContext, result: cf.Conformed, *, write: bool
     blocked["CustomerID"] = blocked["CustomerKey"].astype(str)
     legacy_logger = pipeline.legacy_logger
     sales_org = SalesOrgRepository(legacy_logger).load(pipeline.settings.sales_team_path)
-    df = cf.customer_growth_input(result.tables["fact_sales_lines"], {int(k): v for k, v in names.items()})
+    lines = result.tables["fact_sales_lines"]
+    df = cf.customer_growth_input(lines, {int(k): v for k, v in names.items()})
     dim = CustomerDimensionBuilder(sales_org, PipelineSettings(), BlockedCustomersLoader(legacy_logger)).build(
         df, blocked_customers_path=None, blocked_customers=blocked.drop(columns=["CustomerKey"]))
     growth = cf.growth_rows(dim)
@@ -171,7 +172,6 @@ def _apply_customer_growth(ctx: RunContext, result: cf.Conformed, *, write: bool
         with ctx.engine.begin() as conn:
             upsert(conn, "dim_customer", growth, update_columns=[*cf.GROWTH_COLUMNS, "updated_at_utc"])
     by_key = growth.set_index("CustomerKey")
-    lines = result.tables["fact_sales_lines"]
     for col in ("First_Purchase_Date", "CustomerStatus"):
         if col in lines.columns:
             lines[col] = lines["CustomerKey"].map(by_key[col]).to_numpy()

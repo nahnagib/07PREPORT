@@ -95,13 +95,14 @@ SALES_INPUT_FILES = ("SalesTeam.xlsx", "sales_targets.xlsx", "OffDays.xlsx", "Bl
 
 def _inputs_signature(input_dir: Path) -> str:
     """Name, size and modification time of every input file the sales build reads (SALES_INPUT_FILES): a changed
-    workbook rebuilds; any other file in the folder does not."""
+    workbook rebuilds; ProductExclusions is hashed by content."""
     parts = []
     for name in SALES_INPUT_FILES:
         f = Path(input_dir) / name
         if f.is_file():
             st = f.stat()
-            parts.append(f"{f.name}|{st.st_size}|{int(st.st_mtime)}")
+            token = hashlib.sha256(f.read_bytes()).hexdigest() if name == "ProductExclusions.xlsx" else st.st_mtime_ns
+            parts.append(f"{f.name}|{st.st_size}|{token}")
     return hashlib.sha1("\n".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -115,7 +116,7 @@ def _last_build(conn) -> dict[str, Any] | None:
     return {"started": row[0], **details}
 
 
-def build_reason(ctx: RunContext, mode: str) -> str | None:
+def build_reason(ctx: RunContext, mode: str, inputs_signature: str | None = None) -> str | None:
     """Why the sales tables must be rebuilt now, or None (nothing changed since the last build)."""
     today = _dt.datetime.now(ZoneInfo(ctx.config.business_timezone)).date().isoformat()
     with ctx.engine.connect() as conn:
@@ -126,7 +127,7 @@ def build_reason(ctx: RunContext, mode: str) -> str | None:
             return f"first build in {mode} mode"
         if last.get("business_date") != today:
             return f"business date {today} (date-relative columns)"
-        if last.get("inputs_signature") != _inputs_signature(ctx.config.input_dir):
+        if last.get("inputs_signature") != (inputs_signature or _inputs_signature(ctx.config.input_dir)):
             return "input workbook(s) changed"
         changed = ctx.watermarks.get(MIRROR_CHANGED, conn=conn).write_date
         if changed is not None and str(changed) != last.get("mirror_changed"):
@@ -144,7 +145,8 @@ def build_sales_from_mirror(ctx: RunContext) -> TaskResult:
     if mode == "legacy":
         ctx.state["skip_sales_build"] = "ETL_SALES_MODE=legacy"
         return TaskResult(details={"skipped": "ETL_SALES_MODE=legacy: the sales tables are built by the 5x/day job"})
-    reason = build_reason(ctx, mode)
+    inputs_signature = _inputs_signature(ctx.config.input_dir)
+    reason = build_reason(ctx, mode, inputs_signature)
     if reason is None:
         ctx.state["skip_sales_build"] = "nothing changed since the last build"
         log.info("sales_build: nothing changed since the last build (mirror, shared lists, inputs, date): nothing to do")
@@ -154,7 +156,7 @@ def build_sales_from_mirror(ctx: RunContext) -> TaskResult:
     log.info("sales_build (%s): rebuilding because %s", mode, reason)
     with mr.MirrorSnapshot(ctx.engine) as snapshot:
         build = _pipeline(ctx).build_sheets(include_qa=False, source=snapshot)
-    ctx.state.update(build=build, sales_mode=mode, build_reason=reason, mirror_changed=mirror_changed)
+    ctx.state.update(build=build, sales_mode=mode, build_reason=reason, mirror_changed=mirror_changed, inputs_signature=inputs_signature)
     return TaskResult(rows_extracted=0, details={"mode": mode, "reason": reason, "mirror_rows_used": build.odoo_extract_count,
                                                  "sheets": {k: len(v) for k, v in build.sheets.items()}})
 
@@ -203,7 +205,9 @@ def write_sales_from_mirror(ctx: RunContext) -> TaskResult:
     log.info("sales_build (%s): %s row(s) written or deleted: %s", mode, f"{written:,}",
              {t: (c.get("inserted", 0), c.get("updated", 0), c.get("deleted", 0)) for t, c in changes.items()})
     return TaskResult(rows_loaded=written, details={
-        "mode": mode, "reason": ctx.state["build_reason"], "business_date": today, "inputs_signature": _inputs_signature(ctx.config.input_dir),
+        "mode": mode, "reason": ctx.state["build_reason"], "business_date": today,
+        # the signature the build started from (a re-upload during the run is picked up by the next build)
+        "inputs_signature": ctx.state.get("inputs_signature") or _inputs_signature(ctx.config.input_dir),
         "mirror_changed": None if ctx.state["mirror_changed"] is None else str(ctx.state["mirror_changed"]), "tables": changes,
         "targets": {t: target_table(t, mode) for t in MART_TABLES}})
 

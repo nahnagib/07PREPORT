@@ -65,7 +65,7 @@ from sales_pipeline.staging import StagingStore, odoo_incremental_domain
 from sales_pipeline.validation import ModelValidator
 from sales_pipeline import odoo_products
 from sales_pipeline.product_dashboard import IntercompanyFlagger, ProductDashboardBuilder, ProductDashboardConfig
-from sales_pipeline.product_exclusions import load_for_run as load_product_exclusions
+from sales_pipeline.product_exclusions import ProductExclusions, load_for_run as load_product_exclusions
 
 
 SALE_REPORT_CACHE_TABLE = "raw_sale_report_api"
@@ -231,7 +231,7 @@ class PowerBISalesPipeline:
             with run_context.step("validate_config_and_inputs"):
                 # Inputs first: a wrong/unmounted input folder is the cheapest thing to detect, so it
                 # must fail before config checks that lead into DB access.
-                self._validate_inputs()
+                exclusions = self._validate_inputs()
                 self.settings.validate(require_database=output_mode in {"sql", "both"} or load_mode == "incremental")
                 self.settings.output_dir.mkdir(parents=True, exist_ok=True)
                 self.logger.info("Pipeline load mode: %s", load_mode.upper())
@@ -422,6 +422,7 @@ class PowerBISalesPipeline:
                     inventory_companies_raw=inventory_companies_raw,
                     valuation_layers_raw=valuation_layers_raw,
                     product_categories_raw=product_categories_raw,
+                    exclusions=exclusions,
                     sale_orders_raw=sale_orders_raw,
                 )
                 if metadata_exporter is not None:
@@ -641,7 +642,7 @@ class PowerBISalesPipeline:
         run_context = PipelineRunContext(scheduled_refresh_time=None)
         odoo_extract_count = 0
         with run_context.step("validate_config_and_inputs"):
-            self._validate_inputs()
+            exclusions = self._validate_inputs()
             self.settings.validate(require_database=False)
         if source is None:
             with run_context.step("odoo_authenticate"):
@@ -707,6 +708,7 @@ class PowerBISalesPipeline:
                 stock_locations_raw=fetched["stock.location"], inventory_companies_raw=fetched["res.company"],
                 valuation_layers_raw=fetched["stock.valuation.layer"],
                 product_categories_raw=fetched["product.category"],
+                exclusions=exclusions,
                 sale_orders_raw=crm["sale.order"],
             )
         with run_context.step("transform_crm_model"):
@@ -738,20 +740,30 @@ class PowerBISalesPipeline:
     def rebuild_product_tables(self, fact_sales_lines: pd.DataFrame, sheets: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
         """Re-runs the unchanged product-page and BCG builders on (conformed) sales lines, with the same inputs
         transform() gives them, so their keys come from the lines they aggregate."""
-        dashboard_config = ProductDashboardConfig.load(self.settings.product_dashboard_config)
-        business_today = pd.Timestamp.now(tz=self.settings.timezone).tz_localize(None).normalize()
-        dim_product, dim_product_cost = sheets["Dim_Product"], sheets["Dim_ProductCost"]
-        line_costs = ProductCostMatcher.attach(fact_sales_lines, dim_product_cost)["product_cost"]
-        exclusions = load_product_exclusions(self.settings.product_exclusions_path)
-        builder = ProductDashboardBuilder(dashboard_config, business_today, exclusions)
-        tables = builder.build(
-            fact_sales_lines, dim_product, sheets["Fact_Inventory"], line_costs=line_costs,
-            valuation_layers=getattr(self, "valuation_layers", None),
-            categories=getattr(self, "product_categories", None),
+        tables = self._build_product_tables(
+            fact_sales_lines, sheets["Dim_Product"], sheets["Dim_ProductCost"], sheets["Fact_Inventory"],
+            self.product_exclusions,
         )
-        # what was excluded and why (ETL Control Center; written to the conform_sales task log)
+        return tables
+
+    def _build_product_tables(
+        self, lines: pd.DataFrame, catalog: pd.DataFrame, costs: pd.DataFrame, inventory: pd.DataFrame,
+        exclusions: ProductExclusions,
+    ) -> dict[str, pd.DataFrame]:
+        config = ProductDashboardConfig.load(self.settings.product_dashboard_config)
+        business_today = pd.Timestamp.now(tz=self.settings.timezone).tz_localize(None).normalize()
+        builder = ProductDashboardBuilder(config, business_today, exclusions)
+        tables = builder.build(
+            lines, catalog, inventory, line_costs=ProductCostMatcher.attach(lines, costs)["product_cost"],
+            valuation_layers=self.valuation_layers, categories=self.product_categories, catalog_scope=self.product_catalog_scope,
+        )
         self.product_exclusion_report = builder.exclusion_report()
-        tables["Fact_BCGMatrix"] = BCGMatrixBuilder.build(fact_sales_lines, dim_product_cost, dim_product=dim_product)
+        # The legacy Product BCG table leaves the workbook-excluded products out too. The sales lines and the inventory
+        # are NOT flagged or filtered: the exclusions apply to the Product pages only (Sales pages keep matching Odoo).
+        company = "company_final" if "company_final" in lines else "Company"
+        product_id = "OdooProductID" if "OdooProductID" in lines else "ProductKey"
+        self.product_excluded_lines = builder.workbook_exclusion_mask(lines, company, product_id).to_numpy()
+        tables["Fact_BCGMatrix"] = BCGMatrixBuilder.build(lines.loc[~self.product_excluded_lines], costs, dim_product=catalog)
         return tables
 
     def transform(
@@ -766,7 +778,10 @@ class PowerBISalesPipeline:
         sale_orders_raw: pd.DataFrame | None = None,
         valuation_layers_raw: pd.DataFrame | None = None,
         product_categories_raw: pd.DataFrame | None = None,
+        exclusions: ProductExclusions | None = None,
     ) -> dict[str, pd.DataFrame]:
+        self.product_exclusions = exclusions if exclusions is not None else load_product_exclusions(self.settings.product_exclusions_path)
+        self.product_catalog_scope = odoo_products.catalog_company_scope(product_cost_raw)
         _t0 = time.perf_counter()
         sales = self._normalize_sales_export(sales_raw)
         self.logger.info("PERF transform normalize_sales_export rows=%s duration_seconds=%.2f", len(sales), time.perf_counter() - _t0)
@@ -920,18 +935,12 @@ class PowerBISalesPipeline:
         fact_sales_lines = SalesLinesFactBuilder().build(sales)
         self.logger.info("PERF transform fact_sales_lines rows=%s duration_seconds=%.2f", len(fact_sales_lines), time.perf_counter() - _t13)
         _t14 = time.perf_counter()
-        fact_bcg = BCGMatrixBuilder.build(fact_sales_lines, dim_product_cost, dim_product=dim_product)
-        line_costs = ProductCostMatcher.attach(fact_sales_lines, dim_product_cost)["product_cost"]
-        exclusions = load_product_exclusions(self.settings.product_exclusions_path)
-        # Odoo's category tree (sub-categories of an excluded category, Raw Materials); kept for rebuild_product_tables
         self.product_categories = product_categories_raw
-        # Stock Aging: the open receipt layers (kept for rebuild_product_tables, which runs on the same instance)
         self.valuation_layers = InventoryModelBuilder.normalize_valuation_layers(valuation_layers_raw, inventory_companies_raw)
-        product_tables = ProductDashboardBuilder(dashboard_config, business_today, exclusions).build(
-            fact_sales_lines, dim_product, inventory_result.fact_inventory, line_costs=line_costs,
-            valuation_layers=self.valuation_layers,
-            categories=self.product_categories,
+        product_tables = self._build_product_tables(
+            fact_sales_lines, dim_product, dim_product_cost, inventory_result.fact_inventory, self.product_exclusions,
         )
+        fact_bcg = product_tables["Fact_BCGMatrix"]
         self.logger.info(
             "Product dashboard tables: products=%s daily_rows=%s odoo_gaps=%s dq=%s",
             len(product_tables["Dim_ProductDashboard"]),
@@ -939,7 +948,9 @@ class PowerBISalesPipeline:
             len(product_tables["QA_ProductOdooGaps"]),
             len(product_tables["QA_ProductDataQuality"]),
         )
-        bcg_summary = BCGMatrixBuilder.quality_summary(fact_sales_lines, fact_bcg, dim_segment)
+        bcg_summary = BCGMatrixBuilder.quality_summary(
+            fact_sales_lines.loc[~self.product_excluded_lines], fact_bcg, dim_segment,
+        )
         self.logger.info("PERF transform bcg_build rows=%s duration_seconds=%.2f", len(fact_bcg), time.perf_counter() - _t14)
         bcg_checks = {
             "unique_company_product": bcg_summary["duplicate_company_product_count"] == 0,
@@ -961,7 +972,6 @@ class PowerBISalesPipeline:
         )
         sheets = {
             "Fact_SalesLines": fact_sales_lines,
-            "Fact_BCGMatrix": fact_bcg,
             "Fact_Orders": fact_orders,
             "Fact_Targets": TargetsFactBuilder().build(targets),
             "Fact_OffDays": fact_offdays,
@@ -2843,7 +2853,7 @@ class PowerBISalesPipeline:
             )
         return out.loc[~excluded_mask].copy()
 
-    def _validate_inputs(self) -> None:
+    def _validate_inputs(self) -> ProductExclusions:
         report = inspect_input_dir(self.settings.input_dir)
         self.logger.info("Input directory: %s (exists=%s)", report.input_dir, report.dir_exists)
         if not report.ok:
@@ -2860,6 +2870,8 @@ class PowerBISalesPipeline:
                     f"BlockedCustomers.xlsx is missing and could not be created in {blocked.parent} "
                     f"(is the input folder mounted read-only?): {exc}. Add an empty BlockedCustomers.xlsx there."
                 ) from exc
+
+        return load_product_exclusions(self.settings.product_exclusions_path)
 
     @staticmethod
     def _validate_output_sheets(sheets: dict[str, pd.DataFrame], include_qa: bool = True) -> None:

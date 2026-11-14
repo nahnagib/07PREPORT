@@ -456,7 +456,7 @@ function StatusRows({
               <KpiTile label="Non Active · not sold in the period" value={fmtCount(s.nonActive.count)}
                 subValue={`${fmtCount(s.nonActive.withStock)} with stock · ${fmtCount(s.nonActive.zeroStock)} zero stock`} status="watch" />
               <KpiTile label="Dormant · archived in Odoo" value={fmtCount(s.dormant.count)} status="alert" />
-              <KpiTile label="Unclassified · excluded categories" value={fmtCount(s.unclassified.count)} status="neutral" />
+              <KpiTile label="Unclassified · active exclusion rules" value={fmtCount(s.unclassified.count)} status="neutral" />
             </>
           )}
         </div>

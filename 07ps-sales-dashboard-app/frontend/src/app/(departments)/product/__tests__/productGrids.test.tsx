@@ -125,7 +125,7 @@ describe('Product tables use the standard grid, volume first, and every product 
     expect([...kpis.querySelectorAll('h2')].map((h) => h.textContent)).toEqual(['Total SKUs', 'Product Status', 'BCG Matrix (Active products)']);
     expect(labels('row-total-skus')).toEqual(['Active + archived, every category']);
     expect(row('row-total-skus')[0].textContent).toMatch(/12.*Active 4 · Non Active 5 · Dormant 2 · Unclassified 1/);
-    expect(labels('row-product-status')).toEqual(['Active · sold in the period', 'Non Active · not sold in the period', 'Dormant · archived in Odoo', 'Unclassified · excluded categories']);
+    expect(labels('row-product-status')).toEqual(['Active · sold in the period', 'Non Active · not sold in the period', 'Dormant · archived in Odoo', 'Unclassified · active exclusion rules']);
     expect(row('row-product-status')[1].textContent).toMatch(/2 with stock · 3 zero stock/);
     expect(labels('row-bcg')).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs']);
     expect(row('row-bcg')[0].textContent).toMatch(/profit LYD/); // profit access (this user)

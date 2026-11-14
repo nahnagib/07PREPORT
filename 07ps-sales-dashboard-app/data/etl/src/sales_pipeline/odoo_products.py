@@ -98,6 +98,19 @@ def catalog(product_raw: pd.DataFrame | None) -> pd.DataFrame:
     return out[CATALOG_COLUMNS]
 
 
+def catalog_company_scope(product_raw: pd.DataFrame | None) -> pd.DataFrame | None:
+    """Keep the company contexts before catalog() deduplicates shared variants."""
+    if product_raw is None or "cost_company" not in product_raw.columns:
+        return None
+    scope = product_raw[["id", "cost_company"]].dropna().rename(
+        columns={"id": "ProductKey", "cost_company": "Company"},
+    )
+    # A record rule can expose a company-owned product from another context. Ownership takes precedence.
+    owners = product_raw.loc[scope.index, "company_id"] if "company_id" in product_raw else pd.Series(pd.NA, index=scope.index)
+    scope["Company"] = scope["Company"].where(~owners.map(_present), owners)
+    return scope.drop_duplicates().reset_index(drop=True)
+
+
 def _m2o(value: Any) -> tuple[Any, Any]:
     """(id, display name) of an Odoo many2one as read over XML-RPC ([id, name]) or flattened (id / name)."""
     if isinstance(value, (list, tuple)) and len(value) == 2:

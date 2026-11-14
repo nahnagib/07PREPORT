@@ -21,7 +21,7 @@
  *
  * Company view (query.company = 'Majaal' | 'Tika'): that company's products and sales only.
  * All-companies view (no company, still called 'BMH'): every company's products side by side. A product is ALWAYS one
- * Odoo product in one company -- nothing is combined across companies (2026-11-04).
+ * Odoo product in one company for detail rows. SKU cards count distinct variants in the selected scope.
  * Athena is not on the Product pages (EXCLUDED_COMPANIES; the ETL already leaves it out of these tables, the measure
  * filters it again so totals never include it).
  * Units: the ETL shows every unit-type UoM (UNIT, Unit, وحدة) as one "Unit"; other UoMs (bag, m, m², kg) keep their name.
@@ -37,7 +37,7 @@
  *              Odoo UoM (2026-11-07 decision). volumeByUom keeps the split by UoM for reference.
  *   Velocity = Volume / days in the period (period end capped at today).
  *   Order days = distinct days in the period with at least one sales line of the product (Sales Frequency).
- * Product Status of the period: Unclassified (excluded category) and Dormant (archived in Odoo) come from the ETL; every
+ * Product Status of the period: Unclassified (workbook product or category exclusion) and Dormant (archived in Odoo) come from the ETL; every
  * other product is Active when it sold (quantity > 0) in the period, else Non Active.
  * BCG class: Active products only, always one of Stars / Cash Cows / Strategic / Dogs (measures/bcgLatestProfit.ts; no
  * cost data = low GP%, flagged missingCost). The thresholds never leave the server (publicThresholds).
@@ -348,10 +348,12 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   const period = resolvePeriod(query.fromDate, query.toDate);
   let requestedView = resolveView(query.company);
   const companyKeys = query.filters?.companyKeys ?? [];
+  let allowedCompanies: Set<string> | undefined;
   if (companyKeys.length > 0) {
     // Role limited to some companies: never show another company -- a single allowed company always gets its company view.
-    const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM v_sales_product_daily WHERE CompanyKey IN (?)', [companyKeys]);
+    const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM v_sales_product_dashboard WHERE CompanyKey IN (?) AND Company NOT IN (?)', [companyKeys, EXCLUDED_COMPANIES]);
     const allowed = (allowedRows as any[]).map((r) => String(r.Company));
+    allowedCompanies = new Set(allowed);
     if (requestedView !== 'BMH' && !allowed.includes(requestedView)) {
       throw new ProductScopeError(`Company ${requestedView} is outside this role's permitted data scope.`);
     }
@@ -455,7 +457,10 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   const soldAnywhere = new Set((soldRows as any[]).map((r) => String(r.k)));
   const odooBase = odooConfiguredBaseUrl();
   const products: ProductDashboardRow[] = [];
-  const viewRows = (productRows as any[]).filter((r) => view === 'BMH' || String(r.Company ?? '') === view);
+  const viewRows = (productRows as any[]).filter((r) => {
+    const company = String(r.Company ?? '');
+    return (!allowedCompanies || allowedCompanies.has(company)) && (view === 'BMH' || company === view);
+  });
   const rawByKey = new Map(viewRows.map((r) => [String(r.ProductCompanyKey), r]));
   // OnProductPages = 0: an archived / excluded / catalog-only product -- only the status cards count it.
   for (const p of viewRows.filter(onProductPages)) {
@@ -472,6 +477,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   const bcgByKey = new Map(bcgWindows.map((w) => [w.k, w]));
   const statusOf = (p: any): ProductStatus => {
     const etl = str(p.ProductStatus);
+    if (num(p.ExcludedByProduct) === 1 || num(p.ExcludedByCategory) === 1) return 'Unclassified';
     if (etl === 'Unclassified' || etl === 'Dormant') return etl;
     if (etl === null && p.IsActive !== null && p.IsActive !== undefined && num(p.IsActive) === 0) return 'Dormant';
     return bcgByKey.get(String(p.ProductCompanyKey))?.sold ? 'Active' : 'NonActive';
@@ -588,13 +594,21 @@ function onProductPages(p: any): boolean {
 /** The status cards, or why they cannot be shown (never fails the whole response: the other Product pages share it). */
 function statusSummaryOf(rows: any[], statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>) {
   try {
-    const input = rows.map((p) => ({
-      status: statuses.get(String(p.ProductCompanyKey)) ?? null,
-      onHandQty: num(p.OnHandQty),
-      onHandValue: num(p.OnHandValue),
-      bcg: classOf.get(String(p.ProductCompanyKey)) ?? null,
-    }));
-    return { statusSummary: summarizeProductStatus(input), statusSummaryError: null };
+    const catalog = new Map<string, Array<StatusInput>>();
+    for (const p of rows) {
+      // A nullable OdooProductID marks catalog membership even when core conformance uses ProductKey = -1.
+      const id = String(p.OdooProductID === undefined ? p.ProductKey : p.OdooProductID);
+      if (!/^[1-9]\d*$/.test(id)) continue;
+      const parts = catalog.get(id) ?? [];
+      parts.push({
+        status: statuses.get(String(p.ProductCompanyKey)) ?? null,
+        onHandQty: num(p.OnHandQty),
+        onHandValue: num(p.OnHandValue),
+        bcg: classOf.get(String(p.ProductCompanyKey)) ?? null,
+      });
+      catalog.set(id, parts);
+    }
+    return { statusSummary: summarizeProductStatus([...catalog.values()].map(combineSkuStatus)), statusSummaryError: null };
   } catch (err) {
     console.error('[productDashboard] status summary check failed:', err);
     return { statusSummary: null, statusSummaryError: (err as Error).message };
@@ -607,6 +621,36 @@ export interface StatusInput {
   onHandValue: number;
   /** The Active product's BCG of the period (units, value, profit); null otherwise. */
   bcg: Pick<BcgResult, 'bcgClass' | 'volume' | 'value' | 'profit' | 'missingCost'> | null;
+}
+
+/** Shared variants count once. Prefer a workbook match in any in-scope company, then a sale in the period. */
+function combineSkuStatus(parts: StatusInput[]): StatusInput {
+  const excluded = parts.find((part) => part.status === 'Unclassified');
+  if (excluded) return excluded;
+
+  const active = parts.filter((part) => part.status === 'Active');
+  if (active.length) {
+    // The leading company by sales value supplies the class; the amounts span all active company rows.
+    const ordered = [...active].sort((a, b) => (b.bcg?.value ?? 0) - (a.bcg?.value ?? 0));
+    const primary = ordered[0];
+    if (!primary.bcg || active.some((part) => !part.bcg)) return { ...primary, bcg: null };
+    return {
+      ...primary,
+      bcg: {
+        bcgClass: primary.bcg.bcgClass,
+        volume: active.reduce((total, part) => total + part.bcg!.volume, 0),
+        value: active.reduce((total, part) => total + part.bcg!.value, 0),
+        profit: active.reduce((total, part) => total + (part.bcg!.profit ?? 0), 0),
+        missingCost: active.some((part) => part.bcg!.missingCost),
+      },
+    };
+  }
+  return {
+    status: parts.every((part) => part.status === 'Dormant') ? 'Dormant' : 'NonActive',
+    onHandQty: parts.reduce((total, part) => total + part.onHandQty, 0),
+    onHandValue: parts.reduce((total, part) => total + part.onHandValue, 0),
+    bcg: null,
+  };
 }
 
 /** Total SKUs = Unclassified + Dormant + Active + Non Active, and Stars + Cash Cows + Strategic + Dogs = Active. Throws

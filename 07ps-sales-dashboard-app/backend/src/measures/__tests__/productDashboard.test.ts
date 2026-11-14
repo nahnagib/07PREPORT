@@ -22,7 +22,7 @@ function makePool(salesRows: unknown[], productRows: unknown[], meta: unknown[] 
   const calls: Array<{ sql: string; params: unknown[] }> = [];
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     calls.push({ sql, params });
-    if (sql.includes('SELECT DISTINCT Company FROM v_sales_product_daily')) {
+    if (sql.includes('SELECT DISTINCT Company FROM v_sales_product_dashboard')) {
       const keys = (params[0] as number[]) ?? [];
       return [[...(keys.includes(1) ? [{ Company: 'Majaal' }] : []), ...(keys.includes(2) ? [{ Company: 'Tika' }] : [])]];
     }
@@ -351,6 +351,19 @@ describe('computeProductDashboard', () => {
   });
 
   describe('Total SKUs / Product Status cards (statusSummary)', () => {
+    it('counts 60 category members once, including overlap and shared company rows, outside analytical rows', async () => {
+      const packaging = Array.from({ length: 60 }, (_, i) => product(`Majaal|${i + 1}`, 'Majaal', {
+        OdooProductID: i + 1, ExcludedByCategory: 1, ExcludedByProduct: i === 0 ? 1 : 0,
+        OnProductPages: 0, ProductStatus: 'Unclassified',
+      }));
+      const shared = product('Tika|1', 'Tika', { OdooProductID: 1, ExcludedByCategory: 1, OnProductPages: 0 });
+      const pending = product('Majaal|61', 'Majaal', { OdooProductID: 61, OnProductPages: 1 });
+      const out = await computeProductDashboard(makePool([], [...packaging, shared, pending]).pool, {});
+      expect(out.statusSummary).toMatchObject({ total: 61, unclassified: { count: 60 }, nonActive: { count: 1 } });
+      expect(out.products.map((p) => p.productKey)).toHaveLength(1);
+      expect(out.statusSummaryError).toBeNull();
+    });
+
     const rows = [
       product('Majaal|1', 'Majaal', { ProductStatus: 'Active', IsActive: 1 }),
       product('Majaal|2', 'Majaal', { ProductStatus: 'Active', IsActive: 1, OnHandQty: 5, OnHandValue: 50 }), // not sold in the period

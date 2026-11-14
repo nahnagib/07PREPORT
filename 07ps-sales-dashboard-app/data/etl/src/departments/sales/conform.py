@@ -491,7 +491,8 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
     # product pages, BCG: rebuilt by the product builders from the conformed lines ------------------------------------------
     # ProductKey is the Odoo product id on both sides; the builders key a product per company by Company + that id.
     hybrid = lines.copy()
-    hybrid["ProductKey"] = hybrid["ProductKey"].astype("int64").astype(str)
+    # An Odoo SKU can exist before the shared core dimension catches up. Resolve by source identity.
+    hybrid["ProductKey"] = pd.to_numeric(_col(hybrid, "OdooProductID"), errors="coerce").astype("Int64").astype("string").fillna("-1")
     product = product_rebuild(hybrid)
     out.product_gaps = product.get("QA_ProductOdooGaps")
     for name, table in (("Fact_ProductSalesDaily", "fact_sales_product_daily"), ("Dim_ProductDashboard", "dim_sales_product_dashboard"),
