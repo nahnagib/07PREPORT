@@ -452,6 +452,27 @@ export const VISUAL_HELP = {
     },
     interactions: ['Click a product to open it in Odoo', ...GRID],
   },
+  'product.bcgMatrix.totalSkus': {
+    help: {
+      definition: 'Every Odoo product variant, active and archived, every category; counted once.',
+      formula: 'Total SKUs = Active + Non Active + Dormant + Unclassified · a variant in both companies counts once',
+    },
+    interactions: ['Click a status chip to list its products'],
+  },
+  'product.bcgMatrix.productStatus': {
+    help: {
+      definition: 'Sold in the period, not sold, archived in Odoo, or matched by an exclusion rule.',
+      formula: 'Unclassified = ProductExclusions.xlsx rule (first) · Dormant = archived in Odoo · Active = sold in the period · else Non Active (with stock = On Hand > 0)',
+    },
+    interactions: ['Click a card to list its products'],
+  },
+  'product.bcgMatrix.statusTable': {
+    help: {
+      definition: 'The SKUs behind a Product Status card; one row per Odoo variant, same count.',
+      formula: 'Units / Sales value = the period · Profit = Sales value − cost when every sold line has a cost · Qty on hand = Odoo On Hand',
+    },
+    interactions: ['Switch status with the tabs', 'Non Active: With stock / Zero stock', 'Open a product in Odoo', ...GRID],
+  },
   // Stock Velocity: the page replaces the threshold lines (days on hand, ISR, buckets) with the ETL config values.
   'product.stockVelocity.kpiDoh': {
     help: { definition: 'Days on Hand (DOH).', formula: 'DOH = finished-goods Quantity On Hand ÷ average daily Quantity Sold (last 90 days)' },

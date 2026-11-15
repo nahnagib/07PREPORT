@@ -17,11 +17,66 @@
   gap: var(--ps-space-3, 16px);
 }
 
-/* Same card width as .kpiGrid, but a single card keeps its normal width instead of stretching across the row. */
-.kpiGridFill {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
-  gap: var(--ps-space-3, 16px);
+/* Total SKUs hero (2026-11-15): full row, the Critical Number hero's layout (global .ps-cn-hero) + its 40px number. */
+.heroNumber {
+  font-size: 40px;
+  font-weight: 700;
+  color: var(--ps-color-text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+/* The breakdown chips: each opens that status's product table. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--ps-space-2, 8px);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--ps-color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ps-color-text);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip:hover {
+  border-color: var(--chip-color, var(--ps-color-accent));
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--ps-color-accent);
+  outline-offset: 2px;
+}
+
+.chipDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chip-color, var(--ps-color-muted-text));
+}
+
+/* A KpiTile made clickable (.ps-card-clickable gives the hover / focus ring): the wrapper keeps the grid cell. */
+.clickTile {
+  cursor: pointer;
+  border-radius: var(--ps-radius-md, 12px);
+}
+
+.clickHint {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ps-color-accent);
+  margin-top: 4px;
+  text-align: right;
 }
 
 /* Section titles as on the other pages (14px, bold). */

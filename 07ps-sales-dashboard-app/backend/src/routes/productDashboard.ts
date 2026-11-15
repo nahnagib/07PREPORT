@@ -10,6 +10,7 @@ import { allows, getRequestPermissions } from '../services/permissionService';
  * Product pages' data (measures/productDashboard.ts). One router per page so each keeps its own
  * permission key; all four serve the same measure:
  *   GET /product-dashboard/<page>/overview?company=Majaal&fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD
+ *   GET /product-dashboard/<page>/products  (same params): the status cards' SKUs, one row each (BCG status table)
  * Filters (2026-11-14, round 2): Company and Date only. No dates = the Last 12 Months (lib/last12Months.ts). The
  * Customer Group / Channel / Branch / Salesperson / Customer params are dropped before resolveScopedFilters, so only the
  * role's data scope and the salesperson lock narrow the sales. Profit data (profit, GP%, cost, missing-cost flags) is
@@ -30,18 +31,27 @@ export const PRODUCT_DASHBOARD_PAGES = {
 export function productDashboardRouter(pageKey: string): Router {
   const router = Router();
   router.use(requireAuth, requirePasswordChangeCleared, requirePermission(pageKey, 'view'), attachUserContext, dropUserFilters, resolveScopedFilters);
-  router.get('/overview', async (req, res, next) => {
+  // /overview: the page's data. /products (2026-11-15, the BCG page's status table): the SKUs behind the Total SKUs /
+  // Product Status cards, one row per SKU, grouped exactly as the cards count them (measures skuListOf).
+  const handler = (withSkus: boolean) => async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { company, fromDate, toDate } = req.query;
       const { companyKeys, segmentKeys, channelKeys, salesTeamKeys, salespersonKeys } = req.scopedFilters ?? {};
-      const overview = await computeProductDashboard(pool, {
-          fromDate: typeof fromDate === 'string' ? fromDate : undefined,
-          toDate: typeof toDate === 'string' ? toDate : undefined,
-          company: typeof company === 'string' ? company : undefined,
-          filters: { companyKeys, segmentKeys, channelKeys, salesTeamKeys, salespersonKeys },
-          salespersonTier: req.userContext?.roleCode === 'SALESPERSON',
-        });
-      res.json(allows(await getRequestPermissions(req), 'profit_data', 'view') ? overview : withoutProfit(overview));
+      const computed = await computeProductDashboard(pool, {
+        fromDate: typeof fromDate === 'string' ? fromDate : undefined,
+        toDate: typeof toDate === 'string' ? toDate : undefined,
+        company: typeof company === 'string' ? company : undefined,
+        filters: { companyKeys, segmentKeys, channelKeys, salesTeamKeys, salespersonKeys },
+        salespersonTier: req.userContext?.roleCode === 'SALESPERSON',
+        includeSkuList: withSkus,
+      });
+      const overview = allows(await getRequestPermissions(req), 'profit_data', 'view') ? computed : withoutProfit(computed);
+      if (!withSkus) {
+        res.json(overview);
+        return;
+      }
+      const { view, period, asOfDate, profitAccess, statusSummary, statusSummaryError, skuList } = overview;
+      res.json({ view, period, asOfDate, profitAccess, statusSummary, statusSummaryError, skus: skuList ?? [] });
     } catch (err) {
       if (err instanceof ProductScopeError) {
         res.status(403).json({ error: 'Forbidden: request is outside your assigned scope.' });
@@ -49,7 +59,9 @@ export function productDashboardRouter(pageKey: string): Router {
       }
       next(err);
     }
-  });
+  };
+  router.get('/overview', handler(false));
+  router.get('/products', handler(true));
   return router;
 }
 

@@ -391,6 +391,43 @@ describe('computeProductDashboard', () => {
       expect(out.statusSummary?.bcg.classes.find((c) => c.key === 'Dogs')).toMatchObject({ count: 1, units: 7 }); // Tika|7: no cost
     });
 
+    it('status table (skuList, 2026-11-15): one row per SKU, the rows per status = the cards, with stock / rule / archived', async () => {
+      const { pool } = makePool([], [...rows, product('Tika|5', 'Tika', { OdooProductID: 5, ProductStatus: 'Unclassified', ExcludedByCategory: 1, Category: 'All / Packaging', OnProductPages: 0 })],
+        META, [], [], windows);
+      const out = await computeProductDashboard(pool, { includeSkuList: true });
+      const skus = out.skuList ?? [];
+      const count = (status: string) => skus.filter((r) => r.status === status).length;
+      const s = out.statusSummary!;
+      expect(skus).toHaveLength(s.total);
+      expect([count('Active'), count('NonActive'), count('Dormant'), count('Unclassified')])
+        .toEqual([s.active.count, s.nonActive.count, s.dormant.count, s.unclassified.count]);
+      const nonActive = skus.filter((r) => r.status === 'NonActive');
+      expect(nonActive.filter((r) => r.withStock)).toHaveLength(s.nonActive.withStock);
+      expect(nonActive.filter((r) => !r.withStock)).toHaveLength(s.nonActive.zeroStock);
+      expect(skus.find((r) => r.odooProductId === '4')).toMatchObject({ status: 'Dormant', archived: true, archivedDate: null });
+      // Majaal|5 and Tika|5 are one SKU (Odoo variant 5): one row, both companies, the Majaal ETL status wins
+      expect(skus.filter((r) => r.odooProductId === '5')).toHaveLength(1);
+      expect(skus.find((r) => r.odooProductId === '5')).toMatchObject({ status: 'Unclassified', companies: ['Majaal', 'Tika'] });
+      expect(skus.find((r) => r.odooProductId === '1')).toMatchObject({ status: 'Active', bcgClass: 'Stars', companies: ['Majaal'] });
+      // without the option the response carries no table
+      expect((await computeProductDashboard(makePool([], rows, META, [], [], windows).pool, {})).skuList).toBeUndefined();
+    });
+
+    it('status table: the Unclassified row names the ProductExclusions rule; profit stripped without profit access', async () => {
+      const { pool } = makePool([sale('Majaal|9', 'Unit', 100, 4, 1, { costValue: 60, uncostedQty: 0 })], [
+        product('Majaal|8', 'Majaal', { OdooProductID: 8, ProductStatus: 'Unclassified', ExcludedByProduct: 1, OnProductPages: 0 }),
+        product('Majaal|10', 'Majaal', { OdooProductID: 10, ProductStatus: 'Unclassified', ExcludedByCategory: 1, Category: 'All / Samples', OnProductPages: 0 }),
+        product('Majaal|9', 'Majaal', { OdooProductID: 9, IsActive: 1 }),
+      ], META, [], [], [win('Majaal|9', 100, 4, 60)]);
+      const out = await computeProductDashboard(pool, { includeSkuList: true });
+      const by = new Map((out.skuList ?? []).map((r) => [r.odooProductId, r]));
+      expect(by.get('8')?.exclusionRule).toMatch(/Products sheet/);
+      expect(by.get('10')?.exclusionRule).toBe('ProductExclusions.xlsx · Categories sheet · All / Samples');
+      expect(by.get('9')).toMatchObject({ status: 'Active', units: 4, value: 100, profit: 40, grossProfitPct: 40, exclusionRule: null });
+      const stripped = withoutProfit(out);
+      expect(JSON.stringify(stripped.skuList)).not.toMatch(/"profit"|grossProfitPct/);
+    });
+
     it('company view: that company only', async () => {
       const { pool } = makePool([], rows, META, [], [], windows);
       const out = await computeProductDashboard(pool, { company: 'Tika' });

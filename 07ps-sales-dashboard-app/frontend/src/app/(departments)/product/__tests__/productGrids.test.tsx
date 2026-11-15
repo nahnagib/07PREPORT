@@ -118,14 +118,19 @@ describe('Product tables use the standard grid, volume first, and every product 
     // 2x2: STARS | CASH COWS / STRATEGIC | DOGS
     expect([...screen.getByTestId('bcg-class-grid').querySelectorAll('[data-testid^="bcg-class-card-"]')].map((e) => e.getAttribute('data-testid')))
       .toEqual(['bcg-class-card-Stars', 'bcg-class-card-Cash Cows', 'bcg-class-card-Strategic', 'bcg-class-card-Dogs']);
-    // 3 rows: Total SKUs (1 card) · Product Status (4) · BCG Matrix of the Active products (4), the shared KpiTile
+    // 3 rows: Total SKUs (full-width hero, 2026-11-15) · Product Status (4 clickable cards) · BCG Matrix of the Active products
     const kpis = screen.getByTestId('bcg-kpis');
     const row = (id: string) => [...kpis.querySelector(`section[aria-labelledby="${id}"] > div`)!.children];
     const labels = (id: string) => row(id).map((tile) => tile.getAttribute('aria-label'));
-    expect([...kpis.querySelectorAll('h2')].map((h) => h.textContent)).toEqual(['Total SKUs', 'Product Status', 'BCG Matrix (Active products)']);
-    expect(labels('row-total-skus')).toEqual(['Active + archived, every category']);
-    expect(row('row-total-skus')[0].textContent).toMatch(/12.*Active 4 · Non Active 5 · Dormant 2 · Unclassified 1/);
-    expect(labels('row-product-status')).toEqual(['Active · sold in the period', 'Non Active · not sold in the period', 'Dormant · archived in Odoo', 'Unclassified · active exclusion rules']);
+    expect([...kpis.querySelectorAll('h2')].map((h) => h.textContent?.trim())).toEqual(['Total SKUs', 'Product Status', 'BCG Matrix (Active products)']);
+    expect(screen.getByTestId('total-skus-value').textContent).toBe('12');
+    expect([...screen.getByTestId('total-skus-chips').querySelectorAll('button')].map((b) => b.textContent))
+      .toEqual(['Active 4', 'Non Active 5', 'Dormant 2', 'Unclassified 1']);
+    expect(screen.getByTestId('total-skus-hero').textContent).toMatch(/Active \+ archived, every category/);
+    expect(labels('row-product-status')).toEqual(['Active 4: list the products', 'Non Active 5: list the products', 'Dormant 2: list the products', 'Unclassified 1: list the products']);
+    expect(row('row-product-status').map((t) => t.getAttribute('role'))).toEqual(['link', 'link', 'link', 'link']);
+    expect(row('row-product-status').map((t) => t.querySelector('[aria-label]')?.getAttribute('aria-label')))
+      .toEqual(['Active · sold in the period', 'Non Active · not sold in the period', 'Dormant · archived in Odoo', 'Unclassified · active exclusion rules']);
     expect(row('row-product-status')[1].textContent).toMatch(/2 with stock · 3 zero stock/);
     expect(labels('row-bcg')).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs']);
     expect(row('row-bcg')[0].textContent).toMatch(/profit LYD/); // profit access (this user)

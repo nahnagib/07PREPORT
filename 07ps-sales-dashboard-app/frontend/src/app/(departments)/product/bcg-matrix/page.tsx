@@ -2,6 +2,7 @@
 import { VisualInfoIcons, tooltipBoxStyle } from '@07ps/ui';
 import { vh } from '../../../../lib/visualHelp';
 import React, { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
@@ -47,13 +48,15 @@ import {
 } from '../../../../lib/materialsAnalogy/shared';
 import { bcgClassName } from '../../../../components/product/InventoryVisual';
 import { PeriodNote, periodDates, periodLabel } from '../../../../components/product/PeriodNote';
-import type { BcgMovement, ProductDashboardOverview, ProductStatusSummary } from '../../../../lib/api';
+import type { BcgMovement, ProductDashboardOverview, ProductDashboardScope, ProductStatusSummary } from '../../../../lib/api';
+import { statusTableHref, type StatusKey, type StockFilter } from '../../../../lib/product/statusTable';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
 import {
   ExportButtons,
   LTR,
   Pill,
   ProductName,
+  ProductTooltip,
   TooltipRow,
   TooltipSection,
   exportProductCsv,
@@ -298,6 +301,7 @@ export default function BcgMatrixPage() {
             summary={summary}
             summaryError={overview.data?.statusSummaryError ?? null}
             showProfit={profit.view}
+            scope={scope}
           />
 
           <section aria-labelledby="bcg-heading">
@@ -412,9 +416,39 @@ export default function BcgMatrixPage() {
   );
 }
 
-/** Rows 1-3: Total SKUs; Product Status; BCG Matrix of the Active products -- the app's shared KpiTile in the standard
- * KPI grid (same as Stock Velocity / Receivables). From the API's statusSummary, whose two checks (Total = the 4
- * statuses, the 4 classes = Active) the backend enforces. Profit lines only with profit access. */
+/** Rows 1-3: Total SKUs; Product Status; BCG Matrix of the Active products. From the API's statusSummary, whose two
+ * checks (Total = the 4 statuses, the 4 classes = Active) the backend enforces. Profit lines only with profit access.
+ * 2026-11-15: Total SKUs is a full-width hero (the Critical Number card's layout: global .ps-cn-hero, 40px number) with
+ * one chip per status; the chips and the 4 Product Status cards open the status table (/product/bcg-matrix/products)
+ * with the page's Company + Date filters. */
+const STATUS_COLOR: Record<StatusKey, string> = {
+  active: 'var(--ps-color-success)',
+  non_active: 'var(--ps-color-watch)',
+  dormant: 'var(--ps-color-alert)',
+  unclassified: 'var(--ps-color-neutral-text)',
+};
+
+/** A KpiTile that opens a page: the app's .ps-card-clickable (hover lift, focus ring), Enter / Space like a button. */
+function ClickableTile({ label, onOpen, children }: { label: string; onOpen: () => void; children: React.ReactNode }) {
+  return (
+    <div
+      role="link"
+      tabIndex={0}
+      aria-label={label}
+      className={`ps-card-clickable ${styles.clickTile}`}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function StatusRows({
   loading,
   error,
@@ -422,6 +456,7 @@ function StatusRows({
   summary,
   summaryError,
   showProfit,
+  scope,
 }: {
   loading: boolean;
   error: string | null;
@@ -429,37 +464,76 @@ function StatusRows({
   summary: ProductStatusSummary | null;
   summaryError: string | null;
   showProfit: boolean;
+  scope: ProductDashboardScope;
 }) {
+  const router = useRouter();
   if (error) return <ErrorState message={error} onRetry={onRetry} />;
   if (!loading && !summary) return <ErrorState message={summaryError ?? 'Product status is not available.'} onRetry={onRetry} />;
   const s = summary;
+  const open = (key: StatusKey, stock: StockFilter = 'all') => router.push(statusTableHref(key, scope, stock));
   const skeletons = (n: number) => Array.from({ length: n }, (_, i) => <LoadingSkeleton key={i} variant="kpi" />);
+  const chips: { key: StatusKey; label: string; count: number }[] = s
+    ? [
+        { key: 'active', label: 'Active', count: s.active.count },
+        { key: 'non_active', label: 'Non Active', count: s.nonActive.count },
+        { key: 'dormant', label: 'Dormant', count: s.dormant.count },
+        { key: 'unclassified', label: 'Unclassified', count: s.unclassified.count },
+      ]
+    : [];
   return (
     <div data-testid="bcg-kpis" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
       <section aria-labelledby="row-total-skus">
         <h2 id="row-total-skus" className={styles.sectionTitle}>Total SKUs</h2>
-        {/* auto-fill: the one card keeps the width of a normal KPI card instead of stretching across the row */}
-        <div className={styles.kpiGridFill}>
-          {loading || !s ? skeletons(1) : (
-            <KpiTile label="Active + archived, every category" value={fmtCount(s.total)}
-              subValue={`Active ${fmtCount(s.active.count)} · Non Active ${fmtCount(s.nonActive.count)} · Dormant ${fmtCount(s.dormant.count)} · Unclassified ${fmtCount(s.unclassified.count)}`} />
-          )}
-        </div>
+        {loading || !s ? (
+          <Card style={{ width: '100%' }}><LoadingSkeleton variant="kpi" /></Card>
+        ) : (
+          <Card data-testid="total-skus-hero" style={{ width: '100%', borderInlineStart: '4px solid var(--ps-color-accent)' }}>
+            <div className="ps-cn-hero">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--ps-color-muted-text)' }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Total SKUs</span>
+                <VisualInfoIcons title="Total SKUs" {...vh('product.bcgMatrix.totalSkus')} />
+              </div>
+              <div className={styles.heroNumber} data-testid="total-skus-value">{fmtCount(s.total)}</div>
+              <div className={styles.chips} data-testid="total-skus-chips">
+                {chips.map((c) => (
+                  <button key={c.key} type="button" className={styles.chip} data-testid={`total-skus-chip-${c.key}`}
+                    style={{ '--chip-color': STATUS_COLOR[c.key] } as React.CSSProperties}
+                    aria-label={`${c.label} ${fmtCount(c.count)}: list the products`} onClick={() => open(c.key)}>
+                    <span className={styles.chipDot} aria-hidden="true" />
+                    {c.label} {fmtCount(c.count)}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>Active + archived, every category</div>
+            </div>
+          </Card>
+        )}
       </section>
 
       <section aria-labelledby="row-product-status">
-        <h2 id="row-product-status" className={styles.sectionTitle}>Product Status</h2>
+        <h2 id="row-product-status" className={styles.sectionTitle}>
+          Product Status <VisualInfoIcons title="Product Status" {...vh('product.bcgMatrix.productStatus')} />
+        </h2>
         <div className={styles.kpiGrid}>
           {loading || !s ? skeletons(4) : (
             <>
-              <KpiTile label="Active · sold in the period" value={fmtCount(s.active.count)} subValue={`${fmtUnits(s.active.units)} · ${fmtLYD(s.active.value)}`} status="success" />
-              <KpiTile label="Non Active · not sold in the period" value={fmtCount(s.nonActive.count)}
-                subValue={`${fmtCount(s.nonActive.withStock)} with stock · ${fmtCount(s.nonActive.zeroStock)} zero stock`} status="watch" />
-              <KpiTile label="Dormant · archived in Odoo" value={fmtCount(s.dormant.count)} status="alert" />
-              <KpiTile label="Unclassified · active exclusion rules" value={fmtCount(s.unclassified.count)} status="neutral" />
+              <ClickableTile label={`Active ${fmtCount(s.active.count)}: list the products`} onOpen={() => open('active')}>
+                <KpiTile label="Active · sold in the period" value={fmtCount(s.active.count)} subValue={`${fmtUnits(s.active.units)} · ${fmtLYD(s.active.value)}`} status="success" />
+              </ClickableTile>
+              <ClickableTile label={`Non Active ${fmtCount(s.nonActive.count)}: list the products`} onOpen={() => open('non_active')}>
+                <KpiTile label="Non Active · not sold in the period" value={fmtCount(s.nonActive.count)}
+                  subValue={`${fmtCount(s.nonActive.withStock)} with stock · ${fmtCount(s.nonActive.zeroStock)} zero stock`} status="watch" />
+              </ClickableTile>
+              <ClickableTile label={`Dormant ${fmtCount(s.dormant.count)}: list the products`} onOpen={() => open('dormant')}>
+                <KpiTile label="Dormant · archived in Odoo" value={fmtCount(s.dormant.count)} status="alert" />
+              </ClickableTile>
+              <ClickableTile label={`Unclassified ${fmtCount(s.unclassified.count)}: list the products`} onOpen={() => open('unclassified')}>
+                <KpiTile label="Unclassified · active exclusion rules" value={fmtCount(s.unclassified.count)} status="neutral" />
+              </ClickableTile>
             </>
           )}
         </div>
+        {!loading && s && <div className={styles.clickHint}>Click a card to list its products</div>}
       </section>
 
       <section aria-labelledby="row-bcg">
@@ -490,15 +564,18 @@ function StatusRows({
 function BcgTooltip({ r, period, showProfit }: { r: BcgFact; period: Period | null; showProfit: boolean }) {
   const growthColor = r.quantity_growth_pct === null ? 'var(--ps-color-muted-text)' : r.quantity_growth_pct >= 0 ? 'var(--ps-color-success)' : 'var(--ps-color-alert)';
   return (
-    <div style={{ ...tooltipBoxStyle, ...LTR, padding: '10px 12px', width: 280 }} data-testid="bcg-tooltip">
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>
-        <ProductName name={r.ProductName} truncate={false} />
-      </div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 2 }} data-testid="product-tooltip-badges">
-        {vendorOf(r) !== '—' && <Pill color="var(--ps-color-neutral-text)" label={vendorOf(r)} />}
-        <Pill color={(r.bcg_class && BCG_COLOR[r.bcg_class]) || 'var(--ps-color-muted-text)'} label={classLabel(r)} />
-        {r.bcg_movement && <Pill color={MOVEMENT_COLOR[r.bcg_movement]} label={MOVEMENT_LABEL[r.bcg_movement]} />}
-      </div>
+    <div data-testid="bcg-tooltip" style={{ width: 280 }}>
+    <ProductTooltip
+      name={r.ProductName}
+      company={r.Company}
+      badges={
+        <>
+          {vendorOf(r) !== '—' && <Pill color="var(--ps-color-neutral-text)" label={vendorOf(r)} />}
+          <Pill color={(r.bcg_class && BCG_COLOR[r.bcg_class]) || 'var(--ps-color-muted-text)'} label={classLabel(r)} />
+          {r.bcg_movement && <Pill color={MOVEMENT_COLOR[r.bcg_movement]} label={MOVEMENT_LABEL[r.bcg_movement]} />}
+        </>
+      }
+    >
       <TooltipSection title={`Sales · ${periodLabel(period)}`}>
         <TooltipRow label="Volume" value={fmtUnits(r.volume)} />
         <TooltipRow label="Volume prior period" value={fmtUnits(r.volumePrior)} />
@@ -519,6 +596,7 @@ function BcgTooltip({ r, period, showProfit }: { r: BcgFact; period: Period | nu
       <div style={{ borderTop: '1px solid var(--ps-color-border)', marginTop: 6, paddingTop: 6, fontSize: 11, color: 'var(--ps-color-muted-text)', whiteSpace: 'nowrap' }}>
         {statusLabel(r)}{period ? ` · ${periodDates(period)}` : ''}
       </div>
+    </ProductTooltip>
     </div>
   );
 }

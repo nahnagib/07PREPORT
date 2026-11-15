@@ -191,6 +191,40 @@ export interface ProductDashboardOverview {
   /** null when a reconciliation check fails (statusSummaryError says which). */
   statusSummary: ProductStatusSummary | null;
   statusSummaryError: string | null;
+  /** Only with query.includeSkuList: the SKUs behind the Total SKUs / Product Status cards (same grouping, same count). */
+  skuList?: ProductStatusSkuRow[];
+}
+
+/** One SKU of the Product Status cards (2026-11-15): an Odoo variant, its company rows combined exactly as the cards
+ * combine them (combineSkuStatus), so the rows per status = the card counts. */
+export interface ProductStatusSkuRow {
+  odooProductId: string;
+  productName: string;
+  sku: string | null;
+  /** Every company row of the variant in the view (usually one). */
+  companies: string[];
+  category: string | null;
+  brand: string | null;
+  status: ProductStatus;
+  /** The period's BCG class (Active only). */
+  bcgClass: BcgClassKey | null;
+  units: number;
+  unitsPrior: number;
+  value: number;
+  /** PROFIT DATA: the period's value - cost when every sold line is costed, else null. Absent without profit access. */
+  profit?: number | null;
+  grossProfitPct?: number | null;
+  onHandQty: number;
+  /** Last sale date (any period, Odoo order date). */
+  lastSaleDate: string | null;
+  odooUrl: string | null;
+  /** Non Active: On Hand > 0 (the card's "with stock"). */
+  withStock: boolean;
+  /** Archived in Odoo (Dormant). The archive date is not loaded (null). */
+  archived: boolean;
+  archivedDate: string | null;
+  /** Unclassified: the ProductExclusions.xlsx rule that matched. */
+  exclusionRule: string | null;
 }
 
 export interface ProductDashboardQuery {
@@ -203,6 +237,8 @@ export interface ProductDashboardQuery {
   filters?: Pick<Filters, 'companyKeys' | 'segmentKeys' | 'channelKeys' | 'salesTeamKeys' | 'salespersonKeys'>;
   /** SALESPERSON-tier caller: products without any sale in the period / prior period are not listed. */
   salespersonTier?: boolean;
+  /** Also return skuList (the BCG page's status table, GET <page>/products): one row per SKU of the status cards. */
+  includeSkuList?: boolean;
 }
 
 /** A company the caller's role may not see was requested (the route answers 403). */
@@ -250,7 +286,7 @@ export function resolveView(company?: string): ProductDashboardView {
   return 'BMH';
 }
 
-type Agg = {
+export type Agg = {
   value: number;
   lines: number;
   linesPrior: number;
@@ -502,6 +538,8 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     r.bcgMovement = movementOf(r, period, movementRule);
   }
 
+  const statuses = new Map(viewRows.map((r) => [String(r.ProductCompanyKey), statusOf(r)]));
+
   // Totals straight from the sales rows (not from the product list), so a key missing from
   // v_sales_product_dashboard can never drop out of the reconciliation.
   const totalQty = new Map<string, number>();
@@ -525,7 +563,8 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     totals: { value: totalValue, lines: totalLines, volumeByUom: uomList(totalQty) },
     intercompanyValue,
     profitAccess: true,
-    ...statusSummaryOf(viewRows, new Map(viewRows.map((r) => [String(r.ProductCompanyKey), statusOf(r)])), classOf),
+    ...statusSummaryOf(viewRows, statuses, classOf),
+    ...(query.includeSkuList ? { skuList: skuListOf(viewRows, statuses, classOf, byProduct, odooBase) } : {}),
   };
 }
 
@@ -557,7 +596,13 @@ export function withoutProfit(o: ProductDashboardOverview): ProductDashboardOver
       }),
     },
   };
-  return { ...o, products, statusSummary, profitAccess: false };
+  const skuList = o.skuList?.map((r) => {
+    const rest = { ...r };
+    delete rest.profit;
+    delete rest.grossProfitPct;
+    return rest;
+  });
+  return { ...o, products, statusSummary, ...(skuList ? { skuList } : {}), profitAccess: false };
 }
 
 interface MovementRule {
@@ -591,24 +636,84 @@ function onProductPages(p: any): boolean {
   return p.OnProductPages === null || p.OnProductPages === undefined || num(p.OnProductPages) !== 0;
 }
 
+/** The SKUs of the status cards: the view's company rows grouped by Odoo variant id (a nullable OdooProductID marks
+ * catalog membership even when core conformance uses ProductKey = -1). Rows without a real id are not SKUs. Shared by
+ * the cards (statusSummaryOf) and the status table (skuListOf), so both count the same SKUs. */
+export function groupBySku(rows: any[]): Map<string, any[]> {
+  const catalog = new Map<string, any[]>();
+  for (const p of rows) {
+    const id = String(p.OdooProductID === undefined ? p.ProductKey : p.OdooProductID);
+    if (!/^[1-9]\d*$/.test(id)) continue;
+    const parts = catalog.get(id) ?? [];
+    parts.push(p);
+    catalog.set(id, parts);
+  }
+  return catalog;
+}
+
+function statusInputOf(p: any, statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>): StatusInput {
+  return {
+    status: statuses.get(String(p.ProductCompanyKey)) ?? null,
+    onHandQty: num(p.OnHandQty),
+    onHandValue: num(p.OnHandValue),
+    bcg: classOf.get(String(p.ProductCompanyKey)) ?? null,
+  };
+}
+
+/** The status table (GET <page>/products): one row per SKU of groupBySku, its status from combineSkuStatus -- the cards'
+ * own rule -- so the rows per status equal the cards. Period sums add up the variant's company rows. */
+export function skuListOf(rows: any[], statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>,
+  byProduct: Map<string, Agg>, odooBase: string | null): ProductStatusSkuRow[] {
+  const out: ProductStatusSkuRow[] = [];
+  for (const [id, parts] of groupBySku(rows)) {
+    const combined = combineSkuStatus(parts.map((p) => statusInputOf(p, statuses, classOf)));
+    const status = combined.status as ProductStatus;
+    const aggOf = (p: any) => byProduct.get(String(p.ProductCompanyKey));
+    // The row's face: the excluded company row for Unclassified, else the company row with the most sales.
+    const primary = (status === 'Unclassified' ? parts.find((p) => statuses.get(String(p.ProductCompanyKey)) === 'Unclassified') : undefined)
+      ?? [...parts].sort((a, b) => (aggOf(b)?.value ?? 0) - (aggOf(a)?.value ?? 0))[0];
+    const aggs = parts.map(aggOf);
+    const value = aggs.reduce((t, a) => t + (a?.value ?? 0), 0);
+    const sold = aggs.filter((a): a is Agg => Boolean(a && a.lines > 0));
+    const costed = sold.length > 0 && sold.every((a) => a.uncosted === 0);
+    const profit = costed ? sold.reduce((t, a) => t + a.value - a.cost, 0) : null;
+    const lastSale = parts.map((p) => isoDate(p.LastSaleDate)).filter((d): d is string => d !== null).sort().pop() ?? null;
+    const byProductSheet = parts.some((p) => num(p.ExcludedByProduct) === 1);
+    const byCategorySheet = parts.find((p) => num(p.ExcludedByCategory) === 1);
+    out.push({
+      odooProductId: id,
+      productName: String(primary.ProductName ?? primary.OdooProductName ?? id),
+      sku: str(primary.SKU),
+      companies: [...new Set(parts.map((p) => String(p.Company ?? '')))],
+      category: str(primary.Category),
+      brand: str(primary.Brand),
+      status,
+      bcgClass: status === 'Active' ? ((combined.bcg?.bcgClass as BcgClassKey | undefined) ?? null) : null,
+      units: aggs.reduce((t, a) => t + (a ? sumQty(a.qty) : 0), 0),
+      unitsPrior: aggs.reduce((t, a) => t + (a ? sumQty(a.qtyPrior) : 0), 0),
+      value,
+      profit,
+      grossProfitPct: profit !== null && value !== 0 ? (profit / value) * 100 : null,
+      onHandQty: parts.reduce((t, p) => t + num(p.OnHandQty), 0),
+      lastSaleDate: lastSale,
+      odooUrl: odooFormUrl(odooBase, 'product.product', Number(primary.ProductKey), numOrNull(primary.CompanyKey)),
+      withStock: status === 'NonActive' && combined.onHandQty > 0,
+      archived: parts.some((p) => p.IsActive !== null && p.IsActive !== undefined && num(p.IsActive) === 0),
+      archivedDate: null,
+      exclusionRule: status !== 'Unclassified' ? null
+        : byProductSheet ? 'ProductExclusions.xlsx · Products sheet (product excluded)'
+          : byCategorySheet ? `ProductExclusions.xlsx · Categories sheet · ${str(byCategorySheet.Category) ?? 'category'}`
+            : 'Unclassified by the ETL (rule not recorded)',
+    });
+  }
+  return out;
+}
+
 /** The status cards, or why they cannot be shown (never fails the whole response: the other Product pages share it). */
 function statusSummaryOf(rows: any[], statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>) {
   try {
-    const catalog = new Map<string, Array<StatusInput>>();
-    for (const p of rows) {
-      // A nullable OdooProductID marks catalog membership even when core conformance uses ProductKey = -1.
-      const id = String(p.OdooProductID === undefined ? p.ProductKey : p.OdooProductID);
-      if (!/^[1-9]\d*$/.test(id)) continue;
-      const parts = catalog.get(id) ?? [];
-      parts.push({
-        status: statuses.get(String(p.ProductCompanyKey)) ?? null,
-        onHandQty: num(p.OnHandQty),
-        onHandValue: num(p.OnHandValue),
-        bcg: classOf.get(String(p.ProductCompanyKey)) ?? null,
-      });
-      catalog.set(id, parts);
-    }
-    return { statusSummary: summarizeProductStatus([...catalog.values()].map(combineSkuStatus)), statusSummaryError: null };
+    const skus = [...groupBySku(rows).values()].map((parts) => combineSkuStatus(parts.map((p) => statusInputOf(p, statuses, classOf))));
+    return { statusSummary: summarizeProductStatus(skus), statusSummaryError: null };
   } catch (err) {
     console.error('[productDashboard] status summary check failed:', err);
     return { statusSummary: null, statusSummaryError: (err as Error).message };
@@ -624,7 +729,7 @@ export interface StatusInput {
 }
 
 /** Shared variants count once. Prefer a workbook match in any in-scope company, then a sale in the period. */
-function combineSkuStatus(parts: StatusInput[]): StatusInput {
+export function combineSkuStatus(parts: StatusInput[]): StatusInput {
   const excluded = parts.find((part) => part.status === 'Unclassified');
   if (excluded) return excluded;
 

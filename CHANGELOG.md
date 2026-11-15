@@ -6,6 +6,28 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (BCG Matrix: Total SKUs hero, clickable status cards, product status table, company in the hover, 2026-11-15)
+- Total SKUs is a full-width card in the Critical Number hero style (same 40px number and accent border, global
+  `.ps-cn-hero`). The breakdown is four chips: Active · Non Active · Dormant · Unclassified. Each chip opens that status.
+- The four Product Status cards are clickable (hover lift, focus ring, Enter / Space). Each opens the new page
+  `/product/bcg-matrix/products?status=active|non_active|dormant|unclassified`, which carries the BCG page's Company and
+  Date filters in the URL. (The Product pages have had only those two filters since 2026-11-14.)
+- The status table lists one row per SKU (Odoo variant): product, internal ref, company, category, vendor, status, units
+  (period / prior period), sales value, profit and GP% (profit access only), quantity on hand, last sale and an Odoo link.
+  It has status tabs with counts, search, sort, column filters, 50 rows per page, and CSV / Excel / PDF export. Non Active
+  has a With stock / Zero stock switch. Dormant shows "Archived in Odoo" (the archive date is not loaded, so it reads
+  "not loaded"). Unclassified shows the ProductExclusions.xlsx rule that matched (Products sheet, or Categories sheet +
+  category).
+- New read-only endpoint `GET /product-dashboard/bcg-matrix/products` (same params and `bcg_matrix` permission as
+  `/overview`). It builds the rows with the cards' own SKU grouping (`groupBySku` + `combineSkuStatus`), so the counts
+  equal the cards. Checked on the local DB for all companies, Majaal, Tika and a custom range: 4,289 = 1,055 / 1,438 /
+  1,589 / 207, with stock 736. If the rows ever disagree with the cards, the page says so.
+- The BCG product hover now uses the shared `ProductTooltip`: the company chip sits first, under the product name, as on
+  every other Product page hover.
+- Visual help: `product.bcgMatrix.totalSkus`, `.productStatus`, `.statusTable`. Tests: backend `productDashboard.test.ts`
+  (table = cards, with-stock split, rule, archived, profit stripped); frontend `bcgStatusTable.test.tsx` and
+  `productGrids.test.tsx`.
+
 ### Changed (NPS reach 12 Jul – 02 Oct = approved manual figures, 2026-11-11)
 - Migration 0071: `process_nps_reach_manual`, seeded with the 8 approved rows (Meta exports + estimates, per company and
   period), spread evenly per day into `v_process_nps_reach` (new column `source` = etl / manual / estimate). Before

@@ -21,6 +21,8 @@ import {
   TachometerOverview,
   TachometerTrend,
   fetchProductDashboard,
+  fetchProductStatusList,
+  type ProductStatusList,
   fetchDebtReport,
   type DebtReportEndpoint,
   type DebtReportScope,
@@ -764,6 +766,26 @@ export function useProductDashboard(
     load();
   }, [load]);
 
+  return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
+/** The BCG page's status table (GET /product-dashboard/bcg-matrix/products, 2026-11-15). */
+export function useProductStatusList(token: string | null, authError: string | null, retryAuth: () => void, scope: ProductDashboardScope = {}) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
+  const [state, setState] = useState<AsyncState<ProductStatusList>>({ data: null, loading: true, error: null });
+  const load = useCallback(() => {
+    if (authGate(token, authError, setState)) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
+    fetchProductStatusList(token as string, scope)
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion, token, authError, JSON.stringify(scope)]);
+  useEffect(() => {
+    load();
+  }, [load]);
   return { ...state, retry: makeRetry(token, retryAuth, load) };
 }
 

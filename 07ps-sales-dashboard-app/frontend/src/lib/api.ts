@@ -2740,6 +2740,48 @@ export function fetchProductDashboard(token: string, page: ProductDashboardPage,
   return request(`/product-dashboard/${page}/overview${qs ? `?${qs}` : ''}`, token);
 }
 
+/** One SKU behind the BCG page's Total SKUs / Product Status cards (backend measures skuListOf, 2026-11-15): the cards'
+ * own grouping, so the rows per status = the card counts. profit / grossProfitPct: profit access only. */
+export interface ProductStatusSkuRow {
+  odooProductId: string;
+  productName: string;
+  sku: string | null;
+  companies: string[];
+  category: string | null;
+  brand: string | null;
+  status: ProductStatus;
+  bcgClass: BcgClassKey | null;
+  units: number;
+  unitsPrior: number;
+  value: number;
+  profit?: number | null;
+  grossProfitPct?: number | null;
+  onHandQty: number;
+  lastSaleDate: string | null;
+  odooUrl: string | null;
+  withStock: boolean;
+  archived: boolean;
+  /** Not loaded today (always null): the table says so. */
+  archivedDate: string | null;
+  exclusionRule: string | null;
+}
+
+export interface ProductStatusList {
+  view: ProductDashboardOverview['view'];
+  period: ProductDashboardOverview['period'];
+  asOfDate: string | null;
+  profitAccess: boolean;
+  statusSummary: ProductStatusSummary | null;
+  statusSummaryError: string | null;
+  skus: ProductStatusSkuRow[];
+}
+
+/** GET /product-dashboard/bcg-matrix/products: the status cards' SKUs (same Company / Date params as the overview). */
+export function fetchProductStatusList(token: string, scope: ProductDashboardScope = {}): Promise<ProductStatusList> {
+  const qs = buildProductDashboardQuery(scope);
+  return request(`/product-dashboard/bcg-matrix/products${qs ? `?${qs}` : ''}`, token);
+}
+
 // ---- Debt Report (Price / Finance department; backend routes/debtReport.ts) -----------------------------------------
 export type DebtSizeTier = 'large' | 'medium' | 'small';
 export type DebtOverdueStatus = 'all' | 'overdue' | 'not_due';

@@ -34,6 +34,7 @@ describe('Product pages "?" and "i"', () => {
       'product.stockVelocity.aging', 'product.stockVelocity.isr', 'product.stockVelocity.kpiDoh', 'product.stockVelocity.kpiOverstock',
       'product.stockVelocity.kpiStockOut', 'product.stockVelocity.kpiFast', 'product.stockVelocity.kpiInStock', 'product.stockVelocity.kpiInventory',
       'product.pimContribution.asp', 'product.productLifecycle.pareto',
+      'product.bcgMatrix.totalSkus', 'product.bcgMatrix.productStatus', 'product.bcgMatrix.statusTable',
     ];
     for (const id of productIds) {
       const hint = vh(id);
