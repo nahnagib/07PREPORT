@@ -315,3 +315,62 @@ describe('Salesforce Performance: status cards, charts and table', () => {
     await screen.findByRole('region', { name: 'YTD tier summary' });
   });
 });
+
+describe('Salesforce Performance: a Team tiers card filters the whole page (2026-11-15)', () => {
+  afterEach(() => window.history.replaceState(null, '', '/'));
+
+  it('every section follows the tier; the other cards dim; a chip shows it; the URL keeps it', async () => {
+    render(<Page />);
+    const summary = await screen.findByRole('region', { name: 'YTD tier summary' });
+    fireEvent.click(within(summary).getByRole('button', { name: /^Top performer/ }));
+    // cards: the chosen one pressed, the others (Total included) dimmed
+    expect(within(summary).getByRole('button', { name: /^Top performer/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(summary).getByRole('button', { name: /^Critical/ }).getAttribute('data-dimmed')).toBe('true');
+    expect(within(summary).getByRole('button', { name: /Total sales people/ }).getAttribute('data-dimmed')).toBe('true');
+    // chip + URL
+    expect(screen.getByTestId('tier-filter-chip').textContent).toContain('Tier: Top performer');
+    expect(window.location.search).toBe('?tier=top_performer');
+    // Top people: only the tier's card, and the Team pulse of its people (Omar 150 + Sara 120 of 200)
+    const top = screen.getByRole('region', { name: 'Top people by category' });
+    expect(within(top).queryByRole('region', { name: 'Critical' })).toBeNull();
+    expect(within(top).getByRole('region', { name: 'Top performer' })).toBeTruthy();
+    const pulse = within(top).getByRole('region', { name: 'Team pulse' });
+    expect(pulse.textContent).toContain('Team pulse · Top performer');
+    expect(pulse.textContent).toContain('135.00%');
+    // the people table: that tier only
+    expect(screen.getByRole('region', { name: 'Performance details · 2' })).toBeTruthy();
+    expect(screen.getByRole('table').textContent).not.toContain('Amal');
+    // MoM: that tier's line only
+    expect(within(screen.getByRole('group', { name: 'Show tiers' })).getAllByRole('button').map((b) => b.textContent)).toEqual(['Top performer']);
+  });
+
+  it('clicking the card again, Total, or the chip clears it (URL too)', async () => {
+    render(<Page />);
+    const summary = await screen.findByRole('region', { name: 'YTD tier summary' });
+    const critical = within(summary).getByRole('button', { name: /^Critical/ });
+    fireEvent.click(critical);
+    fireEvent.click(critical);
+    expect(screen.queryByTestId('tier-filter-chip')).toBeNull();
+    expect(window.location.search).toBe('');
+    fireEvent.click(critical);
+    fireEvent.click(within(summary).getByRole('button', { name: /Total sales people/ }));
+    expect(screen.getByRole('region', { name: 'Performance details · 7' })).toBeTruthy();
+    fireEvent.click(critical);
+    fireEvent.click(screen.getByRole('button', { name: /Clear the tier filter/ }));
+    expect(screen.queryByTestId('tier-filter-chip')).toBeNull();
+    expect(within(screen.getByRole('group', { name: 'Show tiers' })).getAllByRole('button')).toHaveLength(5);
+  });
+
+  it('a shared link (?tier=critical) opens the page filtered; an unknown tier is ignored', async () => {
+    window.history.replaceState(null, '', '/?tier=critical');
+    render(<Page />);
+    await screen.findByRole('region', { name: 'YTD tier summary' });
+    expect(await screen.findByTestId('tier-filter-chip')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Performance details · 5' })).toBeTruthy();
+    cleanup();
+    window.history.replaceState(null, '', '/?tier=nonsense');
+    render(<Page />);
+    await screen.findByRole('region', { name: 'YTD tier summary' });
+    expect(screen.queryByTestId('tier-filter-chip')).toBeNull();
+  });
+});

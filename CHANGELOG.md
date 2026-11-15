@@ -6,6 +6,16 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Salesforce Performance: a Team tiers card filters the whole page, 2026-11-15)
+- Clicking a Team tiers card filters every section to that tier: Top people by category (only that tier's card), Team pulse
+  (recomputed for its people: "Team pulse · <tier>"), Tier mix (that tier highlighted, the others dimmed), MoM performance
+  by tier (only that tier's line, over everyone in the search), the people table, search, the contribution pie, the
+  monthly chart and every export.
+- The chosen card keeps `aria-pressed`, the other cards (Total included) dim, and a removable chip "Tier: <name> ×" sits
+  above the sections. The tier is in the URL (`?tier=critical`): a refresh or a shared link keeps it, and an unknown value
+  is ignored. Clicking the card again, Total sales people, or the chip × clears it.
+- Tests: every section follows the tier, the three ways to clear, and the URL round trip.
+
 ### Changed (Product pages: shorter text, 2026-11-15)
 - Every Product "?" is now one line plus its formula. The long notes paragraphs (BCG per-class advice, Stock Aging layers,
   Overstock excess, Stock-Out risk levels) are gone. A test keeps it that way: no `notes`, definition ≤ 90 characters.

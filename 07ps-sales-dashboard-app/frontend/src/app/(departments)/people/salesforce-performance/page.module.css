@@ -121,3 +121,13 @@
   .search { flex: 1; }
   .search input { width: 100%; }
 }
+
+/* Team tiers filter (2026-11-15): the other cards dim; the active tier shows as a removable chip above the sections. */
+.statusCard[data-dimmed='true'] { opacity: 0.45; }
+.statusCard[data-dimmed='true']:hover, .statusCard[data-dimmed='true']:focus-visible { opacity: 0.8; }
+.filterChips { display: flex; gap: 8px; flex-wrap: wrap; }
+.filterChip { --status: var(--ps-color-accent); display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: var(--ps-color-text);
+  background: color-mix(in srgb, var(--status) 14%, transparent); border: 1px solid color-mix(in srgb, var(--status) 45%, transparent); }
+.filterChip button { border: none; background: none; color: var(--ps-color-text); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 6px; border-radius: 999px; }
+.filterChip button:focus-visible { outline: 2px solid var(--ps-color-accent); }

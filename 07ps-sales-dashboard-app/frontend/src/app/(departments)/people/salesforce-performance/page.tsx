@@ -129,12 +129,12 @@ function VsTarget({ people }: { people: SalesPersonPerformance[] }) {
   );
 }
 
-function StatusCard({ definition, people, pressed, onPress }: {
-  definition: PeopleStatusDefinition; people: SalesPersonPerformance[]; pressed: boolean; onPress: () => void;
+function StatusCard({ definition, people, pressed, dimmed = false, onPress }: {
+  definition: PeopleStatusDefinition; people: SalesPersonPerformance[]; pressed: boolean; dimmed?: boolean; onPress: () => void;
 }) {
   const color = STATUS_COLOR[definition.key];
   return (
-    <Card {...pressable(onPress)} aria-pressed={pressed} aria-label={`${definition.label}: ${people.length} people`}
+    <Card {...pressable(onPress)} aria-pressed={pressed} aria-label={`${definition.label}: ${people.length} people`} data-dimmed={dimmed || undefined}
       className={`ps-card-clickable ${styles.statusCard}`} style={{ '--status': color, borderInlineStart: `4px solid ${color}` } as React.CSSProperties}>
       <span className={styles.cardTitle}><span className={styles.dot} aria-hidden />{definition.label}</span>
       <div className={styles.cardValue}>{people.length}</div>
@@ -143,9 +143,9 @@ function StatusCard({ definition, people, pressed, onPress }: {
   );
 }
 
-function TotalCard({ people, pressed, onPress }: { people: SalesPersonPerformance[]; pressed: boolean; onPress: () => void }) {
+function TotalCard({ people, pressed, dimmed = false, onPress }: { people: SalesPersonPerformance[]; pressed: boolean; dimmed?: boolean; onPress: () => void }) {
   return (
-    <Card {...pressable(onPress)} aria-pressed={pressed} aria-label={`Total sales people: ${people.length}`}
+    <Card {...pressable(onPress)} aria-pressed={pressed} aria-label={`Total sales people: ${people.length}`} data-dimmed={dimmed || undefined}
       className={`ps-card-clickable ${styles.statusCard}`}
       style={{ '--status': 'var(--ps-color-accent)', borderInlineStart: '4px solid var(--ps-color-accent)' } as React.CSSProperties}>
       <span className={styles.cardTitle}><Users size={14} aria-hidden />Total sales people</span>
@@ -203,11 +203,11 @@ function ProgressBar({ label, value }: { label: string; value: number | null }) 
 
 /** First slot of the Top people row: achievement, gap and the run-rate needed for the full-year target, for the people
  * on the page, or for the selected person. */
-function TeamPulseCard({ people, monthsElapsed, personName }: {
-  people: SalesPersonPerformance[]; monthsElapsed: number; personName?: string;
+function TeamPulseCard({ people, monthsElapsed, personName, tierLabel }: {
+  people: SalesPersonPerformance[]; monthsElapsed: number; personName?: string; tierLabel?: string;
 }) {
   const pulse = teamPulse(people, monthsElapsed);
-  const title = personName ? `Pulse · ${personName}` : 'Team pulse';
+  const title = personName ? `Pulse · ${personName}` : tierLabel ? `Team pulse · ${tierLabel}` : 'Team pulse';
   return (
     <Card role="region" aria-label="Team pulse" className={styles.statusCard}
       style={{ '--status': 'var(--ps-color-accent)', borderInlineStart: '4px solid var(--ps-color-accent)' } as React.CSSProperties}>
@@ -257,6 +257,25 @@ export default function SalesPeoplePerformancePage() {
   const [drill, setDrill] = useState<DrillStep[]>([]);
   const [downloading, setDownloading] = useState<string | null>(null);
   useEffect(() => { setPersonKey(null); setMixMonth(''); setDrill([]); }, [anchorDate, filterKey]);
+  // The Team tiers filter is in the URL (?tier=top_performer ...), so a refresh or a shared link keeps it (2026-11-15).
+  useEffect(() => {
+    try {
+      const tier = new URLSearchParams(window.location.search).get('tier');
+      if (tier && (STATUS_ORDER as readonly string[]).includes(tier)) setStatus(tier as PeopleStatus);
+    } catch {
+      /* no URL: everyone */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      if (status) url.searchParams.set('tier', status);
+      else url.searchParams.delete('tier');
+      if (url.href !== window.location.href) window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      /* the filter still applies */
+    }
+  }, [status]);
   // Selecting a person opens the donut on their team's members; clearing the selection goes back to the top level.
   const atoms = overview.data?.contributions;
   useEffect(() => {
@@ -308,7 +327,9 @@ export default function SalesPeoplePerformancePage() {
     ? `${selected.name} had no target in ${mixPeriodLabel}`
     : `${selected.name} was ${label(selectedMixStatus).toLowerCase()} ${mixIndex == null ? 'YTD' : `in ${mixPeriodLabel}`}`;
   // MoM performance: per month, achievement of the people in each (monthly) status.
-  const momRows = monthlyStatusPerformance(cohort).map((m) => ({
+  const momCohort = status && !selected ? searched : cohort;
+  const momTiers = status && !selected ? definitions.filter((d) => d.key === status) : definitions;
+  const momRows = monthlyStatusPerformance(momCohort).map((m) => ({
     month: m.month, label: monthLabel(m.month), statuses: m.statuses,
     ...Object.fromEntries(STATUS_ORDER.map((s) => [s, m.statuses[s].achievement])),
   }));
@@ -380,8 +401,8 @@ export default function SalesPeoplePerformancePage() {
   const exportMix = () => exportPdf('mix', 'Tier mix', ['Tier', 'People', 'Team share', 'Benchmark', 'Gap'],
     mixRows.map((r) => [r.label, String(r.count), peoplePercent.format(r.share), r.benchmarkLabel, r.gap]),
     [`Period: ${mixPeriodLabel}`, `Team size: ${headcount(mix.total)}`], mixNote ? [mixNote] : []);
-  const exportMom = () => exportPdf('mom', 'MoM performance by tier', ['Month', ...definitions.map((d) => d.label)],
-    momRows.map((m) => [m.label, ...definitions.map((d) => {
+  const exportMom = () => exportPdf('mom', 'MoM performance by tier', ['Month', ...momTiers.map((d) => d.label)],
+    momRows.map((m) => [m.label, ...momTiers.map((d) => {
       const s = m.statuses[d.key];
       return s.count ? `${pct(s.achievement)} (${s.count})` : '—';
     })]));
@@ -419,16 +440,25 @@ export default function SalesPeoplePerformancePage() {
             <Card><EmptyState message="No sales people with a target for the selected filters." onResetFilters={() => { clearPage(); state.resetFilters(); }} /></Card>
           ) : (
             <>
-              {/* 1. Team tiers: one card per tier, click = filter the page to that tier. */}
+              {status && (
+                <div className={styles.filterChips} data-testid="tier-filter-chip">
+                  <span className={styles.filterChip} style={{ '--status': STATUS_COLOR[status] } as React.CSSProperties}>
+                    <span className={styles.dot} aria-hidden />Tier: {label(status)}
+                    <button type="button" aria-label={`Clear the tier filter (${label(status)})`} onClick={() => chooseStatus(null)}>×</button>
+                  </span>
+                </div>
+              )}
+              {/* 1. Team tiers: one card per tier, click = filter the whole page to that tier (?tier=). */}
               <section aria-label="YTD tier summary" className={styles.section}>
                 <SectionHeader title="Team tiers" helpId="promotion.salesPeople.statusCards">
                   <span className={styles.muted}>YTD 1 Jan – {anchorDate}</span>
                 </SectionHeader>
                 <div className={styles.cards}>
-                  <TotalCard people={people} pressed={!status} onPress={() => chooseStatus(null)} />
+                  <TotalCard people={people} pressed={!status} dimmed={!!status} onPress={() => chooseStatus(null)} />
                   {definitions.map((d) => (
                     <StatusCard key={d.key} definition={d} people={people.filter((p) => p.status === d.key)}
-                      pressed={status === d.key} onPress={() => chooseStatus(status === d.key ? null : d.key)} />
+                      pressed={status === d.key} dimmed={!!status && status !== d.key}
+                      onPress={() => chooseStatus(status === d.key ? null : d.key)} />
                   ))}
                 </div>
               </section>
@@ -443,9 +473,9 @@ export default function SalesPeoplePerformancePage() {
                   </label>
                 </SectionHeader>
                 <div className={styles.cards}>
-                  <TeamPulseCard people={selected ? [selected] : people} monthsElapsed={overview.data?.monthsElapsed ?? 0}
-                    personName={selected?.name} />
-                  {definitions.map((d) => {
+                  <TeamPulseCard people={selected ? [selected] : status ? filterPeople(people, status) : people} monthsElapsed={overview.data?.monthsElapsed ?? 0}
+                    personName={selected?.name} tierLabel={status && !selected ? label(status) : undefined} />
+                  {definitions.filter((d) => !status || d.key === status).map((d) => {
                     const top = topPerson(searched, d.key);
                     return (
                       <TopPersonCard key={d.key} definition={d} person={top} searching={!!search.trim()}
@@ -520,11 +550,12 @@ export default function SalesPeoplePerformancePage() {
                         ) : null;
                       }} />
                       <Bar dataKey="share" name="Team share" isAnimationActive={false}>
-                        {mixRows.map((r) => <Cell key={r.status} fill={STATUS_COLOR[r.status]} />)}
+                        {mixRows.map((r) => <Cell key={r.status} fill={STATUS_COLOR[r.status]} fillOpacity={status && r.status !== status ? 0.25 : 1} />)}
                         <LabelList dataKey="peopleLabel" position="right" fontSize={11} fill="var(--ps-color-text)" />
                       </Bar>
                       <Bar dataKey="benchmark" name="Benchmark" isAnimationActive={false}>
-                        {mixRows.map((r) => <Cell key={r.status} fill={`url(#spp-hatch-${r.status})`} stroke={STATUS_COLOR[r.status]} />)}
+                        {mixRows.map((r) => <Cell key={r.status} fill={`url(#spp-hatch-${r.status})`} stroke={STATUS_COLOR[r.status]}
+                          fillOpacity={status && r.status !== status ? 0.25 : 1} strokeOpacity={status && r.status !== status ? 0.25 : 1} />)}
                         <LabelList dataKey="benchmarkLabel" position="right" fontSize={11} fill="var(--ps-color-muted-text)" />
                       </Bar>
                     </BarChart>
@@ -534,9 +565,9 @@ export default function SalesPeoplePerformancePage() {
 
                 <ChartPanel title="MoM performance by tier" {...vh('promotion.salesPeople.momStatus')}
                   headerActions={<ExportPdfButton onClick={exportMom} downloading={downloading === 'mom'} disabled={!momRows.length} />}>
-                  <p className={styles.caption}>Achievement of each month&apos;s tier group · {cohortCaption}</p>
+                  <p className={styles.caption}>Achievement of each month&apos;s tier group · {status && !selected ? `${label(status)} only` : cohortCaption}</p>
                   <div role="group" aria-label="Show tiers" className={styles.legend}>
-                    {definitions.map((d) => (
+                    {momTiers.map((d) => (
                       <button key={d.key} type="button" aria-pressed={!hiddenLines.has(d.key)} onClick={() => toggleLine(d.key)}
                         style={{ '--status': STATUS_COLOR[d.key] } as React.CSSProperties}>
                         <span className={styles.dot} aria-hidden />{d.label}
@@ -553,7 +584,7 @@ export default function SalesPeoplePerformancePage() {
                         const m = active ? payload?.[0]?.payload : undefined;
                         return m ? (
                           <TooltipBox title={m.label}>
-                            {definitions.filter((d) => !hiddenLines.has(d.key) && m.statuses[d.key].count).map((d) => {
+                            {momTiers.filter((d) => !hiddenLines.has(d.key) && m.statuses[d.key].count).map((d) => {
                               const s = m.statuses[d.key];
                               return (
                                 <div key={d.key}>
@@ -565,7 +596,7 @@ export default function SalesPeoplePerformancePage() {
                           </TooltipBox>
                         ) : null;
                       }} />
-                      {definitions.map((d) => (
+                      {momTiers.map((d) => (
                         <Line key={d.key} type="monotone" dataKey={d.key} name={d.label} stroke={STATUS_COLOR[d.key]} strokeWidth={2}
                           dot={{ r: 3, fill: STATUS_COLOR[d.key] }} hide={hiddenLines.has(d.key)} isAnimationActive={false} />
                       ))}

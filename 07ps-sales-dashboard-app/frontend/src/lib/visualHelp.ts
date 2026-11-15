@@ -335,7 +335,7 @@ export const VISUAL_HELP = {
       notes: 'Only people with a positive YTD target are included. Critical ≤50% · Need attention >50–90% · '
         + 'Behind target >90–<100% · On target 100–110% · Top performer >110%.',
     },
-    interactions: ['Click a tier card to filter contributions, sales charts and the details table', 'Click it again, or Total sales people, to show everyone'],
+    interactions: ['Click a tier card to filter the whole page to that tier (kept in the link)', 'Click it again, Total sales people or the chip × to show everyone'],
   },
   'promotion.salesPeople.topPeople': {
     help: {
