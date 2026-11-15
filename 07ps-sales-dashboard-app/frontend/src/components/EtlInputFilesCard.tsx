@@ -109,6 +109,9 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
   }
 
   const readOnly = data?.read_only === true;
+  /** Read-only folder, but this file is saved in the admin upload folder (ETL_INPUT_UPLOAD_DIR) instead. */
+  const canReplace = (f: EtlInputFileSlot) => f.replaceable ?? !readOnly;
+  const replaceableNames = data?.files.filter((f) => readOnly && canReplace(f)).map((f) => f.name) ?? [];
 
   const whenApplied = (name: string) =>
     FULL_REFRESH_ONLY.has(name)
@@ -133,6 +136,13 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
           <strong>The input folder is read-only on this server.</strong> The ETL never changes these files. To update one,
           replace it directly in the input folder on the server; the next ETL run reads it. <em>Check file</em> only checks a
           file against what the ETL expects — nothing is saved.
+          {replaceableNames.length > 0 && (
+            <>
+              {' '}
+              <strong>{replaceableNames.join(', ')}</strong> can be replaced here: <em>Upload / Replace</em> validates the file,
+              keeps the current one as a backup and saves the new one in the admin upload folder, which the ETL reads first.
+            </>
+          )}
         </p>
       ) : (
         <p style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', margin: '6px 0 10px' }}>
@@ -212,6 +222,9 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
                     <tr style={{ borderTop: '1px solid var(--ps-color-border)' }}>
                       <td style={{ padding: '6px 8px 6px 0' }}>
                         <div style={{ fontWeight: 600 }}>{f.name}</div>
+                        {f.source === 'admin_upload' && (
+                          <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>Uploaded here (used instead of the server copy)</div>
+                        )}
                         <button
                           type="button"
                           onClick={() => setExpanded((cur) => (cur === f.name ? null : f.name))}
@@ -229,7 +242,7 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
                       </td>
                       <td style={{ padding: '6px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <Button variant="secondary" onClick={() => pickFile(f)} disabled={etlRunActive || uploading}>
-                          {readOnly ? 'Check file' : 'Upload / Replace'}
+                          {canReplace(f) ? 'Upload / Replace' : 'Check file'}
                         </Button>
                       </td>
                     </tr>
@@ -264,7 +277,13 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
             </table>
           </div>
           <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
-            ETL input folder <code>{data.input_dir}</code> · backups in <code>{data.backup_dir}</code> · max{' '}
+            ETL input folder <code>{data.input_dir}</code>
+            {data.upload_dir ? (
+              <>
+                {' '}· admin uploads in <code>{data.upload_dir}</code>
+              </>
+            ) : null}{' '}
+            · backups in <code>{data.backup_dir}</code> · max{' '}
             {formatBytes(data.max_bytes)} per file
           </div>
         </>
@@ -272,17 +291,18 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
 
       <ConfirmDialog
         open={pending !== null}
-        title={readOnly ? `Check ${pending?.slot.name ?? ''}?` : `Replace ${pending?.slot.name ?? ''}?`}
+        title={pending && !canReplace(pending.slot) ? `Check ${pending.slot.name}?` : `Replace ${pending?.slot.name ?? ''}?`}
         message={
           pending
-            ? readOnly
+            ? !canReplace(pending.slot)
               ? `"${pending.file.name}" (${formatBytes(pending.file.size)}) will be checked against what the ETL expects for ${pending.slot.name}.` +
                 ' The input folder is read-only, so nothing is saved.'
               : `"${pending.file.name}" (${formatBytes(pending.file.size)}) will be checked and, if valid, replace ${pending.slot.name}` +
-                ` in the ETL input folder. The current file is kept as a backup. Nothing runs now — it will be used by ${whenApplied(pending.slot.name)}.`
+                ` ${readOnly ? 'in the admin upload folder (the ETL reads it instead of the server copy)' : 'in the ETL input folder'}.` +
+                ` The current file is kept as a backup. Nothing runs now — it will be used by ${whenApplied(pending.slot.name)}.`
             : ''
         }
-        confirmLabel={readOnly ? 'Check file' : 'Replace file'}
+        confirmLabel={pending && !canReplace(pending.slot) ? 'Check file' : 'Replace file'}
         onConfirm={confirmUpload}
         onCancel={() => setPending(null)}
         busy={uploading}

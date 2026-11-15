@@ -15,6 +15,7 @@ import argparse
 import datetime as _dt
 import logging
 import sys
+import warnings
 from pathlib import Path
 
 from etl_platform.config import PlatformConfig
@@ -25,6 +26,11 @@ from etl_platform.runner import STATUS_PARTIAL, Runner
 LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 
 EXIT_SUCCESS, EXIT_FAILED, EXIT_USAGE, EXIT_PARTIAL, EXIT_LOCKED = 0, 1, 2, 3, 4
+
+# openpyxl drops the Excel data-validation lists (the Yes/No dropdowns of the input workbooks) when it READS a file and
+# says so on stderr for every sheet. Harmless -- the ETL never writes an input file -- but the Control Center showed
+# that warning as the failed run's error instead of the real one.
+warnings.filterwarnings("ignore", message="Data Validation extension is not supported", module="openpyxl")
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

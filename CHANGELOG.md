@@ -6,6 +6,19 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Fixed (ETL: ProductExclusions.xlsx from the admin side, sales_build mirror repair, one Critical Number tab, 2026-11-15)
+- **ProductExclusions.xlsx can be replaced from ETL Control Center** although the server's input folder is read-only: the
+  upload is validated, the current file backed up, and the new one saved in the writable `ETL_INPUT_UPLOAD_DIR`
+  (`/etl/input_admin`), which every run reads first (`config.input_check.effective_input_path`: Settings, the sales-build
+  input signature, preflight). The card shows *Upload / Replace* for it and "Uploaded here" once the admin copy is in use.
+- **sales_build failed every 30 minutes** with `product.product: field(s) ['categ_id', 'sub_brand_id', 'product_family_id',
+  'size_dimensions_id'] are not mirrored`: a 02:00 full check had saved the new field list while re-reading only recently
+  changed products. The mirror now records which fields every stored record holds, checks stored payloads once when that
+  differs from the field list, and re-reads the dataset in full (dropping records no longer in Odoo) when any record lacks
+  one. The build's error now names the fix.
+- openpyxl's "Data Validation extension is not supported" warning is silenced in the ETL runner; it hid the real error.
+- Admin Panel: the **Critical Number** tab was listed twice (merge duplicate); one remains. Test guards unique tabs.
+
 ### Changed (Salesforce Performance: Team pulse = Tachometer, B2B / B2C Directors, reconciliation, 2026-11-15)
 - **Team pulse = the Tachometer's YTD Value card.** The pulse and the Total sales people card's variance now come from
   `computeYtdCard`, the same function as the Tachometer, with the same filters and anchor date. Same actual, same prorated

@@ -56,6 +56,12 @@ log = logging.getLogger(__name__)
 ODOO_DT = "%Y-%m-%d %H:%M:%S"
 FIELDS_GET_ATTRS = ["string", "type", "relation", "store"]
 LEAD_TYPE_DOMAIN = (("type", "in", ["lead", "opportunity"]),)
+# Kept inside raw_odoo_mirror_meta.fields_get_json (never returned as a field): the fields EVERY stored record of the
+# dataset is known to hold. A dataset whose meta lists more fields than this is checked record by record once
+# (MirrorStore.ids_missing_fields) and re-read in full when stored records lack a field -- e.g. a spec that gained
+# fields on a release whose first sync was a 02:00 full check, which saved the new field list but re-read only the
+# recently changed records (sales_build then failed with "field(s) [...] are not mirrored").
+COMPLETE_FIELDS_KEY = "__mirror_complete_fields__"
 
 
 def _u(*lists: Iterable[str]) -> tuple[str, ...]:
@@ -163,15 +169,47 @@ class MirrorStore:
                                      "WHERE model = :m AND company_ctx = :c"), {"m": model, "c": ctx}).first()
         if row is None:
             return None
-        return {"fields": json.loads(row[0]), "fields_get": json.loads(row[1]), "domain": json.loads(row[2])}
+        fields_get = json.loads(row[1])
+        complete = fields_get.pop(COMPLETE_FIELDS_KEY, None) if isinstance(fields_get, dict) else None
+        return {"fields": json.loads(row[0]), "fields_get": fields_get, "domain": json.loads(row[2]), "complete_fields": complete}
 
-    def save_meta(self, model: str, ctx: int, fields: Sequence[str], fields_get: Mapping[str, Any], domain: Sequence[Any]) -> None:
-        params = {"m": model, "c": ctx, "f": json.dumps(list(fields)), "g": json.dumps(fields_get, ensure_ascii=False, sort_keys=True),
+    def save_meta(self, model: str, ctx: int, fields: Sequence[str], fields_get: Mapping[str, Any], domain: Sequence[Any],
+                  complete_fields: Sequence[str] | None = None) -> None:
+        fg = {k: v for k, v in fields_get.items() if k != COMPLETE_FIELDS_KEY}
+        if complete_fields is not None:
+            fg[COMPLETE_FIELDS_KEY] = sorted(complete_fields)
+        params = {"m": model, "c": ctx, "f": json.dumps(list(fields)), "g": json.dumps(fg, ensure_ascii=False, sort_keys=True),
                   "d": json.dumps([list(t) if isinstance(t, (list, tuple)) else t for t in domain]), "t": utc_now()}
         if not self.conn.execute(text("UPDATE raw_odoo_mirror_meta SET fields_json = :f, fields_get_json = :g, domain_json = :d, "
                                       "refreshed_at_utc = :t WHERE model = :m AND company_ctx = :c"), params).rowcount:
             self.conn.execute(text("INSERT INTO raw_odoo_mirror_meta (model, company_ctx, fields_json, fields_get_json, domain_json, "
                                    "refreshed_at_utc) VALUES (:m, :c, :f, :g, :d, :t)"), params)
+
+    def mark_complete(self, model: str, ctx: int, fields: Sequence[str]) -> None:
+        """Records that every stored record of the dataset holds ``fields`` (the meta row must exist)."""
+        meta = self.meta(model, ctx)
+        if meta is None:
+            return
+        fg = {**meta["fields_get"], COMPLETE_FIELDS_KEY: sorted(fields)}
+        self.conn.execute(text("UPDATE raw_odoo_mirror_meta SET fields_get_json = :g WHERE model = :m AND company_ctx = :c"),
+                          {"g": json.dumps(fg, ensure_ascii=False, sort_keys=True), "m": model, "c": ctx})
+
+    def ids_missing_fields(self, model: str, ctx: int, fields: Sequence[str], limit: int = 5) -> list[int]:
+        """Up to ``limit`` stored records whose payload lacks one of ``fields`` (Odoo's search_read returns every requested
+        field, False included, so a complete record always has the key). Payloads are compact JSON: ``"name":``."""
+        def pattern(f: str) -> str:
+            return "%" + ('"' + f + '":').replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+        wanted = [f for f in fields if f != "id"]
+        if not wanted:
+            return []
+        params: dict[str, Any] = {"m": model, "c": ctx}
+        clauses = []
+        for i, f in enumerate(wanted):
+            params[f"p{i}"] = pattern(f)
+            clauses.append(f"payload NOT LIKE :p{i} ESCAPE '!'")
+        rows = self.conn.execute(text(f"SELECT record_id FROM raw_odoo_mirror WHERE model = :m AND company_ctx = :c AND "
+                                      f"({' OR '.join(clauses)}) LIMIT {int(limit)}"), params)
+        return [int(r[0]) for r in rows]
 
     def stored_hashes(self, model: str, ctx: int, ids: Sequence[int] | None = None) -> dict[int, str]:
         out: dict[int, str] = {}
@@ -381,7 +419,8 @@ class MirrorSync:
         key = (spec.model, ctx)
         if key in self._meta:
             return self._meta[key]
-        meta = None if refresh else self.store.meta(spec.model, ctx)
+        stored = self.store.meta(spec.model, ctx)
+        meta = None if refresh else stored
         if meta is not None and set(meta["fields"]) != {f for f in spec.fields if f in meta["fields_get"]}:
             # A deployed extraction spec can add category fields without any Odoo write_date changing.
             meta = None
@@ -391,8 +430,10 @@ class MirrorSync:
             domain = list(spec.domain)
             if spec.domain_if_field and spec.domain_if_field[0] in fg:
                 domain += [list(t) for t in spec.domain_if_field[1]]
-            self.store.save_meta(spec.model, ctx, fields, fg, domain)
-            meta = {"fields": fields, "fields_get": fg, "domain": domain}
+            # the stored records are still complete when the field list did not change (the 02:00 refresh of fields_get)
+            complete = stored.get("complete_fields") if stored is not None and set(stored["fields"]) == set(fields) else None
+            self.store.save_meta(spec.model, ctx, fields, fg, domain, complete_fields=complete)
+            meta = {"fields": fields, "fields_get": fg, "domain": domain, "complete_fields": complete}
         non_stored = sorted(f for f in meta["fields"] if meta["fields_get"].get(f, {}).get("store") is False
                             and f not in COVERED_NON_STORED.get(spec.model, set()))
         if non_stored:
@@ -447,7 +488,18 @@ class MirrorSync:
         schema_changed = previous_meta is None or set(previous_meta["fields"]) != set(fields) or previous_meta["domain"] != domain
         wm = self.wm.get(ds, conn=self.conn)
         started = self.now()
-        if wm.write_date is None or schema_changed:
+        full_read = wm.write_date is None or schema_changed
+        if not full_read and set(meta.get("complete_fields") or ()) != set(fields):
+            # the field list changed at some point without every stored record being re-read: check them once
+            stale = self.store.ids_missing_fields(spec.model, ctx, fields)
+            if stale:
+                log.warning("Mirror %s: stored records lack field(s) of %s (e.g. ids %s): re-reading every record", ds,
+                            sorted(fields), stale)
+                full_read = True
+            else:
+                self.store.mark_complete(spec.model, ctx, fields)
+                meta["complete_fields"] = sorted(fields)
+        if full_read:
             records = self._read(spec.model, domain, fields, context)
             self.result.first_fill.append(ds)
         else:
@@ -455,7 +507,10 @@ class MirrorSync:
             records = self._read(spec.model, [*domain, ["write_date", ">=", since]], fields, context)
         changed = set(self.store.upsert(spec.model, ctx, records, self.run_uid))
         deleted: list[int] = []
-        if wm.write_date is not None and (full_check or spec.id_check_every_cycle):
+        if full_read and wm.write_date is not None:
+            # a full read returns every record of the domain: whatever else is stored left Odoo (or the domain)
+            deleted = self.store.delete(spec.model, ctx, self.store.ids(spec.model, ctx) - {int(r["id"]) for r in records})
+        elif wm.write_date is not None and (full_check or spec.id_check_every_cycle):
             odoo_ids = set(self.client.search(spec.model, domain, context=dict(context) or None))
             mine = self.store.ids(spec.model, ctx)
             deleted = self.store.delete(spec.model, ctx, mine - odoo_ids)
@@ -464,6 +519,9 @@ class MirrorSync:
                 changed |= set(self.store.upsert(spec.model, ctx, self._read_ids(spec.model, missing, fields, context), self.run_uid))
             if full_check:
                 changed |= self._audit(spec, ctx, context, fields, domain, started)
+        if full_read:
+            self.store.mark_complete(spec.model, ctx, fields)
+            meta["complete_fields"] = sorted(fields)
         self.result.changed[ds] = len(changed)
         self.result.deleted[ds] = len(deleted)
         self._deleted.setdefault(spec.model, set()).update(deleted)
@@ -768,9 +826,10 @@ class MirrorClient:
             raise MirrorError(f"order {order!r} is not supported by the mirror (records are in id order)")
         rows = self._select(model, domain, context)
         rows = rows[offset:] if not limit else rows[offset:offset + limit]
-        missing = [f for f in fields if rows and f not in rows[0]]
+        missing = sorted({f for r in rows for f in fields if f not in r})
         if missing:
-            raise MirrorError(f"{model}: field(s) {missing} are not mirrored")
+            raise MirrorError(f"{model}: field(s) {missing} are not mirrored (stored before the field list changed): the next "
+                              "sales_mirror run (30-minute refresh) re-reads these records; run the 30-minute refresh, then sales_build")
         return [{f: r.get(f) for f in fields} if fields else dict(r) for r in rows]
 
     def execute_kw(self, model: str, method: str, args: list[Any] | None = None, kwargs: dict[str, Any] | None = None) -> Any:

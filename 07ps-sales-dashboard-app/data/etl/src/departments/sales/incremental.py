@@ -29,6 +29,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from sqlalchemy import inspect, text
 
+from config.input_check import effective_input_path
 from departments.sales import mirror as mr
 from departments.sales.dim_changes import dim_changes_since
 from etl_platform.config import sales_mode_from_env
@@ -98,7 +99,7 @@ def _inputs_signature(input_dir: Path) -> str:
     workbook rebuilds; ProductExclusions is hashed by content."""
     parts = []
     for name in SALES_INPUT_FILES:
-        f = Path(input_dir) / name
+        f = effective_input_path(Path(input_dir), name)  # an admin-uploaded copy (ETL_INPUT_UPLOAD_DIR) wins
         if f.is_file():
             st = f.stat()
             token = hashlib.sha256(f.read_bytes()).hexdigest() if name == "ProductExclusions.xlsx" else st.st_mtime_ns

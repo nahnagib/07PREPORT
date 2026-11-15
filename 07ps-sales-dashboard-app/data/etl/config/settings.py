@@ -7,7 +7,7 @@ from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
-from config.input_check import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, env_dir
+from config.input_check import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, effective_input_path, env_dir
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -81,8 +81,9 @@ class Settings:
 
     @property
     def product_exclusions_path(self) -> Path:
-        """Optional: customers / categories / products left out of the Product pages (sales_pipeline.product_exclusions)."""
-        return self.input_dir / "ProductExclusions.xlsx"
+        """Optional: customers / categories / products left out of the Product pages (sales_pipeline.product_exclusions).
+        The copy an admin uploaded in the ETL Control Center (ETL_INPUT_UPLOAD_DIR) wins over the input folder's."""
+        return effective_input_path(self.input_dir, "ProductExclusions.xlsx")
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":

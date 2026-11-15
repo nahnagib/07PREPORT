@@ -1299,6 +1299,10 @@ export interface EtlInputFileSlot {
   size_bytes: number | null;
   /** ISO-8601 UTC. */
   modified: string | null;
+  /** false = the input folder is read-only and this file is not admin-replaceable: an upload only checks it. */
+  replaceable?: boolean;
+  /** admin_upload = runs read the copy uploaded in the Control Center (ETL_INPUT_UPLOAD_DIR). */
+  source?: 'admin_upload' | 'input_folder';
   sheets: { label: string; sheet_names: string[] | null; required: string[]; optional: string[] }[];
   recent_backups: { name: string; size_bytes: number; modified: string }[];
   lastUpload: { at: string; byUserId: number | null; byName: string | null } | null;
@@ -1310,6 +1314,8 @@ export interface EtlInputFilesResponse {
   max_bytes: number;
   /** true = the ETL input folder is read-only on this server: uploads are checked, never saved. */
   read_only?: boolean;
+  /** ETL_INPUT_UPLOAD_DIR: where admin-replaceable files are saved (null = not configured). */
+  upload_dir?: string | null;
   files: EtlInputFileSlot[];
 }
 
@@ -1320,6 +1326,8 @@ export interface EtlInputFileReplaced {
   read_only?: boolean;
   message?: string;
   input_dir: string;
+  /** Where the new file was written (the upload folder for admin-replaceable files). */
+  saved_to?: string;
   previous: { path: string; size_bytes: number; modified: string; sha256: string } | null;
   current: { path: string; size_bytes: number; modified: string; sha256: string };
   backup: { path: string; size_bytes: number } | null;

@@ -33,6 +33,9 @@ from config.input_check import (
     OPTIONAL_INPUT_FILES,
     REQUIRED_INPUT_FILES,
     _check_xlsx,
+    admin_input_files,
+    admin_upload_dir,
+    effective_input_path,
     env_dir,
     resolve_dir,
 )
@@ -237,6 +240,18 @@ def backup_dir() -> Path:
     return resolve_dir(raw, "ETL_INPUT_BACKUP_DIR") if raw else DEFAULT_BACKUP_DIR.resolve()
 
 
+def admin_slot(name: str) -> bool:
+    """True when ``name`` is saved in ETL_INPUT_UPLOAD_DIR (writable even where the input folder is read-only)."""
+    return admin_upload_dir() is not None and name in admin_input_files()
+
+
+def _assert_upload_dir_separate(inputs: Path, backups: Path, uploads: Path) -> None:
+    if uploads in (inputs, backups) or inputs in uploads.parents or backups in uploads.parents:
+        raise UploadRejected(
+            f"ETL_INPUT_UPLOAD_DIR ({uploads}) must be its own folder, not the input or backup folder or inside them.", status=500
+        )
+
+
 def _assert_backup_dir_separate(inputs: Path, backups: Path) -> None:
     if backups == inputs or inputs in backups.parents:
         raise UploadRejected(
@@ -360,9 +375,12 @@ def describe_slots() -> dict[str, Any]:
     backups = backup_dir()
     slots = _slots()
     files = []
+    folder_read_only = inputs.is_dir() and not os.access(inputs, os.W_OK)
     for name in SLOT_NAMES:
         spec = slots[name]
-        meta = _file_meta(inputs / name)
+        path = effective_input_path(inputs, name)
+        meta = _file_meta(path)
+        uploaded = admin_slot(name)
         files.append({
             "name": name,
             "required": name in REQUIRED_INPUT_FILES,
@@ -370,6 +388,10 @@ def describe_slots() -> dict[str, Any]:
             "exists": meta is not None,
             "size_bytes": meta["size_bytes"] if meta else None,
             "modified": meta["modified"] if meta else None,
+            # replaceable from the Control Center (False = the input folder is read-only: the upload only checks the file)
+            "replaceable": uploaded or not folder_read_only,
+            # "admin_upload" = the copy uploaded in the Control Center (ETL_INPUT_UPLOAD_DIR) is the one runs read
+            "source": "admin_upload" if uploaded and path.parent != inputs and meta is not None else "input_folder",
             "sheets": [
                 {
                     "label": s.label,
@@ -387,7 +409,8 @@ def describe_slots() -> dict[str, Any]:
         "max_bytes": MAX_UPLOAD_BYTES,
         # Production mounts the input folder read-only: files are updated directly in the folder on the
         # host, and an upload here only CHECKS a file (see replace_file).
-        "read_only": inputs.is_dir() and not os.access(inputs, os.W_OK),
+        "read_only": folder_read_only,
+        "upload_dir": str(admin_upload_dir()) if admin_upload_dir() is not None else None,
         "files": files,
     }
 
@@ -419,10 +442,16 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
         finally:
             gc.collect()
 
+    # Files an admin may replace (ETL_INPUT_ADMIN_FILES, default ProductExclusions.xlsx) are saved in the writable
+    # ETL_INPUT_UPLOAD_DIR, which every run reads before the input folder (config.input_check.effective_input_path).
+    uploads = admin_upload_dir() if admin_slot(name) else None
+    if uploads is not None:
+        _assert_upload_dir_separate(inputs, backups, uploads)
+
     # Production mounts the input folder read-only (the ETL never writes an input file): the file has
     # been validated above, so a bad file is still rejected with its reason. A good one is reported as
     # checked -- not an error -- and nothing is written.
-    if not os.access(inputs, os.W_OK):
+    if uploads is None and not os.access(inputs, os.W_OK):
         current = _file_meta(inputs / name)
         return {
             "name": name,
@@ -439,13 +468,16 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
             "validation": summary,
         }
 
-    target = inputs / name
+    target_dir = uploads if uploads is not None else inputs
+    target = target_dir / name
     with _replace_lock:
         # Re-checked under the lock, right before touching the folder: a run reads these files in
         # its first step, so never swap mid-run.
         if is_run_active():
             raise UploadRejected("An ETL run is in progress. Upload again once it has finished.", status=409)
-        previous = _file_meta(target)
+        # the file runs read now (an earlier upload, or the input folder's copy): compared and backed up
+        current_path = effective_input_path(inputs, name)
+        previous = _file_meta(current_path)
         if previous and previous["sha256"] == new_sha:
             raise UploadRejected(f"This file is identical to the current {name}; nothing was replaced.", status=409)
 
@@ -459,13 +491,14 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
             while backup_path.exists():
                 backup_path = backups / f"{stem}.{stamp}-{counter}{suffix}"
                 counter += 1
-            shutil.copy2(target, backup_path)
+            shutil.copy2(current_path, backup_path)
             backup = {"path": str(backup_path), "size_bytes": backup_path.stat().st_size}
 
         # Written next to the target (same filesystem, so os.replace is an atomic rename) under a
         # name the pipeline never reads, then swapped in.
-        staging = inputs / f".{name}.uploading"
+        staging = target_dir / f".{name}.uploading"
         try:
+            target_dir.mkdir(parents=True, exist_ok=True)
             with staging.open("wb") as handle:
                 handle.write(content)
                 handle.flush()
@@ -486,6 +519,7 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
         "replaced": True,
         "read_only": False,
         "input_dir": str(inputs),
+        "saved_to": str(target),
         "previous": previous,
         "current": current,
         "backup": backup,

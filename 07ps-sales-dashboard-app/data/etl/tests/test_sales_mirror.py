@@ -179,6 +179,51 @@ def test_new_category_field_backfills_unchanged_products_on_incremental_run(engi
     assert odoo.reads.get("product.product", 0) == 0
 
 
+def test_meta_listing_new_fields_with_stale_payloads_rereads_every_record(engine, odoo):
+    """Production 2026-11-15: a 02:00 full check saved the new product field list but re-read only recently changed
+    products, so sales_build failed with "field(s) ['categ_id', ...] are not mirrored" on every run."""
+    import json
+
+    product_fields = ("categ_id", "sub_brand_id", "product_family_id", "size_dimensions_id")
+    odoo.db["product.product"][500]["categ_id"] = [39, "Packaging"]
+    _sync(engine, odoo, 0)
+    with engine.begin() as conn:
+        store = mr.MirrorStore(conn)
+        for ctx in (1, 3):
+            meta = store.meta("product.product", ctx)
+            assert set(meta["complete_fields"]) == set(meta["fields"])          # a full read marks the dataset complete
+            store.save_meta("product.product", ctx, meta["fields"], meta["fields_get"], meta["domain"])  # old code: no marker
+            record = store.payloads("product.product", ctx, [500])[0]
+            for f in product_fields:
+                record.pop(f)
+            conn.execute(text("UPDATE raw_odoo_mirror SET payload = :payload WHERE model = 'product.product' AND company_ctx = :ctx"),
+                         {"payload": json.dumps(record), "ctx": ctx})
+        assert store.ids_missing_fields("product.product", 1, list(product_fields)) == [500]
+    with mr.MirrorSnapshot(engine) as snap, pytest.raises(mr.MirrorError, match="not mirrored"):
+        mr.MirrorClient(snap).search_read("product.product", [], list(product_fields), context={"allowed_company_ids": [1]})
+
+    result = _sync(engine, odoo, 30)
+    assert "mirror:product.product@1" in result.first_fill and "mirror:product.product@3" in result.first_fill
+    assert _payload(engine, "product.product", 500, 1)["categ_id"] == [39, "Packaging"]
+    assert "sub_brand_id" in _payload(engine, "product.product", 500, 3)
+    with mr.MirrorSnapshot(engine) as snap:
+        rows = mr.MirrorClient(snap).search_read("product.product", [], list(product_fields), context={"allowed_company_ids": [1]})
+    assert rows[0]["categ_id"] == [39, "Packaging"]
+
+    odoo.reads.clear()  # complete again: the next cycle neither checks nor re-reads
+    quiet = _sync(engine, odoo, 60)
+    assert odoo.reads.get("product.product", 0) == 0 and not quiet.first_fill
+
+
+def test_a_02h00_fields_get_refresh_keeps_the_complete_marker(engine, odoo):
+    _sync(engine, odoo, 0)
+    _sync(engine, odoo, 30, full_check=True)
+    with engine.connect() as conn:
+        meta = mr.MirrorStore(conn).meta("sale.order")
+    assert set(meta["complete_fields"]) == set(meta["fields"])
+    assert mr.COMPLETE_FIELDS_KEY not in meta["fields_get"]
+
+
 def test_a_line_removed_from_an_order_is_deleted_although_it_has_no_write_date(engine, odoo):
     _sync(engine, odoo, 0)
     del odoo.db["sale.order.line"][12]

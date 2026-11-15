@@ -55,4 +55,9 @@ describe('header title "<Department> — <Page>" from the nav config', () => {
     for (const item of NAV_ITEMS) expect(resolvePageTitle(item.href).page).toBe(item.label);
     for (const tab of ADMIN_TABS) expect(resolvePageTitle(tab.href).text).toBe(`Admin — ${tab.label}`);
   });
+
+  it('lists every admin tab once (a merge had added Critical Number twice)', () => {
+    const hrefs = ADMIN_TABS.map((t) => t.href);
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+  });
 });

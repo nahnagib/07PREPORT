@@ -83,7 +83,6 @@ export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string
   { label: 'ETL Control Center', href: '/admin/etl-control', pageKey: null, adminOnly: true },
   { label: 'Audit Log', href: '/admin/audit-log', pageKey: null, adminOnly: true },
   { label: 'Kaizen Dropdowns', href: '/admin/kaizen-dropdowns', pageKey: null, adminOnly: true },
-  { label: 'Critical Number', href: '/admin/critical-number', pageKey: null, adminOnly: true },
 ];
 
 /** Routes whose permission page differs from the nav entry they sit under: the Kaizen card entry

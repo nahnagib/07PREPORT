@@ -33,6 +33,12 @@ REQUIRED_INPUT_FILES: tuple[str, ...] = (
 # ProductExclusions.xlsx: when absent the Product pages simply get no extra exclusions (no template is created).
 OPTIONAL_INPUT_FILES: tuple[str, ...] = ("BlockedCustomers.xlsx", "ProductExclusions.xlsx")
 
+# Input files an admin replaces from the ETL Control Center even where the input folder is mounted read-only
+# (production): the upload is saved in ETL_INPUT_UPLOAD_DIR, a separate writable folder, and every reader takes that
+# copy before the one in the input folder (effective_input_path). ETL_INPUT_ADMIN_FILES (comma-separated) widens the
+# list; without ETL_INPUT_UPLOAD_DIR nothing changes (uploads go to the input folder when it is writable).
+DEFAULT_ADMIN_INPUT_FILES: tuple[str, ...] = ("ProductExclusions.xlsx",)
+
 LISTING_LIMIT = 20
 _WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 
@@ -77,6 +83,30 @@ def resolve_dir(raw: str, var_name: str) -> Path:
     if not path.is_absolute():
         path = ETL_ROOT / path
     return path.resolve()
+
+
+def admin_upload_dir() -> Path | None:
+    """ETL_INPUT_UPLOAD_DIR (writable; admin-uploaded copies of ``admin_input_files()``), or None when not set."""
+    raw = os.getenv("ETL_INPUT_UPLOAD_DIR", "").strip()
+    return resolve_dir(raw, "ETL_INPUT_UPLOAD_DIR") if raw else None
+
+
+def admin_input_files() -> tuple[str, ...]:
+    raw = os.getenv("ETL_INPUT_ADMIN_FILES", "").strip()
+    if not raw:
+        return DEFAULT_ADMIN_INPUT_FILES
+    return tuple(dict.fromkeys(n.strip() for n in raw.split(",") if n.strip()))
+
+
+def effective_input_path(input_dir: Path, name: str) -> Path:
+    """Where a run reads input file ``name``: the admin-uploaded copy (ETL_INPUT_UPLOAD_DIR) when there is one for a
+    file an admin may replace, else ``input_dir / name``."""
+    uploads = admin_upload_dir()
+    if uploads is not None and name in admin_input_files():
+        candidate = uploads / name
+        if candidate.is_file():
+            return candidate
+    return Path(input_dir) / name
 
 
 def env_dir(names: tuple[str, ...], default: Path) -> tuple[Path, str, str]:
@@ -174,9 +204,9 @@ def inspect_input_dir(
     checks: list[FileCheck] = []
     for names, is_required in ((required, True), (optional, False)):
         for name in names:
-            path = input_dir / name
+            path = effective_input_path(input_dir, name)
             check = FileCheck(name=name, path=str(path), required=is_required, status="missing")
-            if is_dir and path.is_file():
+            if path.is_file():
                 status, detail = _check_xlsx(path)
                 check.status, check.detail = status, detail
                 try:

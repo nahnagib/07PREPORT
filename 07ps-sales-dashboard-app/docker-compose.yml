@@ -67,6 +67,9 @@ services:
       DB_HOST: ${DB_HOST_FOR_CONTAINERS:-host.docker.internal}
       ETL_INPUT_DIR: /etl/input
       ETL_INPUT_BACKUP_DIR: /etl/input_backups
+      # Writable folder for the input files an admin replaces from the ETL Control Center even though /etl/input is
+      # read-only (ETL_INPUT_ADMIN_FILES, default ProductExclusions.xlsx): the uploaded copy is read before /etl/input's.
+      ETL_INPUT_UPLOAD_DIR: /etl/input_admin
       ETL_OUTPUT_DIR: /etl/output
     extra_hosts: *host-gateway
     volumes:
@@ -74,6 +77,9 @@ services:
       # Previous versions of replaced input workbooks (<name>.<UTC timestamp>.xlsx). A named volume by
       # default; set ETL_INPUT_BACKUP_HOST_DIR to a host folder to bind-mount instead.
       - ${ETL_INPUT_BACKUP_HOST_DIR:-etl_input_backups}:/etl/input_backups
+      # Admin-uploaded input files (ETL_INPUT_UPLOAD_DIR). A named volume by default; set ETL_INPUT_UPLOAD_HOST_DIR to a
+      # host folder to bind-mount instead. Delete a file here to fall back to the copy in the input folder.
+      - ${ETL_INPUT_UPLOAD_HOST_DIR:-etl_input_admin}:/etl/input_admin
       # NPS Score source (docs/nps-etl.md): the SSH private key, read-only. Uncomment, set NPS_SSH_KEY_HOST_PATH in the
       # project .env and NPS_SSH_KEY_PATH=/run/secrets/nps_ssh_key in data/etl/.env.
       # - ${NPS_SSH_KEY_HOST_PATH}:/run/secrets/nps_ssh_key:ro
@@ -225,6 +231,8 @@ volumes:
   etl_output:
     driver: local
   etl_input_backups:
+    driver: local
+  etl_input_admin:
     driver: local
   etl_logs:
     driver: local

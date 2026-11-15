@@ -51,6 +51,8 @@ def folders(tmp_path, monkeypatch):
     inputs.mkdir()
     monkeypatch.setenv("ETL_INPUT_DIR", str(inputs))
     monkeypatch.setenv("ETL_INPUT_BACKUP_DIR", str(backups))
+    monkeypatch.delenv("ETL_INPUT_UPLOAD_DIR", raising=False)
+    monkeypatch.delenv("ETL_INPUT_ADMIN_FILES", raising=False)
     return inputs, backups
 
 
@@ -296,3 +298,48 @@ def test_product_exclusions_2026_11_15_without_a_required_column_is_rejected_wit
     response = put(client, "ProductExclusions.xlsx", _exclusions_2026_11_15(products_columns_drop=("Active",)))
     assert response.status_code == 422
     assert "Active" in str(response.get_json()) and "Products" in str(response.get_json())
+
+
+def test_product_exclusions_is_replaced_from_the_admin_side_although_the_input_folder_is_read_only(client, folders, tmp_path, monkeypatch):
+    """Production 2026-11-15: ProductExclusions.xlsx is saved in ETL_INPUT_UPLOAD_DIR (writable) and the ETL reads that
+    copy before the read-only input folder's; every other file is still only checked."""
+    from config.input_check import effective_input_path
+    from config.settings import Settings
+
+    inputs, backups = folders
+    uploads = tmp_path / "input_admin"
+    monkeypatch.setenv("ETL_INPUT_UPLOAD_DIR", str(uploads))
+    server_copy = _exclusions(categories_active="No")
+    (inputs / "ProductExclusions.xlsx").write_bytes(server_copy)
+    (inputs / "OffDays.xlsx").write_bytes(xlsx({"Sheet1": OFFDAYS}))
+    real_access = os.access
+    with patch("input_files.os.access", side_effect=lambda path, mode: False if Path(path) == inputs.resolve() and mode == os.W_OK else real_access(path, mode)):
+        before = client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()
+        uploaded = _exclusions()
+        replaced = put(client, "ProductExclusions.xlsx", uploaded)
+        checked = put(client, "OffDays.xlsx", xlsx({"Sheet1": {k: v[:1] for k, v in OFFDAYS.items()}}))
+        after = client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()
+
+    slot = {f["name"]: f for f in before["files"]}
+    assert before["read_only"] is True and slot["ProductExclusions.xlsx"]["replaceable"] is True
+    assert slot["OffDays.xlsx"]["replaceable"] is False and slot["ProductExclusions.xlsx"]["source"] == "input_folder"
+
+    body = replaced.get_json()
+    assert replaced.status_code == 200 and body["replaced"] is True, body
+    assert Path(body["saved_to"]) == (uploads / "ProductExclusions.xlsx").resolve()
+    assert (uploads / "ProductExclusions.xlsx").read_bytes() == uploaded
+    assert (inputs / "ProductExclusions.xlsx").read_bytes() == server_copy           # the server copy is untouched
+    assert body["backup"] is not None and Path(body["backup"]["path"]).read_bytes() == server_copy
+    assert checked.get_json()["replaced"] is False                                  # other files: checked only
+
+    assert {f["name"]: f["source"] for f in after["files"]}["ProductExclusions.xlsx"] == "admin_upload"
+    assert effective_input_path(inputs, "ProductExclusions.xlsx") == (uploads / "ProductExclusions.xlsx").resolve()
+    assert Settings.from_env().product_exclusions_path == (uploads / "ProductExclusions.xlsx").resolve()
+    assert effective_input_path(inputs, "OffDays.xlsx") == inputs / "OffDays.xlsx"
+
+
+def test_without_an_upload_folder_product_exclusions_is_read_from_the_input_folder(folders):
+    from config.input_check import effective_input_path
+
+    inputs, _ = folders
+    assert effective_input_path(inputs, "ProductExclusions.xlsx") == inputs / "ProductExclusions.xlsx"

@@ -1,3 +1,25 @@
+# Deploy notes: ETL fixes -- ProductExclusions.xlsx from the admin side, sales_build mirror repair (2026-11-15, evening)
+
+No migration. One compose change; rebuild and restart **etl-api** (and the frontend / backend images for the UI text).
+
+1. **New writable folder for admin uploads** (`docker-compose.yml`, service `etl-api`): `ETL_INPUT_UPLOAD_DIR=/etl/input_admin`,
+   mounted from the named volume `etl_input_admin` (or a host folder: set `ETL_INPUT_UPLOAD_HOST_DIR` in the project `.env`).
+   `/etl/input` stays read-only. `ProductExclusions.xlsx` uploaded in **ETL Control Center → Input Files → Upload / Replace**
+   is validated, the current copy is backed up to `/etl/input_backups`, and the new one is saved in `/etl/input_admin`;
+   every run reads that copy before `/etl/input/ProductExclusions.xlsx`. The other four files are unchanged (checked only).
+   `ETL_INPUT_ADMIN_FILES` (comma-separated) can widen the list. To go back to the server copy, delete
+   `/etl/input_admin/ProductExclusions.xlsx`.
+   If the stack is started with an older compose file the variable is missing and the behaviour is exactly as before.
+2. **sales_build "field(s) [...] are not mirrored"**: the mirror now checks, once, that every stored record holds every field
+   the readers ask for and re-reads the dataset in full when not. Nothing to do: the first 30-minute refresh after deploy
+   re-reads `product.product` for each company (a few seconds, ~4k rows per company, logged as
+   `Mirror mirror:product.product@N: stored records lack field(s) ... re-reading every record`), then the next
+   **Sales build** succeeds. To fix it at once, run the 30-minute refresh manually, then Sales build.
+3. The openpyxl "Data Validation extension is not supported" warning is silenced in the ETL runner (it was shown as the
+   failed run's error).
+
+---
+
 # Deploy notes: Product status buckets, ProductExclusions.xlsx 2026-11-15, BCG status table, Product Development Plan (2026-11-15)
 
 Release pushed to `main` on 2026-11-15 (fast-forward from `b1dd1f1`). Run the steps in this order, in one window.
