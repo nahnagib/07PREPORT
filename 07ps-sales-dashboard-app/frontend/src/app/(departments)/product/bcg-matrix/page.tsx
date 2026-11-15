@@ -483,14 +483,13 @@ function StatusRows({
   return (
     <div data-testid="bcg-kpis" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-3, 16px)' }}>
       <section aria-labelledby="row-total-skus">
-        <h2 id="row-total-skus" className={styles.sectionTitle}>Total SKUs</h2>
         {loading || !s ? (
-          <Card style={{ width: '100%' }}><LoadingSkeleton variant="kpi" /></Card>
+          <Card style={{ width: '100%' }}><h2 id="row-total-skus" className={styles.sectionTitle}>Total SKUs</h2><LoadingSkeleton variant="kpi" /></Card>
         ) : (
           <Card data-testid="total-skus-hero" style={{ width: '100%', borderInlineStart: '4px solid var(--ps-color-accent)' }}>
             <div className="ps-cn-hero">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: 'var(--ps-color-muted-text)' }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>Total SKUs</span>
+                <h2 id="row-total-skus" style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Total SKUs</h2>
                 <VisualInfoIcons title="Total SKUs" {...vh('product.bcgMatrix.totalSkus')} />
               </div>
               <div className={styles.heroNumber} data-testid="total-skus-value">{fmtCount(s.total)}</div>
