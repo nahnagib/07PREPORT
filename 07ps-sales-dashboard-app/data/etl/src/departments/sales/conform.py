@@ -389,6 +389,41 @@ def target_sheet_rows(sheet: pd.DataFrame) -> pd.DataFrame:
     return sheet[year.notna() & month.notna() & month.between(1, 12)].reset_index(drop=True)
 
 
+DIRECTOR_SEGMENT_KEYS = (1, 2)  # B2B, B2C
+
+
+def is_director_row(sheet: pd.DataFrame) -> pd.Series:
+    """TargetLevel = Director (case and spaces ignored): a channel owner's own target (2026-11-15)."""
+    if "TargetLevel" not in sheet.columns:
+        return pd.Series(False, index=sheet.index)
+    return sheet["TargetLevel"].map(_ident_text).str.lower().eq("director")
+
+
+def conform_targets(fact: pd.DataFrame, keys: pd.DataFrame, out: "Conformed") -> pd.DataFrame:
+    """Fact_Targets with the sheet's own keys. Every Salesperson / SalesTeam row needs its SalespersonKey; a
+    TargetLevel = Director row (2026-11-15) has no salesperson (SalespersonKey Unknown) and must name its channel
+    (SalesSegment B2B or B2C, SegmentKey 1 / 2): the app uses those rows only for the director cards, never in a total."""
+    t = fact.copy().reset_index(drop=True)
+    check_target_alignment(t, keys)
+    director = is_director_row(keys).to_numpy()
+    missing = keys["SalespersonKey"].isna().to_numpy() & ~director
+    if missing.any():
+        raise ValueError(f"{int(missing.sum())} target row(s) have no SalespersonKey in sales_targets.xlsx: "
+                         f"{keys.loc[missing, ['YearMonth', 'Salesperson']].head(5).to_dict('records')}")
+    legacy = {c: t[c].copy() for c in ("SalesTeamKey", "ChannelKey", "SegmentKey", "CompanyKey")}
+    t["SalespersonKey"] = keys["SalespersonKey"].map(lambda v: UNKNOWN if pd.isna(v) else int(v)).astype("int64").to_numpy()
+    t["CompanyKey"] = keys["CompanyKey"].map(lambda v: UNKNOWN if pd.isna(v) else int(v)).to_numpy()
+    t["SalesTeamKey"] = t["SalesTeamKey"].map(_team_key)
+    t["ChannelKey"] = t["ChannelKey"].map(lambda v: UNKNOWN if pd.isna(v) or int(v) == 1 else int(v))  # frozen: legacy codes == sheet codes
+    t["SegmentKey"] = t["SegmentKey"].map(lambda v: UNKNOWN if pd.isna(v) or int(v) == 5 else int(v))
+    no_channel = director & ~t["SegmentKey"].isin(DIRECTOR_SEGMENT_KEYS).to_numpy()
+    if no_channel.any():
+        raise ValueError(f"{int(no_channel.sum())} TargetLevel = Director row(s) in sales_targets.xlsx have no SalesSegment B2B / B2C: "
+                         f"{keys.loc[no_channel, ['YearMonth', 'SalesSegment']].head(5).to_dict('records')}")
+    out.parity["fact_sales_targets"] = legacy_key_parity(legacy, t)
+    return t
+
+
 def check_target_alignment(fact: pd.DataFrame, sheet: pd.DataFrame) -> None:
     """Fact_Targets and the sheet rows must agree row by row on what the legacy code never rewrites."""
     if len(fact) != len(sheet):
@@ -472,20 +507,7 @@ def conform(build, maps: KeyMaps, targets_keys: pd.DataFrame, product_rebuild) -
         out.tables[table] = _date_keys(df)
 
     # targets: the sheets' own key columns -------------------------------------------------------------------------------
-    t = s["Fact_Targets"].copy().reset_index(drop=True)
-    keys = target_sheet_rows(targets_keys)
-    check_target_alignment(t, keys)
-    missing = keys["SalespersonKey"].isna()
-    if missing.any():
-        raise ValueError(f"{int(missing.sum())} target row(s) have no SalespersonKey in sales_targets.xlsx: "
-                         f"{keys.loc[missing, ['YearMonth', 'Salesperson']].head(5).to_dict('records')}")
-    legacy = {c: t[c].copy() for c in ("SalesTeamKey", "ChannelKey", "SegmentKey", "CompanyKey")}
-    t["SalespersonKey"] = keys["SalespersonKey"].astype("int64").to_numpy()
-    t["CompanyKey"] = keys["CompanyKey"].map(lambda v: UNKNOWN if pd.isna(v) else int(v)).to_numpy()
-    t["SalesTeamKey"] = t["SalesTeamKey"].map(_team_key)
-    t["ChannelKey"] = t["ChannelKey"].map(lambda v: UNKNOWN if pd.isna(v) or int(v) == 1 else int(v))  # frozen: legacy codes == sheet codes
-    t["SegmentKey"] = t["SegmentKey"].map(lambda v: UNKNOWN if pd.isna(v) or int(v) == 5 else int(v))
-    out.parity["fact_sales_targets"] = legacy_key_parity(legacy, t)
+    t = conform_targets(s["Fact_Targets"], target_sheet_rows(targets_keys), out)
     out.tables["fact_sales_targets"] = _date_keys(t)
 
     # product pages, BCG: rebuilt by the product builders from the conformed lines ------------------------------------------

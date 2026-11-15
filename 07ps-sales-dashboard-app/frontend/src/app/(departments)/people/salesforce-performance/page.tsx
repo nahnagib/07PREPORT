@@ -37,8 +37,11 @@ import { CATEGORICAL_8 } from '../../../../lib/marcom/palette';
 import {
   CONTRIBUTION_LEVEL_LABEL, STATUS_COLOR, STATUS_ORDER, benchmarkMet, contributionSlices, filterPeople,
   monthlyStatusPerformance, peopleSummary, personPath, personShares, showsBest, statusMix, teamPulse, topPerson,
-  type DrillStep, type PeopleStatus, type PeopleStatusDefinition, type SalesPersonPerformance,
+  CHANNEL_SEGMENT, RECONCILIATION_REASON_LABEL, parseChannel, totalPulse,
+  type DirectorChannel, type DirectorPerformance, type DrillStep, type PeopleReconciliation, type PeopleStatus,
+  type PeopleStatusDefinition, type SalesPersonPerformance, type TotalFigures,
 } from '../../../../lib/salesPeoplePerformance';
+import { DataQualityRow } from '../../../../components/DataQualityRow';
 import { vh, type VisualHelpId } from '../../../../lib/visualHelp';
 import styles from './page.module.css';
 
@@ -113,8 +116,10 @@ function pressable(onPress: () => void) {
   };
 }
 
-function VsTarget({ people }: { people: SalesPersonPerformance[] }) {
-  const { actual, target, variance, variancePct } = peopleSummary(people);
+function VsTarget({ people, total }: { people: SalesPersonPerformance[]; total?: TotalFigures }) {
+  const { actual, target, variance, variancePct } = total
+    ? { actual: total.actual, target: total.target ?? 0, variance: total.variance, variancePct: total.variancePct }
+    : peopleSummary(people);
   return (
     <div className={styles.ytdVariance} title={`${formatCurrency(actual)} of ${formatCurrency(target)}`}>
       <div className={styles.varianceRow} style={{ color: varianceColor(variance) }}>
@@ -143,14 +148,16 @@ function StatusCard({ definition, people, pressed, dimmed = false, onPress }: {
   );
 }
 
-function TotalCard({ people, pressed, dimmed = false, onPress }: { people: SalesPersonPerformance[]; pressed: boolean; dimmed?: boolean; onPress: () => void }) {
+function TotalCard({ people, total, pressed, dimmed = false, onPress }: {
+  people: SalesPersonPerformance[]; total?: TotalFigures; pressed: boolean; dimmed?: boolean; onPress: () => void;
+}) {
   return (
     <Card {...pressable(onPress)} aria-pressed={pressed} aria-label={`Total sales people: ${people.length}`} data-dimmed={dimmed || undefined}
       className={`ps-card-clickable ${styles.statusCard}`}
       style={{ '--status': 'var(--ps-color-accent)', borderInlineStart: '4px solid var(--ps-color-accent)' } as React.CSSProperties}>
       <span className={styles.cardTitle}><Users size={14} aria-hidden />Total sales people</span>
       <div className={styles.cardValue}>{people.length}</div>
-      <VsTarget people={people} />
+      <VsTarget people={people} total={total} />
     </Card>
   );
 }
@@ -203,11 +210,7 @@ function ProgressBar({ label, value }: { label: string; value: number | null }) 
 
 /** First slot of the Top people row: achievement, gap and the run-rate needed for the full-year target, for the people
  * on the page, or for the selected person. */
-function TeamPulseCard({ people, monthsElapsed, personName, tierLabel }: {
-  people: SalesPersonPerformance[]; monthsElapsed: number; personName?: string; tierLabel?: string;
-}) {
-  const pulse = teamPulse(people, monthsElapsed);
-  const title = personName ? `Pulse · ${personName}` : tierLabel ? `Team pulse · ${tierLabel}` : 'Team pulse';
+function TeamPulseCard({ pulse, title }: { pulse: ReturnType<typeof teamPulse>; title: string }) {
   return (
     <Card role="region" aria-label="Team pulse" className={styles.statusCard}
       style={{ '--status': 'var(--ps-color-accent)', borderInlineStart: '4px solid var(--ps-color-accent)' } as React.CSSProperties}>
@@ -230,6 +233,65 @@ function TeamPulseCard({ people, monthsElapsed, personName, tierLabel }: {
   );
 }
 
+/** A channel owner (2026-11-15): the channel's YTD actual and target, in the people cards' style, with the tier colour.
+ * Click = filter the page to that channel (?channel=). Dimmed when the tier filter or the Customer Group leaves it out. */
+function DirectorCard({ director, tierLabel, pressed, dimmed, onPress }: {
+  director: DirectorPerformance; tierLabel: string; pressed: boolean; dimmed: boolean; onPress: () => void;
+}) {
+  const color = director.status === 'no_target' ? 'var(--ps-color-muted-text)' : STATUS_COLOR[director.status];
+  const name = director.names.join(', ') || 'Not assigned';
+  return (
+    <Card {...pressable(onPress)} aria-pressed={pressed} aria-label={`${director.roleLabel}: ${name}`} data-dimmed={dimmed || undefined}
+      data-testid={`director-card-${director.channel}`} className={`ps-card-clickable ${styles.statusCard}`}
+      style={{ '--status': color, borderInlineStart: `4px solid ${color}` } as React.CSSProperties}>
+      <span className={styles.cardTitle}><span className={styles.dot} aria-hidden />{director.roleLabel} · {tierLabel}</span>
+      <div className={styles.personPick} style={{ cursor: 'inherit' }}>
+        <span className={styles.personName} title={name}>{name}</span>
+        <span className={styles.cardValue} style={{ color: varianceColor(director.variancePct) }}>
+          {dash(formatSignedPercent(director.variancePct))}
+        </span>
+        <VsTarget people={[]} total={director} />
+        <span className={styles.personFigures} title={`${formatCurrency(director.actual)} of ${formatCurrency(director.target)}`}>
+          {compact(director.actual)} <span className={styles.muted}>of {compact(director.target)} · {director.channel} channel
+            {director.targetSource === 'director_rows' ? ' · director target' : ''}</span>
+        </span>
+        <ProgressBar label={`${director.roleLabel} achievement`} value={director.achievement} />
+      </div>
+    </Card>
+  );
+}
+
+/** Admins only: why the listed people do not add up to the company total, by reason and by salesperson. */
+function ReconciliationTable({ data }: { data: PeopleReconciliation }) {
+  const byReason = new Map<string, { actual: number; target: number; count: number }>();
+  for (const r of data.rows) {
+    const o = byReason.get(r.reason) ?? { actual: 0, target: 0, count: 0 };
+    o.actual += r.actual; o.target += r.target; o.count += 1;
+    byReason.set(r.reason, o);
+  }
+  return (
+    <Card data-testid="reconciliation-table">
+      <table className={styles.reconciliation}>
+        <thead><tr><th>Reason</th><th>Salesperson</th><th>YTD sales</th><th>YTD target</th></tr></thead>
+        <tbody>
+          {[...byReason].map(([reason, o]) => (
+            <tr key={reason} className={styles.reconciliationTotal}>
+              <td>{RECONCILIATION_REASON_LABEL[reason as keyof typeof RECONCILIATION_REASON_LABEL]}</td><td>{o.count} rows</td>
+              <td>{formatCurrency(o.actual)}</td><td>{formatCurrency(o.target)}</td>
+            </tr>
+          ))}
+          {data.rows.map((r, i) => (
+            <tr key={`${r.key}-${i}`}>
+              <td>{RECONCILIATION_REASON_LABEL[r.reason]}</td><td dir="auto">{r.name}</td>
+              <td>{formatCurrency(r.actual)}</td><td>{formatCurrency(r.target)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
 type TooltipProps<T> = { active?: boolean; payload?: Array<{ payload?: T }> };
 
 function TooltipBox({ title, children }: { title: string; children: React.ReactNode }) {
@@ -248,7 +310,11 @@ export default function SalesPeoplePerformancePage() {
   const refresh = useRefreshStatus(token, authError, retryAuth);
   const { anchorDate, effectiveFilters } = state;
   const filterKey = JSON.stringify(effectiveFilters);
-  const overview = useSalesPeopleOverview(token, anchorDate, effectiveFilters, authError, retryAuth, canView('sales_people_performance'));
+  // A director card filters the whole page to its channel (?channel=B2B|B2C): Customer Group = that channel (2026-11-15).
+  const [channel, setChannel] = useState<DirectorChannel | null>(null);
+  const [showReconciliation, setShowReconciliation] = useState(false);
+  const requestFilters = channel ? { ...effectiveFilters, segmentKeys: [CHANNEL_SEGMENT[channel]] } : effectiveFilters;
+  const overview = useSalesPeopleOverview(token, anchorDate, requestFilters, authError, retryAuth, canView('sales_people_performance'));
   const [status, setStatus] = useState<PeopleStatus | null>(null);
   const [personKey, setPersonKey] = useState<number | null>(null);
   const [search, setSearch] = useState('');
@@ -260,8 +326,10 @@ export default function SalesPeoplePerformancePage() {
   // The Team tiers filter is in the URL (?tier=top_performer ...), so a refresh or a shared link keeps it (2026-11-15).
   useEffect(() => {
     try {
-      const tier = new URLSearchParams(window.location.search).get('tier');
+      const query = new URLSearchParams(window.location.search);
+      const tier = query.get('tier');
       if (tier && (STATUS_ORDER as readonly string[]).includes(tier)) setStatus(tier as PeopleStatus);
+      setChannel(parseChannel(query.get('channel')));
     } catch {
       /* no URL: everyone */
     }
@@ -271,11 +339,13 @@ export default function SalesPeoplePerformancePage() {
       const url = new URL(window.location.href);
       if (status) url.searchParams.set('tier', status);
       else url.searchParams.delete('tier');
+      if (channel) url.searchParams.set('channel', channel);
+      else url.searchParams.delete('channel');
       if (url.href !== window.location.href) window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     } catch {
       /* the filter still applies */
     }
-  }, [status]);
+  }, [status, channel]);
   // Selecting a person opens the donut on their team's members; clearing the selection goes back to the top level.
   const atoms = overview.data?.contributions;
   useEffect(() => {
@@ -298,7 +368,20 @@ export default function SalesPeoplePerformancePage() {
 
   const chooseStatus = (next: PeopleStatus | null) => { setStatus(next); setPersonKey(null); };
   const choosePerson = (key: number) => setPersonKey((current) => (current === key ? null : key));
-  const clearPage = () => { setStatus(null); setSearch(''); setPersonKey(null); setDrill([]); };
+  const clearPage = () => { setStatus(null); setChannel(null); setSearch(''); setPersonKey(null); setDrill([]); };
+  const chooseChannel = (next: DirectorChannel | null) => { setChannel(next); setPersonKey(null); setDrill([]); };
+  const company = overview.data?.company;
+  const directors = overview.data?.directors ?? [];
+  const reconciliation = overview.data?.reconciliation ?? null;
+  const monthsElapsed = overview.data?.monthsElapsed ?? 0;
+  const tierPeople = status ? filterPeople(people, status) : people;
+  // Team pulse: one person; a tier's people (not the company figure); else the company = the Tachometer YTD Value.
+  const pulse = selected ? teamPulse([selected], monthsElapsed)
+    : status || !company ? teamPulse(tierPeople, monthsElapsed) : totalPulse(company, monthsElapsed);
+  const pulseTitle = selected ? `Pulse · ${selected.name}`
+    : status ? `Pulse · ${label(status)} (${tierPeople.length} ${tierPeople.length === 1 ? 'person' : 'people'})`
+      : channel ? `Team pulse · ${channel} channel` : 'Team pulse';
+  const tierText = (d: DirectorPerformance) => (d.status === 'no_target' ? 'No target' : label(d.status as PeopleStatus));
   const toggleLine = (key: PeopleStatus) => setHiddenLines((current) => {
     const next = new Set(current);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -378,6 +461,7 @@ export default function SalesPeoplePerformancePage() {
   ];
 
   const selectionParts = [
+    channel && `Channel: ${channel}`,
     status && `Tier: ${label(status)}`,
     search.trim() && `Name contains: ${search.trim()}`,
     selected && `Person: ${selected.name}`,
@@ -398,6 +482,15 @@ export default function SalesPeoplePerformancePage() {
       setDownloading(null);
     }
   }
+  const figureRow = (name: string, f: TotalFigures | undefined, tier: string) => f
+    ? [name, formatCurrency(f.actual), formatCurrency(f.target), formatCurrency(f.variance), dash(formatSignedPercent(f.variancePct)),
+      formatCurrency(f.fullYearTarget), tier]
+    : [name, '—', '—', '—', '—', '—', tier];
+  const exportDirectors = () => exportPdf('directors', 'Directors and company total',
+    ['', 'Actual YTD', 'Target to date', 'Variance', 'Variance %', 'Full-year target', 'Tier'],
+    [figureRow('Company total (= Tachometer YTD Value)', company, company && company.status !== 'no_target' ? label(company.status as PeopleStatus) : ''),
+      ...directors.map((d) => figureRow(`${d.roleLabel}${d.names.length ? ` (${d.names.join(', ')})` : ''}`, d, tierText(d)))],
+    [`Anchor date: ${anchorDate}`]);
   const exportMix = () => exportPdf('mix', 'Tier mix', ['Tier', 'People', 'Team share', 'Benchmark', 'Gap'],
     mixRows.map((r) => [r.label, String(r.count), peoplePercent.format(r.share), r.benchmarkLabel, r.gap]),
     [`Period: ${mixPeriodLabel}`, `Team size: ${headcount(mix.total)}`], mixNote ? [mixNote] : []);
@@ -425,8 +518,17 @@ export default function SalesPeoplePerformancePage() {
             !/^sale(?:s|rs)[\s._-]*person(?:[\s._#-]*\d+)?$/i.test(String(option.salesperson_name ?? '').trim())) ?? []}
           showDateRange={false} showSingleDate
           onReset={() => { clearPage(); state.resetFilters(); }}
-          isPristine={state.isAtDefaults && !status && !search && personKey == null} />
+          isPristine={state.isAtDefaults && !status && !channel && !search && personKey == null} />
         <ValidationStatusBar isStale={refresh.data?.isStale} isInverted={refresh.data?.isInverted} refreshCheck={refresh.data?.refreshCheck} />
+        {/* Admins only (the API sends it to admins only): why the people do not add up to the company total. */}
+        {user?.isAdmin === true && reconciliation && (Math.abs(reconciliation.gap.actual) >= 1 || Math.abs(reconciliation.gap.target) >= 1) && (
+          <>
+            <DataQualityRow testId="salesforce-reconciliation" {...vh('promotion.salesPeople.reconciliation')}
+              summary={`${compact(reconciliation.gap.actual)} of sales and ${compact(reconciliation.gap.target)} of target are not on any listed person (no target, vacant seat, director or unassigned)`}
+              onOpen={() => setShowReconciliation((v) => !v)} />
+            {showReconciliation && <div className={styles.reconciliationWrap}><ReconciliationTable data={reconciliation} /></div>}
+          </>
+        )}
 
         <main className={styles.main}>
           {overview.error ? (
@@ -440,6 +542,14 @@ export default function SalesPeoplePerformancePage() {
             <Card><EmptyState message="No sales people with a target for the selected filters." onResetFilters={() => { clearPage(); state.resetFilters(); }} /></Card>
           ) : (
             <>
+              {channel && (
+                <div className={styles.filterChips} data-testid="channel-filter-chip">
+                  <span className={styles.filterChip}>
+                    Channel: {channel}
+                    <button type="button" aria-label={`Clear the channel filter (${channel})`} onClick={() => chooseChannel(null)}>×</button>
+                  </span>
+                </div>
+              )}
               {status && (
                 <div className={styles.filterChips} data-testid="tier-filter-chip">
                   <span className={styles.filterChip} style={{ '--status': STATUS_COLOR[status] } as React.CSSProperties}>
@@ -454,7 +564,7 @@ export default function SalesPeoplePerformancePage() {
                   <span className={styles.muted}>YTD 1 Jan – {anchorDate}</span>
                 </SectionHeader>
                 <div className={styles.cards}>
-                  <TotalCard people={people} pressed={!status} dimmed={!!status} onPress={() => chooseStatus(null)} />
+                  <TotalCard people={people} total={company} pressed={!status} dimmed={!!status} onPress={() => chooseStatus(null)} />
                   {definitions.map((d) => (
                     <StatusCard key={d.key} definition={d} people={people.filter((p) => p.status === d.key)}
                       pressed={status === d.key} dimmed={!!status && status !== d.key}
@@ -462,6 +572,22 @@ export default function SalesPeoplePerformancePage() {
                   ))}
                 </div>
               </section>
+
+              {/* 1b. Directors (channel owners, 2026-11-15): not counted in any people figure. Click = that channel only. */}
+              {directors.length > 0 && (
+                <section aria-label="Directors" className={styles.section} data-testid="directors-row">
+                  <SectionHeader title="Directors" helpId="promotion.salesPeople.directors">
+                    <ExportPdfButton onClick={exportDirectors} downloading={downloading === 'directors'} />
+                  </SectionHeader>
+                  <div className={styles.directorCards}>
+                    {directors.map((d) => (
+                      <DirectorCard key={d.channel} director={d} tierLabel={tierText(d)} pressed={channel === d.channel}
+                        dimmed={!d.inFilter || (status != null && d.status !== status)}
+                        onPress={() => chooseChannel(channel === d.channel ? null : d.channel)} />
+                    ))}
+                  </div>
+                </section>
+              )}
 
               {/* 2. The #1 person per status, each card under its Team status card. */}
               <section aria-label="Top people by category" className={styles.section}>
@@ -473,8 +599,7 @@ export default function SalesPeoplePerformancePage() {
                   </label>
                 </SectionHeader>
                 <div className={styles.cards}>
-                  <TeamPulseCard people={selected ? [selected] : status ? filterPeople(people, status) : people} monthsElapsed={overview.data?.monthsElapsed ?? 0}
-                    personName={selected?.name} tierLabel={status && !selected ? label(status) : undefined} />
+                  <TeamPulseCard pulse={pulse} title={pulseTitle} />
                   {definitions.filter((d) => !status || d.key === status).map((d) => {
                     const top = topPerson(searched, d.key);
                     return (

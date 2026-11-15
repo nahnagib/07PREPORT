@@ -1,14 +1,21 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { Pool } from 'mysql2/promise';
-import { computeBreakdown } from '../tachometer';
+import { computeBreakdown, computeYtdCard } from '../tachometer';
 import { computePersonContributions, computeSalesPeoplePerformance, performanceFigures, performanceStatus } from '../salesPeoplePerformance';
-vi.mock('../tachometer', () => ({ computeBreakdown: vi.fn() }));
-const pool = {} as Pool;
+vi.mock('../tachometer', () => ({ computeBreakdown: vi.fn(), computeYtdCard: vi.fn() }));
 const row = (key: number | string, actual: number, target: number | null) => ({
   groupKey: key, groupLabel: `Person ${key}`, actual, targetToDate: target,
   status: 'green' as never, variancePct: null,
 });
-beforeEach(() => vi.resetAllMocks());
+/** A Tachometer YTD Value card (measures/tachometer.ts computeYtdCard). */
+const card = (actual: number, targetToDate: number, fullPeriodTarget: number) => ({
+  actual, targetToDate, fullPeriodTarget, status: 'green' as never, variancePct: null, lastYearSamePeriod: 0,
+  fullLastPeriodActual: 0, lastYearRange: { start: '', end: '' }, fullLastPeriodRange: { start: '', end: '' },
+});
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.mocked(computeYtdCard).mockResolvedValue(card(0, 0, 0));
+});
 
 describe('achievement boundaries', () => {
   it.each([
@@ -114,4 +121,61 @@ it('omits vacant seats from contribution denominators and direct lookups', async
   expect(active.rows).toHaveLength(3);
   expect(active.rows.every((r) => r.totalTarget === 200 && r.targetShare === 0.25)).toBe(true);
   expect((await computePersonContributions(db, anchor, {}, 3)).rows).toEqual([]);
+});
+
+describe('company total, directors and reconciliation (2026-11-15)', () => {
+  // two listed people (1, 2), one without a target (3), a vacant seat (4), unassigned lines (-1)
+  const breakdown = [row(1, 100, 80), row(2, 50, 100), row(3, 30, null), { ...row(4, 0, 20), groupLabel: 'Sales Person 1' }, row(-1, 5, null)];
+  // a plain function: beforeEach's resetAllMocks would wipe a vi.fn implementation
+  const query = async (sql: string) => (sql.includes('FROM app_user') ? [[
+    { roleName: 'B2B_DIRECTOR', name: 'Nour', salespersonKey: 3 },
+  ]] : [[]]);
+  const db = { query } as unknown as Pool;
+
+  it('the company figures are the Tachometer YTD Value card, not the sum of the people', async () => {
+    vi.mocked(computeBreakdown).mockResolvedValue(breakdown);
+    vi.mocked(computeYtdCard).mockResolvedValue(card(185, 200, 400));
+    const out = await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), { segmentKeys: [1, 2] });
+    expect(out.people.map((p) => p.key)).toEqual([1, 2]);
+    expect(out.company).toMatchObject({ actual: 185, target: 200, fullYearTarget: 400, achievement: 0.925, status: 'behind_target' });
+    expect(vi.mocked(computeYtdCard).mock.calls.every((c) => c[3] === 'value')).toBe(true);
+    expect(out.directors).toEqual([]);
+    expect(out.reconciliation).toBeNull();
+  });
+
+  it('director cards: channel actual, channel target (no director rows), tier, dimmed outside the Customer Group filter', async () => {
+    vi.mocked(computeBreakdown).mockResolvedValue(breakdown);
+    vi.mocked(computeYtdCard).mockImplementation(async (_p, _a, f, _m, opts) =>
+      opts?.targetLevel === 'director' ? card(0, 0, 0) : f.segmentKeys?.[0] === 2 && f.segmentKeys.length === 1 ? card(60, 100, 200) : card(125, 100, 200));
+    const out = await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), { segmentKeys: [1] }, {
+      directorFilters: { B2B: { segmentKeys: [1] }, B2C: { segmentKeys: [2] } },
+    });
+    expect(out.directors).toEqual([
+      expect.objectContaining({ channel: 'B2B', names: ['Nour'], actual: 125, target: 100, status: 'top_performer', inFilter: true, targetSource: 'channel' }),
+      expect.objectContaining({ channel: 'B2C', names: [], actual: 60, target: 100, status: 'need_attention', inFilter: false }),
+    ]);
+  });
+
+  it('a channel the caller may not see has no card', async () => {
+    vi.mocked(computeBreakdown).mockResolvedValue(breakdown);
+    const out = await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), {}, { directorFilters: { B2B: { segmentKeys: [1] }, B2C: null } });
+    expect(out.directors.map((d) => d.channel)).toEqual(['B2B']);
+  });
+
+  it('reconciliation: what is not on a listed person, by reason, adding up to company - people', async () => {
+    vi.mocked(computeBreakdown).mockResolvedValue(breakdown);
+    vi.mocked(computeYtdCard).mockResolvedValue(card(185, 200, 400));
+    const out = await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), {}, { withReconciliation: true });
+    const r = out.reconciliation!;
+    expect(r.listed).toEqual({ actual: 150, target: 180 });
+    expect(r.gap).toEqual({ actual: 35, target: 20 });
+    const by = Object.fromEntries(r.rows.map((x) => [x.reason, { actual: x.actual, target: x.target }]));
+    expect(by).toEqual({
+      director: { actual: 30, target: 0 },       // person 3 is the B2B Director's salesperson (no target)
+      unassigned: { actual: 5, target: 0 },
+      vacant_seat: { actual: 0, target: 20 },
+    });
+    expect(r.rows.reduce((t, x) => t + x.actual, 0)).toBe(r.gap.actual);
+    expect(r.rows.reduce((t, x) => t + x.target, 0)).toBe(r.gap.target);
+  });
 });

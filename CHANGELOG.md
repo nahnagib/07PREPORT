@@ -6,6 +6,44 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Salesforce Performance: Team pulse = Tachometer, B2B / B2C Directors, reconciliation, 2026-11-15)
+- **Team pulse = the Tachometer's YTD Value card.** The pulse and the Total sales people card's variance now come from
+  `computeYtdCard`, the same function as the Tachometer, with the same filters and anchor date. Same actual, same prorated
+  target-to-date, same admin overrides, same full-year target, so the two pages cannot drift apart. The Total card's count
+  stays the people count. With a tier selected the pulse shows that tier's people only, labelled
+  "Pulse · <tier> (<n> people)". With the default Customer Group B2B + B2C (local data, 15 Nov):
+  - Before (sum of the 30 listed people): LYD 124.6M of 145.5M = 85.6%, full year 164.7M.
+  - Now: LYD 149.2M of 148.6M = 100.4%, full year 168.5M (= Tachometer).
+  - The Tachometer's 137.8M seen earlier is B2B + B2C for Majaal + Tika only; Athena adds 11.3M of B2B/B2C sales with no
+    target.
+- **Directors row** under Team tiers: B2B Director and B2C Director, the channel owners.
+  - Actual = the channel's Tachometer YTD Value.
+  - Target = the channel's `TargetLevel = Director` rows of sales_targets.xlsx when there are any, else every target row of
+    the channel (same proration and overrides).
+  - Same tier rules and card style as the people cards. Clicking a director filters the page to that channel (chip,
+    `?channel=B2B|B2C`).
+  - Directors are never counted in the tier counts, tier mix, rankings, MoM chart or people list. They dim when a tier or
+    the Customer Group leaves them out.
+  - A B2B / B2C Director user gets only their own channel's card (role scope). A salesperson gets none.
+  - The Directors PDF export carries the company total.
+- **Director target rows never double count.** Every target sum (Tachometer, Critical Number share, Salesforce allocation,
+  salesperson admin) now leaves out `TargetLevel = Director` rows (`PEOPLE_TARGETS`). Only the director cards read them
+  (`DIRECTOR_TARGETS`).
+  - The ETL now accepts such rows: a director row needs no salesperson but must name B2B or B2C. Before, a row without a
+    salesperson stopped the sales build.
+  - `sales_targets.xlsx` has no director rows today, so the cards use the channel target.
+- **Reconciliation (admins only):** a Data Quality line "LYD X of sales and LYD Y of target are not on any listed person
+  (no target, vacant seat, director or unassigned)". It opens a breakdown by reason and salesperson. Local, default
+  filters: 24.6M of sales on 15 people with no target, 3.1M of target on 2 vacant seats.
+- **Tests:**
+  - backend `directorTargets.test.ts` (director rows replace the channel sum, never counted in totals, no overrides),
+    `salesPeoplePerformance.test.ts` and `.routes.test.ts` (B2B / B2C Director scopes, salesperson, admin-only
+    reconciliation);
+  - DB test `salesforceTachometer.db.test.ts` (`vitest.salesforce-db.config.ts`): both real endpoints agree for no
+    filters, B2B + B2C, B2B, B2C, one company and a custom anchor date;
+  - ETL `test_sales_conform.py`;
+  - frontend page tests.
+
 ### Release 2026-11-15 (pushed to main): summary of round 1, round 2 and the push fixes
 Details are in the entries below. DevOps steps: `DEPLOY_NOTES.md` (migrations 0070–0078, the new ProductExclusions.xlsx).
 - **Merged in:** the Last 12 Months BCG rework and the Product Development Plan module (TIKA R&D: tree, roadmap, projects,

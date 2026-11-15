@@ -59,6 +59,7 @@ import {
   ytdWindow,
   type DateWindow,
   type Filters,
+  PEOPLE_TARGETS,
 } from './filters';
 
 function toDateOnlyString(d: Date): string {
@@ -329,6 +330,7 @@ function sumTarget(days: Date[], target: DailyTarget): number {
  * Since 2026-11-09 every scope gets its own share of that base: its part of the year's revenue target in
  * Input/sales_targets.xlsx (computeTargetShare / computeDailyCriticalNumberSchedule below, docs/critical-number-split.md).
  */
+// eslint-disable-next-line no-unused-vars -- parameter names of a function type (the base rule misreads them)
 export type DailyTarget = number | ((date: Date) => number);
 
 /** The (scaled) Daily Critical Number on one day. A plain number = the same value every day. */
@@ -374,6 +376,7 @@ async function loadTargetTotalsByYear(pool: Pool, filters: Filters): Promise<Map
             SUM(CASE WHEN ${asSqlCondition(clause)} THEN t.Target_Revenue ELSE 0 END) AS scoped,
             SUM(t.Target_Revenue) AS total
      FROM v_sales_targets t
+     WHERE ${PEOPLE_TARGETS('t')}
      GROUP BY t.Year`,
     params,
   );
@@ -402,11 +405,13 @@ export async function computeTargetShare(pool: Pool, filters: Filters, year: num
 }
 
 /** The Daily Critical Number schedule: the value of any day, plus the share behind it. */
+/* eslint-disable no-unused-vars -- parameter names of call / method signatures (the base rule misreads them) */
 export interface CriticalNumberSchedule {
   (date: Date): number;
   /** The share used for `date`'s year (what the page shows next to the Daily Critical Number card). */
   shareFor(date: Date): TargetShare;
 }
+/* eslint-enable no-unused-vars */
 
 /**
  * The Daily Critical Number of every day for the active filter selection:
@@ -459,6 +464,7 @@ export async function computeDailyCriticalNumber(
   pool: Pool,
   anchor: Date,
   filters: Filters,
+  // eslint-disable-next-line no-unused-vars -- kept for the callers' signature
   _companyNamesByKey: Map<number, string>,
 ): Promise<number> {
   return (await computeDailyCriticalNumberSchedule(pool, filters))(anchor);

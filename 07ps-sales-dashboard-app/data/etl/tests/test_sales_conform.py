@@ -207,3 +207,31 @@ def test_product_fallback_labels_include_odoo_name():
     })
 
     assert cf._product_fallback_labels(df, [1002, 1001]) == ["1002 | Unknown B", "1001 | Unknown A"]
+
+
+def _targets(levels, persons, segments):
+    n = len(levels)
+    sheet = pd.DataFrame({"Year": [2026] * n, "Month": list(range(1, n + 1)), "YearMonth": [f"2026-{m:02d}" for m in range(1, n + 1)],
+                          "TargetLevel": levels, "Salesperson": ["A" if p else None for p in persons],
+                          "SalesSegment": ["B2B" if s == 1 else "B2C" if s == 2 else None for s in segments],
+                          "Target_Revenue": [100.0] * n, "Target_Volume": [None] * n, "SalespersonKey": persons, "CompanyKey": [1] * n})
+    fact = pd.DataFrame({"YearMonth": sheet["YearMonth"], "Target_Revenue": sheet["Target_Revenue"], "Target_Volume": sheet["Target_Volume"],
+                         "TargetLevel": levels, "SalesTeamKey": [None] * n, "ChannelKey": [2] * n, "SegmentKey": segments, "CompanyKey": [1] * n})
+    return fact, cf.target_sheet_rows(sheet)
+
+
+def test_a_director_target_row_is_accepted_without_a_salesperson_and_keeps_its_channel():
+    fact, keys = _targets(["Salesperson", "Director", " director "], [5, None, None], [1, 1, 2])
+    t = cf.conform_targets(fact, keys, cf.Conformed())
+    assert t["SalespersonKey"].tolist() == [5, UNKNOWN, UNKNOWN]
+    assert t["SegmentKey"].tolist() == [1, 1, 2]
+    assert t["TargetLevel"].tolist() == ["Salesperson", "Director", " director "]  # the app reads it case/space-insensitively
+
+
+def test_a_salesperson_row_still_needs_its_salesperson_and_a_director_row_needs_b2b_or_b2c():
+    fact, keys = _targets(["Salesperson"], [None], [1])
+    with pytest.raises(ValueError, match="no SalespersonKey"):
+        cf.conform_targets(fact, keys, cf.Conformed())
+    fact, keys = _targets(["Director"], [None], [None])
+    with pytest.raises(ValueError, match="no SalesSegment B2B / B2C"):
+        cf.conform_targets(fact, keys, cf.Conformed())

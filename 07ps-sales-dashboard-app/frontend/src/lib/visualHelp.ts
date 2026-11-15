@@ -337,14 +337,28 @@ export const VISUAL_HELP = {
     },
     interactions: ['Click a tier card to filter the whole page to that tier (kept in the link)', 'Click it again, Total sales people or the chip × to show everyone'],
   },
+  'promotion.salesPeople.directors': {
+    help: {
+      definition: 'B2B and B2C Directors: the channel\'s YTD sales against its target.',
+      formula: 'Actual = Tachometer YTD Value with Customer Group = the channel · Target = Director rows of sales_targets.xlsx, else the channel\'s target rows',
+    },
+    interactions: ['Click a director to show that channel only (kept in the link)', 'Click it again or the chip × to show every channel', 'Export as PDF (with the company total)'],
+  },
+  'promotion.salesPeople.reconciliation': {
+    help: {
+      definition: 'Sales and target of the company total that are on no listed person.',
+      formula: 'Gap = Tachometer YTD Value − Σ listed people (no target, vacant seat, director, unassigned)',
+    },
+    interactions: ['Click the line to open the breakdown by reason and salesperson'],
+  },
   'promotion.salesPeople.topPeople': {
     help: {
       definition: 'The #1 person of each tier: the best for Top performer and On target, the one furthest behind for Behind '
         + 'target, Need attention and Critical.',
       formula: [
         'Variance % = (Actual YTD − YTD target) ÷ YTD target (the ranking and the big number)',
-        'Team pulse: achievement = Σ actual ÷ Σ YTD target; need/month = (full-year target − YTD actual) ÷ months left; '
-          + 'running/month = YTD actual ÷ months elapsed',
+        'Team pulse = the Tachometer YTD Value (same filters): achievement = actual ÷ target to date; need/month = '
+          + '(full-year target − YTD actual) ÷ months left; running/month = YTD actual ÷ months elapsed',
       ],
       notes: 'Always ranked by variance % to YTD target; a tie goes to the higher actual value. The first card (Team pulse) '
         + 'covers everyone on the page, or the selected person.',

@@ -1,10 +1,10 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
-import { applyRoleDataScope, applySalespersonLock } from '../measures/filters';
-import { computePersonContributions, computeSalesPeoplePerformance } from '../measures/salesPeoplePerformance';
+import { applyRoleDataScope, applySalespersonLock, type Filters } from '../measures/filters';
+import { computePersonContributions, computeSalesPeoplePerformance, DIRECTOR_CHANNELS, type DirectorChannel } from '../measures/salesPeoplePerformance';
 
 export const salesPeoplePerformanceRouter = Router();
 salesPeoplePerformanceRouter.use(requireAuth, requirePasswordChangeCleared,
@@ -22,9 +22,32 @@ salesPeoplePerformanceRouter.use((req, res, next) => {
   next();
 });
 
+/**
+ * The director cards (2026-11-15): each is the page's filters with Customer Group = that channel, then the caller's own
+ * role scope and salesperson lock, exactly as for any request -- a B2B Director (role scope Customer Group B2B) never
+ * gets the B2C card (applyRoleDataScope refuses it), and a salesperson gets no director card at all.
+ */
+export function directorFiltersFor(scoped: Filters, context: NonNullable<Request['userContext']>):
+  Partial<Record<DirectorChannel, Filters | null>> {
+  const out: Partial<Record<DirectorChannel, Filters | null>> = {};
+  for (const d of DIRECTOR_CHANNELS) {
+    if (context.roleCode === 'SALESPERSON') { out[d.channel] = null; continue; }
+    try {
+      out[d.channel] = applySalespersonLock(applyRoleDataScope({ ...scoped, segmentKeys: [d.segmentKey] }, context.dataScopeRules ?? []), context);
+    } catch {
+      out[d.channel] = null;
+    }
+  }
+  return out;
+}
+
 salesPeoplePerformanceRouter.get('/overview', async (req, res, next) => {
   try {
-    res.json(await computeSalesPeoplePerformance(pool, res.locals.anchor, req.scopedFilters!));
+    res.json(await computeSalesPeoplePerformance(pool, res.locals.anchor, req.scopedFilters!, {
+      directorFilters: directorFiltersFor(req.scopedFilters!, req.userContext!),
+      // why the people do not add up to the company total: admins only
+      withReconciliation: req.user?.isAdmin === true,
+    }));
   } catch (err) { next(err); }
 });
 

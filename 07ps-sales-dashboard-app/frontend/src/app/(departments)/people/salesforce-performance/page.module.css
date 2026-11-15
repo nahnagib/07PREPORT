@@ -131,3 +131,13 @@
   background: color-mix(in srgb, var(--status) 14%, transparent); border: 1px solid color-mix(in srgb, var(--status) 45%, transparent); }
 .filterChip button { border: none; background: none; color: var(--ps-color-text); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 6px; border-radius: 999px; }
 .filterChip button:focus-visible { outline: 2px solid var(--ps-color-accent); }
+
+/* Directors row (2026-11-15): two channel-owner cards in the people cards' style. */
+.directorCards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: var(--ps-space-3, 16px); }
+/* Admin reconciliation breakdown, under the data quality row. */
+.reconciliationWrap { padding: 8px var(--ps-space-4, 24px) 0; }
+.reconciliation { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.reconciliation th, .reconciliation td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--ps-color-border); }
+.reconciliation th:nth-child(n + 3), .reconciliation td:nth-child(n + 3) { text-align: right; }
+.reconciliation th { color: var(--ps-color-muted-text); font-weight: 600; }
+.reconciliationTotal td { font-weight: 700; }

@@ -1,5 +1,6 @@
 import { pool } from '../db/pool';
 import { ValidationError } from '../lib/errors';
+import { PEOPLE_TARGETS } from '../measures/filters';
 
 /**
  * Admin Salesperson Management -- reads live dim_salesperson/v_sales_lines/v_sales_targets
@@ -97,7 +98,7 @@ const BASE_SELECT = `
   LEFT JOIN (
     SELECT ft.SalespersonKey, SUM(ft.Target_Revenue) AS ytd_target
     FROM v_sales_targets ft
-    WHERE ft.Year = ?
+    WHERE ft.Year = ? AND ${PEOPLE_TARGETS('ft')}
     GROUP BY ft.SalespersonKey
   ) tgt ON tgt.SalespersonKey = ds.SalespersonKey
   LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey

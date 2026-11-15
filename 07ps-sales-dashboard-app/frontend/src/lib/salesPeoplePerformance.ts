@@ -23,9 +23,42 @@ export interface ContributionAtom {
   personKey: number; companyKey: number; companyName: string; segmentKey: number; segmentName: string;
   teamKey: string; teamName: string; revenue: number; target: number;
 }
+/** A total's YTD figures (2026-11-15): the Tachometer YTD Value card for the same filters (backend computeYtdCard). */
+export interface TotalFigures extends PeopleFigures {
+  status: MonthStatus; fullYearTarget: number;
+}
+export type DirectorChannel = 'B2B' | 'B2C';
+/** A channel owner (B2B / B2C Director): the channel's YTD actual and target, not a sales person. */
+export interface DirectorPerformance extends TotalFigures {
+  channel: DirectorChannel; segmentKey: number; roleLabel: string; names: string[];
+  /** false = the page's Customer Group filter (or the channel filter) leaves this channel out: shown dimmed */
+  inFilter: boolean;
+  /** 'director_rows' = TargetLevel = Director rows of sales_targets.xlsx; 'channel' = every target row of the channel */
+  targetSource: 'director_rows' | 'channel';
+}
+export type ReconciliationReason = 'no_target' | 'vacant_seat' | 'director' | 'unassigned' | 'other';
+/** Admins only: what of the company total is on no listed person. */
+export interface PeopleReconciliation {
+  listed: { actual: number; target: number };
+  gap: { actual: number; target: number };
+  rows: { key: number | null; name: string; reason: ReconciliationReason; actual: number; target: number }[];
+}
 export interface PeopleOverview {
   anchorDate: string; monthsElapsed: number; statuses: PeopleStatusDefinition[]; people: SalesPersonPerformance[];
   contributions: ContributionAtom[];
+  /** The company total = the Tachometer YTD Value card (2026-11-15). Optional for older API responses. */
+  company?: TotalFigures;
+  directors?: DirectorPerformance[];
+  reconciliation?: PeopleReconciliation | null;
+}
+
+/** Customer Group (segment) key of each director channel: the page's ?channel= filter. */
+export const CHANNEL_SEGMENT: Record<DirectorChannel, number> = { B2B: 1, B2C: 2 };
+export const RECONCILIATION_REASON_LABEL: Record<ReconciliationReason, string> = {
+  no_target: 'No target', vacant_seat: 'Vacant seat', director: 'Director', unassigned: 'Unassigned', other: 'Other',
+};
+export function parseChannel(v: string | null | undefined): DirectorChannel | null {
+  return v === 'B2B' || v === 'B2C' ? v : null;
 }
 
 /** Best first: the order of the status cards, the top-people cards, the chart axes and legends. */
@@ -76,6 +109,11 @@ export function topPerson(people: SalesPersonPerformance[], status: PeopleStatus
 }
 
 /** Team pulse: YTD achievement and gap, and the monthly run-rate needed for the full-year target against the current one. */
+/** The pulse of a total (the company, the Tachometer's figures): the same lines as for a group of people. */
+export function totalPulse(total: TotalFigures, monthsElapsed: number) {
+  return teamPulse([{ actual: total.actual, target: total.target, fullYearTarget: total.fullYearTarget } as SalesPersonPerformance], monthsElapsed);
+}
+
 export function teamPulse(people: SalesPersonPerformance[], monthsElapsed: number) {
   const sums = peopleSummary(people);
   const fullYear = people.reduce((sum, p) => sum + (p.fullYearTarget ?? 0), 0);

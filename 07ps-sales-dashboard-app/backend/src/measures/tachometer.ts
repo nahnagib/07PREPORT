@@ -38,12 +38,9 @@
 
 import type { Pool } from 'mysql2/promise';
 import { classifyVsTarget, variancePct, TargetStatus } from './classify';
-import { EVEN_SPLIT_SEASONALITY_PCT, SEASONALITY_MONTH_COUNT } from '../lib/seasonality';
 import {
   buildWhereClause,
   dateOnlyUTC,
-  effectiveSalesTeamExpr,
-  effectiveSegmentExpr,
   flmWindow,
   flyWindow,
   lmtdWindow,
@@ -55,6 +52,9 @@ import {
   ytdWindow,
   type DateWindow,
   type Filters,
+  DIRECTOR_TARGETS,
+  PEOPLE_TARGETS,
+  type TargetLevel,
 } from './filters';
 
 export interface ValueVolume {
@@ -157,10 +157,12 @@ export async function fetchTargetForMonths(
   pool: Pool,
   year: number,
   filters: Filters,
-  opts: { month?: number; monthLt?: number } = {},
+  opts: { month?: number; monthLt?: number; level?: TargetLevel } = {},
 ): Promise<TargetFigures> {
   const { clause, params } = buildWhereClause(filters, 'ftp');
-  const conditions = ['ftp.Year = ?'];
+  // 'people' (default): every salesperson / team row, never a Director row; 'director': only the channel owners' rows.
+  const level = opts.level ?? 'people';
+  const conditions = ['ftp.Year = ?', level === 'director' ? DIRECTOR_TARGETS('ftp') : PEOPLE_TARGETS('ftp')];
   const queryParams: Array<string | number> = [year];
 
   if (opts.month !== undefined) {
@@ -185,7 +187,9 @@ export async function fetchTargetForMonths(
   const [rows] = await pool.query(sql, queryParams);
   const perSalesperson = rows as { salespersonKey: number; target_revenue: number; target_volume: number }[];
 
-  const overrides = await fetchMonthlyOverrideAmounts(pool, perSalesperson.map((r) => Number(r.salespersonKey)));
+  // Admin overrides are per salesperson: they never apply to a director's channel row.
+  const overrides = level === 'director' ? new Map<number, number>()
+    : await fetchMonthlyOverrideAmounts(pool, perSalesperson.map((r) => Number(r.salespersonKey)));
   const monthCount = monthCountForOpts(opts);
 
   let targetRevenue = 0;
@@ -233,11 +237,12 @@ async function ytdTargetToDate(
   pool: Pool,
   anchor: Date,
   filters: Filters,
+  level: TargetLevel = 'people',
 ): Promise<TargetFigures> {
   const year = anchor.getUTCFullYear();
   const month = anchor.getUTCMonth() + 1;
-  const completed = await fetchTargetForMonths(pool, year, filters, { monthLt: month });
-  const currentMonth = await fetchTargetForMonths(pool, year, filters, { month });
+  const completed = await fetchTargetForMonths(pool, year, filters, { monthLt: month, level });
+  const currentMonth = await fetchTargetForMonths(pool, year, filters, { month, level });
   return {
     targetRevenue: prorateYtdTarget(completed.targetRevenue, currentMonth.targetRevenue, anchor) ?? 0,
     targetVolume: prorateYtdTarget(completed.targetVolume, currentMonth.targetVolume, anchor) ?? 0,
@@ -250,8 +255,8 @@ async function fullPeriodTargetForMtd(pool: Pool, anchor: Date, filters: Filters
   });
 }
 
-async function fullPeriodTargetForYtd(pool: Pool, anchor: Date, filters: Filters) {
-  return fetchTargetForMonths(pool, anchor.getUTCFullYear(), filters);
+async function fullPeriodTargetForYtd(pool: Pool, anchor: Date, filters: Filters, level: TargetLevel = 'people') {
+  return fetchTargetForMonths(pool, anchor.getUTCFullYear(), filters, { level });
 }
 
 async function computeCard(
@@ -262,7 +267,9 @@ async function computeCard(
   currentWindow: DateWindow,
   lastYearWindow: DateWindow,
   fullLastPeriodWindow: DateWindow,
+  // eslint-disable-next-line no-unused-vars -- parameter names of a function type (the base rule misreads them)
   targetToDateFn: (pool: Pool, anchor: Date, filters: Filters) => Promise<TargetFigures>,
+  // eslint-disable-next-line no-unused-vars -- parameter names of a function type (the base rule misreads them)
   fullPeriodTargetFn: (pool: Pool, anchor: Date, filters: Filters) => Promise<TargetFigures>,
 ): Promise<TachometerCard> {
   const [current, lastYear, fullLastPeriod, targetToDate, fullPeriodTarget] = await Promise.all([
@@ -325,12 +332,16 @@ export async function computeMtdCard(
   );
 }
 
+/** The Tachometer's YTD card. `targetLevel: 'director'` (Salesforce Performance director cards only) takes the target
+ * from the TargetLevel = Director rows instead of the people's rows; the actual is the same. */
 export async function computeYtdCard(
   pool: Pool,
   anchor: Date,
   filters: Filters,
   metric: Metric,
+  opts: { targetLevel?: TargetLevel } = {},
 ): Promise<TachometerCard> {
+  const level = opts.targetLevel ?? 'people';
   return computeCard(
     pool,
     anchor,
@@ -339,8 +350,8 @@ export async function computeYtdCard(
     ytdWindow(anchor),
     lytdWindow(anchor),
     flyWindow(anchor),
-    ytdTargetToDate,
-    fullPeriodTargetForYtd,
+    (p, a, f) => ytdTargetToDate(p, a, f, level),
+    (p, a, f) => fullPeriodTargetForYtd(p, a, f, level),
   );
 }
 
@@ -409,12 +420,14 @@ export type GroupBy = 'salesperson' | 'salesTeam' | 'segment';
  * instead joins salesperson_admin_profile directly into the inner aggregation query's FROM clause
  * (a plain 1:1-or-0 join on its PK), so keyExpr can reference a joined column instead.
  */
+/* eslint-disable no-unused-vars -- parameter names of function types (the base rule misreads them) */
 interface GroupConfig {
   keyJoin: (factAlias: string) => string;
   keyExpr: (factAlias: string) => string;
   labelJoins: string;
   labelExpr: string;
 }
+/* eslint-enable no-unused-vars */
 
 const GROUP_CONFIG: Record<GroupBy, GroupConfig> = {
   salesperson: {
@@ -520,7 +533,7 @@ async function fetchTargetForMonthsGrouped(
   const { clause, params } = buildWhereClause(filters, 'ftp');
   const cfg = GROUP_CONFIG[groupBy];
   const keyExpr = cfg.keyExpr('ftp');
-  const conditions = ['ftp.Year = ?'];
+  const conditions = ['ftp.Year = ?', PEOPLE_TARGETS('ftp')];
   const queryParams: Array<string | number> = [year];
 
   if (opts.month !== undefined) {

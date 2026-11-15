@@ -13,7 +13,8 @@ const filterBar = vi.hoisted(() => ({
 }));
 const nav = vi.hoisted(() => ({ active: undefined as string | undefined }));
 const charts = vi.hoisted(() => ({ bars: [] as Record<string, unknown>[], lines: [] as Record<string, unknown>[] }));
-vi.mock('../../../../../lib/AuthProvider', () => ({ useAuth: () => ({ token: 'test', user: null, canView: () => true, retryAuth: vi.fn(), logout: vi.fn() }) }));
+const auth = vi.hoisted(() => ({ user: null as null | { isAdmin: boolean; role: { label: string }; fullName: string } }));
+vi.mock('../../../../../lib/AuthProvider', () => ({ useAuth: () => ({ token: 'test', user: auth.user, canView: () => true, retryAuth: vi.fn(), logout: vi.fn() }) }));
 vi.mock('../../../../../components/FilterProvider', () => ({
   useFilterState: () => state,
   useScopedFilterOptions: () => ({ salespersons: { data: [
@@ -335,7 +336,7 @@ describe('Salesforce Performance: a Team tiers card filters the whole page (2026
     expect(within(top).queryByRole('region', { name: 'Critical' })).toBeNull();
     expect(within(top).getByRole('region', { name: 'Top performer' })).toBeTruthy();
     const pulse = within(top).getByRole('region', { name: 'Team pulse' });
-    expect(pulse.textContent).toContain('Team pulse · Top performer');
+    expect(pulse.textContent).toContain('Pulse · Top performer (2 people)');  // the tier's people, not the company figure
     expect(pulse.textContent).toContain('135.00%');
     // the people table: that tier only
     expect(screen.getByRole('region', { name: 'Performance details · 2' })).toBeTruthy();
@@ -372,5 +373,91 @@ describe('Salesforce Performance: a Team tiers card filters the whole page (2026
     render(<Page />);
     await screen.findByRole('region', { name: 'YTD tier summary' });
     expect(screen.queryByTestId('tier-filter-chip')).toBeNull();
+  });
+});
+
+describe('Salesforce Performance: company total = Tachometer, directors, reconciliation (2026-11-15)', () => {
+  const company = { actual: 1500, target: 1600, achievement: 0.9375, variance: -100, variancePct: -0.0625, status: 'behind_target', fullYearTarget: 19200 };
+  const director = (channel: 'B2B' | 'B2C', actual: number, target: number, status: string, names: string[], inFilter = true) => ({
+    channel, segmentKey: channel === 'B2B' ? 1 : 2, roleLabel: `${channel} Director`, names, inFilter, targetSource: 'channel',
+    actual, target, achievement: actual / target, variance: actual - target, variancePct: (actual - target) / target, status, fullYearTarget: target * 12,
+  });
+  const reconciliation = {
+    listed: { actual: 775, target: 1600 }, gap: { actual: 725, target: 0 },
+    rows: [{ key: 50, name: 'No-target person', reason: 'no_target', actual: 700, target: 0 }, { key: null, name: 'Unassigned', reason: 'unassigned', actual: 25, target: 0 }],
+  };
+  beforeEach(() => {
+    vi.mocked(fetchPeopleOverview).mockResolvedValue({ anchorDate: '2026-02-15', monthsElapsed: 1.5, statuses: [...statuses], people: team,
+      contributions, company, directors: [director('B2B', 1000, 900, 'top_performer', ['Nour']), director('B2C', 500, 700, 'need_attention', [])],
+      reconciliation } as never);
+  });
+  afterEach(() => { auth.user = null; window.history.replaceState(null, '', '/'); });
+
+  it('Team pulse and the Total card show the company figures (the Tachometer), not the sum of the listed people', async () => {
+    render(<Page />);
+    const pulse = await screen.findByRole('region', { name: 'Team pulse' });
+    expect(pulse.textContent).toContain('Team pulse');
+    expect(pulse.textContent).toContain('93.75%');
+    const total = within(screen.getByRole('region', { name: 'YTD tier summary' })).getByRole('button', { name: /Total sales people/ });
+    expect(total.textContent).toContain('7');                                         // still the people count
+    expect(within(total).getByTestId('variance-amount').textContent).toBe('−LYD 100');
+    expect(within(total).getByTestId('variance-pct').textContent).toBe('−6.25%');
+  });
+
+  it('Directors row: under Team tiers, above Top people; names, tier, no director in the people figures', async () => {
+    render(<Page />);
+    const row = await screen.findByTestId('directors-row');
+    const order = [...document.querySelectorAll('section[aria-label]')].map((e) => e.getAttribute('aria-label'));
+    expect(order.indexOf('Directors')).toBe(order.indexOf('YTD tier summary') + 1);
+    expect(order.indexOf('Top people by category')).toBe(order.indexOf('Directors') + 1);
+    const b2b = within(row).getByTestId('director-card-B2B');
+    expect(b2b.textContent).toContain('B2B Director · Top performer');
+    expect(b2b.textContent).toContain('Nour');
+    expect(within(row).getByTestId('director-card-B2C').textContent).toContain('Not assigned');
+    expect(screen.getByRole('region', { name: 'Performance details · 7' })).toBeTruthy();   // the people list is unchanged
+  });
+
+  it('a selected tier dims the director not in it', async () => {
+    render(<Page />);
+    const summary = await screen.findByRole('region', { name: 'YTD tier summary' });
+    fireEvent.click(within(summary).getByRole('button', { name: /^Top performer/ }));
+    expect(screen.getByTestId('director-card-B2B').getAttribute('data-dimmed')).toBeNull();
+    expect(screen.getByTestId('director-card-B2C').getAttribute('data-dimmed')).toBe('true');
+  });
+
+  it('clicking a director filters the page to that channel (Customer Group), with a chip and ?channel=; clicking again clears it', async () => {
+    render(<Page />);
+    const b2b = await screen.findByTestId('director-card-B2B');
+    fireEvent.click(b2b);
+    await vi.waitFor(() => expect(vi.mocked(fetchPeopleOverview).mock.calls.at(-1)?.[2]).toMatchObject({ segmentKeys: [1] }));
+    expect((await screen.findByTestId('channel-filter-chip')).textContent).toContain('Channel: B2B');
+    expect(window.location.search).toContain('channel=B2B');
+    fireEvent.click(await screen.findByTestId('director-card-B2B'));
+    await vi.waitFor(() => expect(vi.mocked(fetchPeopleOverview).mock.calls.at(-1)?.[2]).toMatchObject({ segmentKeys: [1, 2] }));
+    await screen.findByTestId('directors-row');
+    expect(screen.queryByTestId('channel-filter-chip')).toBeNull();
+  });
+
+  it('a shared link with ?channel=B2C opens the page on that channel', async () => {
+    window.history.replaceState(null, '', '/?channel=B2C');
+    render(<Page />);
+    await vi.waitFor(() => expect(vi.mocked(fetchPeopleOverview).mock.calls.at(-1)?.[2]).toMatchObject({ segmentKeys: [2] }));
+  });
+
+  it('the reconciliation line is for admins only and opens the breakdown by reason and salesperson', async () => {
+    render(<Page />);
+    await screen.findByTestId('directors-row');
+    expect(screen.queryByTestId('salesforce-reconciliation')).toBeNull();
+    cleanup();
+    auth.user = { isAdmin: true, role: { label: 'Admin' }, fullName: 'Admin' };
+    render(<Page />);
+    const line = await screen.findByTestId('salesforce-reconciliation');
+    expect(line.textContent).toContain('of sales and');
+    expect(line.textContent).toContain('are not on any listed person');
+    fireEvent.click(within(line).getByTestId('salesforce-reconciliation-open'));
+    const table = screen.getByTestId('reconciliation-table');
+    expect(table.textContent).toContain('No target');
+    expect(table.textContent).toContain('No-target person');
+    expect(table.textContent).toContain('Unassigned');
   });
 });

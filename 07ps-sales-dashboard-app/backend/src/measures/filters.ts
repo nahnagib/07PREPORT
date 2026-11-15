@@ -153,11 +153,22 @@ export function effectiveChannelExpr(tableAlias = ''): string {
 // Fields whose raw column is replaced by an admin-override-aware expression (see the three
 // effective*Expr functions above) -- companyKeys/salespersonKeys have no override concept and
 // always resolve to their plain column.
+// eslint-disable-next-line no-unused-vars -- parameter names of a function type (the base rule misreads them)
 const OVERRIDE_EXPR: Partial<Record<keyof Filters, (alias: string) => string>> = {
   segmentKeys: effectiveSegmentExpr,
   channelKeys: effectiveChannelExpr,
   salesTeamKeys: effectiveSalesTeamExpr,
 };
+
+/**
+ * Target rows by level (2026-11-15). sales_targets.xlsx rows are per salesperson (TargetLevel Salesperson / SalesTeam);
+ * a `TargetLevel = Director` row is a channel owner's own target (SalesSegment B2B / B2C). Director rows replace the
+ * channel sum on that director's card only and must never add to a company, team or person total, so every target sum
+ * uses PEOPLE_TARGETS and only the director cards use DIRECTOR_TARGETS.
+ */
+export const PEOPLE_TARGETS = (alias: string) => `LOWER(TRIM(COALESCE(${alias}.TargetLevel, ''))) <> 'director'`;
+export const DIRECTOR_TARGETS = (alias: string) => `LOWER(TRIM(COALESCE(${alias}.TargetLevel, ''))) = 'director'`;
+export type TargetLevel = 'people' | 'director';
 
 export function buildWhereClause(
   filters: Filters,
@@ -202,6 +213,7 @@ export function buildCrmWhereClause(
   filters: Filters,
   tableAlias = '',
 ): { clause: string; params: Array<string | number> } {
+  // eslint-disable-next-line no-unused-vars -- channelKeys is dropped on purpose (the CRM facts have no ChannelKey)
   const { channelKeys, ...crmFilters } = filters;
   return buildWhereClause(crmFilters, tableAlias);
 }

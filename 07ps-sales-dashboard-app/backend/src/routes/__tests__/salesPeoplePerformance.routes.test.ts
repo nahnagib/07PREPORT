@@ -9,6 +9,10 @@ vi.mock('../../db/pool', () => ({ pool: {} }));
 vi.mock('../../measures/salesPeoplePerformance', () => ({
   computeSalesPeoplePerformance: vi.fn(async () => ({ people: [] })),
   computePersonContributions: vi.fn(async () => ({ rows: [] })),
+  DIRECTOR_CHANNELS: [
+    { channel: 'B2B', segmentKey: 1, roleName: 'B2B_DIRECTOR', roleLabel: 'B2B Director' },
+    { channel: 'B2C', segmentKey: 2, roleName: 'B2C_DIRECTOR', roleLabel: 'B2C Director' },
+  ],
 }));
 vi.mock('../../services/dataScopeService', () => ({ getRoleDataScopeRules: vi.fn(async () => []) }));
 vi.mock('../../middleware/auth', () => ({
@@ -66,5 +70,43 @@ describe('performance HTTP permissions and data scope', () => {
     expect((await get('/contributions/1?anchorDate=2026-11-09&segmentKeys=1&salespersonKeys=1', 'viewer')).status).toBe(200);
     expect(vi.mocked(computePersonContributions).mock.calls[0][2]).toEqual({ companyKeys: [3] });
     expect((await get('/overview?anchorDate=2026-11-09&companyKeys=1', 'viewer')).status).toBe(403);
+  });
+});
+
+describe('director cards and the reconciliation (2026-11-15)', () => {
+  const options = () => vi.mocked(computeSalesPeoplePerformance).mock.calls[0][3]!;
+
+  it('an unrestricted viewer gets both channels, each with the page filters and Customer Group = that channel', async () => {
+    expect((await get('/overview?anchorDate=2026-11-09&companyKeys=1&segmentKeys=1&segmentKeys=2', 'viewer')).status).toBe(200);
+    expect(options().directorFilters).toMatchObject({
+      B2B: { companyKeys: [1], segmentKeys: [1] },
+      B2C: { companyKeys: [1], segmentKeys: [2] },
+    });
+  });
+
+  it('a B2B Director (role scope Customer Group B2B) sees their own channel only, never the B2C card', async () => {
+    vi.mocked(getRoleDataScopeRules).mockResolvedValue([{ dimension: 'segmentKeys', value: '1' }]);
+    expect((await get('/overview?anchorDate=2026-11-09', 'viewer')).status).toBe(200);
+    expect(vi.mocked(computeSalesPeoplePerformance).mock.calls[0][2].segmentKeys).toEqual([1]);
+    expect(options().directorFilters).toMatchObject({ B2B: { segmentKeys: [1] }, B2C: null });
+  });
+
+  it('a B2C Director (role scope Customer Group B2C) sees the B2C card only', async () => {
+    vi.mocked(getRoleDataScopeRules).mockResolvedValue([{ dimension: 'segmentKeys', value: '2' }]);
+    expect((await get('/overview?anchorDate=2026-11-09', 'viewer')).status).toBe(200);
+    expect(options().directorFilters).toMatchObject({ B2B: null, B2C: { segmentKeys: [2] } });
+  });
+
+  it('a salesperson gets no director card', async () => {
+    expect((await get('/overview?anchorDate=2026-11-09', 'person')).status).toBe(200);
+    expect(options().directorFilters).toEqual({ B2B: null, B2C: null });
+  });
+
+  it('the reconciliation is computed for admins only', async () => {
+    await get('/overview?anchorDate=2026-11-09', 'viewer');
+    expect(options().withReconciliation).toBe(false);
+    vi.mocked(computeSalesPeoplePerformance).mockClear();
+    await get('/overview?anchorDate=2026-11-09', 'admin');
+    expect(options().withReconciliation).toBe(true);
   });
 });

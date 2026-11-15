@@ -81,3 +81,16 @@ Tests cover status boundaries, exclusion of people without a target, target allo
 companies/segments/teams, best/worst person per status, status mix shares summing to 100%, monthly
 achievement per status, the drill-down, page order, HTTP permissions and scope, and the bottom
 navigator's active tab.
+
+## Company total, directors and reconciliation (2026-11-15)
+
+- **Team pulse** and the **Total sales people** variance are the Tachometer's YTD Value card (`computeYtdCard`, same
+  filters and anchor): actual, prorated target-to-date with the admin overrides, full-year target. With a tier selected the
+  pulse is that tier's people ("Pulse · Critical (10 people)").
+- **Directors** (B2B / B2C): actual = the channel's Tachometer YTD Value (Customer Group = the channel, narrowed by the
+  caller's role scope). Target = the channel's `TargetLevel = Director` rows in sales_targets.xlsx when it has any, else
+  every target row of the channel. Names = active users with the B2B_DIRECTOR / B2C_DIRECTOR role. Not counted in any
+  people figure. Click = `?channel=`.
+- Director target rows never add to a total: every target sum uses `PEOPLE_TARGETS` (backend `measures/filters.ts`).
+- **Reconciliation** (admins only): company total − Σ listed people, per salesperson row of the Tachometer breakdown, by
+  reason: no target, vacant seat, director (a director user's own salesperson), unassigned (no salesperson), other.
