@@ -193,6 +193,7 @@ describe('missing cost: an admin-only data quality row (2026-11-15)', () => {
     render(<BcgMatrixPage />);
     const row = screen.getByTestId('bcg-data-quality');
     expect(row.textContent).toMatch(/^Data Quality1 Active products have no cost in Odoo \(counted as low margin\)/);
+    expect(row.textContent).not.toMatch(/Behind Target|On Target|Critical/); // no status badge: a count, not a verdict
     const grid = document.getElementById('product-detail')!;
     expect(grid.textContent).toContain('Fully costed');
     fireEvent.click(screen.getByTestId('bcg-data-quality-open'));

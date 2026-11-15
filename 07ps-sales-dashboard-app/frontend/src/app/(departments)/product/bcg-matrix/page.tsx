@@ -316,7 +316,6 @@ export default function BcgMatrixPage() {
             testId="bcg-data-quality"
             summary={`${fmtCount(missingCost)} Active products have no cost in Odoo (counted as low margin)`}
             onOpen={openMissingCost}
-            status="watch"
           />
         )}
 
