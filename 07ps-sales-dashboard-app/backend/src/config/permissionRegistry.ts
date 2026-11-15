@@ -69,7 +69,12 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   // Revisit the actions when the page is built.
   { key: 'quality_assurance', label: 'Quality Assurance (coming soon)', group: 'dashboard', actions: DASHBOARD },
   { key: 'customer_pulse', label: 'Customer Pulse (coming soon)', group: 'dashboard', actions: DASHBOARD },
-  { key: 'product_development_plan', label: 'Product Development Plan (coming soon)', group: 'dashboard', actions: DASHBOARD },
+  // Product Development Plan (TIKA R&D, migrations 0074-0076; routes/productDevelopment.ts). plan = the read-only views;
+  // entry = every form; approval = deciding a gate, which ALSO needs the user's governance role for that gate (the
+  // permission alone is not enough). 0076 grants plan View to the roles that view a Product report, the rest to ADMIN.
+  { key: 'product_development_plan', label: 'Product Development Plan', group: 'dashboard', actions: DASHBOARD },
+  { key: 'product_development_entry', label: 'Product Development Plan: data entry', group: 'data_entry', actions: ['view', 'create', 'edit', 'delete', 'export'] },
+  { key: 'product_development_approval', label: 'Product Development Plan: gate approvals', group: 'data_entry', actions: ['view', 'edit'] },
   // Price (Finance) department. Granted to the full-access roles by migration 0034 (not to Salesperson; an admin may
   // enable it, the API then scopes a salesperson to their own SalespersonKey).
   // key kept from the "Debt Report" days (role grants reference it); the label is what the Roles page shows

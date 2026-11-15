@@ -208,3 +208,6 @@ User_Manuals/**/*.tgz
 GoLive_Emails/
 docs/*.csv
 /.claude/launch.json
+
+# TIKA R&D source files (internal documents; the .xlsm holds macros). Read only by the one-time PDP import.
+Input/product_development/
