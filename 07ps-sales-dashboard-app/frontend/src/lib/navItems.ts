@@ -43,7 +43,7 @@ export const NAV_ITEMS = [
   { label: 'Product Lifecycle', icon: RefreshCw, href: '/product/product-lifecycle', pageKey: 'product_lifecycle', department: 'product' },
   { label: 'Stock Velocity', icon: Boxes, href: '/product/stock-velocity', pageKey: 'stock_velocity', department: 'product' },
   // "Coming soon" placeholder (2026-10-27): announced in the navigation, opens a placeholder page until it is built.
-  { label: 'Product Development Plan', icon: Lightbulb, href: '/product/product-development-plan', pageKey: 'product_development_plan', department: 'product', comingSoon: true },
+  { label: 'Product Development Plan', icon: Lightbulb, href: '/product/product-development-plan', pageKey: 'product_development_plan', department: 'product' },
   { label: 'Salesforce Performance', icon: Users, href: '/people/salesforce-performance', pageKey: 'sales_people_performance', department: 'people' },
   // Process department. The card list/entry screens live under this href (see ROUTE_PAGE_KEYS).
   { label: 'Kaizen Board', icon: ClipboardList, href: '/process/kaizen-board', pageKey: 'kaizen_board', department: 'process' },
@@ -89,6 +89,8 @@ export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string
 /** Routes whose permission page differs from the nav entry they sit under: the Kaizen card entry
  * screens belong to kaizen_cards, not to the kaizen_board report they're nested in. */
 const ROUTE_PAGE_KEYS: { href: string; pageKey: string }[] = [
+  { href: '/product/product-development-plan/projects/new', pageKey: 'product_development_entry' },
+  { href: '/product/product-development-plan/admin', pageKey: 'product_development_entry' },
   { href: '/process/kaizen-board/manage', pageKey: 'kaizen_cards' },
   { href: '/process/nps-followup/reasons', pageKey: 'nps_followup_reasons' },
 ];

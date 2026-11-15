@@ -38,6 +38,7 @@ import { marcomUploadRouter, marcomFreshnessRouter } from './routes/marcomUpload
 import { marcomKpiRouter } from './routes/marcomKpi';
 import { exportsRouter } from './routes/exports';
 import { kaizenRouter } from './routes/kaizen';
+import { productDevelopmentRouter } from './routes/productDevelopment';
 import { adminKaizenDropdownsRouter } from './routes/admin/kaizenDropdowns';
 import { syncPermissionRegistry } from './services/permissionService';
 import { cleanupExpiredStaged } from './marcom/staging';
@@ -117,6 +118,8 @@ app.use('/marcom/kpi', marcomKpiRouter);
 app.use('/exports', exportsRouter);
 // Kaizen Board (Process department): cards, dashboard, QR, one-time import.
 app.use('/kaizen', kaizenRouter);
+// Product Development Plan (Product department, TIKA only): tree, roadmap, R&D projects through the gates, launches, feedback.
+app.use('/product-development', productDevelopmentRouter);
 
 // Section 5.9 - system-tier fallback: no stack traces, no raw DB errors, ever.
 app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
