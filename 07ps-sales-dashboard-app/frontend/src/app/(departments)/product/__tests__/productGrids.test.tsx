@@ -190,6 +190,19 @@ describe('Product tables use the standard grid, volume first, and every product 
     expect(within(grid).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([url(3, 3), url(2, 1), url(1, 1)]); // highest volume first
   });
 
+  it('Product Lifecycle (2026-11-15): a "?" on every KPI card, Freshness over Active + Non Active, segment definitions', () => {
+    render(<ProductLifecyclePage />);
+    for (const label of ['Mature SKUs', 'Discontinued', 'Portfolio Freshness']) {
+      const card = screen.getByLabelText(label, { selector: '[aria-label]:not(button)' });
+      expect(within(card).getByTestId('visual-help'), label).toBeTruthy();
+    }
+    // every fixture row is Active, none New: 0 of 3
+    expect(screen.getByText('0 new SKUs · 0 Active · 0 Non Active')).toBeTruthy();
+    const defs = screen.getByTestId('lifecycle-segment-definitions');
+    expect([...defs.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['New', 'Growing', 'Mature', 'Declining', 'Discontinued', 'Never sold']);
+    expect(defs.textContent).toMatch(/First sale within the last 180 days/);
+  });
+
   it('Brand page (Stonewrap): the products are the standard grid, volume first, each linked to Odoo', () => {
     render(<BrandPage />);
     const grid = within(screen.getByTestId('brand-product-table')).getByTestId('data-grid');

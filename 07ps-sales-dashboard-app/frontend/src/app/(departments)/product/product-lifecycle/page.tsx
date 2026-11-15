@@ -41,6 +41,7 @@ import {
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
 import { ProductName } from '../../../../components/product/ProductUi';
+import { lifecycleConfig, portfolioFreshness, segmentDefinitions } from '../../../../lib/product/lifecycle';
 
 const SEGMENTS = LIFECYCLE_SEGMENTS;
 interface TableRow extends ProductFact, Record<string, unknown> {
@@ -75,8 +76,17 @@ export default function ProductLifecyclePage() {
   // ---- KPIs (segments come precomputed from the ETL: config/product_dashboard.json "lifecycle") ----
   const matureRows = filtered.filter((r) => r.lifecycle === 'Mature');
   const discRows = filtered.filter((r) => r.lifecycle === 'Discontinued');
-  const newRows = filtered.filter((r) => r.lifecycle === 'New');
-  const freshPct = filtered.length ? (newRows.length / filtered.length) * 100 : 0;
+  // Portfolio Freshness (2026-11-15): Active + Non Active only (lib/product/lifecycle.ts portfolioFreshness)
+  const fresh = portfolioFreshness(filtered);
+  const lc = lifecycleConfig(overview.data?.thresholds);
+  const segDef = segmentDefinitions(lc);
+  const withFormula = (entry: ReturnType<typeof vh>, formula: string) => (entry.help ? { ...entry.help, formula } : undefined);
+  const kpiHelp = {
+    mature: withFormula(vh('product.productLifecycle.kpiMature'), `${segDef.Mature} · % = Mature ÷ every SKU listed after the page filters`),
+    discontinued: withFormula(vh('product.productLifecycle.kpiDiscontinued'), `${segDef.Discontinued} · sub-line = their units sold in the prior period`),
+    freshness: withFormula(vh('product.productLifecycle.kpiFreshness'),
+      `Freshness = SKUs first sold in the last ${lc.newDays} days ÷ (Active + Non Active SKUs after the page filters) · Dormant and Unclassified left out`),
+  };
 
   // ---- Pareto on volume: units sold in the period per lifecycle segment (added up as Unit), the same period last year,
   // and the cumulative share of the units ----
@@ -188,14 +198,22 @@ export default function ProductLifecyclePage() {
               value={String(matureRows.length)}
               variance={filtered.length ? `${((matureRows.length / filtered.length) * 100).toFixed(1)}% of filtered portfolio` : undefined}
               status="neutral"
+              help={kpiHelp.mature}
             />
             <KpiTile
               label="Discontinued"
               value={String(discRows.length)}
               variance={`${fmtUnits(sum(discRows, (r) => r.volumePrior))} sold in the prior period`}
               status="alert"
+              help={kpiHelp.discontinued}
             />
-            <KpiTile label="Portfolio Freshness" value={`${freshPct.toFixed(1)}%`} variance={`${newRows.length} SKUs first sold in the last 180 days`} status="neutral" />
+            <KpiTile
+              label="Portfolio Freshness"
+              value={`${fresh.pct.toFixed(1)}%`}
+              variance={`${fresh.fresh} new SKUs · ${fresh.active} Active · ${fresh.nonActive} Non Active`}
+              status="neutral"
+              help={kpiHelp.freshness}
+            />
           </div>
 
           <ChartPanel {...vh("product.productLifecycle.pareto")}
@@ -214,6 +232,14 @@ export default function ProductLifecyclePage() {
               rightAxisFormatter={(v) => `${v.toFixed(0)}%`}
               height={360}
             />
+            <dl data-testid="lifecycle-segment-definitions" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: '6px 16px', margin: '12px 0 0', fontSize: 12 }}>
+              {SEGMENTS.map((s) => (
+                <div key={s} style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <dt style={{ fontWeight: 700, color: SEGMENT_COLOR[s], whiteSpace: 'nowrap' }}>{s}</dt>
+                  <dd style={{ margin: 0, color: 'var(--ps-color-muted-text)' }}>{segDef[s]}</dd>
+                </div>
+              ))}
+            </dl>
           </ChartPanel>
 
           <Card>

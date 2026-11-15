@@ -6,6 +6,21 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Product Lifecycle: card definitions, Portfolio Freshness = Active + Non Active, 2026-11-15)
+- Every KPI card (Mature SKUs, Discontinued, Portfolio Freshness) has the standard "?", with its definition taken from the
+  ETL rule (`product_dashboard.py` `_lifecycle`) and the config values (`lifecycle` in `product_dashboard.json`). The
+  Pareto lists one definition per segment under the chart (New, Growing, Mature, Declining, Discontinued, Never sold).
+  The segments are as of the last data refresh, not the Date filter.
+- Portfolio Freshness = SKUs first sold in the last 180 days ÷ (Active + Non Active SKUs after the page filters). Dormant
+  and Unclassified are left out. The sub-line shows the split, e.g. "174 new SKUs · 168 Active · 6 Non Active". On the
+  local data the result does not change (7.0%, 174 / 2,490): the Lifecycle list never holds Dormant or Unclassified rows.
+- Not changed yet: renaming "Discontinued" to "Dormant" and aligning its rule with BCG (archived in Odoo). On the local
+  data all 401 Discontinued products are unarchived products with no sale in 365 days. Archived products are not on the
+  Product page lists at all (only the BCG status cards count them). The literal change would show Dormant 0 and move the
+  401 into Mature, so it waits for a business decision.
+- Follow-up (not changed): "Mature SKUs — % of filtered portfolio" still divides by every listed SKU, not by
+  Active + Non Active.
+
 ### Removed (PIM Contribution: Categories donut, 2026-11-15)
 - The "Categories" card is gone: its By Volume / By Value toggle, Export image, the top-8 legend and the "Other (+N)"
   row, plus its page state, visual-help entry (`product.pimContribution.categories`) and test id. The Category filter and
