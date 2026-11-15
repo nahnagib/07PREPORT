@@ -5,8 +5,8 @@ import {
   SEED_CHECKLIST, SEED_CRITERIA, SEED_DROPDOWNS, SEED_GAP_ITEMS, SEED_GATE_RULES, SEED_GOVERNANCE_ROLES, SEED_KPI_TARGETS, SEED_ROADMAP_YEARS, SEED_SETTINGS,
 } from '../seedConfig';
 
-/** seedConfig.ts (used by the import on a database seeded before TIKA existed) must say what migration 0075 says. */
-const SQL = readFileSync(path.resolve(__dirname, '../../../../../data/warehouse/migrations/0075_pdp_seed_config.sql'), 'utf8');
+/** seedConfig.ts (used by the import on a database seeded before TIKA existed) must say what migration 0076 says. */
+const SQL = readFileSync(path.resolve(__dirname, '../../../../../data/warehouse/migrations/0076_pdp_seed_config.sql'), 'utf8');
 // One ROW(...) per value tuple; a multi-line ROW is joined onto one line first.
 const ROWS = SQL.replace(/,\n\s+(?=')/g, ', ').split('\n').filter((l) => l.includes('ROW('));
 const lit = (v: string | number) => (typeof v === 'number' ? String(v) : `'${v.replace(/'/g, "''")}'`);
@@ -16,7 +16,7 @@ function hasRow(...values: (string | number)[]): boolean {
   return ROWS.some((line) => values.every((v) => line.includes(lit(v))));
 }
 
-describe('0075 and seedConfig.ts agree', () => {
+describe('0076 and seedConfig.ts agree', () => {
   it('settings', () => {
     for (const [k, v] of SEED_SETTINGS) expect(hasRow(k, v), k).toBe(true);
   });

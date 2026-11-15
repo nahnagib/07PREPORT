@@ -1,4 +1,4 @@
--- Reverses 0074_pdp_schema.sql: drops every Product Development Plan table, with its data (projects, decisions,
+-- Reverses 0075_pdp_schema.sql: drops every Product Development Plan table, with its data (projects, decisions,
 -- attachments). Roll the backend back first and take a backup: this cannot be undone.
 
 SET NAMES utf8mb4;

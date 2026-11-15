@@ -1,5 +1,5 @@
--- Reverses 0075_pdp_seed_config.sql: removes the seeded configuration rows nothing references yet. Rows already used
--- by a project, score, checklist or member stay; run 0074's down script to remove everything.
+-- Reverses 0076_pdp_seed_config.sql: removes the seeded configuration rows nothing references yet. Rows already used
+-- by a project, score, checklist or member stay; run 0075's down script to remove everything.
 
 SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
 SET @tika := (SELECT CompanyKey FROM dim_company WHERE LOWER(Company) = 'tika' OR UPPER(odoo_name) = 'TIKA' ORDER BY CompanyKey LIMIT 1);

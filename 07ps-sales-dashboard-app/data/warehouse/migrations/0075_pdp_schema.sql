@@ -1,5 +1,5 @@
--- 0074: Product Development Plan (Product department, TIKA only) -- schema.
--- Design and workflow: docs/product-development-plan.md. Config seed: 0075. Permissions: 0076.
+-- 0075: Product Development Plan (Product department, TIKA only) -- schema.
+-- Design and workflow: docs/product-development-plan.md. Config seed: 0076. Permissions: 0077.
 --
 -- Rules every table follows:
 --   * company_key BIGINT NOT NULL -> dim_company.CompanyKey (the core, Odoo-id table; the ETL only upserts it). The API
@@ -10,7 +10,7 @@
 --   * No FK to dim_product / dim_customer: the ETL's sync mode may delete rows there, and an FK would block it.
 --     The API validates those keys (TIKA or shared products, TIKA customers) instead.
 --   * utf8mb4 everywhere, so Arabic text in any data field is stored as typed.
--- Idempotent (CREATE TABLE IF NOT EXISTS). Reverse: data/warehouse/down/0074_pdp_schema_down.sql.
+-- Idempotent (CREATE TABLE IF NOT EXISTS). Reverse: data/warehouse/down/0075_pdp_schema_down.sql.
 
 SET NAMES utf8mb4;
 

@@ -1,4 +1,4 @@
--- 0075: Product Development Plan -- configuration seed for TIKA (from the CEO's R&D Policy, scoring matrix and roadmap
+-- 0076: Product Development Plan -- configuration seed for TIKA (from the CEO's R&D Policy, scoring matrix and roadmap
 -- deck, see docs/product-development-plan.md). Everything here stays editable in the app (Product Development Plan ->
 -- Admin); INSERT IGNORE on the natural keys never overwrites an edit, so re-running this file is safe.
 --
@@ -8,7 +8,7 @@
 --
 -- NOT seeded on purpose: governance members (assigned on the admin screen), the product tree and policy v1.0 (the
 -- admin import), the peak-season freeze months (empty = no freeze).
--- Reverse: data/warehouse/down/0075_pdp_seed_config_down.sql.
+-- Reverse: data/warehouse/down/0076_pdp_seed_config_down.sql.
 
 SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
 

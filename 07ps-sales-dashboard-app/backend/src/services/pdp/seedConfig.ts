@@ -2,9 +2,9 @@ import type { Db } from './db';
 import { exec } from './db';
 
 /**
- * The configuration migration 0075 seeds, for databases where TIKA reached dim_company only after 0075 ran: the admin
+ * The configuration migration 0076 seeds, for databases where TIKA reached dim_company only after 0076 ran: the admin
  * import calls ensureConfigSeed first. INSERT IGNORE on the natural keys, so it never overwrites an admin's edit.
- * Keep in step with data/warehouse/migrations/0075_pdp_seed_config.sql (__tests__/seedConfig.test.ts compares them).
+ * Keep in step with data/warehouse/migrations/0076_pdp_seed_config.sql (__tests__/seedConfig.test.ts compares them).
  */
 
 export const SEED_SETTINGS: [string, string][] = [

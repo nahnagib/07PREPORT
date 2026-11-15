@@ -24,7 +24,7 @@ SOP. **Measurements**: R&D KPIs, Monitoring tools (launch tracking, dashboard, c
 tools" item is this module, so it is seeded as *in progress*.
 
 ### Deviations from the brief
-1. **Migrations start at 0074, not 0073.** Local `main` already has `0073_product_sku_status.sql` (unpushed, L12M work).
+1. **Migrations start at 0075.** Local `main` already has `0073_product_sku_status.sql` and `0074_workbook_product_exclusions.sql` (unpushed, L12M work).
 2. **File attachments.** Kaizen has no attachments. MARCOM stores the uploaded file in a `LONGBLOB` column (`marcom_upload_batch.original_file`, multer memory storage), so we reuse that pattern. A `pdp_attachment` table keeps the bytes in MySQL (limit 10 MB per file; pdf/docx/xlsx/png/jpg). There is no new storage service. Side effect: the database grows with the attachments.
 3. **The import's server-folder mode works only locally.** `Input/product_development/` is untracked and does not exist in the production container. On production, the admin uploads the 3 files through the button. The `.pptx` is not read at runtime: its content is in seed SQL.
 4. **`dim_company` is ETL-owned** (the ETL upserts it, never truncates it). The FK is safe, but on a fresh DB the Tika row may not exist when the migration runs. Seed rows are inserted with `SELECT CompanyKey FROM dim_company WHERE LOWER(Company) = 'tika'`. If that finds no row, nothing is seeded and the import seeds it later (idempotent). No key is hard-coded anywhere.
@@ -35,9 +35,9 @@ tools" item is this module, so it is seeded as *in progress*.
 
 | # | File | Content |
 |---|---|---|
-| 0074 | `0074_pdp_schema.sql` | All `pdp_*` tables below (CREATE TABLE IF NOT EXISTS, CHECKs, FKs to `dim_company`, `app_user`, `dim_product`). |
-| 0075 | `0075_pdp_seed_config.sql` | Config seed for Tika: governance roles, scoring criteria and meanings, gate rules, checklist templates, KPI targets, settings, roadmap years, gap items, dropdown values. `INSERT … SELECT … FROM dim_company` with natural-key uniques, so it is re-runnable. |
-| 0076 | `0076_pdp_permissions.sql` | Renames the page label (drops "(coming soon)"), adds the `product_development_entry` and `product_development_approval` pages and permissions, View on the plan for every role that views a Product report (0060 query), entry and approval for ADMIN. |
+| 0075 | `0075_pdp_schema.sql` | All `pdp_*` tables below (CREATE TABLE IF NOT EXISTS, CHECKs, FKs to `dim_company`, `app_user`, `dim_product`). |
+| 0076 | `0076_pdp_seed_config.sql` | Config seed for Tika: governance roles, scoring criteria and meanings, gate rules, checklist templates, KPI targets, settings, roadmap years, gap items, dropdown values. `INSERT … SELECT … FROM dim_company` with natural-key uniques, so it is re-runnable. |
+| 0077 | `0077_pdp_permissions.sql` | Renames the page label (drops "(coming soon)"), adds the `product_development_entry` and `product_development_approval` pages and permissions, View on the plan for every role that views a Product report (0060 query), entry and approval for ADMIN. |
 
 The product tree, scoring texts (verified against the seed) and policy v1.0 come from the **import**, not SQL.
 

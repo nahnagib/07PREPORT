@@ -1,4 +1,4 @@
--- 0076: Product Development Plan permissions (backend/src/config/permissionRegistry.ts is the source of truth; its
+-- 0077: Product Development Plan permissions (backend/src/config/permissionRegistry.ts is the source of truth; its
 -- startup sync creates the same pages/permissions rows, inserted here so the grants below have something to point at).
 --
 --   product_development_plan      dashboard   View, Export        the read-only views (no longer "coming soon")
@@ -7,7 +7,7 @@
 --                                                                 requires the approver's governance role for that gate
 -- Grants: View on the plan to every role that views a Product report (same query as 0060; re-run safe); entry and
 -- approval to ADMIN only (other roles are assigned on the Roles page).
--- Idempotent. Reverse: data/warehouse/down/0076_pdp_permissions_down.sql.
+-- Idempotent. Reverse: data/warehouse/down/0077_pdp_permissions_down.sql.
 
 SET NAMES utf8mb4;
 

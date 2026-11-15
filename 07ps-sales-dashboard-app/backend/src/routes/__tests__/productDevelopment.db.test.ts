@@ -9,7 +9,7 @@ import type { AddressInfo } from 'node:net';
  *   PDP_TEST_DB=1 DB_HOST=127.0.0.1 DB_PORT=33309 DB_NAME=powerBI_Data DB_USER=... DB_PASSWORD=... \
  *     [PDP_IMPORT_DIR=...\Input\product_development] npx vitest run -c vitest.pdp-db.config.ts
  *
- * Needs migrations 0074-0076 and the app users 3, 4, 5, 9, 21, 23-27 of the local test database. Refuses to run on port
+ * Needs migrations 0075-0077 and the app users 3, 4, 5, 9, 21, 23-27 of the local test database. Refuses to run on port
  * 3306 (the local production copy). The real router, services and pool; only the signed-in user and the page grants
  * are faked. Everything the test creates lives under its own family "PDP-TEST family", never the imported tree, and
  * is removed at the end (governance members included, so the admin screen stays empty for the real assignment).

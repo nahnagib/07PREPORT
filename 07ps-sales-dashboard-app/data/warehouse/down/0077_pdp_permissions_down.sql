@@ -1,4 +1,4 @@
--- Reverses 0076_pdp_permissions.sql: removes the entry and approval pages (with their role grants and user overrides)
+-- Reverses 0077_pdp_permissions.sql: removes the entry and approval pages (with their role grants and user overrides)
 -- and puts the "(coming soon)" label back on product_development_plan (0060's state; its View grants stay).
 -- Roll the backend back first: its registry sync would otherwise recreate the two pages at startup.
 
