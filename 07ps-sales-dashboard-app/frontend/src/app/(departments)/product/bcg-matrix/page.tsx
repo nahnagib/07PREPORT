@@ -1,7 +1,7 @@
 'use client';
 import { VisualInfoIcons, tooltipBoxStyle } from '@07ps/ui';
 import { vh } from '../../../../lib/visualHelp';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import styles from './page.module.css';
 import { AppHeader } from '../../../../components/AppHeader';
@@ -11,6 +11,7 @@ import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useProductFilters } from '../../../../components/product/useProductFilters';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
+import { DataQualityRow } from '../../../../components/DataQualityRow';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../lib/format';
 import {
@@ -23,7 +24,6 @@ import {
   ErrorState,
   type DataGridColumn,
   type Column,
-  type SemanticStatus,
   type DonutSegment,
   type TableExportCell,
 } from '@07ps/ui';
@@ -97,12 +97,13 @@ const growthText = (r: BcgFact) => (r.quantity_growth_pct !== null ? fmtPct(r.qu
 const MATRIX_CELL_TOP_N = 10;
 const MOVEMENT_DRILL_TOP_N = 20;
 
-// One icon + status per class, same order as the 2x2 grid (Stars top-left, Cash Cows top-right, Strategic, Dogs).
-const CLASS_META: Record<BcgClass, { icon: string; status: SemanticStatus }> = {
-  Stars: { icon: '⭐', status: 'success' },
-  'Cash Cows': { icon: '🐄', status: 'watch' },
-  Strategic: { icon: '🔵', status: 'neutral' },
-  Dogs: { icon: '🐕', status: 'alert' },
+// One icon per class, same order as the 2x2 grid (Stars top-left, Cash Cows top-right, Strategic, Dogs). The class
+// colour is BCG_COLOR (lib/materialsAnalogy/shared.ts) everywhere: cards, matrix panels, bars, hover chips, tables.
+const CLASS_META: Record<BcgClass, { icon: string }> = {
+  Stars: { icon: '⭐' },
+  'Cash Cows': { icon: '🐄' },
+  Strategic: { icon: '🔵' },
+  Dogs: { icon: '🐕' },
 };
 const classOrder = (r: BcgFact) => {
   const i = BCG_CLASSES.indexOf(r.bcg_class as BcgClass);
@@ -151,6 +152,25 @@ export default function BcgMatrixPage() {
   const mvConfig = useMemo(() => movementConfig(overview.data?.thresholds), [overview.data?.thresholds]);
   const summary = overview.data?.statusSummary ?? null;
   const exportColumns = useMemo(() => bcgExportColumns(profit.export), [profit.export]);
+  // Data quality (admins only, 2026-11-15): the link opens Product Detail with Cost data = Missing; ?costData=missing too.
+  const [costMissingOnly, setCostMissingOnly] = useState(false);
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('costData') === 'missing') setCostMissingOnly(true);
+    } catch {
+      /* no URL: the full list */
+    }
+  }, []);
+  const openMissingCost = () => {
+    setCostMissingOnly(true);
+    try {
+      window.history.replaceState(null, '', `${window.location.pathname}?costData=missing#product-detail`);
+    } catch {
+      /* the filter still applies */
+    }
+    requestAnimationFrame(() => document.getElementById('product-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+  const missingCost = profit.view ? summary?.bcg.missingCost ?? 0 : 0;
   const exportSubtitle = (what: string) => `${what} · ${companyLabel} · ${pLabel}${period && period.isDefault ? ` (${periodDates(period)})` : ''}`;
 
   const classStats = useMemo(
@@ -292,6 +312,15 @@ export default function BcgMatrixPage() {
           lastRefreshTime={refresh.data ? formatTimestamp(refresh.data.lastRefreshTime) : undefined}
         />
 
+        {user?.isAdmin === true && missingCost > 0 && (
+          <DataQualityRow
+            testId="bcg-data-quality"
+            summary={`${fmtCount(missingCost)} Active products have no cost in Odoo (counted as low margin)`}
+            onOpen={openMissingCost}
+            status="watch"
+          />
+        )}
+
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
           <PeriodNote period={period} />
           <StatusRows
@@ -388,7 +417,7 @@ export default function BcgMatrixPage() {
             )}
           </Card>
 
-          <Card>
+          <Card id="product-detail">
             <div className={styles.sectionTitle} style={{ marginBottom: 2 }}>
               Product Detail <VisualInfoIcons title="Product Detail" {...vh('product.bcgMatrix.productDetail')} />
             </div>
@@ -400,7 +429,9 @@ export default function BcgMatrixPage() {
             ) : overview.error ? (
               <ErrorState message={overview.error} onRetry={overview.retry} />
             ) : (
-              <DataGrid columns={columns} rows={tableRows} getRowId={(row) => row.id} fileName="bcg-matrix-product-detail" filtersSummary={`${companyLabel} · ${pLabel}`} />
+              <DataGrid key={costMissingOnly ? 'cost-missing' : 'all'} columns={columns} rows={tableRows} getRowId={(row) => row.id}
+                fileName="bcg-matrix-product-detail" filtersSummary={`${companyLabel} · ${pLabel}`}
+                initialColumnFilters={costMissingOnly && profit.view ? [{ id: 'missingCost', value: 'Missing' }] : undefined} />
             )}
           </Card>
         </main>
@@ -544,15 +575,10 @@ function StatusRows({
               label={c.key}
               value={fmtCount(c.count)}
               subValue={`${fmtUnits(c.units)} · ${fmtLYD(c.value)}${showProfit && c.profit !== undefined ? ` · profit ${fmtLYD(c.profit)}` : ''}`}
-              status={CLASS_META[c.key].status}
+              valueColor={BCG_COLOR[c.key]}
             />
           ))}
         </div>
-        {showProfit && s && (s.bcg.missingCost ?? 0) > 0 && (
-          <div data-testid="bcg-missing-cost" style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 6 }}>
-            {fmtCount(s.bcg.missingCost ?? 0)} Active products have missing cost data in Odoo (counted as low margin) · filter Cost data = Missing in Product Detail
-          </div>
-        )}
       </section>
     </div>
   );

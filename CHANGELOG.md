@@ -6,6 +6,18 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (BCG Matrix: one class colour map; missing-cost note → admin data quality row, 2026-11-15)
+- The four BCG summary cards now use the matrix colours from the one map, `BCG_COLOR`: Stars gold, Cash Cows green,
+  Strategic blue, Dogs red. Before they used the status colours (green / amber / grey / red). The matrix panels and bars,
+  the hover chips, the status table, Product Detail, the PIM brand drill and the Stock Velocity buckets already read
+  `BCG_COLOR`. Contrast on the dark card background passes AA: gold 6.8–7.6:1, green 5.4–6.0, blue 5.5–6.1, red 5.1–5.6.
+  `KpiTile` has a new optional `valueColor`.
+- "35 Active products have missing cost data in Odoo …" is gone for normal users. Admins (`user.isAdmin`) see it as the
+  Data Quality row of the Pipeline pages: "35 Active products have no cost in Odoo (counted as low margin)". The line is a
+  link that opens Product Detail with Cost data = Missing applied (`?costData=missing` also works as a link). The row is
+  one shared component, `components/DataQualityRow.tsx`, extracted from Pipeline Health (which looks the same).
+  `DataGrid` has a new optional `initialColumnFilters`. No other Product page had a data-quality sentence.
+
 ### Changed (Product Lifecycle: Discontinued = no sale in 365 days, 2026-11-15)
 - "Discontinued" stays the segment name (the round-1 rename to Dormant was never applied). Its rule is now **no sale in the
   last 365 days**, among Active + Non Active products only. "Archived in Odoo, or…" is gone from the ETL rule

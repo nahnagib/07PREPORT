@@ -24,8 +24,9 @@ vi.mock('next/navigation', () => ({
 vi.mock('next/link', () => ({
   default: ({ children, href, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => <a href={href} {...rest}>{children}</a>,
 }));
+const auth = vi.hoisted(() => ({ user: null as null | { isAdmin: boolean } }));
 vi.mock('../../../../lib/AuthProvider', () => ({
-  useAuth: () => ({ user: null, token: 't', error: null, retryAuth: () => {}, logout: () => {}, isSalesperson: false, canView: () => true, can: () => true }),
+  useAuth: () => ({ user: auth.user, token: 't', error: null, retryAuth: () => {}, logout: () => {}, isSalesperson: false, canView: () => true, can: () => true }),
 }));
 vi.mock('../../../../components/AppHeader', () => ({ AppHeader: () => null }));
 vi.mock('../../../../components/BottomNavBar', () => ({ BottomNavBar: () => null }));
@@ -55,7 +56,7 @@ const SUMMARY = {
   total: 7, active: { count: 2, units: 3, value: 30 }, nonActive: { count: 3, withStock: 1, zeroStock: 2, stockUnits: 5, stockValue: 1 },
   dormant: { count: 1 }, unclassified: { count: 1 },
   bcg: { classes: [{ key: 'Stars' as const, count: 2, units: 3, value: 30, profit: 12 }, { key: 'Cash Cows' as const, count: 0, units: 0, value: 0 },
-    { key: 'Strategic' as const, count: 0, units: 0, value: 0 }, { key: 'Dogs' as const, count: 0, units: 0, value: 0 }] },
+    { key: 'Strategic' as const, count: 0, units: 0, value: 0 }, { key: 'Dogs' as const, count: 0, units: 0, value: 0 }], missingCost: 1 },
 };
 const PERIOD = { from: '2026-01-01', to: '2026-06-30', days: 181, priorFrom: '2025-07-04', priorTo: '2025-12-31', isDefault: false, label: 'Custom' };
 const LIST: ProductStatusList = { view: 'Tika', period: PERIOD, asOfDate: null, profitAccess: true, statusSummary: SUMMARY, statusSummaryError: null, skus: SKUS };
@@ -66,8 +67,9 @@ const productRow = { productCompanyKey: 'Tika|1', productKey: '1', odooUrl: null
   avgUnitPrice: 10, grossProfitPct: 40, stockQty: 0, stockValue: 0, inTransitQty: 0, inTransitValue: 0, avgDailySales: 0, daysOfInventory: null,
   stockBand: 'Normal', stockAgeDays: null, stockAgeBucket: null, lifecycleSegment: 'Mature', firstSaleDate: '2025-01-01', lastSaleDate: '2026-06-01',
   productStatus: 'Active', bcgClass: 'Stars', bcgMovement: 'Improved', bcgExcludedCategory: false, negativeStockRows: 0, bcgVolume: 10, bcgValue: 100,
-  bcgProfit: 40, bcgGrossProfitPct: 40, bcgDataAsOf: '2026-06-01' } as unknown as ProductDashboardRow;
-const OVERVIEW = { view: 'Tika', asOfDate: null, builtAtUtc: null, period: PERIOD, lookbackDays: 90, thresholds: {}, products: [productRow],
+  bcgProfit: 40, bcgGrossProfitPct: 40, bcgDataAsOf: '2026-06-01', missingCost: true } as unknown as ProductDashboardRow;
+const costedRow = { ...productRow, productCompanyKey: 'Tika|2', productKey: '2', productName: 'Fully costed', missingCost: false } as ProductDashboardRow;
+const OVERVIEW = { view: 'Tika', asOfDate: null, builtAtUtc: null, period: PERIOD, lookbackDays: 90, thresholds: {}, products: [productRow, costedRow],
   totals: { value: 100, lines: 1, volumeByUom: [] }, intercompanyValue: 0, profitAccess: true, statusSummary: SUMMARY, statusSummaryError: null } as unknown as ProductDashboardOverview;
 
 const list = vi.hoisted(() => ({ data: null as ProductStatusList | null }));
@@ -79,6 +81,7 @@ vi.mock('../../../../lib/hooks', () => ({
 
 afterEach(() => {
   cleanup();
+  auth.user = null;
   nav.pushed.length = 0;
   nav.replaced.length = 0;
   nav.params = new URLSearchParams();
@@ -163,5 +166,38 @@ describe('status table page', () => {
     nav.params = new URLSearchParams('status=active');
     render(<ProductStatusTablePage />);
     expect(screen.getByTestId('status-table-mismatch')).toBeTruthy();
+  });
+});
+
+describe('BCG class colours (2026-11-15): one map everywhere', () => {
+  it('the summary cards use the matrix colours (BCG_COLOR)', async () => {
+    const { BCG_COLOR } = await import('../../../../lib/materialsAnalogy/shared');
+    render(<BcgMatrixPage />);
+    const row = document.querySelector('section[aria-labelledby="row-bcg"] > div')!;
+    const values = [...row.children].map((tile) => (tile.querySelector('div[style*="font-size: 32px"]') as HTMLElement).style.color);
+    expect(values).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs'].map((k) => BCG_COLOR[k]));
+    expect(BCG_COLOR).toMatchObject({ Stars: 'var(--ps-color-gold)', 'Cash Cows': 'var(--ps-color-success)', Strategic: 'var(--ps-color-accent)', Dogs: 'var(--ps-color-alert)' });
+  });
+});
+
+describe('missing cost: an admin-only data quality row (2026-11-15)', () => {
+  it('non-admins see no row and no sentence', () => {
+    const { container } = render(<BcgMatrixPage />);
+    expect(screen.queryByTestId('bcg-data-quality')).toBeNull();
+    expect(container.textContent).not.toMatch(/no cost in Odoo|missing cost data/);
+  });
+
+  it('admins see one short line; it opens Product Detail with Cost data = Missing applied', () => {
+    auth.user = { isAdmin: true, role: { label: 'Admin' }, fullName: 'Admin' } as unknown as { isAdmin: boolean };
+    Element.prototype.scrollIntoView = vi.fn();
+    render(<BcgMatrixPage />);
+    const row = screen.getByTestId('bcg-data-quality');
+    expect(row.textContent).toMatch(/^Data Quality1 Active products have no cost in Odoo \(counted as low margin\)/);
+    const grid = document.getElementById('product-detail')!;
+    expect(grid.textContent).toContain('Fully costed');
+    fireEvent.click(screen.getByTestId('bcg-data-quality-open'));
+    expect(grid.textContent).not.toContain('Fully costed');   // only the missing-cost product is left
+    expect(grid.textContent).toContain('Cem Air');
+    expect(window.location.search).toBe('?costData=missing');
   });
 });

@@ -134,7 +134,9 @@ describe('Product tables use the standard grid, volume first, and every product 
     expect(row('row-product-status')[1].textContent).toMatch(/2 with stock · 3 zero stock/);
     expect(labels('row-bcg')).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs']);
     expect(row('row-bcg')[0].textContent).toMatch(/profit LYD/); // profit access (this user)
-    expect(screen.getByTestId('bcg-missing-cost').textContent).toMatch(/^1 Active products have missing cost data/);
+    // the missing-cost note is an admin-only data quality row (2026-11-15): not for this (non-admin) user
+    expect(screen.queryByTestId('bcg-data-quality')).toBeNull();
+    expect(container.textContent).not.toMatch(/missing cost|no cost in Odoo/);
     expect(screen.getByTestId('period-note').textContent).toMatch(/^Last 12 Months · 7 Nov 2025 – 7 Nov 2026/);
     expect(container.textContent).not.toMatch(/YTD|Year to Date/);
     expect(screen.queryByText(/axes|Export image/)).toBeNull();

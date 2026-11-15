@@ -37,6 +37,8 @@ export interface KpiTileProps {
   badgeLabel?: string;
   /** Optional "?" next to the label: one short definition / formula line (same icon as the charts' VisualInfoIcons). */
   help?: VisualHelpContent;
+  /** Colour of the big value, overriding the status colour (e.g. the BCG class colour map, 2026-11-15). */
+  valueColor?: string;
 }
 
 const statusColorVar: Record<SemanticStatus, string> = {
@@ -52,7 +54,7 @@ const statusColorVar: Record<SemanticStatus, string> = {
  * Color-coding follows the single semantic scale (3.9); KPIs with no target use neutral grey/white.
  * Color is never the only signal (Section 5.10) - the numeric value is always shown alongside it.
  */
-export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelDetail, variance, status = 'neutral', loading, icon, accentColor, badgeLabel, help }: KpiTileProps) {
+export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelDetail, variance, status = 'neutral', loading, icon, accentColor, badgeLabel, help, valueColor }: KpiTileProps) {
   const hasHeader = icon !== undefined && accentColor !== undefined && badgeLabel !== undefined;
 
   if (loading) {
@@ -83,7 +85,7 @@ export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelD
         style={{
           fontSize: 32,
           fontWeight: 700,
-          color: emphasizeLabel ? 'var(--ps-color-text)' : statusColorVar[status],
+          color: valueColor ?? (emphasizeLabel ? 'var(--ps-color-text)' : statusColorVar[status]),
           lineHeight: emphasizeLabel ? 1.15 : undefined,
           fontVariantNumeric: 'tabular-nums',
         }}

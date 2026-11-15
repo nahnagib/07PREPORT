@@ -9,6 +9,7 @@ import { OdooLink } from '../../../../components/OdooLink';
 import { rowsToPdfRows } from '../../../../lib/pdfRows';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
+import { DataQualityRow } from '../../../../components/DataQualityRow';
 import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import {
@@ -1093,34 +1094,13 @@ function DrillIndicator({ hint }: { hint: string }) {
 function DataQualityCard({ dataQuality, loading }: { dataQuality?: DataQualityOverview; loading: boolean }) {
   if (loading && !dataQuality) return null;
   if (!dataQuality) return null;
-
-  const status = toSemanticStatus(dataQuality.status);
-  const issuesWithCounts = dataQuality.issues.filter((issue) => issue.count > 0);
-
   return (
-    <div style={{ padding: '0 var(--ps-space-4, 24px)', marginTop: 'var(--ps-space-3, 16px)' }}>
-      <Card>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ps-color-text)' }}>Data Quality</span>
-            <VisualInfoIcons title="Data Quality" {...vh('promotion.pipelineHealth.dataQuality')} />
-            <span style={{ fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
-              {dataQuality.dirtyRecords} of {dataQuality.totalRecords} records ({formatPct(dataQuality.dirtyPct)}) have an issue
-            </span>
-          </div>
-          <SemanticBadge status={status} />
-        </div>
-        {issuesWithCounts.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 8, fontSize: 11, color: 'var(--ps-color-muted-text)' }}>
-            {issuesWithCounts.map((issue) => (
-              <span key={issue.key}>
-                {issue.label}: <strong style={{ color: 'var(--ps-color-text)' }}>{issue.count}</strong>
-              </span>
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
+    <DataQualityRow
+      {...vh('promotion.pipelineHealth.dataQuality')}
+      summary={`${dataQuality.dirtyRecords} of ${dataQuality.totalRecords} records (${formatPct(dataQuality.dirtyPct)}) have an issue`}
+      status={toSemanticStatus(dataQuality.status)}
+      issues={dataQuality.issues}
+    />
   );
 }
 

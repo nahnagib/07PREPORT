@@ -77,6 +77,9 @@ export interface DataGridProps<T extends Record<string, unknown>> {
   /** Makes each body row clickable (and keyboard-activatable with Enter/Space). Optional -- omit
    * for the previous read-only rows. */
   onRowClick?: (row: T) => void;
+  /** Column filters applied when the grid mounts, e.g. [{ id: 'missingCost', value: 'Missing' }] (2026-11-15: the BCG
+   * data quality link). Remount the grid (`key`) to apply a new set. */
+  initialColumnFilters?: { id: string; value: unknown }[];
 }
 
 /** Case-insensitive "contains" on the cell's raw value -- the free-text column filter. Used for
@@ -128,10 +131,11 @@ export function DataGrid<T extends Record<string, unknown>>({
   filtersSummary,
   extraFilterParts,
   onRowClick,
+  initialColumnFilters,
 }: DataGridProps<T>) {
   const tableRef = useRef<HTMLTableElement>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(() => initialColumnFilters ?? []);
   const [globalFilter, setGlobalFilter] = useState('');
   const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(columns.map((c) => String(c.key)));
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
