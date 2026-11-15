@@ -211,3 +211,9 @@ docs/*.csv
 
 # TIKA R&D source files (internal documents; the .xlsm holds macros). Read only by the one-time PDP import.
 Input/product_development/
+
+# Local working files (2026-11-15): prompt files for the assistant, and the regenerated manual PDFs that are not yet
+# published in the repo (the tracked manuals are User_Manuals/Manual_FullAccess_*.pdf and ManualBook/).
+/PROMPT_*.md
+/User_Manuals/Manual_AR.pdf
+/User_Manuals/Manual_EN.pdf
