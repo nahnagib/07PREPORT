@@ -6,6 +6,19 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Salesforce Performance: "Tiers", variance spacing, 2026-11-15)
+- The performance classification (Top performer, On target, Behind target, Need attention, Critical) is called a "tier"
+  in the UI. That covers: Team tiers, Tier mix, MoM performance by tier, "No one in this tier", the Tier column and
+  filter, the chart tooltip, exports, visual help and `docs/sales-people-performance.md`. The internal names
+  (`PeopleStatus`, `statuses`, `status`) and the API are unchanged.
+- Variance: the amount and the percentage are now two elements. The amount is on the main line and the % is its own
+  pill in the same colour, 8 px apart. Both use one minus sign (U+2212) through the new `formatSignedPercent`, also on
+  the Top people cards and the details table. `formatVariance`, which uses an ASCII hyphen, is still used by Critical
+  Number, Customer Growth, Invoices Engine, Revenue Trend, Tachometer (+ drill) and the Missing Trend modal. Those pages
+  are not changed.
+- Not done: B2B / B2C Director cards. `Input/sales_targets.xlsx` (and `v_sales_targets`) holds Salesperson-level targets
+  only (2025: 208 rows, 2026: 396 rows), with no director or channel rows, so there is no director target to show.
+
 ### Changed (Product Lifecycle: card definitions, Portfolio Freshness = Active + Non Active, 2026-11-15)
 - Every KPI card (Mature SKUs, Discontinued, Portfolio Freshness) has the standard "?", with its definition taken from the
   ETL rule (`product_dashboard.py` `_lifecycle`) and the config values (`lifecycle` in `product_dashboard.json`). The

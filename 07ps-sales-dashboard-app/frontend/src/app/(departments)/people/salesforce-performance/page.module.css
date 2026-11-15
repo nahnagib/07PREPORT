@@ -25,6 +25,11 @@
 .cardSub { font-size: 12px; font-weight: 600; margin-bottom: 10px; }
 .ytdVariance { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .ytdVariance .muted { font-size: 11px; font-weight: 400; }
+/* Variance (2026-11-15): the amount and the % are two elements with real spacing; the % is a pill in the same colour. */
+.varianceRow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.variancePill { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  color: var(--variance); background: color-mix(in srgb, var(--variance) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--variance) 40%, transparent); }
 .benchmarkGap { font-size: 11px; fill: var(--ps-color-muted-text); }
 .benchmarkGap[data-met='true'] { fill: var(--ps-color-success); }
 .benchmarkGap[data-met='false'] { fill: var(--ps-color-alert); }

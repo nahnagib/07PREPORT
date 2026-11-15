@@ -326,7 +326,7 @@ export const VISUAL_HELP = {
   // ---- Salesforce Performance (docs/sales-people-performance.md) -----------------------------------------------------
   'promotion.salesPeople.statusCards': {
     help: {
-      definition: 'Sales people in each YTD status and how far their combined sales are from their combined target.',
+      definition: 'Sales people in each YTD tier and how far their combined sales are from their combined target.',
       formula: [
         'Achievement = Actual YTD ÷ prorated YTD target',
         'LYD variance = Σ Actual − Σ Target of the people in the card',
@@ -335,11 +335,11 @@ export const VISUAL_HELP = {
       notes: 'Only people with a positive YTD target are included. Critical ≤50% · Need attention >50–90% · '
         + 'Behind target >90–<100% · On target 100–110% · Top performer >110%.',
     },
-    interactions: ['Click a status card to filter contributions, sales charts and the details table', 'Click it again, or Total sales people, to show everyone'],
+    interactions: ['Click a tier card to filter contributions, sales charts and the details table', 'Click it again, or Total sales people, to show everyone'],
   },
   'promotion.salesPeople.topPeople': {
     help: {
-      definition: 'The #1 person of each status: the best for Top performer and On target, the one furthest behind for Behind '
+      definition: 'The #1 person of each tier: the best for Top performer and On target, the one furthest behind for Behind '
         + 'target, Need attention and Critical.',
       formula: [
         'Variance % = (Actual YTD − YTD target) ÷ YTD target (the ranking and the big number)',
@@ -364,15 +364,15 @@ export const VISUAL_HELP = {
   },
   'promotion.salesPeople.statusMix': {
     help: {
-      definition: 'How many people are in each performance status and how their share of the team compares with the benchmark.',
+      definition: 'How many people are in each performance tier and how their share of the team compares with the benchmark.',
       formula: [
-        'Team share = people in the status ÷ everyone in scope with a target for the period',
+        'Team share = people in the tier ÷ everyone in scope with a target for the period',
         'Gap in percentage points = difference between the team share and the benchmark',
       ],
-      notes: 'The ≥ benchmarks are minimums and the ≤ benchmarks are caps. Monthly status uses month actual ÷ month target. '
-        + 'The current month uses the target prorated to the as-of date. Selecting a person shows their status row using the full team share.',
+      notes: 'The ≥ benchmarks are minimums and the ≤ benchmarks are caps. Monthly tier uses month actual ÷ month target. '
+        + 'The current month uses the target prorated to the as-of date. Selecting a person shows their tier row using the full team share.',
     },
-    interactions: ['Pick YTD or a month', 'Hover a status for its headcount, team share and benchmark gap', 'Export the figures as PDF'],
+    interactions: ['Pick YTD or a month', 'Hover a tier for its headcount, team share and benchmark gap', 'Export the figures as PDF'],
   },
   'promotion.salesPeople.actualVsTarget': {
     help: { definition: 'Monthly actual sales value (LYD) against the monthly target for the selection.' },
@@ -380,12 +380,12 @@ export const VISUAL_HELP = {
   },
   'promotion.salesPeople.momStatus': {
     help: {
-      definition: 'Month by month, the achievement of the people in each status that month.',
-      formula: 'Achievement = Σ month actual ÷ Σ monthly target of the people in the status',
-      notes: 'Status uses that month\'s actual ÷ monthly target, so people move between lines from month to month. '
+      definition: 'Month by month, the achievement of the people in each tier that month.',
+      formula: 'Achievement = Σ month actual ÷ Σ monthly target of the people in the tier',
+      notes: 'The tier uses that month\'s actual ÷ monthly target, so people move between lines from month to month. '
         + 'The anchor month is partial (target prorated to the as-of date). Dashed line = 100%.',
     },
-    interactions: ['Click a status in the legend to hide or show its line', 'Hover a month for achievement, LYD and people', 'Export as PDF'],
+    interactions: ['Click a tier in the legend to hide or show its line', 'Hover a month for achievement, LYD and people', 'Export as PDF'],
   },
   'promotion.salesPeople.contributions': {
     help: {

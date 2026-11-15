@@ -31,7 +31,7 @@ import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { ValidationStatusBar } from '../../../../components/ValidationStatusBar';
 import { standardFilterBarProps } from '../../../../components/standardFilterBarProps';
 import { useAuth } from '../../../../lib/AuthProvider';
-import { formatCompactCurrency, formatCurrency, formatPercent, formatTimestamp, formatVariance } from '../../../../lib/format';
+import { formatCompactCurrency, formatCurrency, formatPercent, formatSignedPercent, formatTimestamp } from '../../../../lib/format';
 import { useRefreshStatus, useSalesPeopleOverview } from '../../../../lib/hooks';
 import { CATEGORICAL_8 } from '../../../../lib/marcom/palette';
 import {
@@ -117,8 +117,12 @@ function VsTarget({ people }: { people: SalesPersonPerformance[] }) {
   const { actual, target, variance, variancePct } = peopleSummary(people);
   return (
     <div className={styles.ytdVariance} title={`${formatCurrency(actual)} of ${formatCurrency(target)}`}>
-      <div style={{ color: varianceColor(variance) }}>
-        {signedCompact(variance)}{variancePct != null && <> · {formatVariance(variancePct)}</>}
+      <div className={styles.varianceRow} style={{ color: varianceColor(variance) }}>
+        <span data-testid="variance-amount">{signedCompact(variance)}</span>
+        {variancePct != null && (
+          <span data-testid="variance-pct" className={styles.variancePill}
+            style={{ '--variance': varianceColor(variance) } as React.CSSProperties}>{formatSignedPercent(variancePct)}</span>
+        )}
       </div>
       <div className={styles.muted}>vs YTD target</div>
     </div>
@@ -163,7 +167,7 @@ function TopPersonCard({ definition, person, searching, pressed, onPress }: {
     return (
       <Card role="region" aria-label={definition.label} className={styles.statusCard} style={style}>
         {title}
-        <p className={styles.emptyCategory}>{searching ? 'No one matches this search' : 'No one in this status'}</p>
+        <p className={styles.emptyCategory}>{searching ? 'No one matches this search' : 'No one in this tier'}</p>
       </Card>
     );
   }
@@ -173,7 +177,7 @@ function TopPersonCard({ definition, person, searching, pressed, onPress }: {
       <div {...pressable(onPress)} aria-pressed={pressed} aria-label={person.name} className={styles.personPick}>
         <span className={styles.personName} title={person.name}>{person.name}</span>
         <span className={styles.cardValue} style={{ color: varianceColor(person.variancePct) }}>
-          {dash(formatVariance(person.variancePct))}
+          {dash(formatSignedPercent(person.variancePct))}
         </span>
         <span className={styles.cardSub} style={{ color: varianceColor(person.variance) }} title={formatCurrency(person.variance)}>
           {signedCompact(person.variance)} vs target
@@ -337,7 +341,7 @@ export default function SalesPeoplePerformancePage() {
     key, header, align: 'right', render: (r) => fmt(get(r)), rawValue: (r) => fmt(get(r)), sortValue: (r) => get(r) ?? -Infinity,
   });
   const pct = (v: number | null) => dash(formatPercent(v));
-  const variance = (v: number | null) => dash(formatVariance(v));
+  const variance = (v: number | null) => dash(formatSignedPercent(v));
 
   type PersonRow = (typeof personRows)[number];
   const detailColumns: DataGridColumn<PersonRow>[] = [
@@ -348,12 +352,12 @@ export default function SalesPeoplePerformancePage() {
     money<PersonRow>('variance', 'Variance to target', (r) => r.variance),
     ratio<PersonRow>('variancePct', 'Variance %', (r) => r.variancePct, variance),
     ratio<PersonRow>('achievement', 'Achievement', (r) => r.achievement, pct),
-    { key: 'status', header: 'Status', render: (r) => <StatusPill status={r.status} label={label(r.status)} />,
+    { key: 'status', header: 'Tier', render: (r) => <StatusPill status={r.status} label={label(r.status)} />,
       rawValue: (r) => label(r.status), filterOptions: statusFilter },
   ];
 
   const selectionParts = [
-    status && `Status: ${label(status)}`,
+    status && `Tier: ${label(status)}`,
     search.trim() && `Name contains: ${search.trim()}`,
     selected && `Person: ${selected.name}`,
   ].filter((p): p is string => !!p);
@@ -373,10 +377,10 @@ export default function SalesPeoplePerformancePage() {
       setDownloading(null);
     }
   }
-  const exportMix = () => exportPdf('mix', 'Status mix', ['Status', 'People', 'Team share', 'Benchmark', 'Gap'],
+  const exportMix = () => exportPdf('mix', 'Tier mix', ['Tier', 'People', 'Team share', 'Benchmark', 'Gap'],
     mixRows.map((r) => [r.label, String(r.count), peoplePercent.format(r.share), r.benchmarkLabel, r.gap]),
     [`Period: ${mixPeriodLabel}`, `Team size: ${headcount(mix.total)}`], mixNote ? [mixNote] : []);
-  const exportMom = () => exportPdf('mom', 'MoM performance by status', ['Month', ...definitions.map((d) => d.label)],
+  const exportMom = () => exportPdf('mom', 'MoM performance by tier', ['Month', ...definitions.map((d) => d.label)],
     momRows.map((m) => [m.label, ...definitions.map((d) => {
       const s = m.statuses[d.key];
       return s.count ? `${pct(s.achievement)} (${s.count})` : '—';
@@ -415,9 +419,9 @@ export default function SalesPeoplePerformancePage() {
             <Card><EmptyState message="No sales people with a target for the selected filters." onResetFilters={() => { clearPage(); state.resetFilters(); }} /></Card>
           ) : (
             <>
-              {/* 1. Team status: one card per status, click = filter the page to that status. */}
-              <section aria-label="YTD status summary" className={styles.section}>
-                <SectionHeader title="Team status" helpId="promotion.salesPeople.statusCards">
+              {/* 1. Team tiers: one card per tier, click = filter the page to that tier. */}
+              <section aria-label="YTD tier summary" className={styles.section}>
+                <SectionHeader title="Team tiers" helpId="promotion.salesPeople.statusCards">
                   <span className={styles.muted}>YTD 1 Jan – {anchorDate}</span>
                 </SectionHeader>
                 <div className={styles.cards}>
@@ -463,7 +467,7 @@ export default function SalesPeoplePerformancePage() {
 
               {/* 3. Status mix (grouped bars) | MoM performance by status. */}
               <div className={styles.grid}>
-                <ChartPanel title="Status mix" {...vh('promotion.salesPeople.statusMix')} wrapHeader
+                <ChartPanel title="Tier mix" {...vh('promotion.salesPeople.statusMix')} wrapHeader
                   headerActions={(
                     <div className={styles.panelActions}>
                       <div className={styles.monthPicker}>
@@ -474,7 +478,7 @@ export default function SalesPeoplePerformancePage() {
                     </div>
                   )}>
                   <p className={styles.caption}>
-                    Team headcount by {mixPeriod === YTD ? 'YTD status' : 'monthly status'} · {mixPeriodLabel} · {headcount(mix.total)}
+                    Team headcount by {mixPeriod === YTD ? 'YTD tier' : 'monthly tier'} · {mixPeriodLabel} · {headcount(mix.total)}
                     <span className={styles.swatches}>
                       <span><i className={styles.swatchSolid} aria-hidden />People · team share</span>
                       <span><i className={styles.swatchHatched} aria-hidden />Benchmark</span>
@@ -528,10 +532,10 @@ export default function SalesPeoplePerformancePage() {
                   )}
                 </ChartPanel>
 
-                <ChartPanel title="MoM performance by status" {...vh('promotion.salesPeople.momStatus')}
+                <ChartPanel title="MoM performance by tier" {...vh('promotion.salesPeople.momStatus')}
                   headerActions={<ExportPdfButton onClick={exportMom} downloading={downloading === 'mom'} disabled={!momRows.length} />}>
-                  <p className={styles.caption}>Achievement of each month&apos;s status group · {cohortCaption}</p>
-                  <div role="group" aria-label="Show statuses" className={styles.legend}>
+                  <p className={styles.caption}>Achievement of each month&apos;s tier group · {cohortCaption}</p>
+                  <div role="group" aria-label="Show tiers" className={styles.legend}>
                     {definitions.map((d) => (
                       <button key={d.key} type="button" aria-pressed={!hiddenLines.has(d.key)} onClick={() => toggleLine(d.key)}
                         style={{ '--status': STATUS_COLOR[d.key] } as React.CSSProperties}>
@@ -637,7 +641,7 @@ export default function SalesPeoplePerformancePage() {
                                   {contributions.level === 'person' ? (
                                     <>
                                       <div>Variance to YTD target: {variance(s.target > 0 ? (s.actual - s.target) / s.target : null)}</div>
-                                      {personStatus && <div>Status: {label(personStatus)}</div>}
+                                      {personStatus && <div>Tier: {label(personStatus)}</div>}
                                     </>
                                   ) : (
                                     <>

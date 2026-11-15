@@ -49,6 +49,14 @@ export function formatPercent(pct: number | null | undefined): string | undefine
   return `${(pct * 100).toFixed(2)}%`;
 }
 
+/** A signed change with the typographic minus (U+2212), e.g. "+3.20%" / "−66.08%" -- same digits as formatVariance,
+ * whose "-" is the ASCII hyphen (2026-11-15: Salesforce Performance uses this one so the amount and the % share one
+ * minus sign). */
+export function formatSignedPercent(pct: number | null | undefined): string | undefined {
+  if (pct === null || pct === undefined || !Number.isFinite(pct)) return undefined;
+  return `${pct >= 0 ? '+' : '\u2212'}${Math.abs(pct * 100).toFixed(2)}%`;
+}
+
 export function formatVariance(pct: number | null | undefined): string | undefined {
   if (pct === null || pct === undefined || !Number.isFinite(pct)) return undefined;
   const sign = pct >= 0 ? '+' : '';

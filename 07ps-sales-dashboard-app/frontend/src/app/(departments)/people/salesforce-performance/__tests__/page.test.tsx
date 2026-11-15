@@ -128,11 +128,11 @@ describe('Salesforce Performance: top people by category', () => {
     expect(shown('Top performer')).toEqual(['Omar']);
     // Worst by variance % to YTD target: Ziad −90% (Wide is −61%).
     expect(shown('Critical')).toEqual(['Ziad']);
-    expect(topCard('Critical').textContent).toContain('-90.00%');
+    expect(topCard('Critical').textContent).toContain('−90.00%'); // one minus sign (U+2212) for the amount and the %
     expect(topCard('Critical').textContent).toContain('−LYD 90 vs target');
     expect(topCard('Critical').textContent).toContain('LYD 10 of LYD 100');
     expect(topCard('Top performer').textContent).toContain('+LYD 50 vs target');
-    expect(within(topCard('On target')).getByText('No one in this status')).toBeTruthy();
+    expect(within(topCard('On target')).getByText('No one in this tier')).toBeTruthy();
     expect(screen.queryByText(/Show all/)).toBeNull();
   });
   it('always ranks by variance % to YTD target, with no measure toggle', async () => {
@@ -171,15 +171,19 @@ describe('Salesforce Performance: top people by category', () => {
 describe('Salesforce Performance: status cards, charts and table', () => {
   it('cards show headcount and YTD variance in LYD and percent', async () => {
     render(<Page />);
-    const summary = await screen.findByRole('region', { name: 'YTD status summary' });
+    const summary = await screen.findByRole('region', { name: 'YTD tier summary' });
     const total = within(summary).getByRole('button', { name: /Total sales people/ });
     expect(total.textContent).toContain('7');
     // (775 − 1600) ÷ 1600
-    expect(total.textContent).toContain('−LYD 825 · -51.56%');
+    // the amount and the % are separate elements (the % a pill), both with U+2212, no "·" between them
+    expect(within(total).getByTestId('variance-amount').textContent).toBe('−LYD 825');
+    expect(within(total).getByTestId('variance-pct').textContent).toBe('−51.56%');
+    expect(total.textContent).not.toMatch(/ · |-\d/);
     expect(total.textContent).toContain('vs YTD target');
     const critical = within(summary).getByRole('button', { name: /^Critical/ });
     // (505 − 1400) ÷ 1400
-    expect(critical.textContent).toContain('−LYD 895 · -63.93%');
+    expect(within(critical).getByTestId('variance-amount').textContent).toBe('−LYD 895');
+    expect(within(critical).getByTestId('variance-pct').textContent).toBe('−63.93%');
     expect(summary.textContent).not.toMatch(/Achievement|Benchmark/);
     expect(document.body.textContent).not.toContain('No target');
     expect(nav.active).toBe('Salesforce Performance');
@@ -187,7 +191,7 @@ describe('Salesforce Performance: status cards, charts and table', () => {
   });
   it('a status card filters the table; Total shows everyone again', async () => {
     render(<Page />);
-    const summary = await screen.findByRole('region', { name: 'YTD status summary' });
+    const summary = await screen.findByRole('region', { name: 'YTD tier summary' });
     const criticalCard = within(summary).getByRole('button', { name: /^Critical/ });
     expect(criticalCard.getAttribute('tabindex')).toBe('0');
     fireEvent.keyDown(criticalCard, { key: 'Enter' });
@@ -203,7 +207,7 @@ describe('Salesforce Performance: status cards, charts and table', () => {
       anchorDate: '2026-02-15', monthsElapsed: 1.5, statuses: [...statuses], contributions, people: largerTeam,
     });
     render(<Page />);
-    await screen.findByRole('region', { name: 'Status mix' });
+    await screen.findByRole('region', { name: 'Tier mix' });
     const month = screen.getByLabelText('Month') as HTMLSelectElement;
     expect(month.value).toBe('ytd');
     expect([...month.options].map((o) => o.value)).toEqual(['2026-02', '2026-01', 'ytd']);
@@ -226,14 +230,14 @@ describe('Salesforce Performance: status cards, charts and table', () => {
     expect(screen.getByRole('note').textContent).toBe('Omar was top performer YTD');
     fireEvent.change(screen.getByLabelText('Month'), { target: { value: '2026-02' } });
     expect(screen.getByRole('note').textContent).toBe('Omar was top performer in Feb 2026');
-    expect(screen.getByRole('region', { name: 'Status mix' }).textContent).toContain('monthly status');
+    expect(screen.getByRole('region', { name: 'Tier mix' }).textContent).toContain('monthly tier');
   });
   it('MoM performance: achievement per status per month; the legend toggles a line', async () => {
     render(<Page />);
     await screen.findByTestId('mom');
     expect(charts.lines).toHaveLength(2);
     expect(charts.lines[0]).toMatchObject({ top_performer: 270 / 200, on_target: null });
-    const toggle = within(screen.getByRole('group', { name: 'Show statuses' })).getByRole('button', { name: 'Critical' });
+    const toggle = within(screen.getByRole('group', { name: 'Show tiers' })).getByRole('button', { name: 'Critical' });
     expect(screen.getByTestId('line-critical')).toBeTruthy();
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-pressed')).toBe('false');
@@ -280,7 +284,7 @@ describe('Salesforce Performance: status cards, charts and table', () => {
     render(<Page />);
     await screen.findByRole('region', { name: 'Top people by category' });
     const order = [...document.querySelectorAll('main section[aria-label]')].map((s) => s.getAttribute('aria-label'));
-    expect(order).toEqual(['YTD status summary', 'Top people by category', 'Status mix', 'MoM performance by status',
+    expect(order).toEqual(['YTD tier summary', 'Top people by category', 'Tier mix', 'MoM performance by tier',
       'Person contribution', 'Actual vs target by month', 'Performance details · 7']);
   });
   it('a top person or a table row selects that person; Show everyone clears it', async () => {
@@ -296,7 +300,7 @@ describe('Salesforce Performance: status cards, charts and table', () => {
   });
   it('the FilterBar Reset also clears the page status, search and person', async () => {
     render(<Page />);
-    const summary = await screen.findByRole('region', { name: 'YTD status summary' });
+    const summary = await screen.findByRole('region', { name: 'YTD tier summary' });
     fireEvent.click(within(summary).getByRole('button', { name: /^Critical/ }));
     expect(filterBar.props.isPristine).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
@@ -308,6 +312,6 @@ describe('Salesforce Performance: status cards, charts and table', () => {
     render(<Page />);
     expect(await screen.findByRole('alert')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    await screen.findByRole('region', { name: 'YTD status summary' });
+    await screen.findByRole('region', { name: 'YTD tier summary' });
   });
 });
