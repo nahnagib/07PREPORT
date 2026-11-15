@@ -91,13 +91,17 @@ def test_every_product_gets_exactly_one_status_in_order_and_total_equals_the_sum
     status = dim_out.set_index("ProductKey")["ProductStatus"].to_dict()
     assert status == {
         "1": "Active", "2": "NonActive", "3": "NonActive", "4": "Dormant", "5": "Unclassified", "6": "Unclassified",
-        "7": "NonActive", "8": "Active", "9": "NonActive", "10": "NonActive", "11": "Dormant",
+        # 7 = the automatic Raw Materials category: Unclassified (2026-11-15; before it was off the pages yet counted Non Active)
+        "7": "Unclassified", "8": "Active", "9": "NonActive", "10": "NonActive", "11": "Dormant",
     }
     assert len(dim_out) == dim_out["ProductCompanyKey"].nunique() == 11            # one row per product, every product
     counts = dim_out["ProductStatus"].value_counts()
     assert counts.sum() == len(dim_out) and set(counts.index) <= {"Unclassified", "Dormant", "Active", "NonActive"}
     pages = dim_out.set_index("ProductKey")["OnProductPages"].to_dict()
     assert {k for k, v in pages.items() if v == 0} == {"4", "5", "6", "7", "11"}    # excluded / archived: counted, not on the pages
+    # one bucket: every row off the pages is Dormant or Unclassified; every page row is Active or Non Active
+    assert {status[k] for k, v in pages.items() if v == 0} <= {"Dormant", "Unclassified"}
+    assert {status[k] for k, v in pages.items() if v == 1} <= {"Active", "NonActive"}
     on_hand = dim_out.set_index("ProductKey")["OnHandQty"]
     assert on_hand["2"] == 4 and on_hand["3"] == 0                                   # Non Active: with stock / zero stock
 

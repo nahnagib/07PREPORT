@@ -65,6 +65,32 @@ from sales_pipeline.product_exclusions import ProductExclusions
 from sales_pipeline.product_matching import normalize_match_company
 
 UNCLASSIFIED_NO_COST = "Unclassified (no cost)"
+
+# One definition of "our products" (2026-11-15). Every SKU is in exactly one bucket, first match wins:
+#   Unclassified (an active ProductExclusions.xlsx rule, or the automatic Raw Materials category) > Dormant (archived in
+#   Odoo) > Active (sold in the period) > Non Active (not sold, never sold included).
+# The portfolio of every Product page calculation is Active + Non Active; Dormant and Unclassified are counted only by
+# Total SKUs, their own cards and the status table (backend measures/productPortfolio.ts mirrors this).
+PRODUCT_STATUSES = ("Unclassified", "Dormant", "Active", "NonActive")
+PORTFOLIO_STATUSES = ("Active", "NonActive")
+
+
+def product_status(excluded: pd.Series, archived: pd.Series, sold: pd.Series) -> pd.Series:
+    """The bucket of each row by the precedence above (the three masks share one index)."""
+    return pd.Series(np.select([excluded.astype(bool), archived.astype(bool), sold.astype(bool)], list(PRODUCT_STATUSES[:3]),
+                               default=PRODUCT_STATUSES[3]), index=excluded.index)
+
+
+def rule_text(rule: dict[str, Any]) -> str:
+    """"Products · Tika · row 12 · Samples (100% non-sales)" -- the ProductExclusions.xlsx row behind an Unclassified product."""
+    parts = [f"{rule['sheet']} sheet", str(rule.get("company") or "")]
+    if rule.get("name"):
+        parts.append(str(rule["name"]))
+    if rule.get("row") is not None and not pd.isna(rule.get("row")):
+        parts.append(f"row {int(rule['row'])}")
+    if isinstance(rule.get("reason"), str) and rule["reason"].strip():
+        parts.append(rule["reason"].strip())
+    return " · ".join(p for p in parts if p)
 BCG_BY_CODE = {"HV/HP": "Stars", "HV/LP": "Cash Cows", "LV/HP": "Strategic", "LV/LP": "Dogs"}
 MOVEMENTS = ("New", "Stable", "Improved", "Drop", "Discontinued")
 GAP_ATTRIBUTES = ("Brand", "Family", "Size", "SKU")
@@ -412,14 +438,30 @@ class ProductDashboardBuilder:
         raw_hit = in_categories(self.raw_material_category_ids(categories))
         keys["ExcludedByProduct"] = False
         keys["ExcludedByCategory"] = False
+        keys["ExclusionRule"] = None
         reason = pd.Series(pd.NA, index=keys.index, dtype=object)
         for company, group in keys.groupby("Company"):
             idx = group.index
             keep = group["pid"].isin(self.exclusions.ids("Products", "Keep", company))
             individual = group["pid"].isin(self.exclusions.ids("Products", "Exclude", company)) & ~keep
             category = in_categories(category_roots(company)).loc[idx] & ~keep
+            # the automatic Raw Materials category (2026-11-15): Unclassified like a Categories row, never a page product
+            raw = raw_hit.loc[idx] & ~keep & ~individual & ~category
             keys.loc[idx, "ExcludedByProduct"] = individual
-            keys.loc[idx, "ExcludedByCategory"] = category
+            keys.loc[idx, "ExcludedByCategory"] = category | raw
+            # which rule matched (status table, Unclassified tab): sheet · Company · Excel row · Reason
+            applies = self.exclusions.ids("Categories", "Exclude", company)
+            rule_members = [(i, in_categories(rule_roots[i]).loc[idx]) for i, odoo_id, rule_company in
+                            zip(rules.index, rules["OdooID"].astype(int), rules["Company"]) if odoo_id in applies and rule_company in ("All", company)]
+            for k in idx[individual.to_numpy()]:
+                hit = self.exclusions.rule_for("Products", company, int(keys.at[k, "pid"]), "Exclude")
+                keys.at[k, "ExclusionRule"] = rule_text(hit) if hit else "Products sheet"
+            for k in idx[category.to_numpy() & ~individual.to_numpy()]:
+                i = next((i for i, members in rule_members if bool(members.at[k])), None)
+                keys.at[k, "ExclusionRule"] = (rule_text({"sheet": "Categories", "company": rules.at[i, "Company"], "row": rows.at[i],
+                                                          "reason": rules.at[i, "Reason"] if "Reason" in rules.columns else None,
+                                                          "name": names.at[i]}) if i is not None else "Categories sheet")
+            keys.loc[idx[raw.to_numpy()], "ExclusionRule"] = "Automatic · Raw Materials category"
             reason.loc[idx] = np.select(
                 [group["Archived"] & ~keep, individual, category, raw_hit.loc[idx] & ~keep],
                 ["archived", "file_product", "file_category", "raw_material"], default=None,
@@ -604,21 +646,21 @@ class ProductDashboardBuilder:
             extra["ThresholdCompany"] = extra["Company"]
             extra["AsOfDate"] = self.as_of
             extra["OnProductPages"] = 0
-            extra = extra.drop(columns=[c for c in ("pid", "Archived", "ExcludedByProduct", "ExcludedByCategory") if c in extra.columns])
+            extra = extra.drop(columns=[c for c in ("pid", "Archived", "ExcludedByProduct", "ExcludedByCategory", "ExclusionRule") if c in extra.columns])
             out = pd.concat([pages, extra], ignore_index=True)
         else:
             out = pages
         info = keys.drop_duplicates("ProductCompanyKey").set_index("ProductCompanyKey")
         key = out["ProductCompanyKey"]
         out["OdooProductID"] = key.map(info["pid"]).astype("Int64")
+        if "ExclusionRule" in info.columns:
+            out["ExclusionRule"] = key.map(info["ExclusionRule"])
         for column in ("ExcludedByProduct", "ExcludedByCategory"):
             out[column] = key.map(info[column]).eq(True).astype("int64")
         excluded = out["ExcludedByProduct"].eq(1) | out["ExcludedByCategory"].eq(1)
         archived = key.map(info["Archived"]).eq(True)
         active = key.astype(str).isin(self.sold_last_12m) & out["OnProductPages"].eq(1)
-        out["ProductStatus"] = np.select(
-            [excluded, archived, active], list(self.STATUS_ORDER[:3]), default=self.STATUS_ORDER[3],
-        )
+        out["ProductStatus"] = product_status(excluded, archived, active)
         log.info("Product pages: Odoo SKU counts as of %s: %s", self.as_of.date(), self._sku_counts())
         return out
 

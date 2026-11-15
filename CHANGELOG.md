@@ -6,6 +6,29 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (ProductExclusions.xlsx: the 2026-11-15 structure and meaning, 2026-11-15)
+- The reader accepts the new file (sha1 `08a87554…`): Customers 36 rows, Categories 5, Products 695 (501 Exclude / Yes, 194
+  Exclude / No). Every reference column is ignored. "Archived in Odoo" and "Product Type" are never matched on (archive
+  status always comes from Odoo). There is no "Price Fix (Odoo)" sheet, and Instructions / Summary / Lists are not read.
+  Active = No rows are ignored (Customers 10, Categories 2, Products 194). The module docstring describes the new
+  structure.
+- Each rule keeps its Reason. Every Unclassified product now stores the rule that matched in the new column
+  `ExclusionRule` (sheet, Company, Excel row, Reason; e.g. "Categories sheet · All · Packaging · row 2 · Manufacturing
+  packaging, not sold"). The status table's Unclassified tab shows it. **Migration 0078** (not applied) adds the column.
+  Until it is applied, the ETL leaves the column out and the table shows "Products sheet" / "Categories sheet".
+- Products in the automatic Raw Materials category are now Unclassified (rule "Automatic · Raw Materials category").
+  Before, they were off the pages but counted as Non Active. 0 SKUs today.
+- One status rule in the ETL, `product_status()` (Unclassified > Dormant > Active > Non Active), used by the build.
+- New read-only check `data/etl/scripts/product/check_product_status.py`. It reads the local DB (SELECT only) and the file,
+  and reports today's buckets vs the next refresh per company, the what-if for the pending rows, and every product that
+  changes bucket. Its "today" reproduces the live cards exactly. Next refresh (All): Total 4,289 = Unclassified 577 (207) ·
+  Dormant 1,479 (1,589) · Active 1,051 (1,055) · Non Active 1,182 (1,438). Majaal 416 / 1,470 / 973 / 1,132; Tika
+  190 / 108 / 78 / 50.
+- Upload validation: tests for the new structure (accepted) and for a missing required column (rejected, naming the
+  sheet and column). New test file `test_product_exclusions_structure_2026_11_15.py` covers: Exclude / Keep precedence,
+  All vs one company, Active = No ignored, a category with a product Keep, a customer Keep overriding Inter Company, a
+  missing sheet or column, a bad id row skipped with its Excel row, and the stored rule text.
+
 ### Changed (Detractor Follow-up: labelled sections, new order, 2026-11-15)
 - The board now has three section titles, styled like the other pages' section titles (14px bold), in this order:
   **SLA Performance** (Close SLA missed, Contact SLA missed, Resolved last 30 days within SLA), **Status** (Open, Closed,

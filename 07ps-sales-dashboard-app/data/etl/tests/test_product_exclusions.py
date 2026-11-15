@@ -288,6 +288,11 @@ def test_a_dedicated_raw_materials_category_is_excluded_automatically_with_its_s
     out = b.build(pd.DataFrame(lines), dim, None, line_costs=pd.Series([1.0] * 4), categories=CATEGORIES)
     assert set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductKey"]) == {"3", "5"}
     assert b.exclusion_report()["products_excluded"]["raw_material"]["total"] == 2
+    # 2026-11-15: an automatic Raw Materials product is Unclassified (one bucket), never counted Non Active
+    dim_out = out["Dim_ProductDashboard"]
+    status = dict(zip(dim_out["ProductKey"].astype(str), dim_out["ProductStatus"]))
+    assert (status["1"], status["2"], status["3"]) == ("Unclassified", "Unclassified", "Active")
+    assert dict(zip(dim_out["ProductKey"].astype(str), dim_out["ExclusionRule"]))["1"] == "Automatic · Raw Materials category"
 
 
 def test_sales_lines_are_counted_per_customer_rule() -> None:
@@ -440,5 +445,10 @@ def test_the_real_product_exclusions_file_has_no_error_on_the_products_sheet() -
     ex = ProductExclusionsLoader().load(REAL_FILE)
     assert [s for s in ex.skipped if s["sheet"] == "Products"] == []
     assert [w for w in ex.warnings if w["sheet"] == "Products"] == []
-    assert len(ex.products) + ex.ignored["Products"] == 162          # every data row applied or Active = No
-    assert ex.products["OdooID"].is_unique
+    # 2026-11-15 file (sha1 08a87554...): 695 Products rows = 501 Exclude / Yes + 194 Exclude / No; no Price Fix sheet
+    assert len(ex.products) + ex.ignored["Products"] == 695          # every data row applied or Active = No
+    assert (len(ex.products), ex.ignored["Products"]) == (501, 194)
+    assert ex.counts()["Categories"] == {"Exclude": 3} and ex.ignored["Categories"] == 2
+    assert ex.counts()["Customers"] == {"Exclude": 15, "Keep": 11} and ex.ignored["Customers"] == 10
+    assert ex.skipped == []
+    assert ex.products["Reason"].astype(str).str.len().gt(0).all()   # the Reason travels with each rule

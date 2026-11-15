@@ -1,25 +1,33 @@
 """ProductExclusions.xlsx -- the manual exclusion list of the Product pages (optional input file, like BlockedCustomers.xlsx).
 
-Only the sheets Customers, Categories and Products are read; Instructions, Summary, Lists and "Price Fix (Odoo)" (for
-information only) never are. Optional columns Reason, Added By, Added Date and Notes are kept for the log only.
-  Customers   Company | Odoo Partner ID  | Action Exclude/Keep | Active Yes/No | reference columns
-  Categories  Company | Odoo Category ID | Action Exclude      | Active Yes/No | reference columns
-  Products    Company | Odoo Product ID  | Action Exclude/Keep | Active Yes/No | reference columns
+Structure (2026-11-15). Only Customers, Categories and Products are read; Instructions, Summary and Lists never are (there is
+no "Price Fix (Odoo)" sheet any more: those products are rows of the Products sheet).
+  Customers   Company | Odoo Partner ID  | Customer Name (reference) | Action Exclude/Keep | Active Yes/No | Reason | Added By | Added Date | Notes
+  Categories  Company | Odoo Category ID | Category Name (reference) | Action Exclude      | Active Yes/No | Reason | Added By | Added Date | Notes
+  Products    Company | Odoo Product ID  | Product Name / Internal Reference / Category / Odoo Category ID / Product Type /
+              Odoo Sales Price (reference) | Action Exclude/Keep | Active Yes/No | Reason | LYD 2026 YTD / LYD 2025 / LYD before
+              2025 (reference) | Archived in Odoo | Added By | Added Date | Notes
+Required per sheet: Company, the id column, Action, Active. Every other column is reference: it is never used for matching.
+"Archived in Odoo" and "Product Type" are reference only too -- the archive status always comes from Odoo.
 
-Company = All, Majaal or Tika (a Tika row applies to Tika only). Customers and Products match on the Odoo id only (names are
-reference). A Categories row matches the Odoo category with that id OR whose own name / full path ("All / Packaging") equals
-the "Category Name (reference)" text, case and surrounding spaces ignored (2026-11-14, ProductDashboardBuilder).
-Columns are found by their header name (any order, case and surrounding spaces ignored); the grey "(reference)" columns
-are never read for matching. Company / Action / Active are trimmed and case-insensitive. The id must be a whole positive
-number: 123, 123.0 or the text "123" all read as 123; blank, a decimal (123.5) or text is SKIPPED with its sheet and Excel
-row. Fully blank rows (the sheets carry data validation down to row 2000) are ignored.
-Rows with Active = No are IGNORED (counted): such a row does nothing at all -- it does NOT keep a product that another
-rule (archived, a category, a raw-material category) removes. Only Action = Keep with Active = Yes keeps a product.
+Meaning, on every Product page:
+  Customers   Exclude drops that customer's sales lines from every Product calculation; Keep counts them even when the
+              automatic Backoffice / Inter Company / intercompany-flag rule would drop them.
+  Categories  Exclude makes every product of that category (sub-categories follow their parent) Unclassified.
+  Products    Exclude makes that product Unclassified; Keep overrides a category exclusion.
+Unclassified products appear only in the Unclassified card, Total SKUs and the status table's Unclassified tab; the rule
+that matched (sheet, Company, Excel row, Reason) is kept per product (ProductDashboardBuilder: ExclusionRule).
+
+Company = All, Majaal or Tika (a Tika row applies to Tika only; a company row wins over the All row of the same id).
+Customers and Products match on the Odoo id only. A Categories row matches the Odoo category with that id OR whose own
+name / full path ("All / Packaging") equals the "Category Name (reference)" text, case and surrounding spaces ignored.
+Columns are found by their header name (any order, case and surrounding spaces ignored). Company / Action / Active are
+trimmed and case-insensitive. The id must be a whole positive number: 123, 123.0 or the text "123" all read as 123; blank,
+a decimal (123.5) or text is SKIPPED with its sheet and Excel row. Fully blank rows are ignored.
+Rows with Active = No are IGNORED (counted): such a row does nothing at all. Only Action = Keep with Active = Yes keeps.
 Duplicates (same Company + id): rows that agree apply once (warning); rows that conflict (Exclude vs Keep) are all
-SKIPPED and reported. The same id under All and a company: the company's row wins for that company (ids()).
-A row that cannot be read (missing / invalid id, unknown Company, Action or Active value) is SKIPPED with a warning naming
-its sheet and Excel row (`skipped`); the other rows still apply. Ids that are not in Odoo, or a product of another company
-than the row's, are warnings only (`warnings`, added by ProductDashboardBuilder, which has the Odoo catalog).
+SKIPPED and reported. Ids that are not in Odoo, or a product of another company than the row's, are warnings only
+(`warnings`, added by ProductDashboardBuilder, which has the Odoo catalog).
 A missing sheet or required column makes the whole file invalid (ExclusionsFileInvalid): the upload is rejected and a run
 keeps using the last valid file (load_with_fallback: the copy kept in the input-backup folder after every good load).
 A missing file, or a file with only headers, means no extra exclusions.
@@ -74,7 +82,7 @@ SHEET_BY_NAME = {s.name: s for s in SHEETS}
 
 def _empty_rules() -> pd.DataFrame:
     return pd.DataFrame({"Company": pd.Series(dtype=object), "OdooID": pd.Series(dtype="int64"), "Action": pd.Series(dtype=object),
-                         "Row": pd.Series(dtype="int64"), "Name": pd.Series(dtype=object)})
+                         "Row": pd.Series(dtype="int64"), "Name": pd.Series(dtype=object), "Reason": pd.Series(dtype=object)})
 
 
 @dataclass
@@ -109,6 +117,25 @@ class ProductExclusions:
         everyone = r[r["Company"].eq("All") & ~r["OdooID"].isin(own["OdooID"])]
         both = pd.concat([own, everyone])
         return {int(v) for v in both.loc[both["Action"].eq(action), "OdooID"]}
+
+    def rule_for(self, sheet: str, company: str, odoo_id: int, action: str | None = None) -> dict[str, Any] | None:
+        """The active row that applies to `company` for `odoo_id` (the company's own row, else the All row): sheet, Company,
+        Excel row, Action, Reason. None = no row."""
+        r = self.rules(sheet)
+        if r.empty:
+            return None
+        hit = r[r["OdooID"].eq(int(odoo_id))]
+        if action is not None:
+            hit = hit[hit["Action"].eq(action)]
+        row = hit[hit["Company"].eq(company)]
+        if row.empty:
+            row = hit[hit["Company"].eq("All")]
+        if row.empty:
+            return None
+        x = row.iloc[0]
+        reason = x["Reason"] if "Reason" in row.columns and isinstance(x["Reason"], str) and x["Reason"] else None
+        row_no = x["Row"] if "Row" in row.columns and not pd.isna(x["Row"]) else None
+        return {"sheet": sheet, "company": str(x["Company"]), "row": None if row_no is None else int(row_no), "action": str(x["Action"]), "reason": reason}
 
     def counts(self) -> dict[str, dict[str, int]]:
         return {s.name: {str(k): int(v) for k, v in self.rules(s.name)["Action"].value_counts().to_dict().items()} for s in SHEETS}
@@ -235,12 +262,13 @@ class ProductExclusionsLoader:
                 skipped.append({"sheet": spec.name, "row": excel_row, "name": name, "reason": "; ".join(problems)})
                 continue
             rows.append({"Company": company, "OdooID": odoo_id, "Action": action, "Row": excel_row, "Name": name,
+                         "Reason": self._text(r["Reason"]) if "Reason" in df.columns else "",
                          "Log": {c: self._text(r[c]) for c in OPTIONAL_COLUMNS if c in df.columns and self._text(r[c])}})
         rows, conflicts, warnings = self._resolve_duplicates(rows, spec)
         skipped = sorted(skipped + conflicts, key=lambda x: x["row"])
         for row in rows:  # Reason / Added By / Added Date / Notes: for the log only, never matched on
             log.debug("Product pages: %s %s %s %s %s", spec.name, row["Company"], row["OdooID"], row["Action"], row["Log"])
-        rules = pd.DataFrame([{k: row[k] for k in ("Company", "OdooID", "Action", "Row", "Name")} for row in rows]) if rows else _empty_rules()
+        rules = pd.DataFrame([{k: row[k] for k in ("Company", "OdooID", "Action", "Row", "Name", "Reason")} for row in rows]) if rows else _empty_rules()
         if not rules.empty:
             rules["OdooID"] = rules["OdooID"].astype("int64")
             rules["Row"] = rules["Row"].astype("int64")

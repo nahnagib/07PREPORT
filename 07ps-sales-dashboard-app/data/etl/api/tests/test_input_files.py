@@ -258,3 +258,41 @@ def test_product_exclusions_upload_without_a_required_sheet_is_rejected_and_the_
     response = put(client, "ProductExclusions.xlsx", broken)
     assert response.status_code == 422 and "Products sheet" in str(response.get_json())
     assert (inputs / "ProductExclusions.xlsx").read_bytes() == before
+
+
+def _exclusions_2026_11_15(products_columns_drop: tuple[str, ...] = ()):
+    """The 2026-11-15 structure: Instructions / Summary / Customers / Categories / Products / Lists, the Products sheet with
+    every reference column and "Archived in Odoo", no "Price Fix (Odoo)" sheet."""
+    products = {"Company": ["Majaal", "Tika"], "Odoo Product ID": [3273, 5], "Product Name (reference)": ["Design", "P5"],
+                "Internal Reference (reference)": [None, None], "Category (reference)": ["Bathroom", "All"],
+                "Odoo Category ID (reference)": [47, 1], "Product Type (reference)": ["Service", "Storable"],
+                "Odoo Sales Price (reference)": [8274, 1], "Action": ["Exclude", "Exclude"], "Active": ["Yes", "No"],
+                "Reason": ["Service", "pending"], "LYD 2026 YTD (reference)": [0, 0], "LYD 2025 (reference)": [0, 0],
+                "LYD before 2025 (reference)": [0, 0], "Archived in Odoo": ["Yes", None], "Added By": ["QA", "QA"],
+                "Added Date": ["2026-11-15", "2026-11-15"], "Notes": [None, None]}
+    for column in products_columns_drop:
+        products.pop(column)
+    return xlsx({
+        "Instructions": {"How to use": ["Active = No rows are ignored"]},
+        "Summary": {"Sheet": ["Products"], "Rows": [2]},
+        "Customers": {"Company": ["Tika"], "Odoo Partner ID": [9709], "Customer Name (reference)": ["x"], "Action": ["Keep"], "Active": ["Yes"],
+                      "Reason": ["real buyer"], "Added By": [None], "Added Date": [None], "Notes": [None]},
+        "Categories": {"Company": ["All"], "Odoo Category ID": [39], "Category Name (reference)": ["Packaging"], "Action": ["Exclude"],
+                       "Active": ["Yes"], "Reason": ["not sold"], "Added By": [None], "Added Date": [None], "Notes": [None]},
+        "Products": products,
+        "Lists": {"Action": ["Exclude", "Keep"]},
+    })
+
+
+def test_product_exclusions_2026_11_15_structure_is_accepted(client, folders):
+    response = put(client, "ProductExclusions.xlsx", _exclusions_2026_11_15())
+    assert response.status_code == 200, response.get_json()
+    counts = response.get_json()["validation"]["counts"]
+    assert (counts["products_active"], counts["products_ignored"], counts["categories_active"], counts["customers_active"]) == (1, 1, 1, 1)
+    assert counts["rows_skipped"] == 0
+
+
+def test_product_exclusions_2026_11_15_without_a_required_column_is_rejected_with_a_clear_message(client, folders):
+    response = put(client, "ProductExclusions.xlsx", _exclusions_2026_11_15(products_columns_drop=("Active",)))
+    assert response.status_code == 422
+    assert "Active" in str(response.get_json()) and "Products" in str(response.get_json())
