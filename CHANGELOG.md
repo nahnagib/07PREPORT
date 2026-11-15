@@ -30,6 +30,9 @@ Details are in the entries below. DevOps steps: `DEPLOY_NOTES.md` (migrations 00
   - The PROMPT files and the unpublished manual PDFs are untracked. The MARCOM workbooks and the FullAccess manuals stay
     tracked.
   - Stale PDP migration numbers in comments are fixed.
+  - CI was already red on `main`; it is green again. The data/ingestion lint passes (black, safe ruff fixes, the vendored
+    copy excluded). The engine-neutral `HEX(source)` filter in the NPS reach reconciliation is restored (the merge had
+    brought back the SQLite-incompatible `CAST(... AS BINARY)`). 7 ESLint false positives in changed files are cleared.
 
 ### Changed (Salesforce Performance: a Team tiers card filters the whole page, 2026-11-15)
 - Clicking a Team tiers card filters every section to that tier: Top people by category (only that tier's card), Team pulse
