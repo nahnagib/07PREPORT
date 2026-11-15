@@ -1,3 +1,69 @@
+# Deploy notes: Product status buckets, ProductExclusions.xlsx 2026-11-15, BCG status table, Product Development Plan (2026-11-15)
+
+Release pushed to `main` on 2026-11-15 (fast-forward from `b1dd1f1`). Run the steps in this order, in one window.
+
+## 1. Migrations (in order; each has a down file in `data/warehouse/down/`)
+0070–0072 were already on `main` before this release; run them first if production has not yet. 0073–0078 are new.
+
+| # | File | What it does | Down |
+|---|---|---|---|
+| 0070 | `0070_on_hand_stock_layers.sql` | On Hand qty/value and stock-layer aging columns on the Product dashboard table | `0070_on_hand_stock_layers_down.sql` |
+| 0071 | `0071_process_nps_reach_manual.sql` | `process_nps_reach_manual` (approved manual NPS reach, 12 Jul – 02 Oct) + view column `source` | `0071_process_nps_reach_manual_down.sql` |
+| 0072 | `0072_nps_followup_remove_rejected.sql` | NPS follow-up: Rejected replaced by Unresolved (old stage kept in case history; requires 0066 + 0069) | `0072_nps_followup_remove_rejected_down.sql` |
+| 0073 | `0073_product_sku_status.sql` | `ProductStatus` + `OnProductPages` on `dim_sales_product_dashboard` (+ `shd_`) | `0073_product_sku_status_down.sql` |
+| 0074 | `0074_workbook_product_exclusions.sql` | `OdooProductID`, `ExcludedByProduct`, `ExcludedByCategory` (Product pages only; sales views untouched) | `0074_workbook_product_exclusions_down.sql` |
+| 0075 | `0075_pdp_schema.sql` | Product Development Plan tables (`pdp_*`, 33 tables) | `0075_pdp_schema_down.sql` |
+| 0076 | `0076_pdp_seed_config.sql` | PDP configuration seed for TIKA (governance roles, scoring criteria, gate rules, KPI targets, roadmap years); re-runnable | `0076_pdp_seed_config_down.sql` |
+| 0077 | `0077_pdp_permissions.sql` | PDP pages/permissions; View on the plan for every role that views a Product report, entry + approval for ADMIN | `0077_pdp_permissions_down.sql` |
+| 0078 | `0078_product_exclusion_rule.sql` | `ExclusionRule` (the ProductExclusions.xlsx rule behind each Unclassified product) | `0078_product_exclusion_rule_down.sql` |
+
+All are additive and idempotent. **0073 and 0074 must run before the new ETL image runs** (without 0073 the writer drops
+the status rows). 0078 is optional for the ETL (the column is skipped when missing; the status table then shows
+"Products sheet" / "Categories sheet" instead of the full rule). Migration numbers 0002–0007 / 0022 have historical
+duplicates; nothing new is duplicated.
+
+## 2. Manual data step: upload the new ProductExclusions.xlsx BEFORE the next refresh
+Upload through **ETL Control Center → Input files → ProductExclusions.xlsx** (the upload is validated; a missing sheet or
+required column is rejected and the previous file stays). Current file: sha1 `08a87554623046df995d26b1a2a0c0be3115050d`.
+- Sheets read: **Customers**, **Categories**, **Products**. Not read: Instructions, Summary, Lists. There is **no
+  "Price Fix (Odoo)" sheet** any more.
+- Required columns (any order, header names): Customers `Company | Odoo Partner ID | Action | Active`; Categories
+  `Company | Odoo Category ID | Action | Active`; Products `Company | Odoo Product ID | Action | Active`. Every other
+  column (names, Internal Reference, Category, Product Type, Sales Price, LYD columns, "Archived in Odoo", Reason, Added
+  By/Date, Notes) is reference only.
+- Company = All / Majaal / Tika; Action = Exclude / Keep (Categories: Exclude); Active = Yes / No (No = ignored).
+- This file: Customers 15 Exclude + 11 Keep (10 Active = No), Categories 3 Exclude (2 No), Products 501 Exclude (194 No).
+No other manual data step.
+
+## 3. After deploy: a normal ETL refresh
+A normal sales refresh (or the 02:00 full run) rebuilds the Product tables with the new buckets. Expected counts
+(read-only check `data/etl/scripts/product/check_product_status.py` on a copy of the data, last 12 months to 2026-11-15):
+
+| View | Total | Unclassified | Dormant | Active | Non Active |
+|---|---|---|---|---|---|
+| All companies | 4,289 | 577 | 1,479 | 1,051 | 1,182 |
+| Majaal | 3,991 | 416 | 1,470 | 973 | 1,132 |
+| Tika | 426 | 190 | 108 | 78 | 50 |
+
+(Before: 4,289 = 207 / 1,589 / 1,055 / 1,438.) Production data may differ slightly; the check can be run on the server
+read-only (`DB_HOST` must be local to it).
+
+## 4. New pages and permissions
+- **BCG Matrix → status table** `/product/bcg-matrix/products?status=…` (API `GET /product-dashboard/bcg-matrix/products`):
+  existing permission `bcg_matrix`; nothing to grant.
+- **`profit_data`** (View / Export): profit, GP%, cost and missing-cost data on the Product pages. Synced by the backend at
+  startup; **no role has it until an admin grants it** (Admin has it implicitly).
+- **Product Development Plan** (`/product/product-development-plan/*`): `product_development_plan` (View/Export; 0077 grants
+  View to the roles that view a Product report), `product_development_entry` and `product_development_approval` (ADMIN
+  only by 0077; grant to the R&D roles on the Roles page). The plan starts empty on production: an admin creates it in
+  the app (or uploads the three R&D files once in Admin → Import; `PDP_IMPORT_DIR` is a test-stack setting only).
+- **Salesforce Performance moved** from Promotion to **People** (`/people/salesforce-performance`, permission
+  `sales_people_performance` unchanged). Old bookmarks to `/promotion/sales-people-performance` no longer resolve.
+
+## 5. No env change is required.
+
+---
+
 # Deploy notes: role data scope operators (2026-10-15) — migration 0044
 
 - **Migration:** `data/warehouse/migrations/0044_role_data_scope_operator.sql` adds `role_data_scope.operator`

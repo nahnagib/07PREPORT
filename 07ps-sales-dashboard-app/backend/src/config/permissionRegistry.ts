@@ -74,9 +74,9 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   // Revisit the actions when the page is built.
   { key: 'quality_assurance', label: 'Quality Assurance (coming soon)', group: 'dashboard', actions: DASHBOARD },
   { key: 'customer_pulse', label: 'Customer Pulse (coming soon)', group: 'dashboard', actions: DASHBOARD },
-  // Product Development Plan (TIKA R&D, migrations 0074-0076; routes/productDevelopment.ts). plan = the read-only views;
+  // Product Development Plan (TIKA R&D, migrations 0075-0077; routes/productDevelopment.ts). plan = the read-only views;
   // entry = every form; approval = deciding a gate, which ALSO needs the user's governance role for that gate (the
-  // permission alone is not enough). 0076 grants plan View to the roles that view a Product report, the rest to ADMIN.
+  // permission alone is not enough). 0077 grants plan View to the roles that view a Product report, the rest to ADMIN.
   { key: 'product_development_plan', label: 'Product Development Plan', group: 'dashboard', actions: DASHBOARD },
   { key: 'product_development_entry', label: 'Product Development Plan: data entry', group: 'data_entry', actions: ['view', 'create', 'edit', 'delete', 'export'] },
   { key: 'product_development_approval', label: 'Product Development Plan: gate approvals', group: 'data_entry', actions: ['view', 'edit'] },

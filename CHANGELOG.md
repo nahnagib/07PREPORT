@@ -6,6 +6,31 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Release 2026-11-15 (pushed to main): summary of round 1, round 2 and the push fixes
+Details are in the entries below. DevOps steps: `DEPLOY_NOTES.md` (migrations 0070–0078, the new ProductExclusions.xlsx).
+- **Merged in:** the Last 12 Months BCG rework and the Product Development Plan module (TIKA R&D: tree, roadmap, projects,
+  launches, feedback, policy, admin; migrations 0075–0077). The Salesforce Performance page moved to People.
+- **Round 1:**
+  - BCG Matrix: Total SKUs hero, clickable status cards, a new product status table, company in the product hover.
+  - PIM: the Categories donut is gone.
+  - Lifecycle: "?" on every card, Freshness over Active + Non Active.
+  - Salesforce: "Tiers" wording, the variance % as its own pill with one minus sign.
+  - Detractor Follow-up: SLA Performance / Status / Stages sections.
+- **Round 2:**
+  - One definition of "our products": Unclassified > Dormant > Active > Non Active, and every Product page uses Active +
+    Non Active only.
+  - The ProductExclusions.xlsx 2026-11-15 structure, with the matched rule stored per product (migration 0078).
+  - Lifecycle Discontinued = no sale in 365 days.
+  - One BCG colour map. The missing-cost note is an admin-only data quality row.
+  - Shorter help and captions on every Product page.
+  - Salesforce: a tier card filters the whole page (`?tier=`).
+- **Push fixes (Part A and pre-push):**
+  - Product Movement "Discontinued" uses the same rule (no sale in 365 days). Live: 404 vs Lifecycle's 401, because the
+    period ends today and the ETL as-of date is two days earlier.
+  - The PROMPT files and the unpublished manual PDFs are untracked. The MARCOM workbooks and the FullAccess manuals stay
+    tracked.
+  - Stale PDP migration numbers in comments are fixed.
+
 ### Changed (Salesforce Performance: a Team tiers card filters the whole page, 2026-11-15)
 - Clicking a Team tiers card filters every section to that tier: Top people by category (only that tier's card), Team pulse
   (recomputed for its people: "Team pulse · <tier>"), Tier mix (that tier highlighted, the others dimmed), MoM performance
