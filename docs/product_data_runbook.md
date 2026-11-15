@@ -147,7 +147,7 @@ message, and the pages keep showing the last good data.
 All thresholds are in `lifecycle` in the config. They are applied in this order:
 
 1. **Never sold**: no sale in the whole history. This is its own segment; these products are not Discontinued.
-2. **Discontinued**: `IsActive = 0` in the sheet, **or** no sale in the last 365 days.
+2. **Discontinued**: no sale in the last 365 days (2026-11-15: among Active + Non Active products only; archived products are Dormant and never on the Product pages).
 3. **New**: first sale in the last 180 days.
 4. **Growing**: invoiced quantity in the last 90 days is more than 20% above the previous 90 days. A product with sales
    now and none in the previous 90 days is also Growing.

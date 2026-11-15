@@ -545,14 +545,14 @@ export const VISUAL_HELP = {
     interactions: ['Click a brand to open its page'],
   },
   'product.productLifecycle.pareto': {
-    help: { definition: 'Units sold per lifecycle segment, with the cumulative share.', formula: 'New = first sale ≤ 180 days · Growing / Declining = last 90 days vs the 90 before ±20% · Discontinued = archived in Odoo or no sale in 365 days · segment definitions under the chart' },
+    help: { definition: 'Units sold per lifecycle segment, with the cumulative share.', formula: 'New = first sale ≤ 180 days · Growing / Declining = last 90 days vs the 90 before ±20% · Discontinued = no sale in 365 days · segment definitions under the chart' },
   },
   // KPI cards (2026-11-15): the page fills each formula from the ETL config (lib/product/lifecycle.ts).
   'product.productLifecycle.kpiMature': {
     help: { definition: 'SKUs in the Mature segment, as of the last data refresh.', formula: 'Sold, last 90 days within ±20% of the 90 before · % = Mature ÷ portfolio (Active + Non Active) after the page filters' },
   },
   'product.productLifecycle.kpiDiscontinued': {
-    help: { definition: 'SKUs in the Discontinued segment, as of the last data refresh.', formula: 'Archived in Odoo, or no sale in the last 365 days · sub-line = their units sold in the prior period' },
+    help: { definition: 'SKUs in the Discontinued segment, as of the last data refresh.', formula: 'No sale in the last 365 days (Active + Non Active products) · sub-line = their units sold in the prior period' },
   },
   'product.productLifecycle.kpiFreshness': {
     help: { definition: 'Share of the real portfolio (Active + Non Active) first sold recently.', formula: 'Freshness = SKUs first sold in the last 180 days ÷ (Active + Non Active SKUs after the page filters)' },

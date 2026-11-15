@@ -23,7 +23,7 @@ describe('lifecycle definitions come from the ETL config', () => {
     const c = lifecycleConfig({ lifecycle: { new_first_sale_within_days: 120, trend_window_days: 60, growth_threshold_pct: 15, discontinued_no_sales_days: 300 } });
     const d = segmentDefinitions(c);
     expect(d.New).toBe('First sale within the last 120 days.');
-    expect(d.Discontinued).toBe('Archived in Odoo, or no sale in the last 300 days.');
+    expect(d.Discontinued).toBe('No sale in the last 300 days.');
     expect(d.Growing).toMatch(/last 60 days more than 15% above/);
     expect(d.Mature).toMatch(/within ±15%/);
   });

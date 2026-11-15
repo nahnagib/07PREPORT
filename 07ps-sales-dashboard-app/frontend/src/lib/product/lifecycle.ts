@@ -37,7 +37,7 @@ export function maturePct(rows: ProductFact[]): number | null {
 export function segmentDefinitions(c: LifecycleConfig): Record<LifecycleSegment, string> {
   return {
     'Never sold': 'No sale in the whole sales history.',
-    Discontinued: `Archived in Odoo, or no sale in the last ${c.noSalesDays} days.`,
+    Discontinued: `No sale in the last ${c.noSalesDays} days.`,
     New: `First sale within the last ${c.newDays} days.`,
     Growing: `Units of the last ${c.windowDays} days more than ${c.growthPct}% above the ${c.windowDays} days before (or none sold before).`,
     Declining: `Units of the last ${c.windowDays} days more than ${c.growthPct}% below the ${c.windowDays} days before.`,

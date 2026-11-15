@@ -944,7 +944,6 @@ class ProductDashboardBuilder:
         prev_qty = self._window_sum(lines, prev_start, prev_end, "Qty").reindex(p.index).fillna(0.0)
         first = pd.to_datetime(p["FirstSaleDate"], errors="coerce")
         last = pd.to_datetime(p["LastSaleDate"], errors="coerce")
-        inactive = pd.to_numeric(p["IsActive"], errors="coerce").eq(0)
         # A product with no sale in the whole history is its own segment, never Discontinued.
         never_sold = first.isna() & last.isna()
         no_recent = last.lt(today - pd.Timedelta(days=dead_days - 1))
@@ -953,7 +952,7 @@ class ProductDashboardBuilder:
         return pd.Series(np.select(
             [
                 never_sold,
-                inactive | no_recent,
+                no_recent,
                 is_new,
                 prev_qty.le(0) & last_qty.gt(0),
                 change.gt(growth),

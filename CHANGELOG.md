@@ -6,6 +6,15 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Product Lifecycle: Discontinued = no sale in 365 days, 2026-11-15)
+- "Discontinued" stays the segment name (the round-1 rename to Dormant was never applied). Its rule is now **no sale in the
+  last 365 days**, among Active + Non Active products only. "Archived in Odoo, or…" is gone from the ETL rule
+  (`_lifecycle`), the card "?", the Pareto help and legend, and `docs/product_data_runbook.md`. Archived products are
+  Dormant and never listed. Test: `test_discontinued_is_only_no_sale_in_365_days_archive_status_plays_no_part`.
+- Segments today (live, portfolio rows): New 174 · Growing 249 · Mature 325 · Declining 324 · Discontinued 401 · Never sold
+  1,025. All 401 Discontinued were already unarchived, so the rule change alone moves nothing. At the next refresh (read-only
+  check, new exclusions file): New 173 · Growing 249 · Mature 324 · Declining 324 · Discontinued 399 · Never sold 765.
+
 ### Changed (One definition of "our products": Active + Non Active, 2026-11-15)
 - Every SKU is in exactly one bucket: Unclassified > Dormant > Active > Non Active (never sold included). One shared helper
   on each side: backend `measures/productPortfolio.ts` (`productStatusOf`, `combineStatuses`, `isPortfolioStatus`),

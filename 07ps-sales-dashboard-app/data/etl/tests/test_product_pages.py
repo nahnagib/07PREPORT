@@ -179,6 +179,20 @@ def test_lifecycle_rule() -> None:
         "New", "Growing", "Declining", "Mature", "Discontinued", "Never sold"]
 
 
+def test_discontinued_is_only_no_sale_in_365_days_archive_status_plays_no_part() -> None:
+    # 2026-11-15: Discontinued = no sale in the last 365 days, among Active + Non Active products; archived products are
+    # Dormant and never on the pages, so the segment rule itself never looks at the archive flag.
+    import pandas as pd
+    from sales_pipeline.product_dashboard import ProductDashboardBuilder, ProductDashboardConfig
+    b = ProductDashboardBuilder(ProductDashboardConfig.load(CONFIG), "2026-09-29")
+    p = pd.DataFrame({"FirstSaleDate": ["2024-01-01", "2024-01-01"], "LastSaleDate": ["2026-09-01", "2025-06-01"], "IsActive": [0, 1]},
+                     index=["archived, sold last month", "active, last sale 15 months ago"])
+    lines = pd.DataFrame(columns=["ProductCompanyKey", "OrderDate", "Qty"])
+    segments = b._lifecycle(p, lines).tolist()
+    assert segments[0] != "Discontinued"
+    assert segments[1] == "Discontinued"
+
+
 def test_bcg_zero_cost_is_unclassified_and_logged() -> None:
     dim = _dim({"id": 1, "name": "A"}, {"id": 2, "name": "B"})
     out = _build([_line("Tika", 1, "2026-03-01", 30000, 300000), _line("Tika", 2, "2026-03-01", 10, 100)], dim, costs=[5.0, 0.0])
