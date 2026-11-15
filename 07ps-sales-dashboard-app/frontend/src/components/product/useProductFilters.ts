@@ -1,5 +1,5 @@
 'use client';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useAuth } from '../../lib/AuthProvider';
 import { useFilterState, useScopedFilterOptions } from '../FilterProvider';
 import { isProductPageCompany, isProductPageSegment } from '../../lib/materialsAnalogy/shared';
@@ -7,20 +7,62 @@ import type { ProductDashboardScope, RefreshStatus } from '../../lib/api';
 import { standardFilterBarProps } from '../standardFilterBarProps';
 
 /**
- * The Product pages' filter bar: EXACTLY the Promotion FilterBar (standardFilterBarProps: company, Customer Group,
- * Distribution Channel, Branch (= sales team), Salesperson, date range, last-update / refresh info), with the app-wide
- * FilterProvider state -- so the Customer Group default (B2B + B2C) applies on first load and after Reset, as on
- * Promotion. The Product-only filters (Category, Stock Band, BCG Class, Lifecycle Segment) go in FilterBar.secondRow.
- * Product-page rules on top: Athena is never offered (isProductPageCompany), nor Backoffice / Inter Company in Customer
- * Group (isProductPageSegment: their lines are not real sales and the ETL drops them from every Product table).
+ * The Product pages' filter bar: the standard FilterBar (standardFilterBarProps, same look, refresh info) showing only
+ * Company (never Athena: isProductPageCompany) and the Date range. The Product-only filters (Category, Stock Band, BCG
+ * Class, Lifecycle Segment) go in FilterBar.secondRow.
  *
  * `scope` is what useProductDashboard sends: the company view (one company selected, else every company side by side)
- * and the Customer Group / Channel / Branch / Salesperson keys (the API applies them, and the salesperson lock).
+ * and the Date filter.
+ *
+ * 2026-11-14 (round 2): Company and Date only. Customer Group / Channel / Branch / Salesperson are hidden and never sent
+ * (the API drops them too; the role scope still applies server-side). The Date filter is the Product pages' own --
+ * default the Last 12 Months (no dates sent: the API's default), a custom From / To otherwise -- shared by the 4
+ * Product pages for the browser session; it does not change the other pages' date range.
  */
+const DATE_KEY = 'ps_product_date_range';
+type DateRange = { from: string; to: string } | null;
+
+function readRange(): DateRange {
+  try {
+    const raw = sessionStorage.getItem(DATE_KEY);
+    const v = raw ? JSON.parse(raw) : null;
+    return v && typeof v.from === 'string' && typeof v.to === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+function writeRange(v: DateRange): void {
+  try {
+    if (v) sessionStorage.setItem(DATE_KEY, JSON.stringify(v));
+    else sessionStorage.removeItem(DATE_KEY);
+  } catch {
+    /* storage unavailable: the range just isn't remembered */
+  }
+}
+/** The default Last 12 Months shown in the date fields (today - 12 months .. today, the API's own rule). */
+function last12MonthsDates(): { from: string; to: string } {
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const to = new Date();
+  const from = new Date(to);
+  from.setFullYear(to.getFullYear() - 1);
+  if (from.getMonth() !== to.getMonth()) from.setDate(0); // 29 Feb -> 28 Feb
+  return { from: iso(from), to: iso(to) };
+}
 export function useProductFilters(refresh?: RefreshStatus | null) {
   const { isSalesperson } = useAuth();
   const state = useFilterState();
-  const { effectiveFilters, dateFromDate, dateToDate, resetFilters, isAtDefaults } = state;
+  const { effectiveFilters, resetFilters } = state;
+  const [range, setRange] = useState<DateRange>(() => readRange());
+  const defaults = useMemo(() => last12MonthsDates(), []);
+  const onDateRangeChange = useCallback((from: string, to: string) => {
+    const next = from === defaults.from && to === defaults.to ? null : { from, to };
+    setRange(next);
+    writeRange(next);
+  }, [defaults]);
+  const resetDate = useCallback(() => {
+    setRange(null);
+    writeRange(null);
+  }, []);
   const filterOptions = useScopedFilterOptions();
 
   const businessUnits = useMemo(
@@ -42,27 +84,35 @@ export function useProductFilters(refresh?: RefreshStatus | null) {
   const scope: ProductDashboardScope = useMemo(
     () => ({
       company: companyView,
-      segmentKeys: effectiveFilters.segmentKeys,
-      channelKeys: effectiveFilters.channelKeys,
-      salesTeamKeys: effectiveFilters.salesTeamKeys,
-      salespersonKeys: effectiveFilters.salespersonKeys,
-      fromDate: dateFromDate,
-      toDate: dateToDate,
+      ...(range ? { fromDate: range.from, toDate: range.to } : {}),
     }),
-    [companyView, effectiveFilters, dateFromDate, dateToDate],
+    [companyView, range],
   );
 
-  const filterBarProps = standardFilterBarProps({ state, options: filterOptions, isSalesperson, refresh, businessUnits, customerGroups });
+  const companyPristine = (effectiveFilters.companyKeys ?? []).length === 0;
+  const datePristine = range === null;
+  const filterBarProps = {
+    ...standardFilterBarProps({ state, options: filterOptions, isSalesperson, refresh, businessUnits, customerGroups }),
+    showTransactionDimensions: false,
+    dateFromDate: range?.from ?? defaults.from,
+    dateToDate: range?.to ?? defaults.to,
+    onDateRangeChange,
+    onReset: () => {
+      resetDate();
+      resetFilters();
+    },
+    isPristine: companyPristine && datePristine,
+  };
 
-  /** Reset props for a page with its own second-row filters (Category, Stock Band, ...): Reset does exactly what it does
-   * on Promotion (the shared filters back to B2B + B2C and calendar YTD) AND clears those; it is enabled when either is
-   * changed. */
+  /** Reset props for a page with its own second-row filters (Category, Stock Band, ...): Reset puts Company and Date back
+   * (Last 12 Months) AND clears those; it is enabled when any of them is changed. */
   const withLocalReset = (resetLocal: () => void, localPristine: boolean) => ({
     onReset: () => {
       resetLocal();
+      resetDate();
       resetFilters();
     },
-    isPristine: localPristine && isAtDefaults,
+    isPristine: localPristine && companyPristine && datePristine,
   });
 
   return { ...state, filterOptions, scope, companyView, companyLabel, selectedCompanyNames, filterBarProps, withLocalReset };

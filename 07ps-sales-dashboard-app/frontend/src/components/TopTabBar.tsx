@@ -24,7 +24,15 @@ const TABS = [
   { label: 'TT Forced Closure', href: null },
 ] as const;
 
-export function TopTabBar({ active = 'Tachometer' }: { active?: string }) {
+export interface TopTab {
+  label: string;
+  /** null = not built yet (shown disabled with a tooltip). */
+  href: string | null;
+}
+
+/** `tabs` lets a multi-section page (e.g. Product Development Plan) reuse this strip with its own sections; without it
+ * the original Tachometer list is shown, unchanged. */
+export function TopTabBar({ active = 'Tachometer', tabs = TABS }: { active?: string; tabs?: readonly TopTab[] }) {
   return (
     <nav
       aria-label="Dashboard pages"
@@ -39,7 +47,7 @@ export function TopTabBar({ active = 'Tachometer' }: { active?: string }) {
         overflowX: 'auto',
       }}
     >
-      {TABS.map(({ label, href }) => {
+      {tabs.map(({ label, href }) => {
         const isActive = label === active;
         const style: React.CSSProperties = {
           display: 'inline-flex',
@@ -56,7 +64,7 @@ export function TopTabBar({ active = 'Tachometer' }: { active?: string }) {
         };
         if (href) {
           return (
-            <Link key={label} href={href} style={style}>
+            <Link key={label} href={href} style={style} aria-current={isActive ? 'page' : undefined}>
               {label}
             </Link>
           );

@@ -9,3 +9,25 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* The app's KPI row (same grid as Stock Velocity / Receivables): equal cards, wrapping on small screens. */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: var(--ps-space-3, 16px);
+}
+
+/* Same card width as .kpiGrid, but a single card keeps its normal width instead of stretching across the row. */
+.kpiGridFill {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  gap: var(--ps-space-3, 16px);
+}
+
+/* Section titles as on the other pages (14px, bold). */
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ps-color-text);
+  margin: 0 0 8px;
+}

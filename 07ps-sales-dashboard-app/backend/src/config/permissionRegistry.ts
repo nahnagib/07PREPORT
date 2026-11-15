@@ -37,7 +37,7 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   { key: 'tachometer', label: 'Tachometer', group: 'dashboard', actions: DASHBOARD },
   { key: 'critical_number', label: 'Critical Number', group: 'dashboard', actions: DASHBOARD },
   { key: 'revenue_trend', label: 'Revenue Trend', group: 'dashboard', actions: DASHBOARD },
-  { key: 'sales_people_performance', label: 'Sales People Performance', group: 'dashboard', actions: DASHBOARD },
+  { key: 'sales_people_performance', label: 'Salesforce Performance', group: 'dashboard', actions: DASHBOARD },
   { key: 'invoices_engine', label: 'Invoices Engine', group: 'dashboard', actions: DASHBOARD },
   { key: 'customer_growth', label: 'Customer Growth', group: 'dashboard', actions: DASHBOARD },
   { key: 'pipeline_health', label: 'Pipeline Health', group: 'dashboard', actions: DASHBOARD },
@@ -51,6 +51,11 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   { key: 'stock_velocity', label: 'Stock Velocity', group: 'dashboard', actions: DASHBOARD },
   { key: 'pim_contribution', label: 'PIM Contribution', group: 'dashboard', actions: DASHBOARD },
   { key: 'product_lifecycle', label: 'Product Lifecycle', group: 'dashboard', actions: DASHBOARD },
+  // Profit data (2026-11-14): profit, profit margin, GP%, cost / unit cost and the "missing cost" flags, on every page and
+  // export. Not a page (like nps_comments): View lets the API send those fields (routes/productDashboard.ts withoutProfit)
+  // and shows them; Export also puts them in the CSV / PDF / Excel exports. No role has it until an admin grants it (Roles
+  // matrix, or a user's personal override); the Admin role has it implicitly.
+  { key: 'profit_data', label: 'Profit data (profit, GP%, cost)', group: 'dashboard', actions: DASHBOARD },
   // Process department. kaizen_board = the dashboard + read-only card details (the QR page);
   // kaizen_cards = data entry: View opens the cards list, Edit also covers closing a card, Delete is
   // a soft delete, Export is the Excel download. Seeded for the Excellence Manager role (0027).
@@ -69,7 +74,12 @@ export const PERMISSION_REGISTRY: readonly RegistryEntry[] = [
   // Revisit the actions when the page is built.
   { key: 'quality_assurance', label: 'Quality Assurance (coming soon)', group: 'dashboard', actions: DASHBOARD },
   { key: 'customer_pulse', label: 'Customer Pulse (coming soon)', group: 'dashboard', actions: DASHBOARD },
-  { key: 'product_development_plan', label: 'Product Development Plan (coming soon)', group: 'dashboard', actions: DASHBOARD },
+  // Product Development Plan (TIKA R&D, migrations 0074-0076; routes/productDevelopment.ts). plan = the read-only views;
+  // entry = every form; approval = deciding a gate, which ALSO needs the user's governance role for that gate (the
+  // permission alone is not enough). 0076 grants plan View to the roles that view a Product report, the rest to ADMIN.
+  { key: 'product_development_plan', label: 'Product Development Plan', group: 'dashboard', actions: DASHBOARD },
+  { key: 'product_development_entry', label: 'Product Development Plan: data entry', group: 'data_entry', actions: ['view', 'create', 'edit', 'delete', 'export'] },
+  { key: 'product_development_approval', label: 'Product Development Plan: gate approvals', group: 'data_entry', actions: ['view', 'edit'] },
   // Price (Finance) department. Granted to the full-access roles by migration 0034 (not to Salesperson; an admin may
   // enable it, the API then scopes a salesperson to their own SalespersonKey).
   // key kept from the "Debt Report" days (role grants reference it); the label is what the Roles page shows

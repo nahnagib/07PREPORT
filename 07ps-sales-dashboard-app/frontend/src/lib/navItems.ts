@@ -6,7 +6,7 @@ import { Gauge as GaugeIcon, AlertTriangle, TrendingUp, FileText, Users, ShieldC
  * whose Next.js routes were moved from app/(departments)/promotion/* to
  * app/(departments)/product/* to match `department: 'product'` (a card's "Open report" link and
  * its actual route must agree). */
-export type NavDepartment = 'promotion' | 'product' | 'process' | 'price';
+export type NavDepartment = 'promotion' | 'product' | 'process' | 'price' | 'people';
 
 /** Single source of truth for primary nav entries, each tied to a `pages.page_key` from the
  * permissions model (0009_auth_identity.sql). Every nav component (BottomNavBar, DepartmentHubPage,
@@ -17,7 +17,6 @@ export const NAV_ITEMS = [
   { label: 'Tachometer', icon: GaugeIcon, href: '/promotion/tachometer', pageKey: 'tachometer', department: 'promotion' },
   { label: 'Critical Number', icon: AlertTriangle, href: '/promotion/critical-number', pageKey: 'critical_number', department: 'promotion' },
   { label: 'Revenue Trend', icon: TrendingUp, href: '/promotion/revenue-trend', pageKey: 'revenue_trend', department: 'promotion' },
-  { label: 'Sales People Performance', icon: Users, href: '/promotion/sales-people-performance', pageKey: 'sales_people_performance', department: 'promotion' },
   { label: 'Invoices Engine', icon: FileText, href: '/promotion/invoices-engine', pageKey: 'invoices_engine', department: 'promotion' },
   { label: 'Customer Growth', icon: Users, href: '/promotion/customer-growth', pageKey: 'customer_growth', department: 'promotion' },
   { label: 'Pipeline Health', icon: Filter, href: '/promotion/pipeline-health', pageKey: 'pipeline_health', department: 'promotion' },
@@ -33,18 +32,19 @@ export const NAV_ITEMS = [
   // (lib/materialsAnalogy/shared.ts) via the same @07ps/ui components/tokens every other report
   // uses, not standalone HTML anymore (those lived at public/reports/*.html and have been
   // removed). BCG Matrix is the module's product-classification page and deliberately listed
-  // first among the 4 (matches how the other 3 pages already treat bcg_class_YTD as a given
+  // first among the 4 (matches how the other 3 pages already treat bcg_class as a given
   // input) -- order here is render order (BottomNavBar/DepartmentHubPage both just .map() this
   // array), not a separate weight field. Moved from Promotion to Product, routes and all (now
   // under app/(departments)/product/*), per explicit request -- Sales/'nav_group' in
   // 0014_materials_analogy_pages.sql / 0015_bcg_matrix_page.sql is a separate RBAC grouping and is
   // unaffected by this move.
   { label: 'BCG Matrix', icon: Grid2x2, href: '/product/bcg-matrix', pageKey: 'bcg_matrix', department: 'product' },
-  { label: 'Stock Velocity', icon: Boxes, href: '/product/stock-velocity', pageKey: 'stock_velocity', department: 'product' },
   { label: 'PIM Contribution', icon: PieChart, href: '/product/pim-contribution', pageKey: 'pim_contribution', department: 'product' },
   { label: 'Product Lifecycle', icon: RefreshCw, href: '/product/product-lifecycle', pageKey: 'product_lifecycle', department: 'product' },
+  { label: 'Stock Velocity', icon: Boxes, href: '/product/stock-velocity', pageKey: 'stock_velocity', department: 'product' },
   // "Coming soon" placeholder (2026-10-27): announced in the navigation, opens a placeholder page until it is built.
-  { label: 'Product Development Plan', icon: Lightbulb, href: '/product/product-development-plan', pageKey: 'product_development_plan', department: 'product', comingSoon: true },
+  { label: 'Product Development Plan', icon: Lightbulb, href: '/product/product-development-plan', pageKey: 'product_development_plan', department: 'product' },
+  { label: 'Salesforce Performance', icon: Users, href: '/people/salesforce-performance', pageKey: 'sales_people_performance', department: 'people' },
   // Process department. The card list/entry screens live under this href (see ROUTE_PAGE_KEYS).
   { label: 'Kaizen Board', icon: ClipboardList, href: '/process/kaizen-board', pageKey: 'kaizen_board', department: 'process' },
   // Process department: customers' delivery ratings (ETL job process_nps, docs/nps-etl.md).
@@ -89,6 +89,8 @@ export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string
 /** Routes whose permission page differs from the nav entry they sit under: the Kaizen card entry
  * screens belong to kaizen_cards, not to the kaizen_board report they're nested in. */
 const ROUTE_PAGE_KEYS: { href: string; pageKey: string }[] = [
+  { href: '/product/product-development-plan/projects/new', pageKey: 'product_development_entry' },
+  { href: '/product/product-development-plan/admin', pageKey: 'product_development_entry' },
   { href: '/process/kaizen-board/manage', pageKey: 'kaizen_cards' },
   { href: '/process/nps-followup/reasons', pageKey: 'nps_followup_reasons' },
 ];

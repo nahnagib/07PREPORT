@@ -12,17 +12,24 @@
  *                           sales (Customer Group Backoffice / Inter Company and IsIntercompany lines, config
  *                           product_pages_excluded_segment_keys / product_pages_exclude_intercompany), so the
  *                           grand total = the Sales pages' SUM(Value) for the same period minus those lines.
- *   v_sales_product_dashboard    one row per Company + product (every product sold or in stock in that company,
- *                           plus its active never-sold Odoo products) with today's stock, days of inventory,
- *                           stock band, lifecycle segment and BCG class.
+ *   v_sales_product_dashboard    one row per Company + product: the pages' rows (OnProductPages = 1: every product
+ *                           sold or in stock in that company, plus its active never-sold Odoo products) with today's
+ *                           stock, days of inventory, stock band, lifecycle segment; and (2026-11-14, migration 0073)
+ *                           every other Odoo product of the company (OnProductPages = 0), each row with its
+ *                           ProductStatus -- read only by the Total SKUs / Product Status cards (statusSummary).
  *   etl_sales_product_dashboard_meta   as-of date and the thresholds the ETL used (config/product_dashboard.json).
  *
  * Company view (query.company = 'Majaal' | 'Tika'): that company's products and sales only.
  * All-companies view (no company, still called 'BMH'): every company's products side by side. A product is ALWAYS one
- * Odoo product in one company -- nothing is combined across companies (2026-11-04).
+ * Odoo product in one company for detail rows. SKU cards count distinct variants in the selected scope.
  * Athena is not on the Product pages (EXCLUDED_COMPANIES; the ETL already leaves it out of these tables, the measure
  * filters it again so totals never include it).
  * Units: the ETL shows every unit-type UoM (UNIT, Unit, وحدة) as one "Unit"; other UoMs (bag, m, m², kg) keep their name.
+ *
+ * Period (2026-11-14, round 2): the Date filter (fromDate / toDate); none = the rolling LAST 12 MONTHS
+ * (lib/last12Months.ts resolveProductPeriod). Every number follows it -- status, BCG, movement, tables -- compared with
+ * the same number of days immediately before. The only other filter is Company: the Customer Group / Channel / Branch /
+ * Salesperson query params are dropped by the route; the role data scope and the salesperson lock still apply.
  *
  * Metric definitions (docs/product_data_runbook.md):
  *   Value    = SUM(untaxed line amount) in LYD, confirmed orders, order date in Africa/Tripoli.
@@ -30,13 +37,12 @@
  *              Odoo UoM (2026-11-07 decision). volumeByUom keeps the split by UoM for reference.
  *   Velocity = Volume / days in the period (period end capped at today).
  *   Order days = distinct days in the period with at least one sales line of the product (Sales Frequency).
- * Stock, days of inventory, lifecycle, BCG class and Product Movement are "as of the last ETL run", company-wide,
- * and do not move with the period or the filters. Volume / Revenue YTD and LYTD (calendar, as of today) DO follow
- * the Customer Group / Channel / Branch / Salesperson filters (2026-11-07, option a); the class is never recomputed
- * for the filtered subset.
- * BCG class (2026-11-11): the config thresholds applied to each product's LATEST profit data (measures/bcgLatestProfit.ts):
- * calendar YTD when it sold this year fully costed, else its most recent fully costed calendar year. Served as
- * bcgClassYTD (every Product page shows it) with the volume, profit, GP% and the period / date of the data used.
+ * Product Status of the period: Unclassified (workbook product or category exclusion) and Dormant (archived in Odoo) come from the ETL; every
+ * other product is Active when it sold (quantity > 0) in the period, else Non Active.
+ * BCG class: Active products only, always one of Stars / Cash Cows / Strategic / Dogs (measures/bcgLatestProfit.ts; no
+ * cost data = low GP%, flagged missingCost). The thresholds never leave the server (publicThresholds).
+ * Profit data -- profit, GP%, cost, missingCost -- is served only with View on `profit_data` (withoutProfit, the route).
+ * Stock, days of inventory and lifecycle are as of the last ETL run.
  * On Hand (2026-11-10): Odoo's On Hand of the product in its company (OnHandQty / OnHandValue, every internal location);
  * stockQty stays the finished-goods stock behind DOH, the stock band and ISR.
  *
@@ -49,9 +55,9 @@
 import type { Pool } from 'mysql2/promise';
 import { DateTime } from 'luxon';
 import { buildWhereClause, type Filters } from './filters';
-import { getAppTimezone } from '../lib/timezone';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
-import { bcgRule, fetchBcgWindows, latestBcg, withBcgThresholds } from './bcgLatestProfit';
+import { BCG_CLASS_KEYS, bcgRule, classifyPeriod, fetchBcgPeriod, withBcgThresholds, type BcgClassKey, type BcgResult } from './bcgLatestProfit';
+import { resolveProductPeriod, type ProductPeriod } from '../lib/last12Months';
 
 export interface UomQty {
   uom: string;
@@ -93,7 +99,8 @@ export interface ProductDashboardRow {
   valuePrior: number;
   volumePrior: number;
   avgUnitPrice: number | null;
-  grossProfitPct: number | null;
+  /** PROFIT DATA: GP% of the period (every line costed), else null. Absent without profit access. */
+  grossProfitPct?: number | null;
   // Snapshot (as of the last ETL run)
   stockQty: number;
   stockValue: number;
@@ -113,32 +120,43 @@ export interface ProductDashboardRow {
   stockAgeOldestDays: number | null;
   /** 'layers' (Odoo stock.valuation.layer) or 'quant_in_date' (no open layer). */
   stockAgeSource: string | null;
-  /** On Hand units / value per aging bucket, split by receipt layer (config stock.aging_buckets order). */
+  /** On Hand units / value per aging bucket holding stock (config stock.aging_buckets order; a bucket not listed = 0). */
   agingBuckets: AgingBucketAmount[];
   lifecycleSegment: 'New' | 'Growing' | 'Mature' | 'Declining' | 'Discontinued' | 'Never sold';
   firstSaleDate: string | null;
   lastSaleDate: string | null;
-  /** BCG class on the product's latest profit data (bcgLatestProfit.ts); null = never sold. */
-  bcgClassYTD: string | null;
-  bcgClassLYTD: string | null;
-  /** The data behind bcgClassYTD: volume, sales value, profit (Value - Qty x standard cost), GP% of that window. */
+  /** Status in the period: Unclassified / Dormant (ETL) or Active (sold in the period) / NonActive. */
+  productStatus: ProductStatus;
+  /** BCG class of the period; Active products only (null otherwise). */
+  bcgClass: BcgClassKey | null;
+  /** Units / sales value of the period, company-wide (the class's volume). */
   bcgVolume: number | null;
   bcgValue: number | null;
-  bcgProfit: number | null;
-  bcgGrossProfitPct: number | null;
-  /** 'YTD 2026' or the calendar year used ('2025'); null = no profit data in the database. */
-  bcgDataPeriod: string | null;
-  /** Last sale date of the data used. */
+  /** PROFIT DATA (absent without profit access): profit and GP% of the fully costed sales days; missingCost = some sales
+   * of the period have no standard cost in Odoo (or zero revenue), so GP% counted as low. */
+  bcgProfit?: number | null;
+  bcgGrossProfitPct?: number | null;
+  missingCost?: boolean | null;
+  /** Last sale date in the period. */
   bcgDataAsOf: string | null;
   bcgMovement: 'New' | 'Stable' | 'Improved' | 'Drop' | 'Discontinued' | null;
   bcgExcludedCategory: boolean;
-  valueYTD: number;
-  volumeYTD: number;
-  valueLYTD: number;
-  volumeLYTD: number;
-  grossProfitPctYTD: number | null;
-  grossProfitPctLYTD: number | null;
   negativeStockRows: number;
+}
+
+export type ProductStatus = 'Unclassified' | 'Dormant' | 'Active' | 'NonActive';
+export const PRODUCT_STATUSES: ProductStatus[] = ['Unclassified', 'Dormant', 'Active', 'NonActive'];
+export { BCG_CLASS_KEYS, type BcgClassKey };
+
+/** Total SKUs / Product Status / BCG cards of the BCG Matrix page (company view, the selected period). */
+export interface ProductStatusSummary {
+  total: number;
+  active: { count: number; units: number; value: number };
+  nonActive: { count: number; withStock: number; zeroStock: number; stockUnits: number; stockValue: number };
+  dormant: { count: number };
+  unclassified: { count: number };
+  /** Stars + Cash Cows + Strategic + Dogs = active.count. profit / missingCost: PROFIT DATA. */
+  bcg: { classes: { key: BcgClassKey; count: number; units: number; value: number; profit?: number }[]; missingCost?: number };
 }
 
 export interface AgingBucketAmount {
@@ -162,15 +180,21 @@ export interface ProductDashboardOverview {
   view: ProductDashboardView;
   asOfDate: string | null;
   builtAtUtc: string | null;
-  period: { from: string; to: string; days: number; priorFrom: string; priorTo: string };
+  period: ProductPeriod;
+  /** The caller may see profit data (View on profit_data); without it every profit field is absent. */
+  profitAccess: boolean;
   lookbackDays: number;
   thresholds: Record<string, unknown>;
   products: ProductDashboardRow[];
   totals: { value: number; lines: number; volumeByUom: UomQty[] };
   intercompanyValue: number;
+  /** null when a reconciliation check fails (statusSummaryError says which). */
+  statusSummary: ProductStatusSummary | null;
+  statusSummaryError: string | null;
 }
 
 export interface ProductDashboardQuery {
+  /** The Date filter; none = the Last 12 Months. */
   fromDate?: string;
   toDate?: string;
   /** 'Majaal' / 'Tika' = company view; anything else (or absent) = all companies side by side ('BMH'). */
@@ -183,8 +207,6 @@ export interface ProductDashboardQuery {
 
 /** A company the caller's role may not see was requested (the route answers 403). */
 export class ProductScopeError extends Error {}
-
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Companies never shown on the Product pages (Promotion / Price / Process are not affected). */
 export const EXCLUDED_COMPANIES = ['Athena'];
@@ -212,28 +234,9 @@ function isoDate(v: unknown): string | null {
   return s.length >= 10 ? s.slice(0, 10) : null;
 }
 
-/** Resolves the requested period; default = calendar YTD. The end is capped at today (app timezone). */
-export function resolvePeriod(fromDate?: string, toDate?: string, now: DateTime = DateTime.now()) {
-  const today = now.setZone(getAppTimezone()).startOf('day');
-  let to = toDate && ISO.test(toDate) ? DateTime.fromISO(toDate, { zone: getAppTimezone() }) : today;
-  if (to > today) to = today;
-  let from = fromDate && ISO.test(fromDate) ? DateTime.fromISO(fromDate, { zone: getAppTimezone() }) : today.startOf('year');
-  if (from > to) from = to;
-  const days = Math.round(to.diff(from, 'days').days) + 1;
-  const priorFrom = from.minus({ years: 1 });
-  const priorTo = to.minus({ years: 1 });
-  return {
-    from: from.toISODate() as string,
-    to: to.toISODate() as string,
-    days,
-    priorFrom: priorFrom.toISODate() as string,
-    priorTo: priorTo.toISODate() as string,
-    // BCG windows: calendar YTD and the same dates last year, whatever the period (the ETL's own windows).
-    ytdFrom: today.startOf('year').toISODate() as string,
-    ytdTo: today.toISODate() as string,
-    lytdFrom: today.minus({ years: 1 }).startOf('year').toISODate() as string,
-    lytdTo: today.minus({ years: 1 }).toISODate() as string,
-  };
+/** The Product pages' period: the Date filter, default the Last 12 Months (lib/last12Months.ts). */
+export function resolvePeriod(fromDate?: string, toDate?: string, now: DateTime = DateTime.now()): ProductPeriod {
+  return resolveProductPeriod(fromDate, toDate, now);
 }
 
 function uomList(map: Map<string, number>): UomQty[] {
@@ -256,14 +259,10 @@ type Agg = {
   valuePrior: number;
   qty: Map<string, number>;
   qtyPrior: Map<string, number>;
-  valueYTD: number;
-  qtyYTD: number;
-  valueLYTD: number;
-  qtyLYTD: number;
 };
 
 function emptyAgg(): Agg {
-  return { value: 0, lines: 0, linesPrior: 0, cost: 0, uncosted: 0, valuePrior: 0, qty: new Map(), qtyPrior: new Map(), valueYTD: 0, qtyYTD: 0, valueLYTD: 0, qtyLYTD: 0 };
+  return { value: 0, lines: 0, linesPrior: 0, cost: 0, uncosted: 0, valuePrior: 0, qty: new Map(), qtyPrior: new Map() };
 }
 
 const sumQty = (m: Map<string, number>) => [...m.values()].reduce((t, q) => t + q, 0);
@@ -326,27 +325,21 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     onHandValue: num(p.OnHandValue),
     stockAgeOldestDays: numOrNull(p.StockAgeOldestDays),
     stockAgeSource: str(p.StockAgeSource),
-    agingBuckets: buckets.map((b) => ({ ...b, qty: num(p[`AgeQty_${b.key}`]), value: num(p[`AgeValue_${b.key}`]) })),
+    // only the buckets holding stock (consumers look a bucket up by key, missing = 0): a quarter of the response before
+    agingBuckets: buckets.map((b) => ({ ...b, qty: num(p[`AgeQty_${b.key}`]), value: num(p[`AgeValue_${b.key}`]) })).filter((b) => b.qty !== 0 || b.value !== 0),
     lifecycleSegment: String(p.LifecycleSegment) as ProductDashboardRow['lifecycleSegment'],
     firstSaleDate: isoDate(p.FirstSaleDate),
     lastSaleDate: isoDate(p.LastSaleDate),
-    bcgClassYTD: str(p.BcgClassYTD),
-    bcgClassLYTD: str(p.BcgClassLYTD),
+    productStatus: 'NonActive',
+    bcgClass: null,
     bcgVolume: null,
     bcgValue: null,
     bcgProfit: null,
     bcgGrossProfitPct: null,
-    bcgDataPeriod: null,
+    missingCost: null,
     bcgDataAsOf: null,
-    bcgMovement: (str(p.BcgMovement) as ProductDashboardRow['bcgMovement']) ?? null,
+    bcgMovement: null,
     bcgExcludedCategory: Boolean(num(p.BcgExcludedCategory)),
-    // Follow the filters (calendar YTD / LYTD of the period's sales rows); class and movement stay the ETL's.
-    valueYTD: a?.valueYTD ?? 0,
-    volumeYTD: a?.qtyYTD ?? 0,
-    valueLYTD: a?.valueLYTD ?? 0,
-    volumeLYTD: a?.qtyLYTD ?? 0,
-    grossProfitPctYTD: numOrNull(p.GrossProfitPctYTD),
-    grossProfitPctLYTD: numOrNull(p.GrossProfitPctLYTD),
     negativeStockRows: num(p.NegativeStockRows),
   };
 }
@@ -355,10 +348,12 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   const period = resolvePeriod(query.fromDate, query.toDate);
   let requestedView = resolveView(query.company);
   const companyKeys = query.filters?.companyKeys ?? [];
+  let allowedCompanies: Set<string> | undefined;
   if (companyKeys.length > 0) {
     // Role limited to some companies: never show another company -- a single allowed company always gets its company view.
-    const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM v_sales_product_daily WHERE CompanyKey IN (?)', [companyKeys]);
+    const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM v_sales_product_dashboard WHERE CompanyKey IN (?) AND Company NOT IN (?)', [companyKeys, EXCLUDED_COMPANIES]);
     const allowed = (allowedRows as any[]).map((r) => String(r.Company));
+    allowedCompanies = new Set(allowed);
     if (requestedView !== 'BMH' && !allowed.includes(requestedView)) {
       throw new ProductScopeError(`Company ${requestedView} is outside this role's permitted data scope.`);
     }
@@ -378,23 +373,17 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS valuePrior,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qtyPrior,
       SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? AND d.IsIntercompany = 1 THEN d.Value ELSE 0 END) AS icValue,
-      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Lines ELSE 0 END)      AS linesPrior,
-      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS valueYTD,
-      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qtyYTD,
-      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Value ELSE 0 END)      AS valueLYTD,
-      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Qty ELSE 0 END)        AS qtyLYTD
+      SUM(CASE WHEN d.OrderDate BETWEEN ? AND ? THEN d.Lines ELSE 0 END)      AS linesPrior
     FROM v_sales_product_daily d
-    WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?))
+    WHERE ((d.OrderDate BETWEEN ? AND ?) OR (d.OrderDate BETWEEN ? AND ?))
       AND ${scope.clause}${companyClause}
       AND d.Company NOT IN (?)
     GROUP BY d.ProductCompanyKey, COALESCE(d.UoM, '')`;
   const cur = [period.from, period.to];
   const prior = [period.priorFrom, period.priorTo];
-  const ytd = [period.ytdFrom, period.ytdTo];
-  const lytd = [period.lytdFrom, period.lytdTo];
   const salesParams: Array<string | number> = [
-    ...cur, ...cur, ...cur, ...cur, ...cur, ...prior, ...prior, ...cur, ...prior, ...ytd, ...ytd, ...lytd, ...lytd,
-    ...cur, ...prior, ...ytd, ...lytd, ...scope.params,
+    ...cur, ...cur, ...cur, ...cur, ...cur, ...prior, ...prior, ...cur, ...prior,
+    ...cur, ...prior, ...scope.params,
   ];
   if (requestedView !== 'BMH') salesParams.push(requestedView);
   salesParams.push(EXCLUDED_COMPANIES as unknown as string);
@@ -423,7 +412,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     scoped ? pool.query(soldSql, soldParams) : Promise.resolve([[]] as unknown[]),
     pool.query('SELECT * FROM v_sales_product_dashboard WHERE Company NOT IN (?)', [EXCLUDED_COMPANIES]),
     pool.query('SELECT AsOfDate, BuiltAtUtc, LookbackDays, ConfigJson FROM etl_sales_product_dashboard_meta LIMIT 1'),
-    fetchBcgWindows(pool, period.ytdFrom, period.ytdTo, EXCLUDED_COMPANIES),
+    fetchBcgPeriod(pool, period.from, period.to, EXCLUDED_COMPANIES),
   ]);
   const view = requestedView;
 
@@ -438,10 +427,6 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     a.uncosted += num(r.uncostedQty);
     a.valuePrior += num(r.valuePrior);
     a.linesPrior += num(r.linesPrior);
-    a.valueYTD += num(r.valueYTD);
-    a.qtyYTD += num(r.qtyYTD);
-    a.valueLYTD += num(r.valueLYTD);
-    a.qtyLYTD += num(r.qtyLYTD);
     const uom = String(r.uom ?? '');
     if (num(r.lineCount) > 0) a.qty.set(uom, (a.qty.get(uom) ?? 0) + num(r.qty));
     if (num(r.qtyPrior) !== 0) a.qtyPrior.set(uom, (a.qtyPrior.get(uom) ?? 0) + num(r.qtyPrior));
@@ -465,14 +450,20 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   } catch {
     thresholds = {};
   }
-  thresholds = withBcgThresholds(thresholds);
+  thresholds = withBcgThresholds(thresholds); // server-side; publicThresholds() is what the response carries
   const buckets = agingBucketDefs(thresholds);
 
   const orderDaysOf = new Map((orderDayRows as any[]).map((r) => [String(r.k), num(r.orderDays)]));
   const soldAnywhere = new Set((soldRows as any[]).map((r) => String(r.k)));
   const odooBase = odooConfiguredBaseUrl();
   const products: ProductDashboardRow[] = [];
-  for (const p of (productRows as any[]).filter((r) => view === 'BMH' || String(r.Company ?? '') === view)) {
+  const viewRows = (productRows as any[]).filter((r) => {
+    const company = String(r.Company ?? '');
+    return (!allowedCompanies || allowedCompanies.has(company)) && (view === 'BMH' || company === view);
+  });
+  const rawByKey = new Map(viewRows.map((r) => [String(r.ProductCompanyKey), r]));
+  // OnProductPages = 0: an archived / excluded / catalog-only product -- only the status cards count it.
+  for (const p of viewRows.filter(onProductPages)) {
     const key = String(p.ProductCompanyKey);
     const a = byProduct.get(key);
     const soldInScope = Boolean(a && (a.lines > 0 || a.linesPrior > 0));
@@ -480,17 +471,35 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)], orderDaysOf.get(key) ?? 0, odooBase, buckets));
   }
 
-  // BCG on each product's latest fully costed data (company-wide), the config thresholds.
-  const latest = latestBcg(bcgWindows, bcgRule(thresholds), Number(period.ytdFrom.slice(0, 4)));
+  // Status of the period (Active = sold in it, company-wide), BCG of the Active products, movement vs the prior period.
+  const rule = bcgRule(thresholds);
+  const volumeScale = period.isDefault ? 1 : period.days / 365;
+  const bcgByKey = new Map(bcgWindows.map((w) => [w.k, w]));
+  const statusOf = (p: any): ProductStatus => {
+    const etl = str(p.ProductStatus);
+    if (num(p.ExcludedByProduct) === 1 || num(p.ExcludedByCategory) === 1) return 'Unclassified';
+    if (etl === 'Unclassified' || etl === 'Dormant') return etl;
+    if (etl === null && p.IsActive !== null && p.IsActive !== undefined && num(p.IsActive) === 0) return 'Dormant';
+    return bcgByKey.get(String(p.ProductCompanyKey))?.sold ? 'Active' : 'NonActive';
+  };
+  const classOf = new Map<string, BcgResult>();
+  for (const p of viewRows) {
+    const key = String(p.ProductCompanyKey);
+    const w = bcgByKey.get(key);
+    if (w && statusOf(p) === 'Active') classOf.set(key, classifyPeriod(w, rule, volumeScale));
+  }
+  const movementRule = movementConfig(thresholds);
   for (const r of products) {
-    const b = latest.get(r.productCompanyKey);
-    r.bcgClassYTD = b?.bcgClass ?? null;
+    r.productStatus = statusOf(rawByKey.get(r.productCompanyKey));
+    const b = classOf.get(r.productCompanyKey);
+    r.bcgClass = b?.bcgClass ?? null;
     r.bcgVolume = b?.volume ?? null;
     r.bcgValue = b?.value ?? null;
     r.bcgProfit = b?.profit ?? null;
     r.bcgGrossProfitPct = b?.grossProfitPct ?? null;
-    r.bcgDataPeriod = b?.dataPeriod ?? null;
+    r.missingCost = b ? b.missingCost : null;
     r.bcgDataAsOf = b?.dataAsOf ?? null;
+    r.bcgMovement = movementOf(r, period, movementRule);
   }
 
   // Totals straight from the sales rows (not from the product list), so a key missing from
@@ -511,9 +520,195 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     builtAtUtc: meta.BuiltAtUtc ? new Date(meta.BuiltAtUtc).toISOString() : null,
     period,
     lookbackDays: num(meta.LookbackDays) || 90,
-    thresholds,
+    thresholds: publicThresholds(thresholds),
     products,
     totals: { value: totalValue, lines: totalLines, volumeByUom: uomList(totalQty) },
     intercompanyValue,
+    profitAccess: true,
+    ...statusSummaryOf(viewRows, new Map(viewRows.map((r) => [String(r.ProductCompanyKey), statusOf(r)])), classOf),
   };
+}
+
+/** The config minus the BCG class thresholds (volume / GP%): they never leave the server. */
+export function publicThresholds(thresholds: Record<string, unknown>): Record<string, unknown> {
+  const bcg = { ...((thresholds.bcg ?? {}) as Record<string, unknown>) };
+  delete bcg.volume_threshold;
+  delete bcg.profit_threshold_pct;
+  delete bcg.excluded_category_ids;
+  return { ...thresholds, bcg };
+}
+
+const PROFIT_ROW_FIELDS = ['grossProfitPct', 'bcgProfit', 'bcgGrossProfitPct', 'missingCost'] as const;
+
+/** Every PROFIT DATA field removed (no View on profit_data): profit, GP%, cost, missingCost -- in the rows and the cards. */
+export function withoutProfit(o: ProductDashboardOverview): ProductDashboardOverview {
+  const products = o.products.map((r) => {
+    const rest = { ...r };
+    for (const key of PROFIT_ROW_FIELDS) delete rest[key];
+    return rest;
+  });
+  const statusSummary = o.statusSummary && {
+    ...o.statusSummary,
+    bcg: {
+      classes: o.statusSummary.bcg.classes.map((c) => {
+        const rest = { ...c };
+        delete rest.profit;
+        return rest;
+      }),
+    },
+  };
+  return { ...o, products, statusSummary, profitAccess: false };
+}
+
+interface MovementRule {
+  bandPct: number;
+  newWithinDays: number;
+}
+
+function movementConfig(thresholds: Record<string, unknown>): MovementRule {
+  const bcg = (thresholds.bcg ?? {}) as { movement_stable_band_pct?: number };
+  const lifecycle = (thresholds.lifecycle ?? {}) as { new_first_sale_within_days?: number };
+  return { bandPct: Number(bcg.movement_stable_band_pct ?? 10), newWithinDays: Number(lifecycle.new_first_sale_within_days ?? 180) };
+}
+
+/** Product Movement on volume, the period vs the prior period of the same length: Discontinued = archived in Odoo;
+ * New = first sale within the config days of the period end, or nothing sold in the prior period; Improved / Drop =
+ * growth above +band / below -band; Stable within. Not sold in either period = no movement. */
+function movementOf(r: ProductDashboardRow, period: ProductPeriod, rule: MovementRule): ProductDashboardRow['bcgMovement'] {
+  if (r.lines <= 0 && r.volumePrior === 0 && r.valuePrior === 0) return null;
+  if (r.isActive === 0) return 'Discontinued';
+  const end = DateTime.fromISO(period.to);
+  const first = r.firstSaleDate ? DateTime.fromISO(r.firstSaleDate) : null;
+  if ((first && end.diff(first, 'days').days < rule.newWithinDays) || (r.volumePrior <= 0 && r.volume > 0)) return 'New';
+  if (r.volumePrior <= 0) return 'Stable';
+  const growth = ((r.volume - r.volumePrior) / r.volumePrior) * 100;
+  if (growth > rule.bandPct) return 'Improved';
+  if (growth < -rule.bandPct) return 'Drop';
+  return 'Stable';
+}
+
+function onProductPages(p: any): boolean {
+  return p.OnProductPages === null || p.OnProductPages === undefined || num(p.OnProductPages) !== 0;
+}
+
+/** The status cards, or why they cannot be shown (never fails the whole response: the other Product pages share it). */
+function statusSummaryOf(rows: any[], statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>) {
+  try {
+    const catalog = new Map<string, Array<StatusInput>>();
+    for (const p of rows) {
+      // A nullable OdooProductID marks catalog membership even when core conformance uses ProductKey = -1.
+      const id = String(p.OdooProductID === undefined ? p.ProductKey : p.OdooProductID);
+      if (!/^[1-9]\d*$/.test(id)) continue;
+      const parts = catalog.get(id) ?? [];
+      parts.push({
+        status: statuses.get(String(p.ProductCompanyKey)) ?? null,
+        onHandQty: num(p.OnHandQty),
+        onHandValue: num(p.OnHandValue),
+        bcg: classOf.get(String(p.ProductCompanyKey)) ?? null,
+      });
+      catalog.set(id, parts);
+    }
+    return { statusSummary: summarizeProductStatus([...catalog.values()].map(combineSkuStatus)), statusSummaryError: null };
+  } catch (err) {
+    console.error('[productDashboard] status summary check failed:', err);
+    return { statusSummary: null, statusSummaryError: (err as Error).message };
+  }
+}
+
+export interface StatusInput {
+  status: string | null;
+  onHandQty: number;
+  onHandValue: number;
+  /** The Active product's BCG of the period (units, value, profit); null otherwise. */
+  bcg: Pick<BcgResult, 'bcgClass' | 'volume' | 'value' | 'profit' | 'missingCost'> | null;
+}
+
+/** Shared variants count once. Prefer a workbook match in any in-scope company, then a sale in the period. */
+function combineSkuStatus(parts: StatusInput[]): StatusInput {
+  const excluded = parts.find((part) => part.status === 'Unclassified');
+  if (excluded) return excluded;
+
+  const active = parts.filter((part) => part.status === 'Active');
+  if (active.length) {
+    // The leading company by sales value supplies the class; the amounts span all active company rows.
+    const ordered = [...active].sort((a, b) => (b.bcg?.value ?? 0) - (a.bcg?.value ?? 0));
+    const primary = ordered[0];
+    if (!primary.bcg || active.some((part) => !part.bcg)) return { ...primary, bcg: null };
+    return {
+      ...primary,
+      bcg: {
+        bcgClass: primary.bcg.bcgClass,
+        volume: active.reduce((total, part) => total + part.bcg!.volume, 0),
+        value: active.reduce((total, part) => total + part.bcg!.value, 0),
+        profit: active.reduce((total, part) => total + (part.bcg!.profit ?? 0), 0),
+        missingCost: active.some((part) => part.bcg!.missingCost),
+      },
+    };
+  }
+  return {
+    status: parts.every((part) => part.status === 'Dormant') ? 'Dormant' : 'NonActive',
+    onHandQty: parts.reduce((total, part) => total + part.onHandQty, 0),
+    onHandValue: parts.reduce((total, part) => total + part.onHandValue, 0),
+    bcg: null,
+  };
+}
+
+/** Total SKUs = Unclassified + Dormant + Active + Non Active, and Stars + Cash Cows + Strategic + Dogs = Active. Throws
+ * when a row has no known status, an Active product has no class, or either sum does not match. */
+export function summarizeProductStatus(rows: StatusInput[]): ProductStatusSummary {
+  const out: ProductStatusSummary = {
+    total: rows.length,
+    active: { count: 0, units: 0, value: 0 },
+    nonActive: { count: 0, withStock: 0, zeroStock: 0, stockUnits: 0, stockValue: 0 },
+    dormant: { count: 0 },
+    unclassified: { count: 0 },
+    bcg: { classes: BCG_CLASS_KEYS.map((key) => ({ key, count: 0, units: 0, value: 0, profit: 0 })), missingCost: 0 },
+  };
+  for (const r of rows) {
+    switch (r.status) {
+      case 'Unclassified':
+        out.unclassified.count += 1;
+        break;
+      case 'Dormant':
+        out.dormant.count += 1;
+        break;
+      case 'NonActive':
+        out.nonActive.count += 1;
+        if (r.onHandQty > 0) {
+          out.nonActive.withStock += 1;
+          out.nonActive.stockUnits += r.onHandQty;
+          out.nonActive.stockValue += r.onHandValue;
+        } else {
+          out.nonActive.zeroStock += 1;
+        }
+        break;
+      case 'Active': {
+        const cls = out.bcg.classes.find((c) => c.key === r.bcg?.bcgClass);
+        if (!cls || !r.bcg) throw new Error('Product status check failed: an Active product has no BCG class');
+        out.active.count += 1;
+        out.active.units += r.bcg.volume;
+        out.active.value += r.bcg.value;
+        cls.count += 1;
+        cls.units += r.bcg.volume;
+        cls.value += r.bcg.value;
+        cls.profit = (cls.profit ?? 0) + (r.bcg.profit ?? 0);
+        if (r.bcg.missingCost) out.bcg.missingCost = (out.bcg.missingCost ?? 0) + 1;
+        break;
+      }
+      default:
+        throw new Error(`Product status check failed: unknown ProductStatus ${JSON.stringify(r.status)}`);
+    }
+  }
+  const statusSum = out.unclassified.count + out.dormant.count + out.active.count + out.nonActive.count;
+  if (statusSum !== out.total) {
+    throw new Error(`Product status check failed: Total SKUs ${out.total} != Unclassified + Dormant + Active + Non Active ${statusSum}`);
+  }
+  const bcgSum = out.bcg.classes.reduce((t, c) => t + c.count, 0);
+  if (bcgSum !== out.active.count) {
+    throw new Error(`Product status check failed: Stars + Cash Cows + Strategic + Dogs ${bcgSum} != Active ${out.active.count}`);
+  }
+  if (out.nonActive.withStock + out.nonActive.zeroStock !== out.nonActive.count) {
+    throw new Error('Product status check failed: Non Active with stock + zero stock != Non Active');
+  }
+  return out;
 }

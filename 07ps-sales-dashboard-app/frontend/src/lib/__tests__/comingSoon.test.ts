@@ -3,9 +3,8 @@ import { NAV_ITEMS, departmentReports, firstAccessiblePath, isComingSoon, pageKe
 
 describe('"Coming soon" placeholder pages', () => {
   const soon = NAV_ITEMS.filter(isComingSoon);
-  it('Process: Quality Assurance and Customer Pulse; Product: Product Development Plan', () => {
+  it('Only Quality Assurance and Customer Pulse remain placeholders', () => {
     expect(soon.map((i) => [i.label, i.department, i.href, i.pageKey])).toEqual([
-      ['Product Development Plan', 'product', '/product/product-development-plan', 'product_development_plan'],
       ['Quality Assurance', 'process', '/process/quality-assurance', 'quality_assurance'],
       ['Customer Pulse', 'process', '/process/customer-pulse', 'customer_pulse'],
     ]);

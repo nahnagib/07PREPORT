@@ -166,7 +166,8 @@ export async function hasPermission(
 /** True when the user can View at least one dashboard page -- the gate for shared, page-agnostic
  * dashboard endpoints (filter options, refresh status). */
 export function canViewAnyDashboard(permissions: EffectivePermissions): boolean {
-  return dashboardPageKeys().some((k) => allows(permissions, k, 'view'));
+  // profit_data is a data permission, not a page: on its own it opens no dashboard
+  return dashboardPageKeys().some((k) => k !== 'profit_data' && allows(permissions, k, 'view'));
 }
 
 /**

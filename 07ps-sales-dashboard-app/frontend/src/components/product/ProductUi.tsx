@@ -8,17 +8,29 @@
  *     and PDF (shared exportRowsAsPdf) of exactly the rows and columns a table shows, in its sort order.
  *   - SortableProductTable: sortable on every column, search box, sticky header, CSV + PDF export.
  *   - useHoverTooltip: a viewport-anchored hover tooltip (never clipped by a scrolling table).
+ *   - TooltipSection / TooltipRow: one line per item, fixed label width, values right-aligned, small section dividers.
+ *   - useProfitAccess: profit data (profit, GP%, cost, missing-cost flags) is shown / exported only with View / Export on
+ *     `profit_data` AND when the API sent it (the API strips it without View, routes/productDashboard.ts).
  */
 import React, { useMemo, useState } from 'react';
 import { OdooLink } from '../OdooLink';
+import { useAuth } from '../../lib/AuthProvider';
 import {
   TextInput,
   exportRowsAsCsv,
   exportRowsAsPdf,
+  exportSheetsAsXlsx,
   tooltipBoxStyle,
   useCanExport,
   type TableExportCell,
 } from '@07ps/ui';
+
+/** Profit data on screen: View on profit_data and the API sent it (`profitAccess`). */
+export function useProfitAccess(apiProfitAccess: boolean | undefined): { view: boolean; export: boolean } {
+  const { can } = useAuth();
+  const view = Boolean(apiProfitAccess) && can('profit_data', 'view');
+  return { view, export: view && can('profit_data', 'export') };
+}
 
 /** A left-to-right, left-aligned line (cell wrappers, tooltip titles, legends). */
 export const LTR: React.CSSProperties = { direction: 'ltr', textAlign: 'left' };
@@ -78,12 +90,22 @@ export function CompanyBadge({ company }: { company: string }) {
   return <Pill color={COMPANY_COLOR[company] ?? 'var(--ps-color-neutral-text)'} label={company || '—'} />;
 }
 
-/** Label / value row of a product tooltip. */
+/** Label / value row of a product tooltip: one line, fixed label width (never wraps), value right-aligned. */
 export function TooltipRow({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, lineHeight: 1.7 }}>
-      <span style={{ color: 'var(--ps-color-muted-text)' }}>{label}</span>
-      <span style={{ fontWeight: 600, color: valueColor ?? 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+    <div style={{ display: 'grid', gridTemplateColumns: '128px minmax(0, 1fr)', alignItems: 'baseline', gap: 8, fontSize: 12, lineHeight: 1.7 }}>
+      <span style={{ color: 'var(--ps-color-muted-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+      <span style={{ fontWeight: 600, color: valueColor ?? 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums', textAlign: 'right', whiteSpace: 'nowrap' }}>{value}</span>
+    </div>
+  );
+}
+
+/** A titled group of tooltip rows with a small divider above it. */
+export function TooltipSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ borderTop: '1px solid var(--ps-color-border)', marginTop: 6, paddingTop: 6 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--ps-color-muted-text)', marginBottom: 2 }}>{title}</div>
+      {children}
     </div>
   );
 }
@@ -118,6 +140,15 @@ export function exportProductCsv<T>(fileName: string, columns: ExportColumn<T>[]
   return exportRowsAsCsv({ headers: columns.map((c) => c.header), rows: rows.map((r) => columns.map((c) => c.value(r))), fileName });
 }
 
+/** One .xlsx with several sheets (e.g. Summary + one per BCG class), raw numbers. */
+export function exportProductWorkbook(fileName: string, sheets: { name: string; headers: string[]; rows: TableExportCell[][] }[]): Promise<void> {
+  return exportSheetsAsXlsx({ fileName, sheets });
+}
+
+export function rowsFor<T>(columns: ExportColumn<T>[], rows: T[]): TableExportCell[][] {
+  return rows.map((r) => columns.map((c) => c.value(r)));
+}
+
 export function exportProductPdf<T>(opts: { title: string; subtitle?: string; fileName: string; columns: ExportColumn<T>[]; rows: T[] }): Promise<void> {
   const { title, subtitle, fileName, columns, rows } = opts;
   return exportRowsAsPdf({
@@ -137,7 +168,14 @@ const exportButtonStyle: React.CSSProperties = {
 
 /** "Export CSV" + "Export as PDF" (hidden without the Export permission; the backend refuses the export anyway). */
 /** csvText: the CSV button's text when it is not the plain "Export CSV" (e.g. the Stock Aging "Export aging data"). */
-export function ExportButtons({ onCsv, onPdf, label, csvText = 'Export CSV' }: { onCsv?: () => void | Promise<void>; onPdf?: () => void | Promise<void>; label?: string; csvText?: string }) {
+export function ExportButtons({ onCsv, onPdf, onXlsx, label, csvText = 'Export CSV', xlsxText = 'Export Excel' }: {
+  onCsv?: () => void | Promise<void>;
+  onPdf?: () => void | Promise<void>;
+  onXlsx?: () => void | Promise<void>;
+  label?: string;
+  csvText?: string;
+  xlsxText?: string;
+}) {
   const canExport = useCanExport();
   if (!canExport) return null;
   const run = (fn?: () => void | Promise<void>) => () => {
@@ -149,6 +187,11 @@ export function ExportButtons({ onCsv, onPdf, label, csvText = 'Export CSV' }: {
   };
   return (
     <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
+      {onXlsx && (
+        <button type="button" onClick={run(onXlsx)} style={exportButtonStyle} aria-label={label ? `Export ${label} as Excel` : 'Export Excel'}>
+          {xlsxText}
+        </button>
+      )}
       {onCsv && (
         <button type="button" onClick={run(onCsv)} style={exportButtonStyle} aria-label={label ? `Export ${label} as CSV` : 'Export CSV'}>
           {csvText}

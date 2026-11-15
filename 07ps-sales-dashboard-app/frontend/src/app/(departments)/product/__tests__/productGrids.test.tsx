@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ProductDashboardOverview, ProductDashboardRow } from '../../../../lib/api';
 import BcgMatrixPage from '../bcg-matrix/page';
 import ProductLifecyclePage from '../product-lifecycle/page';
@@ -14,19 +14,51 @@ const row = (id: number, over: Partial<ProductDashboardRow>): ProductDashboardRo
   companies: ['Majaal'], parts: [], value: 100, volume: 10 * id, volumeByUom: [], uom: 'Unit', lines: 1, orderDays: 3, velocity: id, valuePrior: 50,
   volumePrior: 5, avgUnitPrice: 10, grossProfitPct: 40, stockQty: 0, stockValue: 0, inTransitQty: 0, inTransitValue: 0, avgDailySales: 0,
   daysOfInventory: null, stockBand: 'Normal', stockAgeDays: null, stockAgeBucket: null, lifecycleSegment: 'Mature', firstSaleDate: '2025-01-01',
-  lastSaleDate: '2026-11-01', bcgClassYTD: 'Stars', bcgClassLYTD: 'Stars', bcgMovement: 'Improved', bcgExcludedCategory: false, valueYTD: 100,
-  volumeYTD: 10 * id, valueLYTD: 50, volumeLYTD: 5 * id, grossProfitPctYTD: 40, grossProfitPctLYTD: 40, negativeStockRows: 0,
-  bcgVolume: 10 * id, bcgValue: 100, bcgProfit: 40, bcgGrossProfitPct: 40, bcgDataPeriod: 'YTD 2026', bcgDataAsOf: '2026-11-0' + id, ...over,
+  lastSaleDate: '2026-11-01', productStatus: 'Active', bcgClass: 'Stars', bcgMovement: 'Improved', bcgExcludedCategory: false,
+  negativeStockRows: 0,
+  bcgVolume: 10 * id, bcgValue: 100, bcgProfit: 40, bcgGrossProfitPct: 40, bcgDataAsOf: '2026-11-0' + id, ...over,
 });
+/** What the API sends a user without profit access (backend withoutProfit). */
+function withoutProfit(o: ProductDashboardOverview): ProductDashboardOverview {
+  const products = o.products.map((r) => {
+    const rest = { ...r };
+    delete rest.grossProfitPct; delete rest.bcgProfit; delete rest.bcgGrossProfitPct; delete rest.missingCost;
+    return rest;
+  });
+  const statusSummary = o.statusSummary && { ...o.statusSummary, bcg: { classes: o.statusSummary.bcg.classes.map(({ key, count, units, value }) => ({ key, count, units, value })) } };
+  return { ...o, products, statusSummary, profitAccess: false };
+}
 const OVERVIEW: ProductDashboardOverview = {
-  view: 'BMH', asOfDate: '2026-11-07', builtAtUtc: null, period: { from: '2026-01-01', to: '2026-11-07', days: 311, priorFrom: '', priorTo: '' },
-  lookbackDays: 90, thresholds: { bcg: { volume_threshold: { Majaal: 3500, Tika: 25000 }, profit_threshold_pct: 35 } },
+  view: 'BMH', asOfDate: '2026-11-07', builtAtUtc: null, period: { from: '2025-11-07', to: '2026-11-07', days: 366, priorFrom: '2024-11-06', priorTo: '2025-11-06', isDefault: true, label: 'Last 12 Months' },
+  lookbackDays: 90, thresholds: { bcg: { movement_stable_band_pct: 10 } },
   products: [row(1, {}), row(2, {}), { ...row(3, { company: 'Tika', productCompanyKey: 'Tika|3' }), odooUrl: url(3, 3) }],
-  totals: { value: 300, lines: 3, volumeByUom: [] }, intercompanyValue: 0,
+  totals: { value: 300, lines: 3, volumeByUom: [] }, intercompanyValue: 0, profitAccess: true, statusSummaryError: null,
+  statusSummary: {
+    total: 12,
+    active: { count: 4, units: 60, value: 300 },
+    nonActive: { count: 5, withStock: 2, zeroStock: 3, stockUnits: 10, stockValue: 25 },
+    dormant: { count: 2 },
+    unclassified: { count: 1 },
+    bcg: {
+      classes: [
+        { key: 'Stars', count: 3, units: 60, value: 300, profit: 120 },
+        { key: 'Cash Cows', count: 0, units: 0, value: 0, profit: 0 },
+        { key: 'Strategic', count: 1, units: 0, value: 0, profit: 0 },
+        { key: 'Dogs', count: 0, units: 0, value: 0, profit: 0 },
+      ],
+      missingCost: 1,
+    },
+  },
 };
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: () => {} }), useParams: () => ({ brand: 'stonewrap' }), useSearchParams: () => new URLSearchParams() }));
-vi.mock('../../../../lib/AuthProvider', () => ({ useAuth: () => ({ user: null, token: 't', error: null, retryAuth: () => {}, logout: () => {}, isSalesperson: false, canView: () => true }) }));
+// profit access can be switched off per test (a user without View on profit_data, whose API response has no profit fields)
+const access = vi.hoisted(() => ({ profit: true }));
+const workbooks = vi.hoisted(() => [] as { fileName: string; sheets: { name: string; headers: string[]; rows: unknown[][] }[] }[]);
+vi.mock('../../../../lib/AuthProvider', () => ({
+  useAuth: () => ({ user: null, token: 't', error: null, retryAuth: () => {}, logout: () => {}, isSalesperson: false, canView: () => true,
+    can: (page: string) => page !== 'profit_data' || access.profit }),
+}));
 vi.mock('../../../../components/AppHeader', () => ({ AppHeader: () => null }));
 vi.mock('../../../../components/BottomNavBar', () => ({ BottomNavBar: () => null }));
 vi.mock('../../../../components/ValidationStatusBar', () => ({ ValidationStatusBar: () => null }));
@@ -37,7 +69,7 @@ vi.mock('../../../../components/product/useProductFilters', () => ({
   useProductFilters: () => ({ anchorDate: '2026-11-07', onAnchorDateChange: () => {}, dateFromDate: '2026-01-01', dateToDate: '2026-11-07', scope: {}, companyLabel: 'Majaal + Tika', filterBarProps: {}, withLocalReset: () => ({}) }),
 }));
 vi.mock('../../../../lib/hooks', () => ({
-  useProductDashboard: () => ({ data: OVERVIEW, loading: false, error: null, retry: () => {} }),
+  useProductDashboard: () => ({ data: access.profit ? OVERVIEW : withoutProfit(OVERVIEW), loading: false, error: null, retry: () => {} }),
   useRefreshStatus: () => ({ data: null, loading: false, error: null }),
 }));
 vi.mock('@07ps/ui', async (importOriginal) => ({
@@ -51,50 +83,105 @@ vi.mock('@07ps/ui', async (importOriginal) => ({
   DonutChart: () => null,
   ComboChart: () => null,
   GroupedBarChart: () => null,
+  useCanExport: () => true,
+  exportSheetsAsXlsx: async (o: { fileName: string; sheets: { name: string; headers: string[]; rows: unknown[][] }[] }) => {
+    workbooks.push(o);
+  },
 }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  access.profit = true;
+  workbooks.length = 0;
+});
 
 describe('Product tables use the standard grid, volume first, and every product opens in Odoo', () => {
   it('BCG Matrix: Product Detail grid + class panels link each product to its own company in Odoo', () => {
     render(<BcgMatrixPage />);
     const grid = screen.getByTestId('data-grid');
     expect(grid.getAttribute('data-file')).toBe('bcg-matrix-product-detail');
-    expect(grid.getAttribute('data-headers')!.split('|').slice(0, 4)).toEqual(['Product Name', 'Volume YTD', 'Volume LYTD', 'Vol Growth']);
+    expect(grid.getAttribute('data-headers')!.split('|').slice(0, 4)).toEqual(['Product Name', 'Status', 'Volume', 'Volume prior period']);
     expect(grid.getAttribute('data-headers')).toMatch(/Vol Growth\|Quantity On Hand/); // Quantity On Hand right after the growth columns
-    expect(grid.getAttribute('data-headers')).toMatch(/Volume YTD\|Volume LYTD/);
+    expect(grid.getAttribute('data-headers')).toMatch(/\|Vendor\|BCG Class\|/);
+    expect(grid.getAttribute('data-headers')).toMatch(/\|Profit\|GP%\|Cost data$/); // profit access (this user)
     expect(within(grid).getByRole('link', { name: /P3/ }).getAttribute('href')).toBe(url(3, 3)); // Tika product -> Tika company
     // the Stars panel (a ranked visual, not a grid) links too
     const links = screen.getAllByRole('link', { name: /P1/ }).map((a) => a.getAttribute('href'));
     expect(links).toContain(url(1, 1));
   });
 
-  it('BCG Matrix (threshold version restored 2026-11-11): class rules from the config thresholds, no median, Product Detail full width under Product Movement', () => {
+  it('BCG Matrix (round 2): 4 classes only, no thresholds anywhere, shared KPI cards, Product Detail full width under Product Movement', () => {
     const { container } = render(<BcgMatrixPage />);
-    expect(screen.getByTestId('bcg-class-definition-Stars').textContent).toBe('Volume ≥ Majaal 3,500 / Tika 25,000 units, GP% ≥ 35%');
-    expect(screen.getByTestId('bcg-class-definition-Dogs').textContent).toBe('Volume < Majaal 3,500 / Tika 25,000 units, GP% < 35%');
-    // 2x2: STARS | CASH COWS / STRATEGIC | DOGS; KPI tiles in the same order, then Not classified
+    expect(screen.getByTestId('bcg-class-definition-Stars').textContent).toMatch(/^High volume, high margin\. Protect availability/);
+    expect(screen.getByTestId('bcg-class-definition-Dogs').textContent).toMatch(/^Low volume, low margin\. .*not an automatic discontinue/);
+    expect(container.textContent).not.toMatch(/3,500|25,000|35%|≥|Not classified|not classified/);
+    // 2x2: STARS | CASH COWS / STRATEGIC | DOGS
     expect([...screen.getByTestId('bcg-class-grid').querySelectorAll('[data-testid^="bcg-class-card-"]')].map((e) => e.getAttribute('data-testid')))
       .toEqual(['bcg-class-card-Stars', 'bcg-class-card-Cash Cows', 'bcg-class-card-Strategic', 'bcg-class-card-Dogs']);
+    // 3 rows: Total SKUs (1 card) · Product Status (4) · BCG Matrix of the Active products (4), the shared KpiTile
     const kpis = screen.getByTestId('bcg-kpis');
-    expect([...kpis.children].map((tile) => tile.querySelector('span:last-child')?.textContent))
-      .toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Not classified']);
+    const row = (id: string) => [...kpis.querySelector(`section[aria-labelledby="${id}"] > div`)!.children];
+    const labels = (id: string) => row(id).map((tile) => tile.getAttribute('aria-label'));
+    expect([...kpis.querySelectorAll('h2')].map((h) => h.textContent)).toEqual(['Total SKUs', 'Product Status', 'BCG Matrix (Active products)']);
+    expect(labels('row-total-skus')).toEqual(['Active + archived, every category']);
+    expect(row('row-total-skus')[0].textContent).toMatch(/12.*Active 4 · Non Active 5 · Dormant 2 · Unclassified 1/);
+    expect(labels('row-product-status')).toEqual(['Active · sold in the period', 'Non Active · not sold in the period', 'Dormant · archived in Odoo', 'Unclassified · active exclusion rules']);
+    expect(row('row-product-status')[1].textContent).toMatch(/2 with stock · 3 zero stock/);
+    expect(labels('row-bcg')).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs']);
+    expect(row('row-bcg')[0].textContent).toMatch(/profit LYD/); // profit access (this user)
+    expect(screen.getByTestId('bcg-missing-cost').textContent).toMatch(/^1 Active products have missing cost data/);
+    expect(screen.getByTestId('period-note').textContent).toMatch(/^Last 12 Months · 7 Nov 2025 – 7 Nov 2026/);
+    expect(container.textContent).not.toMatch(/YTD|Year to Date/);
     expect(screen.queryByText(/axes|Export image/)).toBeNull();
-    expect(screen.getByTestId('bcg-profit-data').textContent).toMatch(/^Profit data as of 2026-/);
-    expect(screen.getByTestId('bcg-class-action-Dogs').textContent).toMatch(/not an automatic discontinue/);
+    expect(screen.getByText('Export BCG')).toBeTruthy();
     expect(container.textContent).not.toMatch(/median|Cannot classify|Insufficient comparison|unstable/i);
     const text = container.textContent ?? '';
-    expect(text.indexOf('Product Movement')).toBeLessThan(text.indexOf('Product Detail'));
+    expect(text.indexOf('Product Movement')).toBeLessThan(text.lastIndexOf('Product Detail')); // the card (the note also says "Product Detail")
     // neither card shares a row with the other (no two-column grid around them)
     const grid = screen.getByTestId('data-grid');
     const sharedRow = [...container.querySelectorAll<HTMLElement>('div')].find((d) => d.style.gridTemplateColumns && d.contains(grid));
     expect(sharedRow).toBeUndefined();
   });
 
+  it('BCG Matrix without profit access: no profit, GP% or missing-cost anywhere, the class stays', () => {
+    access.profit = false;
+    const { container } = render(<BcgMatrixPage />);
+    const headers = screen.getByTestId('data-grid').getAttribute('data-headers')!;
+    expect(headers).not.toMatch(/Profit|GP%|Cost data/);
+    expect(headers).toMatch(/BCG Class/);
+    expect(container.textContent).not.toMatch(/\bprofit\b|GP%|missing cost/i); // ('profitability' in the class actions is advice, not data)
+    expect(screen.getByTestId('bcg-kpis').textContent).toMatch(/Stars/);
+  });
+
+  it('Export BCG: one workbook, a Summary sheet + one sheet per class with every Active product; profit columns only with access', async () => {
+    const run = async () => {
+      render(<BcgMatrixPage />);
+      fireEvent.click(screen.getByText('Export BCG'));
+      await vi.waitFor(() => expect(workbooks).toHaveLength(1));
+      const wb = workbooks.pop()!;
+      cleanup();
+      return wb;
+    };
+    const full = await run();
+    expect(full.fileName).toBe('bcg-matrix');
+    expect(full.sheets.map((sh) => sh.name)).toEqual(['Summary', 'Stars', 'Cash Cows', 'Strategic', 'Dogs']);
+    expect(full.sheets[0].headers).toEqual(['Class', 'Products', 'Volume (Unit)', 'Value (LYD)', 'Profit (LYD)']);
+    expect(full.sheets[0].rows.map((r) => r[0])).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Total (Active)', undefined, 'Period', 'Compared with', 'Company filter']);
+    const meta = Object.fromEntries(full.sheets[0].rows.filter((r) => typeof r[0] === 'string' && r.length === 2).map((r) => [r[0], r[1]]));
+    expect(meta).toEqual({ Period: 'Last 12 Months · 7 Nov 2025 – 7 Nov 2026', 'Compared with': '6 Nov 2024 – 6 Nov 2025', 'Company filter': 'Majaal + Tika' });
+    expect(full.sheets[1].headers).toEqual(['Product', 'Vendor', 'Class', 'Value (LYD)', 'Volume (Unit)', 'Volume prior period (Unit)', 'Growth %', 'Qty on hand (Unit)', 'Profit (LYD)', 'GP%', 'Missing cost data']);
+    expect(full.sheets[1].rows).toHaveLength(3); // every Stars product (the panel shows the top 10)
+    access.profit = false;
+    const plain = await run();
+    expect(plain.sheets[0].headers).toEqual(['Class', 'Products', 'Volume (Unit)', 'Value (LYD)']);
+    expect(plain.sheets[1].headers).toEqual(['Product', 'Vendor', 'Class', 'Value (LYD)', 'Volume (Unit)', 'Volume prior period (Unit)', 'Growth %', 'Qty on hand (Unit)']);
+    expect(JSON.stringify(plain)).not.toMatch(/Profit|GP%|Missing cost|3,500|35%/);
+  });
+
   it('Product Lifecycle: Product Detail is the standard grid, volume first', () => {
     render(<ProductLifecyclePage />);
     const grid = within(screen.getByTestId('lifecycle-product-grid')).getByTestId('data-grid');
-    expect(grid.getAttribute('data-headers')!.split('|').slice(0, 3)).toEqual(['Product Name', 'Volume (period)', 'Volume vs same period LY']);
+    expect(grid.getAttribute('data-headers')!.split('|').slice(0, 3)).toEqual(['Product Name', 'Volume (period)', 'Volume vs prior period']);
     expect(within(grid).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([url(3, 3), url(2, 1), url(1, 1)]); // highest volume first
   });
 

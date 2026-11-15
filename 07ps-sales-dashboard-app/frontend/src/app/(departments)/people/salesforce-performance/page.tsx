@@ -679,14 +679,14 @@ export default function SalesPeoplePerformancePage() {
               {/* 5. Performance details: last on the page. */}
               <ChartPanel title={`Performance details · ${cohort.length}`} {...vh('promotion.salesPeople.details')}>
                 <DataGrid columns={detailColumns} rows={personRows} getRowId={(r) => r.id}
-                  fileName="sales-people-performance-details" extraFilterParts={selectionParts}
+                  fileName="salesforce-performance-details" extraFilterParts={selectionParts}
                   onRowClick={(r) => choosePerson(r.key)} pageSize={25} />
               </ChartPanel>
             </>
           )}
         </main>
         <RefreshFooter lastRefreshTime={refresh.data ? formatTimestamp(refresh.data.lastRefreshTime) : undefined} />
-        <BottomNavBar active="Sales People Performance" />
+        <BottomNavBar active="Salesforce Performance" />
       </div>
     </PermissionGuard>
   );

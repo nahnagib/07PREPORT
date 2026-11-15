@@ -156,7 +156,8 @@ def _apply_customer_growth(ctx: RunContext, result: cf.Conformed, *, write: bool
     blocked["CustomerID"] = blocked["CustomerKey"].astype(str)
     legacy_logger = pipeline.legacy_logger
     sales_org = SalesOrgRepository(legacy_logger).load(pipeline.settings.sales_team_path)
-    df = cf.customer_growth_input(result.tables["fact_sales_lines"], {int(k): v for k, v in names.items()})
+    lines = result.tables["fact_sales_lines"]
+    df = cf.customer_growth_input(lines, {int(k): v for k, v in names.items()})
     dim = CustomerDimensionBuilder(sales_org, PipelineSettings(), BlockedCustomersLoader(legacy_logger)).build(
         df, blocked_customers_path=None, blocked_customers=blocked.drop(columns=["CustomerKey"]))
     growth = cf.growth_rows(dim)
@@ -171,10 +172,19 @@ def _apply_customer_growth(ctx: RunContext, result: cf.Conformed, *, write: bool
         with ctx.engine.begin() as conn:
             upsert(conn, "dim_customer", growth, update_columns=[*cf.GROWTH_COLUMNS, "updated_at_utc"])
     by_key = growth.set_index("CustomerKey")
-    lines = result.tables["fact_sales_lines"]
     for col in ("First_Purchase_Date", "CustomerStatus"):
         if col in lines.columns:
             lines[col] = lines["CustomerKey"].map(by_key[col]).to_numpy()
+
+
+def fit_to_table(table: str, df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """The frame's columns that `table` has. dim_sales_product_dashboard without OnProductPages (migration 0073 not applied
+    yet): only the Product pages' own rows, so the archived / excluded products added for the status cards never show
+    up on the pages."""
+    if table == "dim_sales_product_dashboard" and "OnProductPages" in df.columns and "OnProductPages" not in cols:
+        log.warning("dim_sales_product_dashboard has no OnProductPages column (apply migration 0073): status rows not loaded")
+        df = df[pd.to_numeric(df["OnProductPages"], errors="coerce").fillna(1).ne(0)]
+    return df[[c for c in df.columns if c in cols]]
 
 
 def load_sales_marts(ctx: RunContext) -> TaskResult:
@@ -189,7 +199,7 @@ def load_sales_marts(ctx: RunContext) -> TaskResult:
         extra = [c for c in df.columns if c not in cols]
         if extra:
             dropped[table] = extra
-        frames[table] = df[[c for c in df.columns if c in cols]]
+        frames[table] = fit_to_table(table, df, cols)
     if dropped:
         log.warning("Columns produced by the legacy transforms but not in the mart schema (not loaded): %s", dropped)
 

@@ -11,6 +11,7 @@ import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../lib/format';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
+import { PeriodNote } from '../../../../components/product/PeriodNote';
 import {
   Card,
   ChartPanel,
@@ -43,7 +44,7 @@ import { ProductName } from '../../../../components/product/ProductUi';
 
 const SEGMENTS = LIFECYCLE_SEGMENTS;
 interface TableRow extends ProductFact, Record<string, unknown> {
-  /** Volume of the period vs the same period last year, %; null = nothing sold last year. */
+  /** Volume of the period vs the prior period, %; null = nothing sold before. */
   growth: number | null;
 }
 
@@ -106,7 +107,7 @@ export default function ProductLifecyclePage() {
     { key: 'volume', header: 'Volume (period)', align: 'right', render: (row) => <strong>{fmtVolume(row)}</strong>, rawValue: (row) => row.volume },
     {
       key: 'growth',
-      header: 'Volume vs same period LY',
+      header: 'Volume vs prior period',
       align: 'right',
       rawValue: (row) => (row.growth === null ? '' : Math.round(row.growth * 10) / 10),
       sortValue: (row) => row.growth ?? Number.NEGATIVE_INFINITY,
@@ -173,6 +174,8 @@ export default function ProductLifecyclePage() {
         />
 
         <main style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
+
+          <PeriodNote period={overview.data?.period} />
           {overview.loading && !overview.data ? (
             <LoadingSkeleton variant="chart" />
           ) : overview.error ? (
@@ -189,7 +192,7 @@ export default function ProductLifecyclePage() {
             <KpiTile
               label="Discontinued"
               value={String(discRows.length)}
-              variance={`${fmtUnits(sum(discRows, (r) => r.volumePrior))} sold same period last year`}
+              variance={`${fmtUnits(sum(discRows, (r) => r.volumePrior))} sold in the prior period`}
               status="alert"
             />
             <KpiTile label="Portfolio Freshness" value={`${freshPct.toFixed(1)}%`} variance={`${newRows.length} SKUs first sold in the last 180 days`} status="neutral" />
@@ -205,7 +208,7 @@ export default function ProductLifecyclePage() {
               bars={[{ key: 'units', name: 'Units sold (period)', color: 'var(--ps-color-accent)' }]}
               leftAxisFormatter={(v) => fmtNum(v)}
               lines={[
-                { key: 'unitsLY', name: 'Same period LY', color: 'var(--ps-color-last-year)', yAxisId: 'left' },
+                { key: 'unitsLY', name: 'Prior period', color: 'var(--ps-color-last-year)', yAxisId: 'left' },
                 { key: 'cumPct', name: 'Cumulative %', color: 'var(--ps-color-gold)', yAxisId: 'right' },
               ]}
               rightAxisFormatter={(v) => `${v.toFixed(0)}%`}

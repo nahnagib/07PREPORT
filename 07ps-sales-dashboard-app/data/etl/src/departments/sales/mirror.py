@@ -382,6 +382,9 @@ class MirrorSync:
         if key in self._meta:
             return self._meta[key]
         meta = None if refresh else self.store.meta(spec.model, ctx)
+        if meta is not None and set(meta["fields"]) != {f for f in spec.fields if f in meta["fields_get"]}:
+            # A deployed extraction spec can add category fields without any Odoo write_date changing.
+            meta = None
         if meta is None:
             fg = self.client.fields_get(spec.model, attributes=FIELDS_GET_ATTRS)
             fields = [f for f in spec.fields if f in fg]
@@ -438,11 +441,13 @@ class MirrorSync:
 
     def _sync_spec(self, spec: MirrorSpec, ctx: int, context: dict[str, Any], *, full_check: bool) -> set[int]:
         ds = dataset_name(spec.model, ctx)
+        previous_meta = self.store.meta(spec.model, ctx)
         meta = self._spec_meta(spec, ctx, context, refresh=full_check)
         fields, domain = meta["fields"], meta["domain"]
+        schema_changed = previous_meta is None or set(previous_meta["fields"]) != set(fields) or previous_meta["domain"] != domain
         wm = self.wm.get(ds, conn=self.conn)
         started = self.now()
-        if wm.write_date is None:
+        if wm.write_date is None or schema_changed:
             records = self._read(spec.model, domain, fields, context)
             self.result.first_fill.append(ds)
         else:

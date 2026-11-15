@@ -19,8 +19,8 @@ const row = (id: number, over: Partial<ProductDashboardRow>): ProductDashboardRo
   value: 0, volume: 0, volumeByUom: [], uom: 'Unit', lines: 0, orderDays: 0, velocity: 0, valuePrior: 0, volumePrior: 0, avgUnitPrice: null,
   grossProfitPct: null, stockQty: 0, stockValue: 0, inTransitQty: 0, inTransitValue: 0, avgDailySales: 0, daysOfInventory: null,
   stockBand: 'Normal', stockAgeDays: null, stockAgeBucket: null, lifecycleSegment: 'Mature', firstSaleDate: null, lastSaleDate: null,
-  bcgClassYTD: 'Dogs', bcgClassLYTD: null, bcgMovement: null, bcgExcludedCategory: false, valueYTD: 0, volumeYTD: 0, valueLYTD: 0,
-  volumeLYTD: 0, grossProfitPctYTD: null, grossProfitPctLYTD: null, negativeStockRows: 0, ...over,
+  productStatus: 'Active', bcgClass: 'Dogs', bcgMovement: null, bcgExcludedCategory: false,
+  negativeStockRows: 0, ...over,
 });
 
 // 6 sellers (velocities 1..6 -> Slow 1,2 · Normal 3,4 · Fast 5,6), stock on hand of 30 + 30 + 40 LYD at cost, sales 1,000 LYD
@@ -32,12 +32,12 @@ PRODUCTS[0] = { ...PRODUCTS[0], stockQty: 50, stockValue: 30, onHandQty: 50, onH
 PRODUCTS[1] = { ...PRODUCTS[1], stockQty: 20, stockValue: 30, onHandQty: 20, onHandValue: 30, daysOfInventory: 20, stockBand: 'StockOutRisk', stockAgeDays: 800, stockAgeBucket: '> 2 years' };
 PRODUCTS[2] = { ...PRODUCTS[2], stockQty: 10, stockValue: 40, onHandQty: 10, onHandValue: 40, daysOfInventory: 100, stockAgeDays: 200, stockAgeBucket: '181–365 days' };
 const OVERVIEW: ProductDashboardOverview = {
-  view: 'BMH', asOfDate: '2026-11-07', builtAtUtc: null, period: { from: '2026-10-08', to: '2026-11-07', days: 31, priorFrom: '', priorTo: '' },
-  lookbackDays: 90, thresholds: THRESHOLDS, products: PRODUCTS, totals: { value: 1000, lines: 6, volumeByUom: [] }, intercompanyValue: 0,
+  view: 'BMH', asOfDate: '2026-11-07', builtAtUtc: null, period: { from: '2026-10-08', to: '2026-11-07', days: 31, priorFrom: '2026-09-07', priorTo: '2026-10-07', isDefault: false, label: 'Custom range' },
+  lookbackDays: 90, thresholds: THRESHOLDS, products: PRODUCTS, totals: { value: 1000, lines: 6, volumeByUom: [] }, intercompanyValue: 0, profitAccess: true, statusSummary: null, statusSummaryError: null,
 };
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: () => {} }), useParams: () => ({}), useSearchParams: () => new URLSearchParams() }));
-vi.mock('../../../../lib/AuthProvider', () => ({ useAuth: () => ({ user: null, token: 't', error: null, retryAuth: () => {}, logout: () => {}, isSalesperson: false, canView: () => true }) }));
+vi.mock('../../../../lib/AuthProvider', () => ({ useAuth: () => ({ user: null, token: 't', error: null, retryAuth: () => {}, logout: () => {}, isSalesperson: false, canView: () => true, can: () => true }) }));
 vi.mock('../../../../components/AppHeader', () => ({ AppHeader: () => null }));
 vi.mock('../../../../components/BottomNavBar', () => ({ BottomNavBar: () => null }));
 vi.mock('../../../../components/ValidationStatusBar', () => ({ ValidationStatusBar: () => null }));
@@ -220,9 +220,9 @@ describe('Stock Velocity page', () => {
     const { inventoryFields, bcgClassName } = await vi.importActual<typeof import('../../../../components/product/InventoryVisual')>('../../../../components/product/InventoryVisual');
     const fact = { onHandQty: 0, onHandValue: 0, stockQty: 0, daysOfInventory: null, stockAgeDays: null, velocity: 0, volume: 0, value: 0 } as never;
     expect(inventoryFields(fact).map((f) => f.value)).toEqual(['0 Units', 'LYD 0', '– No stock', '– No stock', '– No sales in period', '– No sales in period', '– No sales in period']);
-    expect(bcgClassName(null)).toBe('Not classified (no sales in period)');
+    expect(bcgClassName(null)).toBe('Not Active in the period');
     // the BCG Matrix's own class names everywhere (threshold class of the ETL)
-    expect(['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Unclassified (no cost)'].map(bcgClassName)).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Not classified (no profit data)']);
+    expect(['Stars', 'Cash Cows', 'Strategic', 'Dogs'].map(bcgClassName)).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs']);
   });
 
   it('Export movers data: every SKU of the visual, the standard columns, the mover columns and the group summary', async () => {

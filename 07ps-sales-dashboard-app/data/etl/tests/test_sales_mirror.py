@@ -155,6 +155,30 @@ def test_a_changed_record_is_read_and_stored_unchanged_ones_are_not(engine, odoo
     assert _payload(engine, "sale.order", 1)["state"] == "cancel"
 
 
+def test_new_category_field_backfills_unchanged_products_on_incremental_run(engine, odoo):
+    import json
+
+    odoo.db["product.product"][500]["categ_id"] = [39, "Packaging"]
+    _sync(engine, odoo, 0)
+    # Simulate the old deployed catalog: watermark is current but category was never extracted.
+    with engine.begin() as conn:
+        store = mr.MirrorStore(conn)
+        for ctx in (1, 3):
+            meta = store.meta("product.product", ctx)
+            store.save_meta("product.product", ctx, [f for f in meta["fields"] if f != "categ_id"], meta["fields_get"], meta["domain"])
+            record = store.payloads("product.product", ctx, [500])[0]
+            record.pop("categ_id")
+            conn.execute(text("UPDATE raw_odoo_mirror SET payload = :payload WHERE model = 'product.product' AND company_ctx = :ctx"),
+                         {"payload": json.dumps(record), "ctx": ctx})
+    result = _sync(engine, odoo, 30)
+    assert _payload(engine, "product.product", 500, 1)["categ_id"] == [39, "Packaging"]
+    assert _payload(engine, "product.product", 500, 3)["categ_id"] == [39, "Packaging"]
+    assert result.changed["mirror:product.product@1"] == 1
+    odoo.reads.clear()
+    _sync(engine, odoo, 60)
+    assert odoo.reads.get("product.product", 0) == 0
+
+
 def test_a_line_removed_from_an_order_is_deleted_although_it_has_no_write_date(engine, odoo):
     _sync(engine, odoo, 0)
     del odoo.db["sale.order.line"][12]

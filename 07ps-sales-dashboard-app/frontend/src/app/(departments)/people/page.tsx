@@ -1,5 +1,5 @@
-import { DepartmentPlaceholderPage } from '../../../components/DepartmentPlaceholderPage';
+import { DepartmentHubPage } from '../../../components/DepartmentHubPage';
 
 export default function PeoplePage() {
-  return <DepartmentPlaceholderPage departmentKey="people" />;
+  return <DepartmentHubPage departmentKey="people" />;
 }

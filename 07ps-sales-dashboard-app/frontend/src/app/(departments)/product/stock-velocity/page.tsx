@@ -11,6 +11,7 @@ import { RefreshFooter } from '../../../../components/RefreshFooter';
 import { formatTimestamp } from '../../../../lib/format';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
+import { PeriodNote } from '../../../../components/product/PeriodNote';
 import {
   Card,
   ChartPanel,
@@ -85,13 +86,13 @@ import {
   type LegendItem,
 } from '../../../../components/product/InventoryVisual';
 
-/** Class buckets for the Overstock / Stock-out charts: the 4 BCG classes (the ETL's YTD class from the config thresholds,
+/** Class buckets for the Overstock / Stock-out charts: the 4 BCG classes (the last-12-months class of the Active products, config thresholds,
  * the BCG Matrix's own), products sold without a standard cost (Unclassified (no cost)), and products with no class.
  * Shown with the BCG Class names of every inventory visual, in the BCG page order (Stars / Cash Cows / Strategic / Dogs / Not classified). */
-const NO_SALES = 'No sales in period';
+const NO_SALES = 'No sales in the period';
 const CLASS_BUCKETS = [...BCG_CLASSES, UNCLASSIFIED_NO_COST, UNCLASSIFIED_ZERO_REVENUE, NO_SALES] as const;
 type ClassBucket = (typeof CLASS_BUCKETS)[number];
-const bucketOf = (r: ProductFact): ClassBucket => (r.bcg_class_YTD ?? NO_SALES) as ClassBucket;
+const bucketOf = (r: ProductFact): ClassBucket => (r.bcg_class ?? NO_SALES) as ClassBucket;
 const bucketColor = (b: ClassBucket) => BCG_COLOR[b] ?? 'var(--ps-color-neutral-text)';
 const bucketName = (b: ClassBucket) => bcgClassName(b === NO_SALES ? null : b);
 
@@ -128,8 +129,8 @@ function countTooltip(unitsLabel: string, valueLabel: string) {
 }
 
 /**
- * Stock Velocity -- live data (useProductDashboard). Velocity = invoiced quantity in the selected period / days in the
- * period; stock, days on hand (DOH), stock band and stock age are as of the last ETL run (finished-goods internal
+ * Stock Velocity -- live data (useProductDashboard). Velocity = invoiced quantity in the period / days in the
+ * window (no date range, 2026-11-14); stock, days on hand (DOH), stock band and stock age are as of the last ETL run (finished-goods internal
  * locations, look-back and company thresholds from config/product_dashboard.json, read through overview.thresholds).
  * Volume is added up as "Unit" whatever the Odoo UoM; LYD is secondary. Filters: the Promotion FilterBar
  * (useProductFilters) plus Category and Stock Band. Stock itself has no customer: Customer Group / Channel / Branch /
@@ -402,6 +403,8 @@ export default function StockVelocityPage() {
         />
 
         <main style={{ flex: 1, padding: 'clamp(8px, calc(5vw - 12px), var(--ps-space-4, 24px))', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
+
+          <PeriodNote period={overview.data?.period} />
           {overview.loading && !overview.data ? (
             <LoadingSkeleton variant="chart" />
           ) : overview.error ? (

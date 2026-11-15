@@ -1,6 +1,6 @@
-# Sales People Performance
+# Salesforce Performance
 
-Promotion → Sales People Performance (`/Dashboard/promotion/sales-people-performance`).
+People → Salesforce Performance (`/Dashboard/people/salesforce-performance`).
 The backend syncs the `sales_people_performance` permission at startup. Admins can view it immediately;
 other roles require an explicit View grant in Roles & Permissions. No warehouse migration is needed.
 

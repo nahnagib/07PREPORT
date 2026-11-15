@@ -51,3 +51,23 @@ export async function exportRowsAsXlsx({ headers, rows, fileName, sheetName = 'D
   XLSX.utils.book_append_sheet(book, sheet, sheetName.slice(0, 31));
   XLSX.writeFile(book, `${fileName}.xlsx`);
 }
+
+export interface WorkbookSheet {
+  /** Excel sheet name (cut to 31 chars, Excel's own limit). */
+  name: string;
+  headers: string[];
+  rows: TableExportCell[][];
+}
+
+/** One .xlsx with several sheets (e.g. a Summary sheet and one sheet per group), raw numbers. */
+export async function exportSheetsAsXlsx({ sheets, fileName }: { sheets: WorkbookSheet[]; fileName: string }): Promise<void> {
+  if (!(await authorizeExport('xlsx'))) return;
+  const XLSX = await import('xlsx');
+  const book = XLSX.utils.book_new();
+  for (const s of sheets) {
+    const sheet = XLSX.utils.aoa_to_sheet([s.headers, ...s.rows]);
+    sheet['!cols'] = s.headers.map((h) => ({ wch: Math.max(12, h.length + 2) }));
+    XLSX.utils.book_append_sheet(book, sheet, s.name.slice(0, 31));
+  }
+  XLSX.writeFile(book, `${fileName}.xlsx`);
+}

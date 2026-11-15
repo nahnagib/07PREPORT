@@ -292,7 +292,7 @@ export function useCriticalNumberOverview(
   return { ...state, retry: makeRetry(token, retryAuth, load) };
 }
 
-/** Sales People Performance overview (backend's /sales-people-performance/overview). Same authGate/makeRetry
+/** Salesforce Performance overview (backend's /sales-people-performance/overview). Same authGate/makeRetry
  * template as useCriticalNumberOverview; `enabled` = the viewer may open the page. */
 export function useSalesPeopleOverview(
   token: string | null,

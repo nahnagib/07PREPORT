@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { BottomNavBar } from '../BottomNavBar';
 
-const route = vi.hoisted(() => ({ pathname: '/promotion/sales-people-performance' }));
+const route = vi.hoisted(() => ({ pathname: '/people/salesforce-performance' }));
 vi.mock('next/navigation', () => ({ usePathname: () => route.pathname }));
 vi.mock('next/link', () => ({
   default: ({ children, href, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => <a href={href} {...rest}>{children}</a>,
@@ -18,7 +18,7 @@ const current = () => screen.getAllByRole('link').filter((l) => l.getAttribute('
 describe('BottomNavBar active tab', () => {
   it('without a label, highlights the page of the current route, not Tachometer', () => {
     render(<BottomNavBar />);
-    expect(current()).toEqual(['Sales People Performance']);
+    expect(current()).toEqual(['Salesforce Performance']);
   });
   it('an explicit label still wins', () => {
     route.pathname = '/promotion/tachometer/value';

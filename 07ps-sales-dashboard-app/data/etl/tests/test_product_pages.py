@@ -13,6 +13,11 @@ CONFIG = Path(__file__).resolve().parents[1] / "config" / "product_dashboard.jso
 
 
 # ---------------------------------------------------------------- Odoo catalog + sales lines
+
+def on_pages(dim: "pd.DataFrame") -> "pd.DataFrame":
+    """The Product pages' rows: Dim_ProductDashboard also holds every other product (OnProductPages = 0, 2026-11-14)."""
+    return dim[dim["OnProductPages"].eq(1)] if "OnProductPages" in dim.columns else dim
+
 def _raw(*rows: dict) -> pd.DataFrame:
     """product.product rows as ProductCostRepository returns them (m2o flattened to name + _id)."""
     out = []
@@ -123,14 +128,14 @@ def test_daily_table_preserves_totals_including_products_outside_the_catalog() -
     out = _build(lines, dim)
     daily = out["Fact_ProductSalesDaily"]
     assert daily["Value"].sum() == 55 and daily["Qty"].sum() == 6 and daily["Lines"].sum() == 3
-    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    p = out["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductCompanyKey")
     assert p.loc["Tika|99", "ValueYTD"] == 5 and p.loc["Tika|99", "Brand"] == "Unassigned"  # in the totals, never dropped
 
 
 def test_zero_sales_active_odoo_product_of_the_company_is_listed_with_zeros() -> None:
     dim = _dim({"id": 1, "name": "A", "company": "Majaal"}, {"id": 2, "name": "B", "company": "Majaal"},
                {"id": 3, "name": "Archived", "company": "Majaal", "active": False})
-    products = _build([_line("Majaal", 1, "2026-09-01", 1, 10)], dim)["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    products = _build([_line("Majaal", 1, "2026-09-01", 1, 10)], dim)["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductCompanyKey")
     assert "Majaal|2" in products.index
     assert products.loc["Majaal|2", "ValueYTD"] == 0 and products.loc["Majaal|2", "QtyYTD"] == 0
     assert products.loc["Majaal|2", "LifecycleSegment"] == "Never sold"
@@ -145,7 +150,7 @@ def test_stock_rules_finished_goods_negative_and_no_movement() -> None:
     ])
     # 1 sells 90 in the last 90 days -> 1/day -> DOH 100 (> Tika overstock 60)
     out = _build([_line("Tika", 1, "2026-09-01", 90, 900)], dim, inventory=inv)
-    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    p = out["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductCompanyKey")
     assert p.loc["Tika|1", "StockQty"] == 100          # raw materials excluded, negative counted as 0
     assert p.loc["Tika|1", "InTransitQty"] == 50       # shown separately, not on hand
     assert p.loc["Tika|1", "DaysOfInventory"] == 100
@@ -167,7 +172,7 @@ def test_lifecycle_rule() -> None:
         _line("Majaal", 5, "2026-09-01", 5, 5),
         _line("Majaal", 6, "2025-06-01", 5, 5),
     ]
-    p = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductKey")
+    p = _build(lines, dim)["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductKey")
     # 5 is archived in Odoo: left out of every Product page (2026-11-11), so only "no sale in 365 days" is Discontinued
     assert "5" not in p.index
     assert p.loc[["1", "2", "3", "4", "6", "7"], "LifecycleSegment"].tolist() == [
@@ -177,7 +182,7 @@ def test_lifecycle_rule() -> None:
 def test_bcg_zero_cost_is_unclassified_and_logged() -> None:
     dim = _dim({"id": 1, "name": "A"}, {"id": 2, "name": "B"})
     out = _build([_line("Tika", 1, "2026-03-01", 30000, 300000), _line("Tika", 2, "2026-03-01", 10, 100)], dim, costs=[5.0, 0.0])
-    p = out["Dim_ProductDashboard"].set_index("ProductKey")
+    p = out["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductKey")
     assert p.loc["1", "BcgClassYTD"] == "Stars"          # HV (>= 25,000 for Tika) and GP 50% >= 35%
     assert p.loc["2", "BcgClassYTD"] == "Unclassified (no cost)"
     assert out["QA_ProductDataQuality"].query("Check == 'NoCost'")["ProductCompanyKey"].tolist() == ["Tika|2"]
@@ -193,7 +198,7 @@ def test_bcg_uses_the_company_volume_threshold_and_the_profit_threshold() -> Non
              _line("Majaal", 3, "2026-03-01", 4000, 4400),          # HV, GP ~9%          -> Cash Cows
              _line("Majaal", 4, "2026-03-01", 10, 11),              # LV, GP ~9%          -> Dogs
              _line("Tika", 5, "2026-03-01", 24999, 24999 * 2)]      # under the Tika 25,000 -> Strategic
-    p = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    p = _build(lines, dim)["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductCompanyKey")
     assert p.loc[["Majaal|1", "Majaal|2", "Majaal|3", "Majaal|4", "Tika|5"], "BcgClassYTD"].tolist() == [
         "Stars", "Strategic", "Cash Cows", "Dogs", "Strategic"]
 
@@ -203,12 +208,12 @@ def test_without_the_exclusions_file_the_json_category_ids_are_the_fallback() ->
     assert "excluded_category_ids" not in shipped.section("bcg") and "product_pages_excluded_category_ids" not in shipped.raw
     dim = _dim({"id": 1, "name": "Bags", "categ_id": 77, "categ": "All / Paper Bags"}, {"id": 2, "name": "Tile", "categ_id": 5})
     lines = [_line("Majaal", 1, "2026-03-01", 1, 1), _line("Majaal", 2, "2026-03-01", 1, 1)]
-    assert set(_build(lines, dim)["Dim_ProductDashboard"]["ProductKey"]) == {"1", "2"}
+    assert set(_build(lines, dim)["Dim_ProductDashboard"].pipe(on_pages)["ProductKey"]) == {"1", "2"}
     for raw in ({**shipped.raw, "product_pages_excluded_category_ids": [77]}, {**shipped.raw, "bcg": {**shipped.section("bcg"), "excluded_category_ids": [77]}}):
         out = _build(lines, dim, config=ProductDashboardConfig(raw))
-        assert set(out["Dim_ProductDashboard"]["ProductKey"]) == {"2"}           # left out of every table, not only BCG
+        assert set(out["Dim_ProductDashboard"].pipe(on_pages)["ProductKey"]) == {"2"}           # left out of every table, not only BCG
         assert out["Fact_ProductSalesDaily"]["Lines"].sum() == 1
-        assert not out["Dim_ProductDashboard"]["BcgExcludedCategory"].any()
+        assert not out["Dim_ProductDashboard"].pipe(on_pages)["BcgExcludedCategory"].any()
 
 
 def test_location_classification_from_config() -> None:
@@ -235,7 +240,7 @@ def test_every_product_row_is_one_odoo_product_in_one_company_never_combined() -
     # products 1 (Majaal) and 2 (Tika) share template 100: still two rows, never "Majaal + Tika"
     dim = _dim({"id": 1, "name": "Cemair", "tmpl": 100}, {"id": 2, "name": "Cem Air", "tmpl": 100})
     out = _build([_line("Majaal", 1, "2026-03-01", 100, 300), _line("Tika", 2, "2026-09-01", 90, 700)], dim)
-    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    p = out["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductCompanyKey")
     assert sorted(p.index) == ["Majaal|1", "Tika|2"]
     assert set(p["Company"]) == {"Majaal", "Tika"} and not p["Company"].str.contains("+", regex=False).any()
     assert "Dim_ProductDashboardGroup" not in out and "ProductGroupKey" not in p.columns
@@ -248,7 +253,7 @@ def test_athena_is_left_out_of_every_product_table() -> None:
     out = _build([_line("Athena", 1, "2026-09-01", 1, 1000), _line("Majaal", 2, "2026-09-01", 1, 10)], dim, inventory=inv)
     assert set(out["Fact_ProductSalesDaily"]["Company"]) == {"Majaal"}
     assert out["Fact_ProductSalesDaily"]["Value"].sum() == 10
-    assert set(out["Dim_ProductDashboard"]["Company"]) == {"Majaal"}
+    assert set(out["Dim_ProductDashboard"].pipe(on_pages)["Company"]) == {"Majaal"}
     assert out["ProductDashboard_Meta"]["SalesLinesValue"].iloc[0] == 10
     assert "Athena" not in set(out["QA_ProductOdooGaps"]["Company"]) and "Athena" not in set(out["QA_ProductDataQuality"]["Company"])
 
@@ -260,7 +265,7 @@ def test_unit_type_uoms_are_one_unit_and_their_quantities_add_up() -> None:
     out = _build(lines, dim)
     daily = out["Fact_ProductSalesDaily"].groupby("UoM")["Qty"].sum().to_dict()
     assert daily == {"Unit": 17, "m²": 3}  # 10 + 5 + 2 in one unit; m² is not a unit-type UoM and keeps its name
-    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey").loc["Majaal|1"]
+    p = out["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductCompanyKey").loc["Majaal|1"]
     assert p["UoMList"] == "Unit | m²"
 
 
@@ -294,7 +299,7 @@ def test_backoffice_inter_company_and_intercompany_lines_are_left_out_of_every_p
     daily = out["Fact_ProductSalesDaily"]
     assert daily["Value"].sum() == 20 and daily["Qty"].sum() == 2 and daily["Lines"].sum() == 1
     assert set(daily["SegmentKey"]) == {1} and not daily["IsIntercompany"].any()
-    p = out["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    p = out["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductCompanyKey")
     assert p.loc["Majaal|1", "QtyYTD"] == 2 and p.loc["Majaal|1", "ValueYTD"] == 20
     assert str(p.loc["Majaal|1", "FirstSaleDate"].date()) == "2026-09-01"       # the January transfer is not a first sale
     assert p.loc["Majaal|2", "QtyYTD"] == 0 and p.loc["Majaal|2", "LifecycleSegment"] == "Never sold"
@@ -310,25 +315,27 @@ def test_non_sales_exclusion_follows_the_config() -> None:
     assert _build(lines, dim, config=keep_flagged)["Fact_ProductSalesDaily"]["Value"].sum() == 30
 
 
-def test_product_movement_is_on_volume_ytd_vs_lytd_with_the_configured_band() -> None:
+def test_product_movement_is_on_volume_last_12_months_vs_the_12_before_with_the_configured_band() -> None:
+    # as of 2026-09-29: last 12 months = 2025-09-29 .. 2026-09-29, the 12 before = 2024-09-29 .. 2025-09-28 (periods.py)
     cases = {  # id: (active, [(date, qty)], expected movement)
         1: (True, [("2025-03-01", 100), ("2026-03-01", 111)], "Improved"),      # +11%
         2: (True, [("2025-03-01", 100), ("2026-03-01", 110)], "Stable"),        # +10% exactly: inside the band
         3: (True, [("2025-03-01", 100), ("2026-03-01", 90)], "Stable"),         # -10% exactly: inside the band
         4: (True, [("2025-03-01", 100), ("2026-03-01", 89)], "Drop"),           # -11%
         5: (True, [("2025-03-01", 100)], "Drop"),                               # sold last year, nothing this year, still active
-        6: (True, [("2024-05-01", 40), ("2026-03-01", 50)], "New"),             # zero LYTD (old product back on sale)
+        6: (True, [("2024-05-01", 40), ("2026-03-01", 50)], "New"),             # nothing in the prior 12 months (old product back on sale)
         7: (True, [("2026-06-01", 5)], "New"),                                  # first sale within 180 days
         8: (False, [("2025-03-01", 100), ("2026-03-01", 300)], "excluded"),     # archived in Odoo: off every Product page
         9: (False, [("2026-06-01", 5)], "excluded"),
         10: (True, [("2024-05-01", 40)], None),                                 # not sold in either period
         11: (True, [("2025-03-01", 100), ("2026-03-01", 110.01)], "Improved"),  # just over +10%
         12: (True, [("2025-03-01", 100), ("2026-03-01", 89.99)], "Drop"),       # just under -10%
-        13: (True, [("2025-03-01", 100), ("2025-12-01", 900), ("2026-03-01", 100)], "Stable"),  # after the LYTD end date: not LYTD
+        13: (True, [("2025-09-28", 100), ("2025-09-29", 100)], "Stable"),       # window edges: the day before = prior, the start day = last 12
+        14: (True, [("2024-09-28", 900), ("2025-03-01", 100), ("2026-03-01", 100)], "Stable"),  # older than the prior 12 months: not counted
     }
     dim = _dim(*({"id": i, "name": f"P{i}", "company": "Majaal", "active": active} for i, (active, _, _) in cases.items()))
     lines = [_line("Majaal", i, d, q, q * 10) for i, (_, sales, _) in cases.items() for d, q in sales]
-    p = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductKey")
+    p = _build(lines, dim)["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductKey")
     for i, (_, _, expected) in cases.items():
         if expected == "excluded":
             assert str(i) not in p.index, i
@@ -343,8 +350,8 @@ def test_movement_band_comes_from_the_config() -> None:
     wide = ProductDashboardConfig({**raw, "bcg": {**raw["bcg"], "movement_stable_band_pct": 20}})
     dim = _dim({"id": 1, "name": "A", "company": "Majaal"})
     lines = [_line("Majaal", 1, "2025-03-01", 100, 1000), _line("Majaal", 1, "2026-03-01", 115, 1150)]
-    assert _build(lines, dim)["Dim_ProductDashboard"]["BcgMovement"].iloc[0] == "Improved"
-    assert _build(lines, dim, config=wide)["Dim_ProductDashboard"]["BcgMovement"].iloc[0] == "Stable"
+    assert _build(lines, dim)["Dim_ProductDashboard"].pipe(on_pages)["BcgMovement"].iloc[0] == "Improved"
+    assert _build(lines, dim, config=wide)["Dim_ProductDashboard"].pipe(on_pages)["BcgMovement"].iloc[0] == "Stable"
 
 
 def _layer(company: str, pid: int, qty: float, value: float, date: str) -> dict:
@@ -365,7 +372,7 @@ def test_on_hand_is_every_internal_quant_of_the_company_negatives_included() -> 
         _inv("Tika", 1, 100, 1000), _inv("Tika", 1, 900, 9000, "RawMaterials", "RM"), _inv("Tika", 1, 50, 500, "InTransit", "VS"),
         _inv("Tika", 1, -20, -200, location="SH"),
     ])
-    p = _build([_line("Tika", 1, "2026-09-01", 90, 900)], dim, inventory=inv)["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    p = _build([_line("Tika", 1, "2026-09-01", 90, 900)], dim, inventory=inv)["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductCompanyKey")
     assert p.loc["Tika|1", "OnHandQty"] == 1030 and p.loc["Tika|1", "OnHandValue"] == 10300   # = Odoo On Hand
     assert p.loc["Tika|1", "StockQty"] == 100                                                  # DOH stock unchanged
 
@@ -382,7 +389,7 @@ def test_stock_age_is_the_age_of_the_receipt_layers_still_in_stock_not_the_first
     layers = [_layer("Majaal", 1, 40, 400, "2026-09-09"),
               _layer("Majaal", 2, 30, 330, "2026-09-19"), _layer("Majaal", 2, 10, 70, "2026-05-02"),
               _layer("Majaal", 4, 3, 3, "2025-01-01")]
-    p = _build_with_layers([_line("Majaal", 1, "2026-09-01", 1, 1)], dim, inv, layers)["Dim_ProductDashboard"].set_index("ProductKey")
+    p = _build_with_layers([_line("Majaal", 1, "2026-09-01", 1, 1)], dim, inv, layers)["Dim_ProductDashboard"].pipe(on_pages).set_index("ProductKey")
     assert p.loc["1", "StockAgeDays"] == 20 and p.loc["1", "StockAgeBucket"] == "0–30 days" and p.loc["1", "StockAgeSource"] == "layers"
     assert p.loc["2", "StockAgeDays"] == 45 and p.loc["2", "StockAgeOldestDays"] == 150   # (30x10 + 10x150) / 40
     # units and value split across buckets by layer, adding up to On Hand
