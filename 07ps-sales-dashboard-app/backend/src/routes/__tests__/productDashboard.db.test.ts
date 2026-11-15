@@ -35,7 +35,7 @@ vi.mock('../../services/permissionService', async () => {
   };
 });
 
-type Json = any; // eslint-disable-line @typescript-eslint/no-explicit-any
+type Json = any;
 let server: Server;
 let base = '';
 let pool: typeof import('../../db/pool').pool;

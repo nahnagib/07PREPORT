@@ -19,6 +19,7 @@ export async function exec(db: Db, sql: string, params: unknown[] = []): Promise
 }
 
 /** Runs `fn` in one transaction: commit on success, rollback on any error. */
+// eslint-disable-next-line no-unused-vars -- parameter name of a function type (the base rule misreads it)
 export async function inTransaction<T>(fn: (conn: PoolConnection) => Promise<T>): Promise<T> {
   const conn = await pool.getConnection();
   try {

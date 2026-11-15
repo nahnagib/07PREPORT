@@ -15,6 +15,7 @@ export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const OWNER_TYPES = ['checklist', 'field_trial', 'project', 'launch', 'feedback', 'doc_error'] as const;
 export type OwnerType = (typeof OWNER_TYPES)[number];
 
+// eslint-disable-next-line no-unused-vars -- parameter name of a function type (the base rule misreads it)
 const KINDS: { ext: string[]; mime: string; test: (b: Buffer) => boolean }[] = [
   { ext: ['pdf'], mime: 'application/pdf', test: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-' },
   { ext: ['png'], mime: 'image/png', test: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },

@@ -124,6 +124,8 @@ describe.skipIf(!RUN)('Product Development Plan on a real database', () => {
     const app = express();
     app.use(express.json());
     app.use('/product-development', productDevelopmentRouter);
+    // Express needs the 4-argument signature to treat this as the error handler.
+    // eslint-disable-next-line no-unused-vars
     app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => { res.status(500).json({ error: String(err) }); });
     server = app.listen(0);
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/product-development`;

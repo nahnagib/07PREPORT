@@ -47,6 +47,7 @@ function sendError(err: unknown, res: Response, next: NextFunction): void {
 }
 
 /** Wraps a handler: PdpError -> `{ error, code, field }`, anything else -> the generic 500 handler. */
+// eslint-disable-next-line no-unused-vars -- parameter names of a function type (the base rule misreads them)
 type Handler = (req: Request, res: Response) => Promise<unknown>;
 const h = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => {
   fn(req, res).catch((err) => sendError(err, res, next));

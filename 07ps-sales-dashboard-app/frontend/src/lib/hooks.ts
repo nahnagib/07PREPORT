@@ -376,6 +376,7 @@ export function useRefreshStatus(token: string | null, authError: string | null,
     fetchRefreshStatus(token as string)
       .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `latest` is a stable ref (useLatestRequest)
   }, [dataVersion, token, authError]);
 
   useEffect(() => {
