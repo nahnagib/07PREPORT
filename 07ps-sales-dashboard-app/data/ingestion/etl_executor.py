@@ -7,6 +7,7 @@ There is deliberately no "customers only" / "sales only" / "incremental" mode he
 pipeline always does a full delete-then-insert load per table (see orchestrator.py's docstring and
 star_schema/loader.py) - there is no partial-refresh capability to expose.
 """
+
 from __future__ import annotations
 
 import datetime

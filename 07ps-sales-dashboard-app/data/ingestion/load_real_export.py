@@ -23,6 +23,7 @@ performs a full replace-load (StarSchemaLoader.load_all truncates every star-sch
 so this is meant for a throwaway/validation warehouse, never a production database with live data
 already in it.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,10 +43,27 @@ logger = logging.getLogger(__name__)
 # Every sheet star_schema/loader.py's load_all() reads. QA_* sheets are informational only in the
 # source export - no star-schema table maps to them (see data/warehouse/README.md).
 REQUIRED_SHEETS = [
-    "Dim_Company", "Dim_Segment", "Dim_DistributionChannel", "Dim_SalesTeam", "Dim_Salesperson",
-    "Dim_CRMStage", "Dim_LostReason", "Dim_Date", "Dim_Customer", "Dim_Product", "Dim_ProductCost",
-    "Fact_Targets", "Fact_OffDays", "Fact_Lead", "Fact_Opportunity", "Fact_Inventory",
-    "Fact_BCGMatrix", "Fact_Orders", "Fact_SalesLines", "Fact_Sales", "Fact_Delivery",
+    "Dim_Company",
+    "Dim_Segment",
+    "Dim_DistributionChannel",
+    "Dim_SalesTeam",
+    "Dim_Salesperson",
+    "Dim_CRMStage",
+    "Dim_LostReason",
+    "Dim_Date",
+    "Dim_Customer",
+    "Dim_Product",
+    "Dim_ProductCost",
+    "Fact_Targets",
+    "Fact_OffDays",
+    "Fact_Lead",
+    "Fact_Opportunity",
+    "Fact_Inventory",
+    "Fact_BCGMatrix",
+    "Fact_Orders",
+    "Fact_SalesLines",
+    "Fact_Sales",
+    "Fact_Delivery",
 ]
 
 
@@ -103,7 +121,7 @@ def main():
     try:
         report = load_export(args.xlsx_path)
     except ValueError as exc:
-        raise SystemExit(str(exc))
+        raise SystemExit(str(exc)) from exc
 
     print("\n--- Load report ---")
     for table, count in sorted(report.inserted.items()):
@@ -114,7 +132,7 @@ def main():
         print(f"\n{report.total_errors} row(s) failed to load - first few errors per table:")
         for table, errs in report.errors.items():
             print(f"  {table}:")
-            for row, msg in errs[:3]:
+            for _row, msg in errs[:3]:
                 print(f"    {msg}")
         sys.exit(1)
     print("\nDone - loaded cleanly.")

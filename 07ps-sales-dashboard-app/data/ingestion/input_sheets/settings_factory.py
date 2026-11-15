@@ -23,6 +23,7 @@ fallback) while still allowing local/dev runs to pass an explicit override. See
 implemented or chosen yet; that decision was explicitly left to be made by the user, not picked
 here.
 """
+
 from __future__ import annotations
 
 import os
@@ -106,8 +107,6 @@ def build_settings(
     settings = replace(settings, input_dir=input_dir, output_dir=output_dir)
     problems = validate_input_dir(settings.input_dir)
     if problems:
-        raise InputSheetsError(
-            "Input-sheet validation failed:\n  - " + "\n  - ".join(problems)
-        )
+        raise InputSheetsError("Input-sheet validation failed:\n  - " + "\n  - ".join(problems))
     output_dir.mkdir(parents=True, exist_ok=True)
     return settings

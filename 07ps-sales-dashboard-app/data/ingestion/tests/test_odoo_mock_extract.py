@@ -3,6 +3,7 @@ anything it imports - MockOdooClient is pure in-memory data (see odoo/fixtures.p
 
 Run with: PYTHONPATH=.:vendor:vendor/sales_pipeline_src python3 -m pytest tests/ -q
 """
+
 from __future__ import annotations
 
 import os

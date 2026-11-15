@@ -14,21 +14,19 @@ Two client modes:
     path is wired but must not be exercised without separate confirmation - see README.md.
 
 No business logic (product mastering, quotation classification, CRM status, etc.) lives here;
-that all happens later, inside the unmodified ``pipeline.transform()`` / ``pipeline.transform_crm()``
+that all happens later, inside the unmodified ``pipeline.transform()`` /
+``pipeline.transform_crm()``
 calls in ``orchestrator.py``, exactly like the vendored ``pipeline.run()`` does internally.
 """
+
 from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
-
-from odoo.fixtures import MOCK_ODOO_DATA
-from odoo.mock_client import MockOdooClient
-
+from sales_pipeline.inventory import InventoryRepository
 from sales_pipeline.odoo import (
     CrmRepository,
     ProductCostRepository,
@@ -37,7 +35,9 @@ from sales_pipeline.odoo import (
     StockMoveRepository,
     StockPickingRepository,
 )
-from sales_pipeline.inventory import InventoryRepository
+
+from odoo.fixtures import MOCK_ODOO_DATA
+from odoo.mock_client import MockOdooClient
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,9 @@ def build_client(batch_size: int = 500):
             max_retries=settings.max_retries,
         )
         client.authenticate()
-        logger.warning("LIVE Odoo client active (ALLOW_LIVE_ODOO=1) - this makes real network calls.")
+        logger.warning(
+            "LIVE Odoo client active (ALLOW_LIVE_ODOO=1) - this makes real network calls."
+        )
         return client, "live"
 
     client = MockOdooClient(models=MOCK_ODOO_DATA)
@@ -143,8 +145,14 @@ def extract_all(batch_size: int = 500) -> ExtractedOdooData:
     logger.info(
         "Odoo extraction complete (source=%s): sale.report=%d crm.lead=%d sale.order=%d "
         "stock.picking=%d stock.move=%d product.product=%d stock.quant=%d",
-        source, len(sales_raw), len(leads_raw), len(sale_orders_raw), len(stock_pickings_raw),
-        len(stock_moves_raw), len(product_cost_raw), len(stock_quants_raw),
+        source,
+        len(sales_raw),
+        len(leads_raw),
+        len(sale_orders_raw),
+        len(stock_pickings_raw),
+        len(stock_moves_raw),
+        len(product_cost_raw),
+        len(stock_quants_raw),
     )
 
     return ExtractedOdooData(

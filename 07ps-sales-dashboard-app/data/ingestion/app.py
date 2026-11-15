@@ -7,6 +7,7 @@ see docs/DEPLOYMENT*.md). Exposes the two real pipeline entry points via etl_exe
 
 Local dev: `python app.py`. Production (cPanel/gunicorn): gunicorn against wsgi:app (see wsgi.py).
 """
+
 from __future__ import annotations
 
 import hmac
@@ -41,9 +42,11 @@ def require_api_key(view):
             return jsonify({"error": "Server misconfiguration: ETL_API_KEY not set"}), 500
 
         auth_header = request.headers.get("Authorization", "")
-        token = auth_header[len("Bearer "):] if auth_header.startswith("Bearer ") else None
+        token = auth_header[len("Bearer ") :] if auth_header.startswith("Bearer ") else None
         if not token or not hmac.compare_digest(token, expected):
-            logger.warning("Rejected request with invalid/missing API key from %s", request.remote_addr)
+            logger.warning(
+                "Rejected request with invalid/missing API key from %s", request.remote_addr
+            )
             return jsonify({"error": "Unauthorized"}), 401
         return view(*args, **kwargs)
 

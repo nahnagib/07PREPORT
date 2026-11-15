@@ -7,7 +7,8 @@ vendor/sales_pipeline_src/sales_pipeline/pipeline.py lines 223-430 - then diverg
 final export, which the vendored ``run()`` would otherwise send to a flat/denormalized MySQL
 schema or an Excel workbook):
 
-  1. odoo.extract.extract_all()          - mocked by default; real Odoo gated behind ALLOW_LIVE_ODOO=1
+  1. odoo.extract.extract_all()          - mocked by default; real Odoo gated behind
+                                           ALLOW_LIVE_ODOO=1
   2. input_sheets.settings_factory       - resolves and validates INPUT_DIR (manual Excel sheets)
   3. pipeline.transform(...)             - UNMODIFIED vendored business logic (product mastering,
                                             sales cleaning, dimension building, BCG matrix, etc.)
@@ -26,6 +27,7 @@ Zero business-rule code was rewritten to build this. See README.md for what "rep
 silently fix" means in this context: any exception here aborts the run and is logged into
 pipeline_run_log with status=FAILED rather than partially loading the warehouse.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -33,7 +35,6 @@ import json
 import logging
 import os
 import sys
-import time
 import warnings
 from pathlib import Path
 
@@ -54,16 +55,17 @@ for _path in (_VENDOR_DIR, _VENDOR_SRC_DIR):
 # actual package here is exposed under as `config_src` (see vendor/config_src/). Rather than edit
 # those "zero lines modified" vendored files, alias `config` -> `config_src` in sys.modules before
 # anything imports sales_pipeline.
-import config_src.settings as _config_src_settings  # noqa: E402
 import config_src as _config_src  # noqa: E402
+import config_src.settings as _config_src_settings  # noqa: E402
 
 sys.modules.setdefault("config", _config_src)
 sys.modules.setdefault("config.settings", _config_src_settings)
 
-from input_sheets.settings_factory import build_settings
-from odoo.extract import extract_all
-from sales_pipeline.pipeline import PowerBISalesPipeline
-from star_schema.loader import StarSchemaLoader
+from sales_pipeline.pipeline import PowerBISalesPipeline  # noqa: E402
+
+from input_sheets.settings_factory import build_settings  # noqa: E402
+from odoo.extract import extract_all  # noqa: E402
+from star_schema.loader import StarSchemaLoader  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +104,15 @@ def _write_run_log(
             status, error_message, odoo_extract_count, db_loaded_count, qa_issues_count)
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (
-            scheduled_refresh_time, started_at, finished_at,
+            scheduled_refresh_time,
+            started_at,
+            finished_at,
             (finished_at - started_at).total_seconds() / 60.0,
-            status, (error_message or "")[:2000] if error_message else None,
-            odoo_extract_count, db_loaded_count, qa_issues_count,
+            status,
+            (error_message or "")[:2000] if error_message else None,
+            odoo_extract_count,
+            db_loaded_count,
+            qa_issues_count,
         ),
     )
     conn.commit()
@@ -132,8 +139,12 @@ def _write_run_audit(
            (started_at, finished_at, load_mode, output_mode, status, error_message, row_counts_json)
            VALUES (%s, %s, %s, %s, %s, %s, %s)""",
         (
-            started_at, finished_at, "full", f"star_schema_mysql(odoo_source={odoo_source})",
-            status, (error_message or "")[:2000] if error_message else None,
+            started_at,
+            finished_at,
+            "full",
+            f"star_schema_mysql(odoo_source={odoo_source})",
+            status,
+            (error_message or "")[:2000] if error_message else None,
             json.dumps(row_counts),
         ),
     )
@@ -194,15 +205,23 @@ def run_refresh(scheduled_refresh_time: str | None = None) -> dict:
         )
         sheets["Fact_Orders"] = pipeline._ensure_fact_orders_order_key(sheets["Fact_Orders"])
         refresh_date = pd.Timestamp.now(tz=settings.timezone).date()
-        sheets["Dim_Date"] = pipeline._extend_dim_date_for_sales_and_delivery(sheets, refresh_date=refresh_date)
+        sheets["Dim_Date"] = pipeline._extend_dim_date_for_sales_and_delivery(
+            sheets, refresh_date=refresh_date
+        )
         pipeline._validate_model_key_integrity(sheets, refresh_date=refresh_date)
 
         odoo_extract_count = (
-            len(data.sales_raw) + len(data.leads_raw) + len(data.sale_orders_raw)
-            + len(data.stock_pickings_raw) + len(data.stock_moves_raw)
-            + len(data.product_cost_raw) + len(data.stock_quants_raw)
+            len(data.sales_raw)
+            + len(data.leads_raw)
+            + len(data.sale_orders_raw)
+            + len(data.stock_pickings_raw)
+            + len(data.stock_moves_raw)
+            + len(data.product_cost_raw)
+            + len(data.stock_quants_raw)
         )
-        qa_issues_count = crm_summary.qa_issues_count if hasattr(crm_summary, "qa_issues_count") else 0
+        qa_issues_count = (
+            crm_summary.qa_issues_count if hasattr(crm_summary, "qa_issues_count") else 0
+        )
 
         logger.info("Loading into MySQL star schema...")
         conn = _db_connect()
@@ -221,17 +240,33 @@ def run_refresh(scheduled_refresh_time: str | None = None) -> dict:
             logger.warning(error_message)
 
         _write_run_log(
-            conn, started_at, finished_at, status, error_message,
-            odoo_extract_count, report.total_inserted, qa_issues_count, scheduled_refresh_time,
+            conn,
+            started_at,
+            finished_at,
+            status,
+            error_message,
+            odoo_extract_count,
+            report.total_inserted,
+            qa_issues_count,
+            scheduled_refresh_time,
         )
         _write_run_audit(
-            conn, started_at, finished_at, status, error_message, report.inserted, data.source,
+            conn,
+            started_at,
+            finished_at,
+            status,
+            error_message,
+            report.inserted,
+            data.source,
         )
         conn.close()
 
         logger.info(
             "Refresh complete: status=%s odoo_source=%s rows_loaded=%d errors=%d duration_min=%.2f",
-            status, data.source, report.total_inserted, report.total_errors,
+            status,
+            data.source,
+            report.total_inserted,
+            report.total_errors,
             (finished_at - started_at).total_seconds() / 60.0,
         )
         return {
@@ -249,16 +284,28 @@ def run_refresh(scheduled_refresh_time: str | None = None) -> dict:
             if conn is None:
                 conn = _db_connect()
             _write_run_log(
-                conn, started_at, finished_at, "FAILED", str(exc), 0, 0, 0, scheduled_refresh_time,
+                conn,
+                started_at,
+                finished_at,
+                "FAILED",
+                str(exc),
+                0,
+                0,
+                0,
+                scheduled_refresh_time,
             )
             _write_run_audit(conn, started_at, finished_at, "FAILED", str(exc), {}, "unknown")
             conn.close()
         except Exception:  # noqa: BLE001 - logging failure must never mask the original error
-            logger.exception("Additionally failed to write the FAILED run to pipeline_run_log/audit.")
+            logger.exception(
+                "Additionally failed to write the FAILED run to pipeline_run_log/audit."
+            )
         raise
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     result = run_refresh()
     print(result)

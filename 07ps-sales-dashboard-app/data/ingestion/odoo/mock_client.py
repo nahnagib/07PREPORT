@@ -21,9 +21,9 @@ No network calls happen anywhere in this module. Swapping in the real
 one-line change in ``extract.py`` - gated behind an explicit ``ALLOW_LIVE_ODOO=1`` environment
 variable AND separate human confirmation, per this session's instruction.
 """
+
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,7 +59,9 @@ class MockOdooClient:
             return {}
         return info["field_types"]
 
-    def search_count(self, model: str, domain: list[Any], context: dict[str, Any] | None = None) -> int:
+    def search_count(
+        self, model: str, domain: list[Any], context: dict[str, Any] | None = None
+    ) -> int:
         return len(self._filtered_records(model, domain))
 
     def search_read(
@@ -78,12 +80,20 @@ class MockOdooClient:
         page = records[offset : offset + limit]
         return [{f: rec.get(f, False) for f in fields} for rec in page]
 
-    def execute_kw(self, model: str, method: str, args: list[Any] | None = None, kwargs: dict[str, Any] | None = None) -> Any:
+    def execute_kw(
+        self,
+        model: str,
+        method: str,
+        args: list[Any] | None = None,
+        kwargs: dict[str, Any] | None = None,
+    ) -> Any:
         # Not exercised directly by any vendored repository (they all go through the typed
         # helper methods above), but included so MockOdooClient is a complete drop-in for
         # OdooClient's public surface.
-        raise MockOdooApiError(f"execute_kw({model}.{method}) not implemented on MockOdooClient - "
-                                "add a typed method instead, matching what the real repositories call.")
+        raise MockOdooApiError(
+            f"execute_kw({model}.{method}) not implemented on MockOdooClient - "
+            "add a typed method instead, matching what the real repositories call."
+        )
 
     def _filtered_records(self, model: str, domain: list[Any]) -> list[dict[str, Any]]:
         info = self.models.get(model)
@@ -102,7 +112,8 @@ def _matches_domain(record: dict[str, Any], domain: list[Any]) -> bool:
     """
     for clause in domain:
         if not isinstance(clause, (list, tuple)) or len(clause) != 3:
-            continue  # skip logical operators like '|', '&' - none of the pipeline's own calls use them
+            # skip logical operators like '|', '&' - none of the pipeline's own calls use them
+            continue
         field_name, op, value = clause
         # dotted lookups like "order_id.state" - the mock stores the flattened value directly
         # under the dotted key for the couple of fixture rows that need it (see fixtures.py).

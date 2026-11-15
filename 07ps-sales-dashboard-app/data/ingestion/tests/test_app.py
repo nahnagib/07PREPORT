@@ -4,6 +4,7 @@ test_odoo_mock_extract.py.
 
 Run with: PYTHONPATH=.:vendor:vendor/sales_pipeline_src python3 -m pytest tests/test_app.py -q
 """
+
 from __future__ import annotations
 
 import os
@@ -54,8 +55,12 @@ def test_etl_run_rejects_wrong_key(client):
 
 def test_etl_run_success(client):
     fake_result = {
-        "job_id": "abc", "started_at": "2026-07-14T00:00:00Z",
-        "status": "SUCCESS", "rows_loaded": 10, "row_errors": 0, "duration_minutes": 1.5,
+        "job_id": "abc",
+        "started_at": "2026-07-14T00:00:00Z",
+        "status": "SUCCESS",
+        "rows_loaded": 10,
+        "row_errors": 0,
+        "duration_minutes": 1.5,
     }
     with patch("etl_executor.run_full_refresh", return_value=fake_result):
         response = client.post("/etl/run", headers=AUTH_HEADERS)
@@ -76,7 +81,10 @@ def test_load_export_requires_xlsx_path(client):
 
 
 def test_load_export_rejects_missing_sheets(client):
-    with patch("etl_executor.load_export", side_effect=ValueError("Export is missing required sheet(s): ['Fact_Sales']")):
+    with patch(
+        "etl_executor.load_export",
+        side_effect=ValueError("Export is missing required sheet(s): ['Fact_Sales']"),
+    ):
         response = client.post(
             "/etl/load-export", headers=AUTH_HEADERS, json={"xlsx_path": "/tmp/bad.xlsx"}
         )
@@ -85,8 +93,13 @@ def test_load_export_rejects_missing_sheets(client):
 
 def test_load_export_success(client):
     fake_result = {
-        "job_id": "def", "started_at": "2026-07-14T00:00:00Z", "clean": True,
-        "inserted": {"Dim_Product": 5}, "skipped": {}, "total_errors": 0, "errors": {},
+        "job_id": "def",
+        "started_at": "2026-07-14T00:00:00Z",
+        "clean": True,
+        "inserted": {"Dim_Product": 5},
+        "skipped": {},
+        "total_errors": 0,
+        "errors": {},
     }
     with patch("etl_executor.load_export", return_value=fake_result):
         response = client.post(

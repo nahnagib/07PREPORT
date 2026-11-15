@@ -2,6 +2,8 @@
 line-length = 100
 target-version = "py311"
 src = ["data/ingestion"]
+# data/ingestion/vendor is a vendored copy of the sales pipeline (kept as shipped): not linted or formatted here.
+extend-exclude = ["data/ingestion/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -10,3 +12,4 @@ select = ["E", "F", "I", "UP", "B"]
 line-length = 100
 target-version = ["py311"]
 include = '\.pyi?$'
+extend-exclude = 'data/ingestion/vendor'

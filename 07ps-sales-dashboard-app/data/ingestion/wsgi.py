@@ -3,6 +3,7 @@
 cPanel Setup Python App: application startup file = wsgi.py, application entry point = app.
 Manual run: gunicorn -w 2 -b 0.0.0.0:5000 wsgi:app
 """
+
 import sys
 from pathlib import Path
 
