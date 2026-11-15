@@ -68,7 +68,7 @@ function ProductStatusTable() {
   const list = useProductStatusList(token, authError, retryAuth, scope);
   const profit = useProfitAccess(list.data?.profitAccess);
   const status = STATUS_OF_KEY[statusKey];
-  const skus = list.data?.skus ?? [];
+  const skus = useMemo(() => list.data?.skus ?? [], [list.data]);
   const counts = useMemo(() => statusCounts(skus), [skus]);
   const summary = list.data?.statusSummary ?? null;
   const matches = list.data ? statusMatchesCards(skus, summary) : true;
