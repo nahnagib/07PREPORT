@@ -82,10 +82,10 @@ export default function ProductLifecyclePage() {
   const segDef = segmentDefinitions(lc);
   const withFormula = (entry: ReturnType<typeof vh>, formula: string) => (entry.help ? { ...entry.help, formula } : undefined);
   const kpiHelp = {
-    mature: withFormula(vh('product.productLifecycle.kpiMature'), `${segDef.Mature} · % = Mature ÷ portfolio (Active + Non Active) after the page filters`),
-    discontinued: withFormula(vh('product.productLifecycle.kpiDiscontinued'), `${segDef.Discontinued} · sub-line = their units sold in the prior period`),
+    mature: withFormula(vh('product.productLifecycle.kpiMature'), `${segDef.Mature} · % = Mature ÷ portfolio`),
+    discontinued: withFormula(vh('product.productLifecycle.kpiDiscontinued'), `${segDef.Discontinued} · sub-line = units sold in the prior period`),
     freshness: withFormula(vh('product.productLifecycle.kpiFreshness'),
-      `Freshness = SKUs first sold in the last ${lc.newDays} days ÷ (Active + Non Active SKUs after the page filters) · Dormant and Unclassified left out`),
+      `Freshness = SKUs first sold ≤ ${lc.newDays} d ÷ (Active + Non Active)`),
   };
 
   // ---- Pareto on volume: units sold in the period per lifecycle segment (added up as Unit), the same period last year,
@@ -247,7 +247,7 @@ export default function ProductLifecyclePage() {
               <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>
                 Product Detail <VisualInfoIcons title="Product Detail" {...vh('product.productLifecycle.productDetail')} />
               </span>
-              <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>Highest volume first · click a column header to sort · search and per-column filters below each header</div>
+              <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>Highest volume first</div>
             </div>
             <div data-testid="lifecycle-product-grid">
               <DataGrid columns={columns} rows={tableRows} getRowId={(row) => row.id} fileName="product-lifecycle-detail" filtersSummary={companyLabel} />

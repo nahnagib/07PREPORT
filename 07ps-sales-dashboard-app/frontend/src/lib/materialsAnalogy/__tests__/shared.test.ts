@@ -153,10 +153,16 @@ describe('Stock Aging buckets (config stock.aging_buckets)', () => {
 
 describe('toProductFacts', () => {
   it('never returns an Athena row and carries the order days', () => {
-    const row = (company: string, orderDays: number) => ({ productCompanyKey: `${company}|1`, company, orderDays, companies: [company], parts: [] }) as unknown as ProductDashboardRow;
+    const row = (company: string, orderDays: number) => ({ productCompanyKey: `${company}|1`, company, orderDays, companies: [company], parts: [], productStatus: 'Active' }) as unknown as ProductDashboardRow;
     const data = { products: [row('Majaal', 3), row('Athena', 9)], asOfDate: '2026-11-04' } as unknown as ProductDashboardOverview;
     const facts = toProductFacts(data);
     expect(facts.map((f) => f.Company)).toEqual(['Majaal']);
     expect(facts[0].orderDays).toBe(3);
+  });
+
+  it('returns the portfolio only (Active + Non Active, 2026-11-15)', () => {
+    const r = (key: string, productStatus: string) => ({ productCompanyKey: key, company: 'Majaal', companies: ['Majaal'], parts: [], productStatus }) as unknown as ProductDashboardRow;
+    const data = { products: [r('a', 'Active'), r('b', 'NonActive'), r('c', 'Dormant'), r('d', 'Unclassified')] } as unknown as ProductDashboardOverview;
+    expect(toProductFacts(data).map((f) => f.id)).toEqual(['a', 'b']);
   });
 });

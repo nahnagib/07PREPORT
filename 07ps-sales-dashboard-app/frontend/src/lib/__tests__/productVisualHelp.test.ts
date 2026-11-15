@@ -71,11 +71,21 @@ describe('Product pages "?" and "i"', () => {
 
   it('BCG class definitions are words only, no numbers (the thresholds stay on the server)', () => {
     expect(BCG_DEFINITION).toEqual({
-      Stars: 'High volume, high margin.',
-      'Cash Cows': 'High volume, low margin.',
-      Strategic: 'Low volume, high margin.',
-      Dogs: 'Low volume, low margin.',
+      Stars: 'High volume · high margin',
+      'Cash Cows': 'High volume · low margin',
+      Strategic: 'Low volume · high margin',
+      Dogs: 'Low volume · low margin',
     });
+  });
+
+  it('short text (2026-11-15): every Product "?" is one line + its formula, no notes paragraph', () => {
+    for (const id of productIds) {
+      const help = vh(id).help as { definition: string; notes?: string } | undefined;
+      if (!help) continue;
+      expect(help.notes, id).toBeUndefined();
+      expect(help.definition.length, id).toBeLessThanOrEqual(90);
+    }
+    expect(vh('product.bcgMatrix.matrix').help?.definition).toBe('BCG class of each Active product by volume and margin.');
   });
 
   it('no median text is left in the BCG help', () => {

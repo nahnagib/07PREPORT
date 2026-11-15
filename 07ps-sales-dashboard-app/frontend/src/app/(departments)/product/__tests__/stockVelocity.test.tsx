@@ -101,9 +101,9 @@ describe('Stock Velocity page', () => {
     const labels = [...kpis.querySelectorAll('[aria-label]')].map((e) => e.getAttribute('aria-label')).filter((l) => !String(l).startsWith('About'));
     expect(labels).toEqual(['DOH – Avg Days of Inventory', 'Overstocked SKUs', 'Stock-Out Risk SKUs', 'Fast Movers', 'SKUs in Stock', 'Total Value']);
     expect(within(kpis).queryByText(/ISR/)).toBeNull();
-    expect(within(kpis).getByText('Based on the last 90 days of sales')).toBeTruthy();
-    expect(within(kpis).getByText('In finished-goods locations')).toBeTruthy();
-    expect(within(kpis).getByText('Out of 6 SKUs sold in the period')).toBeTruthy();
+    expect(within(kpis).getByText('Last 90 days')).toBeTruthy();
+    expect(within(kpis).getByText('Finished goods')).toBeTruthy();
+    expect(within(kpis).getByText('of 6 sold')).toBeTruthy();
     expect(within(kpis).getByText('LYD 100')).toBeTruthy(); // 30 + 30 + 40 LYD at cost
     expect(within(kpis).getByText('80 Units finished goods · 0 Units in transit')).toBeTruthy();
     // ISR = 100 LYD stock at cost / 1,000 LYD sales = 10% -> green, on the gauge only

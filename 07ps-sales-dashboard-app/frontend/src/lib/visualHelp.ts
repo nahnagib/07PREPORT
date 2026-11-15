@@ -429,47 +429,41 @@ export const VISUAL_HELP = {
   'product.bcgMatrix.matrix': {
     // no thresholds on screen: they stay on the server (2026-11-14)
     help: {
-      definition: 'BCG class of each Active product, on volume and margin of the selected period.',
-      formula: 'Stars = high volume, high margin · Cash Cows = high volume, low margin · Strategic = low volume, high margin · Dogs = low volume, low margin',
-      notes:
-        'Every product sold in the period is in one of the 4 classes. A product without cost data counts as low margin. ' +
-        'Stars: high volume, high margin. Protect availability, keep investing, support growth, monitor. ' +
-        'Cash Cows: high volume, low margin. Review pricing, discounts, cost structure, supplier terms and channel profitability. ' +
-        'Strategic: low volume, high margin. Protect profitability, look for ways to grow volume, avoid unnecessary discounting. ' +
-        'Dogs: low volume, low margin. Review before deciding to retain, improve, reposition or discontinue; a Dog is not an automatic discontinue.',
+      definition: 'BCG class of each Active product by volume and margin.',
+      formula: 'Stars = high volume + high margin · Cash Cows = high volume + low margin · Strategic = low volume + high margin · Dogs = low volume + low margin',
     },
     interactions: ['Click a product to open it in Odoo', 'Hover a product for its figures', 'Export the whole BCG to Excel, or a class to CSV or PDF'],
   },
   'product.bcgMatrix.movement': {
     // the page puts the config band and "new" window in the formula line (shared.ts movementRule)
-    help: { definition: 'Volume of the selected period vs the prior period of the same length, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior period · archived Odoo products are left out' },
+    help: { definition: 'Volume of the selected period vs the prior period of the same length, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior period' },
     interactions: ['Click a slice to list its products', 'Click a product to open it in Odoo', 'Hover a product for its figures', 'Export the list to CSV or PDF'],
   },
   'product.bcgMatrix.productDetail': {
     help: {
       definition: 'Per product: status, BCG class, volume, value, growth and Quantity On Hand.',
-      formula: 'Vol Growth = (Volume − Volume prior period) ÷ Volume prior period · Quantity On Hand = Odoo Quantity On Hand of the product in its company (every internal location)',
+      formula: 'Vol Growth = (Volume − prior) ÷ prior · Quantity On Hand = Odoo On Hand',
     },
     interactions: ['Click a product to open it in Odoo', ...GRID],
   },
   'product.bcgMatrix.totalSkus': {
     help: {
       definition: 'Every Odoo product variant, active and archived, every category; counted once.',
-      formula: 'Total SKUs = Active + Non Active + Dormant + Unclassified · a variant in both companies counts once',
+      formula: 'Total SKUs = Active + Non Active + Dormant + Unclassified',
     },
     interactions: ['Click a status chip to list its products'],
   },
   'product.bcgMatrix.productStatus': {
     help: {
       definition: 'Sold in the period, not sold, archived in Odoo, or matched by an exclusion rule.',
-      formula: 'Unclassified = ProductExclusions.xlsx rule (first) · Dormant = archived in Odoo · Active = sold in the period · else Non Active (with stock = On Hand > 0)',
+      formula: 'Unclassified = exclusion rule · Dormant = archived · Active = sold in the period · Non Active = not sold',
     },
     interactions: ['Click a card to list its products'],
   },
   'product.bcgMatrix.statusTable': {
     help: {
       definition: 'The SKUs behind a Product Status card; one row per Odoo variant, same count.',
-      formula: 'Units / Sales value = the period · Profit = Sales value − cost when every sold line has a cost · Qty on hand = Odoo On Hand',
+      formula: 'Profit = Sales value − cost (every sold line costed)',
     },
     interactions: ['Switch status with the tabs', 'Non Active: With stock / Zero stock', 'Open a product in Odoo', ...GRID],
   },
@@ -504,8 +498,7 @@ export const VISUAL_HELP = {
   'product.stockVelocity.aging': {
     help: {
       definition: 'SKUs with Quantity On Hand, by the Stock Age of the stock still on hand.',
-      formula: 'Stock Age = Σ(layer units × days since that layer was received) ÷ Σ(layer units), over the receipts still in stock',
-      notes: 'Layers = Odoo stock valuation layers with units remaining, so stock that arrived 20 days ago is 20 days old even for a product sold since 2024. Quantity On Hand = Odoo Quantity On Hand of the company (every internal location). Buckets: 0–30, 31–60, 61–90, 91–180, 181–365, 365+ days. No stock = no Stock Age (–).',
+      formula: 'Stock Age = Σ(layer units × days since received) ÷ Σ(layer units)',
     },
     interactions: ['Hover a segment for its SKUs, Quantity On Hand and Total Value', 'Click a segment to list its products', 'Hover a product for the standard inventory figures and its Aging Bucket', 'Click a product to open it in Odoo', 'Export aging data: every SKU with its Quantity On Hand and Total Value per bucket, plus the bucket totals (CSV), or PDF'],
   },
@@ -513,7 +506,6 @@ export const VISUAL_HELP = {
     help: {
       definition: 'Overstocked SKUs by BCG Class.',
       formula: 'Tika > 60 days · Majaal > 180 days DOH; stock with no sales in 90 days counts as overstock',
-      notes: 'Excess quantity = finished-goods Quantity On Hand above the company overstock DOH (all of it when nothing sold); excess value = excess quantity × the unit cost.',
     },
     interactions: ['Hover a bar for its SKUs, Quantity On Hand and Total Value', 'Click a class to list its products', 'Hover a product for the standard inventory figures and its excess quantity / value', 'Click a product to open it in Odoo', 'Export overstock data: every overstocked SKU (CSV with the BCG Class summary, or PDF)'],
   },
@@ -525,7 +517,6 @@ export const VISUAL_HELP = {
     help: {
       definition: 'Above-median sellers that may run out, by BCG Class.',
       formula: 'Tika < 30 days · Majaal < 60 days DOH',
-      notes: 'Days until stock-out = DOH of the finished goods. Risk level: Out of stock (no finished goods) · High (DOH under half the company minimum) · Watch (under the minimum).',
     },
     interactions: ['Hover a bar for its SKUs, Quantity On Hand and Total Value', 'Click a class to list its products', 'Hover a product for the standard inventory figures, its risk level and days until stock-out', 'Click a product to open it in Odoo', 'Export stock-out data: every SKU at risk (CSV with the BCG Class summary, or PDF)'],
   },
@@ -545,17 +536,17 @@ export const VISUAL_HELP = {
     interactions: ['Click a brand to open its page'],
   },
   'product.productLifecycle.pareto': {
-    help: { definition: 'Units sold per lifecycle segment, with the cumulative share.', formula: 'New = first sale ≤ 180 days · Growing / Declining = last 90 days vs the 90 before ±20% · Discontinued = no sale in 365 days · segment definitions under the chart' },
+    help: { definition: 'Units sold per lifecycle segment, with the cumulative share.', formula: 'New ≤ 180 d · Growing / Declining = last 90 d vs prior 90 d ±20% · Discontinued = no sale in 365 d' },
   },
   // KPI cards (2026-11-15): the page fills each formula from the ETL config (lib/product/lifecycle.ts).
   'product.productLifecycle.kpiMature': {
-    help: { definition: 'SKUs in the Mature segment, as of the last data refresh.', formula: 'Sold, last 90 days within ±20% of the 90 before · % = Mature ÷ portfolio (Active + Non Active) after the page filters' },
+    help: { definition: 'SKUs in the Mature segment.', formula: 'Last 90 d within ±20% of prior 90 d · % = Mature ÷ portfolio' },
   },
   'product.productLifecycle.kpiDiscontinued': {
-    help: { definition: 'SKUs in the Discontinued segment, as of the last data refresh.', formula: 'No sale in the last 365 days (Active + Non Active products) · sub-line = their units sold in the prior period' },
+    help: { definition: 'SKUs with no sale in the last 365 days.', formula: 'Last sale > 365 d ago · sub-line = units sold in the prior period' },
   },
   'product.productLifecycle.kpiFreshness': {
-    help: { definition: 'Share of the real portfolio (Active + Non Active) first sold recently.', formula: 'Freshness = SKUs first sold in the last 180 days ÷ (Active + Non Active SKUs after the page filters)' },
+    help: { definition: 'Share of the portfolio first sold recently.', formula: 'Freshness = SKUs first sold ≤ 180 d ÷ (Active + Non Active)' },
   },
   'product.productLifecycle.productDetail': {
     help: { definition: 'Every product with its lifecycle segment and volume.' },

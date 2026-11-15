@@ -6,6 +6,15 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Product pages: shorter text, 2026-11-15)
+- Every Product "?" is now one line plus its formula. The long notes paragraphs (BCG per-class advice, Stock Aging layers,
+  Overstock excess, Stock-Out risk levels) are gone. A test keeps it that way: no `notes`, definition ≤ 90 characters.
+- The matrix panels read "High volume · high margin" etc. (`BCG_RECOMMENDATION` removed). The Pareto legend is short
+  ("First sale ≤ 180 d", "Last 90 d > +20%", …). Grid sub-titles no longer explain sorting and filtering. Card captions
+  are a few words ("Last 90 days", "of N sold", "Finished goods", "Partner brands · by volume").
+- Every removed text is in `Claude outputs/2026-11-15-page-edits/manual-changes.md` (Round 2), under its manual chapter.
+- Also fixed: the `toProductFacts` test fixture had no `productStatus` and failed after the portfolio rule (section 1).
+
 ### Changed (BCG Matrix: one class colour map; missing-cost note → admin data quality row, 2026-11-15)
 - The four BCG summary cards now use the matrix colours from the one map, `BCG_COLOR`: Stars gold, Cash Cows green,
   Strategic blue, Dogs red. Before they used the status colours (green / amber / grey / red). The matrix panels and bars,

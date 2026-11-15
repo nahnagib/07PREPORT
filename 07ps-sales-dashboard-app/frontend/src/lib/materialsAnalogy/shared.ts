@@ -277,18 +277,12 @@ export function movementRule(t: MovementConfig): string {
 }
 
 /** Each class in words, no thresholds (they stay on the server). Products without cost data count as low margin. */
+/** One short line per class (2026-11-15: the per-class advice moved to the user manual). */
 export const BCG_DEFINITION: Record<BcgClass, string> = {
-  Stars: 'High volume, high margin.',
-  'Cash Cows': 'High volume, low margin.',
-  Strategic: 'Low volume, high margin.',
-  Dogs: 'Low volume, low margin.',
-};
-/** What to do with each class (category info / tooltips). A Dog is NOT an automatic discontinue. */
-export const BCG_RECOMMENDATION: Record<BcgClass, string> = {
-  Stars: 'Protect availability, keep investing, support growth, monitor.',
-  'Cash Cows': 'Review pricing, discounts, cost structure, supplier terms and channel profitability.',
-  Strategic: 'Protect profitability, look for ways to grow volume, avoid unnecessary discounting.',
-  Dogs: 'Review before deciding to retain, improve, reposition or discontinue. A Dog is not an automatic discontinue: it may matter for strategic, seasonal, contractual or assortment reasons.',
+  Stars: 'High volume · high margin',
+  'Cash Cows': 'High volume · low margin',
+  Strategic: 'Low volume · high margin',
+  Dogs: 'Low volume · low margin',
 };
 
 export const LIFECYCLE_SEGMENTS: LifecycleSegment[] = ['New', 'Growing', 'Mature', 'Declining', 'Discontinued', 'Never sold'];

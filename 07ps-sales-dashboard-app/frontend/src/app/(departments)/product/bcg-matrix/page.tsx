@@ -37,7 +37,6 @@ import {
   BCG_CLASSES,
   BCG_COLOR,
   BCG_DEFINITION,
-  BCG_RECOMMENDATION,
   MOVEMENTS,
   MOVEMENT_COLOR,
   MOVEMENT_LABEL,
@@ -388,8 +387,8 @@ export default function BcgMatrixPage() {
             </div>
             <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
               {movementDrill
-                ? `${MOVEMENT_LABEL[movementDrill]} SKUs, top ${MOVEMENT_DRILL_TOP_N} by volume of the ${movementDrillData?.lastYear ? 'prior period' : 'period'} · hover a row for full detail`
-                : `Volume ${pLabel} vs the prior period, by SKU count · click a slice to see its products`}
+                ? `${MOVEMENT_LABEL[movementDrill]} · top ${MOVEMENT_DRILL_TOP_N} by volume`
+                : `Volume ${pLabel} vs prior period · SKUs`}
             </div>
             {overview.loading ? (
               <LoadingSkeleton variant="chart" />
@@ -402,7 +401,7 @@ export default function BcgMatrixPage() {
                   volumeHeader={movementDrillData.lastYear ? 'Volume prior period' : 'Volume'} />
                 {movementDrillData.moreCount > 0 && (
                   <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>
-                    +{fmtNum(movementDrillData.moreCount)} more SKUs not shown -- export to CSV or PDF for the full list
+                    +{fmtNum(movementDrillData.moreCount)} more · export for all
                   </div>
                 )}
               </>
@@ -422,7 +421,7 @@ export default function BcgMatrixPage() {
               Product Detail <VisualInfoIcons title="Product Detail" {...vh('product.bcgMatrix.productDetail')} />
             </div>
             <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
-              {pLabel} · click a column header to sort · search and per-column filter below each header
+              {pLabel}
             </div>
             {overview.loading ? (
               <LoadingSkeleton variant="table" />
@@ -729,7 +728,7 @@ function MatrixCell({
         <ExportButtons label={`${classKey} products`} onCsv={() => onExport('csv')} onPdf={() => onExport('pdf')} />
       </div>
       <div data-testid={`bcg-class-definition-${classKey}`} style={{ fontSize: 12, color: 'var(--ps-color-text)', marginBottom: 8 }}>
-        <strong style={{ fontWeight: 600 }}>{BCG_DEFINITION[classKey]}</strong> <span style={{ color: 'var(--ps-color-muted-text)' }}>{BCG_RECOMMENDATION[classKey]}</span>
+        <strong style={{ fontWeight: 600 }}>{BCG_DEFINITION[classKey]}</strong>
       </div>
       {rows.length ? (
         <RankedProductList rows={rows} barColor={color} tooltipContent={tooltipContent} />
@@ -737,7 +736,7 @@ function MatrixCell({
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--ps-color-muted-text)' }}>No product in this class</div>
       )}
       {moreCount > 0 && (
-        <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>+{fmtCount(moreCount)} more in this class · Export for the full list</div>
+        <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 8 }}>+{fmtCount(moreCount)} more · export for all</div>
       )}
     </Card>
   );

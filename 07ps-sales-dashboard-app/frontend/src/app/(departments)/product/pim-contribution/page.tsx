@@ -475,7 +475,7 @@ function BrandPerformanceSection({
         Brand Performance <VisualInfoIcons title="Brand Performance" {...vh('product.pimContribution.brands')} />
       </div>
       <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 16 }}>
-        Named partner brands · the period · sorted by volume · synced to the filters above
+        Partner brands · by volume
       </div>
 
       <div className="ps-brand-grid" data-testid="brand-grid">

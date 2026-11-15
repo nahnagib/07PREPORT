@@ -22,10 +22,10 @@ describe('lifecycle definitions come from the ETL config', () => {
     expect(lifecycleConfig(undefined)).toEqual({ newDays: 180, windowDays: 90, growthPct: 20, noSalesDays: 365 });
     const c = lifecycleConfig({ lifecycle: { new_first_sale_within_days: 120, trend_window_days: 60, growth_threshold_pct: 15, discontinued_no_sales_days: 300 } });
     const d = segmentDefinitions(c);
-    expect(d.New).toBe('First sale within the last 120 days.');
-    expect(d.Discontinued).toBe('No sale in the last 300 days.');
-    expect(d.Growing).toMatch(/last 60 days more than 15% above/);
-    expect(d.Mature).toMatch(/within ±15%/);
+    expect(d.New).toBe('First sale ≤ 120 d');
+    expect(d.Discontinued).toBe('No sale in 300 d');
+    expect(d.Growing).toBe('Last 60 d > +15%');
+    expect(d.Mature).toBe('Last 60 d within ±15%');
   });
 });
 

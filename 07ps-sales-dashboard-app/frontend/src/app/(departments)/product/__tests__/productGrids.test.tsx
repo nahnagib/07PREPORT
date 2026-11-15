@@ -112,8 +112,9 @@ describe('Product tables use the standard grid, volume first, and every product 
 
   it('BCG Matrix (round 2): 4 classes only, no thresholds anywhere, shared KPI cards, Product Detail full width under Product Movement', () => {
     const { container } = render(<BcgMatrixPage />);
-    expect(screen.getByTestId('bcg-class-definition-Stars').textContent).toMatch(/^High volume, high margin\. Protect availability/);
-    expect(screen.getByTestId('bcg-class-definition-Dogs').textContent).toMatch(/^Low volume, low margin\. .*not an automatic discontinue/);
+    // one short line per class (2026-11-15: the advice moved to the manual)
+    expect(screen.getByTestId('bcg-class-definition-Stars').textContent).toBe('High volume · high margin');
+    expect(screen.getByTestId('bcg-class-definition-Dogs').textContent).toBe('Low volume · low margin');
     expect(container.textContent).not.toMatch(/3,500|25,000|35%|≥|Not classified|not classified/);
     // 2x2: STARS | CASH COWS / STRATEGIC | DOGS
     expect([...screen.getByTestId('bcg-class-grid').querySelectorAll('[data-testid^="bcg-class-card-"]')].map((e) => e.getAttribute('data-testid')))
@@ -202,7 +203,7 @@ describe('Product tables use the standard grid, volume first, and every product 
     expect(screen.getByText('0 new SKUs · 0 Active · 0 Non Active')).toBeTruthy();
     const defs = screen.getByTestId('lifecycle-segment-definitions');
     expect([...defs.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['New', 'Growing', 'Mature', 'Declining', 'Discontinued', 'Never sold']);
-    expect(defs.textContent).toMatch(/First sale within the last 180 days/);
+    expect(defs.textContent).toMatch(/First sale ≤ 180 d/);
   });
 
   it('Brand page (Stonewrap): the products are the standard grid, volume first, each linked to Odoo', () => {

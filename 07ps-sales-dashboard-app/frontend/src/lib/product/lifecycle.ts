@@ -36,12 +36,12 @@ export function maturePct(rows: ProductFact[]): number | null {
 /** One line per segment, from the config values. */
 export function segmentDefinitions(c: LifecycleConfig): Record<LifecycleSegment, string> {
   return {
-    'Never sold': 'No sale in the whole sales history.',
-    Discontinued: `No sale in the last ${c.noSalesDays} days.`,
-    New: `First sale within the last ${c.newDays} days.`,
-    Growing: `Units of the last ${c.windowDays} days more than ${c.growthPct}% above the ${c.windowDays} days before (or none sold before).`,
-    Declining: `Units of the last ${c.windowDays} days more than ${c.growthPct}% below the ${c.windowDays} days before.`,
-    Mature: `Sold, and the last ${c.windowDays} days within ±${c.growthPct}% of the ${c.windowDays} days before.`,
+    'Never sold': 'Never sold',
+    Discontinued: `No sale in ${c.noSalesDays} d`,
+    New: `First sale ≤ ${c.newDays} d`,
+    Growing: `Last ${c.windowDays} d > +${c.growthPct}%`,
+    Declining: `Last ${c.windowDays} d < −${c.growthPct}%`,
+    Mature: `Last ${c.windowDays} d within ±${c.growthPct}%`,
   };
 }
 

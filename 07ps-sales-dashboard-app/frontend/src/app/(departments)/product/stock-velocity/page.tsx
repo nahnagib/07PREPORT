@@ -412,15 +412,15 @@ export default function StockVelocityPage() {
           ) : (
             <>
               <div data-testid="stock-velocity-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 160px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
-                <KpiTile label="DOH – Avg Days of Inventory" value={avgDOH === null ? '—' : `${Math.round(avgDOH)} days`} variance={`Based on the last ${lookback} days of sales`} status="neutral"
+                <KpiTile label="DOH – Avg Days of Inventory" value={avgDOH === null ? '—' : `${Math.round(avgDOH)} days`} variance={`Last ${lookback} days`} status="neutral"
                   help={withFormula(vh('product.stockVelocity.kpiDoh'), `DOH = finished-goods Quantity On Hand ÷ average daily Quantity Sold (last ${lookback} days)`).help} />
                 <KpiTile label="Overstocked SKUs" value={fmtCount(overRows.length)} variance={`${fmtQty(overUnits)} · ${fmtMoney(overValue)}`} status="watch"
                   help={withFormula(vh('product.stockVelocity.kpiOverstock'), overRule).help} />
                 <KpiTile label="Stock-Out Risk SKUs" value={fmtCount(riskRows.length)} variance={`${INV.qtySold} ${fmtQty(riskUnits)}`} status="alert"
                   help={withFormula(vh('product.stockVelocity.kpiStockOut'), riskRule).help} />
-                <KpiTile label="Fast Movers" value={fmtCount(moverRows.Fast.length)} variance={`Out of ${fmtCount(moving.length)} SKUs sold in the period`} status="success"
+                <KpiTile label="Fast Movers" value={fmtCount(moverRows.Fast.length)} variance={`of ${fmtCount(moving.length)} sold`} status="success"
                   help={withFormula(vh('product.stockVelocity.kpiFast'), moverRuleText(rule)).help} />
-                <KpiTile label="SKUs in Stock" value={fmtCount(inStock.length)} variance="In finished-goods locations" status="neutral"
+                <KpiTile label="SKUs in Stock" value={fmtCount(inStock.length)} variance="Finished goods" status="neutral"
                   help={vh('product.stockVelocity.kpiInStock').help} />
                 <KpiTile label={INV.totalValue} value={fmtMoney(inventoryValue)} variance={`${fmtQty(inventoryUnits)} finished goods · ${fmtQty(inTransitUnits)} in transit`} status="neutral"
                   help={vh('product.stockVelocity.kpiInventory').help} />
