@@ -211,6 +211,17 @@ describe('Product tables use the standard grid, volume first, and every product 
     }
   });
 
+  it('PIM Contribution (2026-11-15): no Categories donut; the Category filter and the hierarchy donut stay', () => {
+    const { container } = render(<PimContributionPage />);
+    expect(screen.queryByTestId('pim-categories-donut')).toBeNull();
+    expect(container.textContent).not.toMatch(/Top \d+ categories|Other \(\+\d+\)/);
+    expect(screen.queryByText('Categories')).toBeNull();
+    expect(screen.getByText('Product Hierarchy Contribution')).toBeTruthy();
+    expect(screen.getByText('Average Selling Price (ASP)')).toBeTruthy();
+    // one By Volume / By Value toggle left: the hierarchy's
+    expect(screen.getAllByText('By Volume (Unit)')).toHaveLength(1);
+  });
+
   it('Brand page lists every product with its own Brand column (a card can group several vendors)', () => {
     render(<BrandPage />);
     const grid = within(screen.getByTestId('brand-product-table')).getByTestId('data-grid');

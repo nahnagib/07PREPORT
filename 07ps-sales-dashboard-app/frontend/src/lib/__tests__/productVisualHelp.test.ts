@@ -14,7 +14,7 @@ const INTERACTIVE: VisualHelpId[] = [
   'product.bcgMatrix.matrix', 'product.bcgMatrix.movement', 'product.bcgMatrix.productDetail',
   'product.stockVelocity.movers', 'product.stockVelocity.overstock', 'product.stockVelocity.frequency', 'product.stockVelocity.stockOutRisk',
   'product.stockVelocity.aging',
-  'product.pimContribution.hierarchy', 'product.pimContribution.categories', 'product.pimContribution.brandProducts', 'product.pimContribution.brands',
+  'product.pimContribution.hierarchy', 'product.pimContribution.brandProducts', 'product.pimContribution.brands',
   'product.productLifecycle.productDetail',
 ];
 

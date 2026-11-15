@@ -533,10 +533,6 @@ export const VISUAL_HELP = {
     help: { definition: 'Units (or LYD) by company, category, brand, family, size and product.' },
     interactions: ['Click a slice to go one level down', 'Click a breadcrumb to go back up', 'Switch By Volume / By Value', 'At a single product, click its name to open it in Odoo'],
   },
-  'product.pimContribution.categories': {
-    help: { definition: 'Units (or LYD) by Odoo category; the 8 largest, the rest as Other.' },
-    interactions: ['Switch By Volume / By Value'],
-  },
   'product.pimContribution.brandProducts': {
     help: { definition: 'Every product of the brand (its main vendor in Odoo).' },
     interactions: ['Click a product to open it in Odoo', ...GRID],

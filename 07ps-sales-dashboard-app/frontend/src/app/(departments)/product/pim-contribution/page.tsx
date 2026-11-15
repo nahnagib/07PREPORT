@@ -173,7 +173,6 @@ export default function PimContributionPage() {
   const [category, setCategory] = useState<string[]>([]);
   const [bcgClass, setBcgClass] = useState<'All' | (typeof BCG_CLASSES)[number]>('All');
   const [metric, setMetric] = useState<Metric>('volume');
-  const [categoryMetric, setCategoryMetric] = useState<Metric>('volume');
   // Full chosen-value path through HIERARCHY_LEVELS (Company -> Category -> Brand -> SubBrand ->
   // Family -> Size -> Product) -- replaces the old single `drillCategory` string now that the
   // donut drills 6+1 levels deep instead of 2. `metric` is deliberately a separate, untouched
@@ -191,17 +190,6 @@ export default function PimContributionPage() {
 
   const metricVal = (r: MaterialsAnalogyFact) => (metric === 'value' ? r.value : r.volume);
   const metricFmt = (v: number) => (metric === 'value' ? fmtLYD(v) : fmtUnits(v));
-
-  // ---- Categories donut: the 8 largest categories + Other, by volume (default) or value ----
-  const categoryVal = (r: MaterialsAnalogyFact) => (categoryMetric === 'value' ? r.value : r.volume);
-  const categoryEntries = topNWithOther([...groupSum(filtered, (r) => normalizeHierarchyValue(r.Category), categoryVal).entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]));
-  const categorySegments: DonutSegment[] = categoryEntries.map(([label, value], i) => ({
-    id: label,
-    label: ltrLabel(label),
-    value,
-    color: label.startsWith('Other (') ? 'var(--ps-color-neutral-text)' : CATEGORY_PALETTE[i % CATEGORY_PALETTE.length],
-  }));
-  const categoryFmt = (v: number) => (categoryMetric === 'value' ? fmtLYD(v) : fmtUnits(v));
 
   // ---- Donut (drill-down), full 6+1-level hierarchy ----
   // `resolved.path` is what actually gets rendered as the breadcrumb -- it can be longer than
@@ -316,36 +304,6 @@ export default function PimContributionPage() {
               onSelectBrand={(b) => router.push(buildBrandHref(b.requested, { category, bcgClass }))}
               showGp={profit.view}
             />
-
-          <ChartPanel {...vh('product.pimContribution.categories')}
-            title="Categories"
-            wrapHeader
-            headerActions={
-              <div style={{ display: 'flex', gap: 6 }}>
-                <Button variant={categoryMetric === 'volume' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setCategoryMetric('volume')}>
-                  By Volume (Unit)
-                </Button>
-                <Button variant={categoryMetric === 'value' ? 'primary' : 'secondary'} style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => setCategoryMetric('value')}>
-                  By Value
-                </Button>
-              </div>
-            }
-          >
-            <div data-testid="pim-categories-donut">
-              {categorySegments.length ? (
-                <DonutChart
-                  title="Categories"
-                  showTitle={false}
-                  segments={categorySegments}
-                  valueFormatter={categoryFmt}
-                  legendTitle={`Top ${Math.min(8, categorySegments.length)} categories · ${categoryMetric === 'value' ? 'value (LYD)' : 'volume (Unit)'}`}
-                  labelDirection="ltr"
-                />
-              ) : (
-                <p style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>No sales in the period.</p>
-              )}
-            </div>
-          </ChartPanel>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
             <ChartPanel {...vh("product.pimContribution.hierarchy")}

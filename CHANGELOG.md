@@ -6,6 +6,12 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Removed (PIM Contribution: Categories donut, 2026-11-15)
+- The "Categories" card is gone: its By Volume / By Value toggle, Export image, the top-8 legend and the "Other (+N)"
+  row, plus its page state, visual-help entry (`product.pimContribution.categories`) and test id. The Category filter and
+  the Category level of the Product Hierarchy Contribution drill stay. Brand Performance now sits directly above the
+  Hierarchy / ASP row, with no empty space. Test: `productGrids.test.tsx`.
+
 ### Changed (BCG Matrix: Total SKUs hero, clickable status cards, product status table, company in the hover, 2026-11-15)
 - Total SKUs is a full-width card in the Critical Number hero style (same 40px number and accent border, global
   `.ps-cn-hero`). The breakdown is four chips: Active · Non Active · Dormant · Unclassified. Each chip opens that status.
