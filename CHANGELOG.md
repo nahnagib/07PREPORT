@@ -6,6 +6,15 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Detractor Follow-up: labelled sections, new order, 2026-11-15)
+- The board now has three section titles, styled like the other pages' section titles (14px bold), in this order:
+  **SLA Performance** (Close SLA missed, Contact SLA missed, Resolved last 30 days within SLA), **Status** (Open, Closed,
+  Disputed, Not classified), **Stages** (the "New detractors appear…" note, then the kanban).
+- "Not classified" moved from the SLA row to Status. It counts every board case with no reason, any status, so it
+  overlaps Open / Closed / Disputed; its sub-line now says so. The "?" help, the responsive grids and the kanban are
+  unchanged. Docs: `docs/nps-followup.md`. Tests: `followupSla.test.tsx` (three SLA cards, Not classified card, section
+  order).
+
 ### Changed (Salesforce Performance: "Tiers", variance spacing, 2026-11-15)
 - The performance classification (Top performer, On target, Behind target, Need attention, Critical) is called a "tier"
   in the UI. That covers: Team tiers, Tier mix, MoM performance by tier, "No one in this tier", the Tier column and

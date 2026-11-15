@@ -18,7 +18,7 @@ vi.mock('../../../lib/AuthProvider', () => ({
   useAuth: () => ({ user: null, canView: () => true }),
 }));
 
-const { CaseCard, SlaKpis, TimeOpen } = await import('../FollowupBits');
+const { CaseCard, NotClassifiedKpi, SlaKpis, TimeOpen } = await import('../FollowupBits');
 
 afterEach(cleanup);
 
@@ -165,7 +165,7 @@ describe('board card', () => {
 });
 
 describe('board KPIs', () => {
-  it('Close SLA missed, Contact SLA missed, Resolved with "within SLA (5 d)", Not classified -- one full-width row of four', () => {
+  it('SLA Performance (2026-11-15): Close SLA missed, Contact SLA missed, Resolved with "within SLA (5 d)" -- three cards, no Not classified', () => {
     const kpis = {
       closeSlaMissed: 4,
       contactSlaMissed: 9,
@@ -175,7 +175,9 @@ describe('board KPIs', () => {
     } as FollowupKpis;
     render(<SlaKpis kpis={kpis} />);
     const row = screen.getByTestId('fu-kpis-stage');
-    expect(row.className).toBe('ps-fu-kpis ps-fu-kpis--4');
+    expect(row.className).toBe('ps-fu-kpis');
+    expect(row.children).toHaveLength(3);
+    expect(within(row).queryByText('Not classified')).toBeNull();
     expect(within(row).getByText('Close SLA missed')).toBeTruthy();
     expect(within(row).getByText('open more than 5 days')).toBeTruthy();
     expect(within(row).getByText('Contact SLA missed')).toBeTruthy();
@@ -183,11 +185,36 @@ describe('board KPIs', () => {
     expect(within(row).getByText('10 within SLA (5 d)')).toBeTruthy();
     expect(within(row).queryByText('Open over 5 days')).toBeNull();
   });
+
+  it('Not classified is its own card (shown under Status): every board case without a reason, any status', () => {
+    render(<NotClassifiedKpi kpis={{ noReason: 3 } as FollowupKpis} />);
+    expect(screen.getByText('Not classified')).toBeTruthy();
+    expect(screen.getByText('3')).toBeTruthy();
+    expect(screen.getByText('no reason chosen yet (any status)')).toBeTruthy();
+  });
 });
 
 describe('SLA share text', () => {
   it('x of y (z %), or none due yet', () => {
     expect(slaShareText({ count: 3, of: 4 })).toBe('3 of 4 (75 %)');
     expect(slaShareText({ count: 0, of: 0 })).toBe('— (none due yet)');
+  });
+});
+
+describe('Board layout (2026-11-15)', () => {
+  it('labelled sections in this order: SLA Performance, Status (with Not classified), Stages (note, then the kanban)', () => {
+    const page = fs.readFileSync(path.resolve(__dirname, '../../../app/(departments)/process/nps-followup/page.tsx'), 'utf8');
+    const at = (needle: string) => {
+      const i = page.indexOf(needle);
+      expect(i, needle).toBeGreaterThan(-1);
+      return i;
+    };
+    const order = [
+      at('>SLA Performance</h2>'), at('<SlaKpis kpis={board.kpis} />'),
+      at('>Status</h2>'), at('data-testid="fu-kpis-status"'), at('<NotClassifiedKpi kpis={board.kpis} />'),
+      at('>Stages</h2>'), at('New detractors appear as cases within 30 minutes'), at('data-testid="fu-board"'),
+    ];
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(page).toContain('className="ps-fu-section-title"');
   });
 });

@@ -141,16 +141,21 @@ export function CaseCard({ c, onOpen }: { c: FollowupCase; onOpen: (id: number) 
   );
 }
 
-/** The board's SLA row (the board's cases; lib/nps/sla.ts), full width: 4 across on wide screens. */
+/** The board's SLA Performance row (the board's cases; lib/nps/sla.ts), full width: 3 across on wide screens. */
 export function SlaKpis({ kpis }: { kpis: FollowupKpis }) {
   return (
-    <section className="ps-fu-kpis ps-fu-kpis--4" aria-label="SLA" data-testid="fu-kpis-stage">
+    <div className="ps-fu-kpis" data-testid="fu-kpis-stage">
       <KaizenKpi label="Close SLA missed" value={String(kpis.closeSlaMissed)} sub={`open more than ${NPS_SLA.closeDays} days`} accent={SLA_COLOR.red} />
       <KaizenKpi label="Contact SLA missed" value={String(kpis.contactSlaMissed)}
         sub={`open more than ${NPS_SLA.contactHours} h, not contacted`} accent={SLA_COLOR.red} />
       <KaizenKpi label="Resolved, last 30 days" value={String(kpis.resolved30Days)}
         sub={`${kpis.resolvedInSla} within SLA (${NPS_SLA.closeDays} d)`} accent={SLA_COLOR.green} />
-      <KaizenKpi label="Not classified" value={String(kpis.noReason)} sub="no reason chosen yet" accent="var(--ps-color-watch)" />
-    </section>
+    </div>
   );
+}
+
+/** "Not classified" (no reason chosen): not an SLA metric, shown with the Status cards (2026-11-15). It counts every case
+ * of the board without a reason, whatever its status, so it overlaps Open / Closed / Disputed. */
+export function NotClassifiedKpi({ kpis }: { kpis: FollowupKpis }) {
+  return <KaizenKpi label="Not classified" value={String(kpis.noReason)} sub="no reason chosen yet (any status)" accent="var(--ps-color-watch)" />;
 }

@@ -662,6 +662,9 @@ textarea.ps-kaizen-input { min-height: 84px; resize: vertical; }
 .ps-fu-filters > .ps-kaizen-field { flex: 0 1 170px; }
 .ps-fu-help-label { display: inline-flex; align-items: center; gap: 6px; }
 /* Full-width KPI rows: 3 status cards or 4 SLA cards, 1 column on phones and 2 from 640px. */
+.ps-fu-section { display: flex; flex-direction: column; min-width: 0; }
+/* Section titles as on the other pages (e.g. "Product Status" on BCG): 14px, bold. */
+.ps-fu-section-title { font-size: 14px; font-weight: 700; color: var(--ps-color-text); margin: 0 0 8px; }
 .ps-fu-kpis { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 @media (min-width: 640px) { .ps-fu-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1280px) { .ps-fu-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

@@ -89,8 +89,13 @@ and open cases older than 24 h; newly open cases still waiting within their cont
 The contact numerator requires a recorded contact time within 24 h. Unresolved and Historical are excluded from both.
 Percentages round to whole numbers. An empty denominator displays "— (none due yet)".
 
-Board SLA KPIs remain full width: **Close SLA missed** (open more than 5 days), **Contact SLA missed** (open older
-than 24 h with no contact time), **Resolved, last 30 days** (with "x within SLA (5 d)"), and **Not classified**.
+The board has three labelled sections (2026-11-15), in this order:
+1. **SLA Performance**: **Close SLA missed** (open more than 5 days), **Contact SLA missed** (open older than 24 h with
+   no contact time), **Resolved, last 30 days** (with "x within SLA (5 d)").
+2. **Status**: **Open**, **Closed**, **Disputed**, and **Not classified**. Not classified is not an SLA metric: it
+   counts every board case with no reason chosen, whatever its status, so it overlaps the other three cards.
+3. **Stages**: the note ("New detractors appear as cases within 30 minutes…") and the kanban (New, Contacted, In
+   progress, Resolved (30 days), Unresolved).
 A case can miss both deadlines and count in both missed KPIs. These stage KPIs use the displayed board cases;
 the existing truncation note applies when there are more than 2,000 cases.
 

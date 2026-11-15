@@ -8,7 +8,7 @@ import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useFilterState, useScopedFilterOptions } from '../../../../components/FilterProvider';
 import { CaseDetail } from '../../../../components/nps-followup/CaseDetail';
 import { FollowupHelp } from '../../../../components/nps-followup/FollowupHelp';
-import { CaseCard, FollowupShell, SlaKpis, StagePill, StatusBadge, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
+import { CaseCard, FollowupShell, NotClassifiedKpi, SlaKpis, StagePill, StatusBadge, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
 import { KaizenKpi } from '../../../../components/kaizen/KaizenBits';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { ApiError } from '../../../../lib/api';
@@ -178,15 +178,25 @@ function FollowupBody() {
           <LoadingSkeleton variant="chart" />
         ) : (
           <>
-            <section className="ps-fu-kpis" aria-label="Status" data-testid="fu-kpis-status">
-              {/* by STATUS: every case of the filters (Historical has no status) */}
-              {STATUSES.map((s) => (
-                <KaizenKpi key={s} label={<span className="ps-fu-help-label"><span>{STATUS_LABEL[s]}</span><FollowupHelp kind="status" value={s} /></span>} value={String(board.kpis[STATUS_KPI[s]])}
-                  sub={`${sharePct(board.kpis[STATUS_SHARE[s]])} of ${board.kpis.total} · ${STATUS_HINT[s]}`} accent={STATUS_COLOR[s]} />
-              ))}
+            {/* 2026-11-15: three labelled sections, in this order: SLA Performance, Status, Stages. */}
+            <section className="ps-fu-section" aria-labelledby="fu-sec-sla" data-testid="fu-section-sla">
+              <h2 id="fu-sec-sla" className="ps-fu-section-title">SLA Performance</h2>
+              <SlaKpis kpis={board.kpis} />
             </section>
-            <SlaKpis kpis={board.kpis} />
-            <p className="ps-fu-muted" style={{ margin: 0 }}>
+            <section className="ps-fu-section" aria-labelledby="fu-sec-status" data-testid="fu-section-status">
+              <h2 id="fu-sec-status" className="ps-fu-section-title">Status</h2>
+              <div className="ps-fu-kpis ps-fu-kpis--4" data-testid="fu-kpis-status">
+                {/* by STATUS: every case of the filters (Historical has no status) */}
+                {STATUSES.map((s) => (
+                  <KaizenKpi key={s} label={<span className="ps-fu-help-label"><span>{STATUS_LABEL[s]}</span><FollowupHelp kind="status" value={s} /></span>} value={String(board.kpis[STATUS_KPI[s]])}
+                    sub={`${sharePct(board.kpis[STATUS_SHARE[s]])} of ${board.kpis.total} · ${STATUS_HINT[s]}`} accent={STATUS_COLOR[s]} />
+                ))}
+                <NotClassifiedKpi kpis={board.kpis} />
+              </div>
+            </section>
+            <section className="ps-fu-section" aria-labelledby="fu-sec-stages" data-testid="fu-section-stages">
+              <h2 id="fu-sec-stages" className="ps-fu-section-title">Stages</h2>
+            <p className="ps-fu-muted" style={{ margin: '0 0 12px' }}>
               New detractors appear as cases within 30 minutes (the refresh runs every 30 min). The columns are stages; the badge is the status. Resolved shows the last 30 days; Historical cases are in the List view.
               {board.truncated ? ' Only the first 2,000 cases are shown: narrow the filters.' : ''}
             </p>
@@ -203,6 +213,7 @@ function FollowupBody() {
                   </div>
                 </div>
               ))}
+            </section>
             </section>
           </>
         )
