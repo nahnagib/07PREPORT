@@ -911,6 +911,9 @@ export const adminApi = {
   getEtlShadowCompare: (token: string): Promise<EtlShadowCompareResponse> => request('/admin/etl/shadow-compare', token),
   getEtlProductGaps: (token: string): Promise<EtlProductGapsResponse> => request('/admin/etl/product-gaps', token),
 
+  /** What the last sales build excluded from the Product pages (ProductExclusions.xlsx + the automatic rules). */
+  getEtlProductExclusions: (token: string): Promise<EtlProductExclusionsResponse> => request('/admin/etl/product-exclusions', token),
+
   startEtlRun: (token: string, mode: EtlStartMode): Promise<{ ok: boolean; runId: number; jobId: string }> =>
     request(`/admin/etl/start/${mode}`, token, { method: 'POST' }),
 
@@ -1320,7 +1323,7 @@ export interface EtlInputFileReplaced {
   previous: { path: string; size_bytes: number; modified: string; sha256: string } | null;
   current: { path: string; size_bytes: number; modified: string; sha256: string };
   backup: { path: string; size_bytes: number } | null;
-  validation: { sheets: Record<string, string>; counts: Record<string, number> };
+  validation: { sheets: Record<string, string>; counts: Record<string, number>; warnings?: string[] };
   /** false = the file WAS replaced, but its audit_log entry could not be written. */
   auditLogged: boolean;
 }
@@ -1424,6 +1427,34 @@ export interface EtlProductGapsReport {
 
 export interface EtlProductGapsResponse {
   report: EtlProductGapsReport | null;
+}
+
+/** ETL Control Center -> Product exclusions (conform_sales task log, details.product_exclusions). */
+export interface EtlProductExclusionsReport {
+  as_of: string;
+  file: {
+    file: string | null;
+    uploaded_at_utc: string | null;
+    fallback_reason: string | null;
+    active_rows: Record<'Customers' | 'Categories' | 'Products', Record<string, number>>;
+    inactive_rows: Record<string, number>;
+    skipped_rows: number;
+    skipped: { sheet: string; row: number; name?: string; reason: string }[];
+    /** Rows applied with a remark: a duplicate applied once, an id not in Odoo, a product of another company. */
+    warning_rows?: number;
+    warnings?: { sheet: string; row: number | null; name?: string; reason: string }[];
+  };
+  /** file_product | file_category | archived | raw_material */
+  products_excluded: Record<string, { total: number; by_company: Record<string, number> }>;
+  /** customers_exclude | backoffice | inter_company | intercompany_flag | customers_keep (kept, not excluded) */
+  sales_lines_excluded: Record<string, { lines: number; qty: number; value: number; by_company: Record<string, number> }>;
+  archived_with_stock: { company: string; product_id: string; product_name: string | null; quantity_on_hand: number; total_value: number }[];
+  finishedAtUtc: string;
+  taskName: string;
+}
+
+export interface EtlProductExclusionsResponse {
+  report: EtlProductExclusionsReport | null;
 }
 
 export interface EtlScheduleInfo {
@@ -2595,10 +2626,18 @@ export interface ProductDashboardRow {
   avgDailySales: number;
   daysOfInventory: number | null;
   stockBand: StockBand;
-  /** Units-weighted average days since the finished-goods stock on hand arrived (Odoo in_date); null = no stock. */
+  /** Units-weighted average age (days) of the receipt layers still in stock (Odoo stock.valuation.layer); null = no stock. */
   stockAgeDays: number | null;
   /** Stock Aging bucket (config stock.aging_buckets), null = no stock on hand. */
   stockAgeBucket: string | null;
+  /** Odoo's On Hand in the product's company (every internal location) and its value. */
+  onHandQty?: number;
+  onHandValue?: number;
+  /** Age (days) of the oldest receipt layer still in stock. */
+  stockAgeOldestDays?: number | null;
+  stockAgeSource?: string | null;
+  /** On Hand units / value per aging bucket, split by receipt layer. */
+  agingBuckets?: AgingBucketAmount[];
   lifecycleSegment: LifecycleSegment;
   /** Companies in this row: one in a company view; both for a shared product in the BMH view. */
   companies: string[];
@@ -2607,6 +2646,15 @@ export interface ProductDashboardRow {
   lastSaleDate: string | null;
   bcgClassYTD: string | null;
   bcgClassLYTD: string | null;
+  /** The data behind bcgClassYTD (the product's latest fully costed window): volume, value, profit, GP%. */
+  bcgVolume?: number | null;
+  bcgValue?: number | null;
+  bcgProfit?: number | null;
+  bcgGrossProfitPct?: number | null;
+  /** 'YTD 2026' or the calendar year used ('2025'); null = no profit data. */
+  bcgDataPeriod?: string | null;
+  /** Last sale date of that data. */
+  bcgDataAsOf?: string | null;
   bcgMovement: BcgMovement | null;
   bcgExcludedCategory: boolean;
   valueYTD: number;
@@ -2618,6 +2666,13 @@ export interface ProductDashboardRow {
   negativeStockRows: number;
 }
 
+export interface AgingBucketAmount {
+  key: string;
+  label: string;
+  qty: number;
+  value: number;
+}
+
 export interface ProductDashboardOverview {
   /** 'BMH' = no company filter (a product both companies sell is one combined row); else one company. */
   view: 'BMH' | 'Majaal' | 'Tika';
@@ -2627,7 +2682,7 @@ export interface ProductDashboardOverview {
   lookbackDays: number;
   thresholds: {
     days_of_inventory?: { lookback_days?: number; overstock_days?: Record<string, number>; stockout_risk_days?: Record<string, number> };
-    bcg?: { volume_threshold?: Record<string, number>; profit_threshold_pct?: number; excluded_categories?: string[] };
+    bcg?: { volume_threshold?: Record<string, number>; profit_threshold_pct?: number; movement_stable_band_pct?: number; excluded_categories?: string[] };
     lifecycle?: { new_first_sale_within_days?: number; trend_window_days?: number; growth_threshold_pct?: number; discontinued_no_sales_days?: number };
     [key: string]: unknown;
   };
@@ -3139,7 +3194,7 @@ export interface NpsTrend extends TrendWindow {
   minResponders: number;
   points: NpsTrendPoint[];
 }
-/** responders / (Delivered + Read): company and date only, from NPS_REACH_START (backend measures/npsScore.ts) */
+/** responders / (Delivered + Read): company and date only, from the first reach day (backend measures/npsScore.ts) */
 export interface NpsResponseRate {
   status: 'waiting' | 'restricted' | 'ready';
   /** Original requested start; dateFrom can be the later effective start of available data. */
@@ -3158,48 +3213,36 @@ export interface NpsResponseRate {
   band: NpsBand | null;
   target: number;
   variancePts: number | null;
-  /** measured weeks only (never estimated) */
+  /** per business week of the counted period, every source */
   weekly: { weekStart: string; responders: number; reached: number; rate: number | null }[];
-  /** the headline includes estimated reached messages before reachStart (backend config/npsReachEstimate.ts) */
-  isEstimated: boolean;
-  estimateStatus: 'not_needed' | 'applied' | 'disabled' | 'no_basis';
-  /** the real rate from reachStart; null when the period ends before it */
-  measured: { from: string; responders: number; reached: number; rate: number | null } | null;
-  estimate: {
-    from: string;
-    to: string;
-    weeks: number;
-    perWeek: number;
-    reached: number;
-    basis: 'auto' | 'fixed';
-    basisWeeks: number;
-    basisFrom: string | null;
-    basisTo: string | null;
-    /** complete measured weeks left out of the basis (the Meta outage) */
-    excludedWeeks: string[];
-    /** per company, each from its own first rating */
-    byCompany: { companyKey: number; company: string; from: string; to: string; weeks: number; perWeek: number; reached: number }[];
-  } | null;
+  /** manual or estimated Delivered / Read (12 Jul – 02 Oct, backend migration 0071) are in the denominator */
+  includesManual: boolean;
+  /** Delivered + Read by source (etl = measured); they add up to reached */
+  reachedBySource: Record<NpsReachSource, number>;
+  /** the manual periods in the counted period (companies merged) */
+  manualPeriods: NpsManualPeriod[];
 }
+/** where a reach count comes from: etl = measured by the ETL, manual = Meta export, estimate = approved estimate */
+export type NpsReachSource = 'etl' | 'manual' | 'estimate';
+/** a process_nps_reach_manual period (backend migration 0071) */
+export interface NpsManualPeriod { from: string; to: string; source: 'estimate' | 'meta_manual' | 'meta_manual+estimate' }
 /** "Resolved Ageing" buckets (backend config/npsSla.ts) */
 export type NpsAgeingBucket = 'd1' | 'd2' | 'd5' | 'd10' | 'd30' | 'dmax';
 /** the follow-up workflow step (lib/nps/followup.ts) */
-export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'UNRESOLVED' | 'REJECTED';
+export type NpsFollowupStage = 'HISTORICAL' | 'NEW' | 'CONTACTED' | 'IN_PROGRESS' | 'RESOLVED' | 'UNRESOLVED';
 /** the outcome group, worked out from the stage */
-export type NpsFollowupStatus = 'OPEN' | 'CLOSE' | 'DISPUTED';
+export type NpsFollowupStatus = 'OPEN' | 'CLOSED' | 'DISPUTED';
 /** the follow-up charts (reason, status, Resolved Ageing), live from nps_followup_case */
 export interface NpsFollowupSummary {
   dateFrom: string;
   dateTo: string;
   detractors: number;
-  /** Total of both follow-up donuts: cases with a status (Rejected included, Historical not) */
+  /** Total of both follow-up donuts: cases with a status */
   charted: number;
-  /** stage Rejected (inside charted) */
-  rejected: number;
   unresolved?: number;
   historical: number;
   noCase: number;
-  /** "Resolved Ageing": resolved by time to resolve, open by age today, and the two SLA lines; Rejected / Historical out */
+  /** "Resolved Ageing": resolved by time to resolve, open by age today, and the two SLA lines; Unresolved / Historical out */
   ageing: {
     buckets: { key: NpsAgeingBucket; label: string; withinSla: boolean; resolved: number; open: number }[];
     closedInSla: { count: number; of: number };
@@ -3223,19 +3266,18 @@ export interface NpsReach {
   dateTo: string;
   companyAndDateOnly: boolean;
   loadedAt: string | null;
-  /** first message date counted (the ETL's NPS_REACH_START), null = all history */
+  /** the ETL's NPS_REACH_START: measured from here, the manual reach (migration 0071) before it */
   reachStart: string | null;
-  /** the official counts: measured + the gap 12 Jul – 02 Oct when isEstimated (backend measures/npsReachEstimate.ts) */
+  /** every source together (backend measures/npsReachCounts.ts): the official counts */
   totals: NpsReachBoxes | null;
-  /** measured + the gap's real errors; they sum to totals.error */
+  /** the error groups of every source (manual errors = "Unclassified (Meta manual)"); they sum to totals.error */
   errors: { key: string; label: string; fixable: boolean; hint: string; count: number }[];
-  /** Delivered, Read, Not Delivered of the gap are estimated; its Error is real */
-  isEstimated: boolean;
-  estimateStatus: 'not_needed' | 'applied' | 'disabled' | 'no_basis';
-  estimate: { from: string; to: string } | null;
-  /** the measured part (from reachStart) and the gap part of every box; null unless isEstimated */
-  measured: NpsReachBoxes | null;
-  gap: NpsReachBoxes | null;
+  /** manual or estimated messages are in the totals */
+  includesManual: boolean;
+  /** every box by source; they add up to totals */
+  bySource: Record<NpsReachSource, NpsReachBoxes> | null;
+  /** the manual periods in the range (companies merged) */
+  manualPeriods: NpsManualPeriod[];
 }
 export interface NpsReachBoxes { totalReach: number; delivered: number; notDelivered: number; read: number; error: number; otherState: number }
 export interface NpsPage<T> {

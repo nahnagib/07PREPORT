@@ -27,13 +27,16 @@ import { ScrollableNav } from './ScrollableNav';
  * convention of not deleting superseded components -- this page now uses TopTabBar + BottomNavBar
  * instead.
  */
-export function BottomNavBar({ active = 'Tachometer' }: { active?: string }) {
+export function BottomNavBar({ active: activeProp }: { active?: string }) {
   const { canView, isAdmin } = useAuth();
   const pathname = usePathname();
   const currentDepartment = DEPARTMENTS.find((d) => pathname === d.href || pathname?.startsWith(`${d.href}/`));
   const items = currentDepartment
     ? departmentReports(currentDepartment.key, canView)
     : NAV_ITEMS.filter((item) => canView(item.pageKey));
+  // Without an explicit label, the active tab is the item whose route the current path is (or is under) -- never a
+  // fixed default, which used to light up Tachometer on pages that did not pass one.
+  const active = activeProp ?? NAV_ITEMS.find((item) => item.href && (pathname === item.href || pathname?.startsWith(`${item.href}/`)))?.label;
   const adminHref = adminNavHref(canView, isAdmin);
   const showAdmin = adminHref !== null;
 

@@ -42,6 +42,11 @@ STOCK_LOCATION_FIELDS = [
 
 RES_COMPANY_FIELDS = ["id", "name"]
 
+# The receipt layers of the stock still on hand (remaining_qty > 0): Stock Aging on the Stock Velocity page (2026-11-10).
+# create_date = when those units were received (UTC).
+VALUATION_LAYER_FIELDS = ["id", "product_id", "company_id", "remaining_qty", "remaining_value", "create_date"]
+VALUATION_LAYER_DOMAIN = [["remaining_qty", ">", 0]]
+
 FACT_INVENTORY_COLUMNS = [
     "SnapshotDate",
     "SnapshotDateKey",
@@ -96,6 +101,12 @@ class InventoryRepository(OdooRepositoryBase):
             order="id",
             context={"active_test": False},
         )
+        return flatten_many2one_columns(rows, meta)
+
+    def fetch_valuation_layers(self) -> pd.DataFrame:
+        fields, qa, meta = self.available_fields("stock.valuation.layer", VALUATION_LAYER_FIELDS)
+        self.field_availability = pd.concat([self.field_availability, qa], ignore_index=True)
+        rows = self.search_read_all("stock.valuation.layer", VALUATION_LAYER_DOMAIN, fields, order="id")
         return flatten_many2one_columns(rows, meta)
 
     def fetch_companies(self) -> pd.DataFrame:
@@ -253,6 +264,27 @@ class InventoryModelBuilder:
         # Odoo sends False for an empty datetime; kept naive UTC like every other Odoo datetime in the extract
         out["InDate"] = pd.to_datetime(raw["in_date"].where(raw["in_date"].astype(str).ne("False")), errors="coerce", utc=True).dt.tz_localize(None)
         return out
+
+    @staticmethod
+    def normalize_valuation_layers(layers: pd.DataFrame | None, companies: pd.DataFrame | None = None) -> pd.DataFrame:
+        """Odoo stock.valuation.layer rows (remaining_qty > 0) -> Company, ProductKey (Odoo product id),
+        ProductCompanyKey, LayerDate (create_date, UTC naive), RemainingQty, RemainingValue. Company from the layer's
+        company_id (name as normalized everywhere else; res.company names when the many2one has none)."""
+        columns = ["Company", "ProductKey", "ProductCompanyKey", "LayerDate", "RemainingQty", "RemainingValue"]
+        if layers is None or layers.empty:
+            return pd.DataFrame(columns=columns)
+        raw = DataFrameUtils.ensure_columns(layers.copy(), ["product_id_id", "company_id", "company_id_id", "remaining_qty", "remaining_value", "create_date"])
+        out = pd.DataFrame(index=raw.index)
+        out["OdooCompanyID"] = pd.to_numeric(raw["company_id_id"], errors="coerce").astype("Int64")
+        out["Company"] = raw["company_id"].apply(TextUtils.normalize_company)
+        out = InventoryModelBuilder._backfill_company_names(out, companies if companies is not None else pd.DataFrame())
+        pid = pd.to_numeric(raw["product_id_id"], errors="coerce").astype("Int64")
+        out["ProductKey"] = pid.astype("string").fillna(odoo_products.UNKNOWN_PRODUCT_KEY)
+        out["ProductCompanyKey"] = odoo_products.product_company_keys(out["Company"], out["ProductKey"])
+        out["LayerDate"] = pd.to_datetime(raw["create_date"].where(raw["create_date"].astype(str).ne("False")), errors="coerce")
+        out["RemainingQty"] = pd.to_numeric(raw["remaining_qty"], errors="coerce").fillna(0.0)
+        out["RemainingValue"] = pd.to_numeric(raw["remaining_value"], errors="coerce").fillna(0.0)
+        return out[columns].reset_index(drop=True)
 
     @staticmethod
     def _backfill_company_names(quants: pd.DataFrame, companies: pd.DataFrame) -> pd.DataFrame:

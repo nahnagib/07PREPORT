@@ -28,7 +28,7 @@ import { buildFollowupExport } from '../services/npsFollowupExportService';
  * The customers' comments are shown only with View on nps_comments (exported only with Export on nps_comments).
  * Every case read goes through resolveScopedFilters (the role's data scope + the salesperson lock), like the NPS page.
  *
- * Stage (the workflow step, editable) and status (OPEN / CLOSE / DISPUTED, worked out from the stage) are separate:
+ * Stage (the workflow step, editable) and status (OPEN / CLOSED / DISPUTED, worked out from the stage) are separate:
  * every case carries both, the filters are `stages=` and `statuses=`, and a PATCH that sends `status` is refused (400).
  *
  *   GET    /nps-followup/options                   stages, statuses, reasons (two levels), owners
@@ -38,7 +38,8 @@ import { buildFollowupExport } from '../services/npsFollowupExportService';
  *   GET    /nps-followup/cases/:id                  details, comment, history
  *   PATCH  /nps-followup/cases/:id                  { version, stage?, reasonId?, reasonNote?, owner? (free text), contactedAt?,
  *                                                     resolvedAt?, rootCause?, actionTaken?, notes? } -> 409 when version is stale
- *                                                   (status / rejectedAt are refused: they follow the stage)
+ *                                                   (status is refused: it follows the stage; there is no
+ *                                                   Rejected stage since migration 0072, "REJECTED" is refused)
  *   GET/POST/PATCH/DELETE /nps-followup/reasons[/:id]   dim_nps_reason: categories and their sub-reasons
  */
 export const npsFollowupRouter = Router();

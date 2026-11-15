@@ -1,4 +1,4 @@
-import type { BcgMovement, LifecycleSegment, ProductCompanyPart, ProductDashboardOverview, ProductDashboardRow, StockBand, UomQty } from '../api';
+import type { AgingBucketAmount, BcgMovement, LifecycleSegment, ProductCompanyPart, ProductDashboardOverview, ProductDashboardRow, StockBand, UomQty } from '../api';
 
 /**
  * Product pages (BCG Matrix / Stock Velocity / PIM Contribution / Product Lifecycle) -- shared types,
@@ -24,9 +24,10 @@ export const isProductPageCompany = (name: string | null | undefined) => !PRODUC
 export const PRODUCT_EXCLUDED_SEGMENT_KEYS = [3, 4];
 export const isProductPageSegment = (segmentKey: unknown) => !PRODUCT_EXCLUDED_SEGMENT_KEYS.includes(Number(segmentKey));
 
-export type BcgClass = 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs';
-export const BCG_CLASSES: BcgClass[] = ['Stars', 'Cash Cows', 'Strategic', 'Dogs'];
+export const BCG_CLASSES = ['Stars', 'Cash Cows', 'Strategic', 'Dogs'] as const;
+export type BcgClass = (typeof BCG_CLASSES)[number];
 export const UNCLASSIFIED_NO_COST = 'Unclassified (no cost)';
+export const UNCLASSIFIED_ZERO_REVENUE = 'Unclassified (zero revenue)';
 
 export interface ProductFact {
   /** Company|Odoo product id -- the product's identity. */
@@ -60,6 +61,13 @@ export interface ProductFact {
   // -- BCG (calendar YTD vs LYTD, as of the last ETL run) --
   bcg_class_YTD: string | null;
   bcg_class_LYTD: string | null;
+  /** The data the class is computed on: the product's latest fully costed window (calendar YTD, else its latest year). */
+  bcgVolume: number | null;
+  bcgProfit: number | null;
+  bcgGrossProfitPct: number | null;
+  /** 'YTD 2026' or '2025'; null = no profit data in the database. */
+  bcgDataPeriod: string | null;
+  bcgDataAsOf: string | null;
   bcg_movement: BcgMovement | null;
   bcgExcludedCategory: boolean;
   total_value_YTD: number;
@@ -79,6 +87,11 @@ export interface ProductFact {
   stockBand: StockBand;
   stockAgeDays: number | null;
   stockAgeBucket: string | null;
+  /** Odoo's On Hand in the product's company (every internal location) and its value. */
+  onHandQty: number;
+  onHandValue: number;
+  stockAgeOldestDays: number | null;
+  agingBuckets: AgingBucketAmount[];
   lifecycle: LifecycleSegment;
   firstSaleDate: string | null;
   lastSaleDate: string | null;
@@ -121,6 +134,11 @@ export function toProductFacts(data: ProductDashboardOverview | null | undefined
     grossProfitPct: r.grossProfitPct,
     bcg_class_YTD: r.bcgClassYTD,
     bcg_class_LYTD: r.bcgClassLYTD,
+    bcgVolume: r.bcgVolume ?? null,
+    bcgProfit: r.bcgProfit ?? null,
+    bcgGrossProfitPct: r.bcgGrossProfitPct ?? null,
+    bcgDataPeriod: r.bcgDataPeriod ?? null,
+    bcgDataAsOf: r.bcgDataAsOf ?? null,
     bcg_movement: r.bcgMovement,
     bcgExcludedCategory: r.bcgExcludedCategory,
     total_value_YTD: r.valueYTD,
@@ -139,6 +157,10 @@ export function toProductFacts(data: ProductDashboardOverview | null | undefined
     stockBand: r.stockBand,
     stockAgeDays: r.stockAgeDays ?? null,
     stockAgeBucket: r.stockAgeBucket ?? null,
+    onHandQty: r.onHandQty ?? 0,
+    onHandValue: r.onHandValue ?? 0,
+    stockAgeOldestDays: r.stockAgeOldestDays ?? null,
+    agingBuckets: r.agingBuckets ?? [],
     lifecycle: r.lifecycleSegment,
     firstSaleDate: r.firstSaleDate,
     lastSaleDate: r.lastSaleDate,
@@ -235,6 +257,7 @@ export const BCG_COLOR: Record<string, string> = {
   Strategic: 'var(--ps-color-accent)',
   Dogs: 'var(--ps-color-alert)',
   [UNCLASSIFIED_NO_COST]: 'var(--ps-color-neutral-text)',
+  [UNCLASSIFIED_ZERO_REVENUE]: 'var(--ps-color-neutral-text)',
 };
 
 /** BCG class definitions from the ETL's own thresholds (config/product_dashboard.json, served as overview.thresholds). */
@@ -258,36 +281,46 @@ export function bcgThresholds(thresholds: Record<string, unknown> | undefined): 
   };
 }
 
-const volumeRule = (t: BcgThresholds) => {
+/** "Majaal 3,500 / Tika 25,000 units" -- the config volume thresholds. */
+const volumeValues = (t: BcgThresholds) => {
   const parts = Object.entries(t.volume).map(([company, v]) => `${company} ${v.toLocaleString('en-US')}`);
-  return parts.length ? `YTD qty ≥ company threshold: ${parts.join(' / ')}` : 'YTD qty ≥ company threshold';
+  return parts.length ? `${parts.join(' / ')} units` : 'the company threshold';
 };
 const gpRule = (t: BcgThresholds) => (t.profitPct === null ? 'the GP% threshold' : `${t.profitPct}%`);
 /** The Product Movement rule in one line, with the config values (the "?" of the Product Movement donut). */
 export function movementRule(t: BcgThresholds): string {
   const band = t.movementBandPct === null ? 'X%' : `${t.movementBandPct}%`;
   const days = t.newWithinDays === null ? 'N days' : `${t.newWithinDays} days`;
-  return `Improved > +${band} · Drop < −${band} · Stable within ±${band} · New = first sale ≤ ${days} or no LYTD · Discontinued = archived in Odoo`;
+  return `Improved > +${band} · Drop < −${band} · Stable within ±${band} · New = first sale ≤ ${days} or no LYTD · archived Odoo products are left out`;
 }
 
-/** The BCG class rule in one line, with the config thresholds (the "?" of the matrix). */
+/** The BCG class rule in one line, with the config thresholds (the "?" of the BCG page). */
 export function bcgClassRule(t: BcgThresholds): string {
-  return `High volume = ${volumeRule(t)}; Stars / Strategic = GP% ≥ ${gpRule(t)}, Cash Cows / Dogs below`;
+  return `High volume = Volume ≥ ${volumeValues(t)} · High profit = GP% ≥ ${gpRule(t)}`;
 }
 export function bcgClassDefinition(cls: string, t: BcgThresholds): string {
   switch (cls) {
     case 'Stars':
-      return `High volume (${volumeRule(t)}) AND GP% ≥ ${gpRule(t)}`;
+      return `Volume ≥ ${volumeValues(t)}, GP% ≥ ${gpRule(t)}`;
     case 'Cash Cows':
-      return `High volume (${volumeRule(t)}), GP% < ${gpRule(t)}`;
+      return `Volume ≥ ${volumeValues(t)}, GP% < ${gpRule(t)}`;
     case 'Strategic':
-      return `Low volume (below the company threshold), GP% ≥ ${gpRule(t)}`;
+      return `Volume < ${volumeValues(t)}, GP% ≥ ${gpRule(t)}`;
     case 'Dogs':
-      return `Low volume (below the company threshold), GP% < ${gpRule(t)}`;
+      return `Volume < ${volumeValues(t)}, GP% < ${gpRule(t)}`;
+    case UNCLASSIFIED_ZERO_REVENUE:
+      return 'Gross profit margin is undefined at zero revenue';
     default:
-      return 'No standard cost in Odoo, so GP% cannot be calculated';
+      return 'No sale with a standard cost in the database, so profit cannot be calculated';
   }
 }
+/** What to do with each class (category info / tooltips). A Dog is NOT an automatic discontinue. */
+export const BCG_RECOMMENDATION: Record<BcgClass, string> = {
+  Stars: 'Protect availability, keep investing, support growth, monitor.',
+  'Cash Cows': 'Review pricing, discounts, cost structure, supplier terms and channel profitability.',
+  Strategic: 'Protect profitability, look for ways to grow volume, avoid unnecessary discounting.',
+  Dogs: 'Review before deciding to retain, improve, reposition or discontinue. A Dog is not an automatic discontinue: it may matter for strategic, seasonal, contractual or assortment reasons.',
+};
 
 export const LIFECYCLE_SEGMENTS: LifecycleSegment[] = ['New', 'Growing', 'Mature', 'Declining', 'Discontinued', 'Never sold'];
 export const SEGMENT_COLOR: Record<LifecycleSegment, string> = {
@@ -467,7 +500,7 @@ export function computeBrandStats(rows: ProductFact[]): { found: FoundBrandStats
 }
 
 // ---- Stock Velocity: Sales Frequency, ISR, Stock Aging -- every limit from config/product_dashboard.json ----------
-type Thresholds = Record<string, unknown> | undefined;
+export type Thresholds = Record<string, unknown> | undefined;
 
 /** Sales Frequency bucket: average days between selling days up to `maxGapDays` (null = no upper limit). */
 export interface FrequencyBucketDef {
@@ -533,12 +566,14 @@ export function isrStatus(pct: number | null, bands: IsrBands): 'success' | 'wat
 
 /** Stock Aging buckets (labels as the ETL writes them in StockAgeBucket), youngest green ... oldest red. */
 export interface AgingBucketDef {
+  /** Column key of the bucket (AgeQty_<key>); the label when the config has none. */
+  key: string;
   label: string;
   maxDays: number | null;
 }
 export function agingBuckets(thresholds: Thresholds): AgingBucketDef[] {
-  const raw = ((thresholds?.stock ?? {}) as { aging_buckets?: { label: string; max_days: number | null }[] }).aging_buckets;
-  return (raw ?? []).map((b) => ({ label: b.label, maxDays: b.max_days ?? null }));
+  const raw = ((thresholds?.stock ?? {}) as { aging_buckets?: { key?: string; label: string; max_days: number | null }[] }).aging_buckets;
+  return (raw ?? []).map((b) => ({ key: b.key ?? b.label, label: b.label, maxDays: b.max_days ?? null }));
 }
 const AGING_TONES = ['var(--ps-color-success)', 'var(--ps-color-gold)', 'var(--ps-color-watch)', 'var(--ps-color-alert)', 'color-mix(in srgb, var(--ps-color-alert) 65%, black)'];
 export function agingColor(buckets: AgingBucketDef[], label: string): string {
@@ -577,8 +612,22 @@ export function velocityVsCategoryMedian<T extends { id: string; Company: string
   });
   return out;
 }
+/** Each SKU's category median Sales Velocity (same company + category), Unit/day. */
+export function categoryMedianVelocity<T extends { id: string; Company: string; Category: string | null; velocity: number | null }>(rows: T[]): Map<string, number> {
+  const groups = new Map<string, T[]>();
+  rows.forEach((r) => {
+    const key = `${r.Company}|${r.Category ?? ''}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  });
+  const out = new Map<string, number>();
+  groups.forEach((list) => {
+    const m = median(list.map((r) => r.velocity ?? 0));
+    list.forEach((r) => out.set(r.id, m));
+  });
+  return out;
+}
 export function moverRuleText(rule: MoverRule): string {
-  return `Velocity = units sold ÷ days in period. Fast ≥ ${rule.fastPct}% of the category median · Slow ≤ ${rule.slowPct}%`;
+  return `Sales Velocity = Quantity Sold ÷ days in period. Fast ≥ ${rule.fastPct}% of the category median · Slow ≤ ${rule.slowPct}%`;
 }
 
 /** Days-on-hand limits per company (config days_of_inventory), for the "?" lines: "Tika > 60 days · Majaal > 180 days". */

@@ -1,0 +1,55 @@
+/* Revenue Trend layout: row 1 = the three trend charts, row 2 = the six variance cards, always below the last chart.
+ * Breakpoints are container queries on .trends, so both rows switch together whatever the sidebar does.
+ * Cards are in DOM order Value YTD, Value MTD, Volume YTD, Volume MTD, ASP YTD, ASP MTD:
+ *   >= 1100px  charts 3 across, cards 6 across (the same 3 columns split in two = 2 cards under each chart)
+ *   >= 760px   cards 3 across: the YTD row, then the MTD row (order)
+ *   >= 400px   cards 2 across: one metric per row, YTD | MTD
+ *   <  400px   cards 1 across */
+.trends {
+  container-type: inline-size;
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: var(--ps-space-3, 16px);
+  align-items: stretch;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ps-space-3, 16px);
+  margin-top: var(--ps-space-3, 16px);
+}
+
+@container (min-width: 400px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 760px) {
+  .cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .ytd {
+    order: 1;
+  }
+  .mtd {
+    order: 2;
+  }
+}
+
+@container (min-width: 1100px) {
+  .charts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .cards {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .ytd,
+  .mtd {
+    order: 0;
+  }
+}

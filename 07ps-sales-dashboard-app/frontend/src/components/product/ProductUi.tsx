@@ -136,7 +136,8 @@ const exportButtonStyle: React.CSSProperties = {
 };
 
 /** "Export CSV" + "Export as PDF" (hidden without the Export permission; the backend refuses the export anyway). */
-export function ExportButtons({ onCsv, onPdf, label }: { onCsv?: () => void; onPdf?: () => void; label?: string }) {
+/** csvText: the CSV button's text when it is not the plain "Export CSV" (e.g. the Stock Aging "Export aging data"). */
+export function ExportButtons({ onCsv, onPdf, label, csvText = 'Export CSV' }: { onCsv?: () => void | Promise<void>; onPdf?: () => void | Promise<void>; label?: string; csvText?: string }) {
   const canExport = useCanExport();
   if (!canExport) return null;
   const run = (fn?: () => void | Promise<void>) => () => {
@@ -150,7 +151,7 @@ export function ExportButtons({ onCsv, onPdf, label }: { onCsv?: () => void; onP
     <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>
       {onCsv && (
         <button type="button" onClick={run(onCsv)} style={exportButtonStyle} aria-label={label ? `Export ${label} as CSV` : 'Export CSV'}>
-          Export CSV
+          {csvText}
         </button>
       )}
       {onPdf && (

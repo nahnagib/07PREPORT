@@ -168,8 +168,10 @@ def test_lifecycle_rule() -> None:
         _line("Majaal", 6, "2025-06-01", 5, 5),
     ]
     p = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductKey")
-    assert p.loc[["1", "2", "3", "4", "5", "6", "7"], "LifecycleSegment"].tolist() == [
-        "New", "Growing", "Declining", "Mature", "Discontinued", "Discontinued", "Never sold"]
+    # 5 is archived in Odoo: left out of every Product page (2026-11-11), so only "no sale in 365 days" is Discontinued
+    assert "5" not in p.index
+    assert p.loc[["1", "2", "3", "4", "6", "7"], "LifecycleSegment"].tolist() == [
+        "New", "Growing", "Declining", "Mature", "Discontinued", "Never sold"]
 
 
 def test_bcg_zero_cost_is_unclassified_and_logged() -> None:
@@ -179,6 +181,21 @@ def test_bcg_zero_cost_is_unclassified_and_logged() -> None:
     assert p.loc["1", "BcgClassYTD"] == "Stars"          # HV (>= 25,000 for Tika) and GP 50% >= 35%
     assert p.loc["2", "BcgClassYTD"] == "Unclassified (no cost)"
     assert out["QA_ProductDataQuality"].query("Check == 'NoCost'")["ProductCompanyKey"].tolist() == ["Tika|2"]
+
+
+def test_bcg_uses_the_company_volume_threshold_and_the_profit_threshold() -> None:
+    # Majaal 3,500 units / Tika 25,000 units, GP 35%; a volume equal to the threshold is High (>=)
+    shipped = ProductDashboardConfig.load(CONFIG).section("bcg")
+    assert shipped["volume_threshold"] == {"Majaal": 3500, "Tika": 25000, "Athena": 3500} and shipped["profit_threshold_pct"] == 35
+    dim = _dim(*({"id": i, "name": f"P{i}"} for i in range(1, 6)))
+    lines = [_line("Majaal", 1, "2026-03-01", 3500, 7000),          # exactly 3,500 = HV, GP 50% -> Stars
+             _line("Majaal", 2, "2026-03-01", 3499, 3499 * 2),      # LV, GP 50%          -> Strategic
+             _line("Majaal", 3, "2026-03-01", 4000, 4400),          # HV, GP ~9%          -> Cash Cows
+             _line("Majaal", 4, "2026-03-01", 10, 11),              # LV, GP ~9%          -> Dogs
+             _line("Tika", 5, "2026-03-01", 24999, 24999 * 2)]      # under the Tika 25,000 -> Strategic
+    p = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    assert p.loc[["Majaal|1", "Majaal|2", "Majaal|3", "Majaal|4", "Tika|5"], "BcgClassYTD"].tolist() == [
+        "Stars", "Strategic", "Cash Cows", "Dogs", "Strategic"]
 
 
 def test_without_the_exclusions_file_the_json_category_ids_are_the_fallback() -> None:
@@ -302,8 +319,8 @@ def test_product_movement_is_on_volume_ytd_vs_lytd_with_the_configured_band() ->
         5: (True, [("2025-03-01", 100)], "Drop"),                               # sold last year, nothing this year, still active
         6: (True, [("2024-05-01", 40), ("2026-03-01", 50)], "New"),             # zero LYTD (old product back on sale)
         7: (True, [("2026-06-01", 5)], "New"),                                  # first sale within 180 days
-        8: (False, [("2025-03-01", 100), ("2026-03-01", 300)], "Discontinued"), # archived in Odoo, whatever it sells
-        9: (False, [("2026-06-01", 5)], "Discontinued"),                        # archived beats New
+        8: (False, [("2025-03-01", 100), ("2026-03-01", 300)], "excluded"),     # archived in Odoo: off every Product page
+        9: (False, [("2026-06-01", 5)], "excluded"),
         10: (True, [("2024-05-01", 40)], None),                                 # not sold in either period
         11: (True, [("2025-03-01", 100), ("2026-03-01", 110.01)], "Improved"),  # just over +10%
         12: (True, [("2025-03-01", 100), ("2026-03-01", 89.99)], "Drop"),       # just under -10%
@@ -313,6 +330,9 @@ def test_product_movement_is_on_volume_ytd_vs_lytd_with_the_configured_band() ->
     lines = [_line("Majaal", i, d, q, q * 10) for i, (_, sales, _) in cases.items() for d, q in sales]
     p = _build(lines, dim)["Dim_ProductDashboard"].set_index("ProductKey")
     for i, (_, _, expected) in cases.items():
+        if expected == "excluded":
+            assert str(i) not in p.index, i
+            continue
         got = p.loc[str(i), "BcgMovement"]
         assert (got if isinstance(got, str) else None) == expected, (i, got)
 
@@ -327,33 +347,61 @@ def test_movement_band_comes_from_the_config() -> None:
     assert _build(lines, dim, config=wide)["Dim_ProductDashboard"]["BcgMovement"].iloc[0] == "Stable"
 
 
-def test_stock_age_is_the_units_weighted_age_of_finished_goods_on_hand_and_buckets_follow_the_config() -> None:
-    dim = _dim(*({"id": i, "name": f"P{i}", "company": "Majaal"} for i in (1, 2, 3, 4)))
+def _layer(company: str, pid: int, qty: float, value: float, date: str) -> dict:
+    return {"Company": company, "ProductKey": str(pid), "ProductCompanyKey": f"{company}|{pid}", "LayerDate": date,
+            "RemainingQty": qty, "RemainingValue": value}
+
+
+def _build_with_layers(lines, dim, inventory, layers, as_of="2026-09-29"):
+    sales = pd.DataFrame(lines)
+    cost = pd.Series([1.0] * len(sales), index=sales.index)
+    return ProductDashboardBuilder(ProductDashboardConfig.load(CONFIG), as_of).build(
+        sales, dim, inventory, line_costs=cost, valuation_layers=pd.DataFrame(layers))
+
+
+def test_on_hand_is_every_internal_quant_of_the_company_negatives_included() -> None:
+    dim = _dim({"id": 1, "name": "A"})
     inv = pd.DataFrame([
-        {**_inv("Majaal", 1, 30, 300), "InDate": "2026-09-19"},          # 10 days
-        {**_inv("Majaal", 1, 10, 100), "InDate": "2026-05-02"},          # 150 days -> (30x10 + 10x150) / 40 = 45
-        {**_inv("Majaal", 1, 99, 99, stock_class="InTransit"), "InDate": "2020-01-01"},   # in transit: not aged
-        {**_inv("Majaal", 2, 5, 50), "InDate": "2025-09-29"},            # 365 days -> 181-365
-        {**_inv("Majaal", 3, 5, 50), "InDate": "2023-09-29"},            # > 2 years
-        {**_inv("Majaal", 4, -3, 0), "InDate": "2026-01-01"},            # negative quant: no stock, no age
+        _inv("Tika", 1, 100, 1000), _inv("Tika", 1, 900, 9000, "RawMaterials", "RM"), _inv("Tika", 1, 50, 500, "InTransit", "VS"),
+        _inv("Tika", 1, -20, -200, location="SH"),
     ])
-    p = _build([_line("Majaal", 1, "2026-09-01", 1, 1)], dim, inventory=inv)["Dim_ProductDashboard"].set_index("ProductKey")
-    assert p.loc["1", "StockAgeDays"] == 45 and p.loc["1", "StockAgeBucket"] == "0–90 days"
-    assert p.loc["2", "StockAgeDays"] == 365 and p.loc["2", "StockAgeBucket"] == "181–365 days"
-    assert p.loc["3", "StockAgeBucket"] == "> 2 years"
-    assert pd.isna(p.loc["4", "StockAgeDays"]) and pd.isna(p.loc["4", "StockAgeBucket"])
+    p = _build([_line("Tika", 1, "2026-09-01", 90, 900)], dim, inventory=inv)["Dim_ProductDashboard"].set_index("ProductCompanyKey")
+    assert p.loc["Tika|1", "OnHandQty"] == 1030 and p.loc["Tika|1", "OnHandValue"] == 10300   # = Odoo On Hand
+    assert p.loc["Tika|1", "StockQty"] == 100                                                  # DOH stock unchanged
+
+
+def test_stock_age_is_the_age_of_the_receipt_layers_still_in_stock_not_the_first_receipt() -> None:
+    # Old product, fresh stock: the quant keeps the 2024 in_date (Odoo keeps the oldest), the open layer is 20 days old.
+    dim = _dim({"id": 1, "name": "Old product"}, {"id": 2, "name": "Two layers"}, {"id": 3, "name": "No layer"}, {"id": 4, "name": "Sold out"})
+    inv = pd.DataFrame([
+        {**_inv("Majaal", 1, 40, 400), "InDate": "2024-05-01"},
+        {**_inv("Majaal", 2, 40, 400), "InDate": "2024-05-01"},
+        {**_inv("Majaal", 3, 5, 50), "InDate": "2026-08-30"},
+        {**_inv("Majaal", 4, 0, 0), "InDate": "2026-01-01"},
+    ])
+    layers = [_layer("Majaal", 1, 40, 400, "2026-09-09"),
+              _layer("Majaal", 2, 30, 330, "2026-09-19"), _layer("Majaal", 2, 10, 70, "2026-05-02"),
+              _layer("Majaal", 4, 3, 3, "2025-01-01")]
+    p = _build_with_layers([_line("Majaal", 1, "2026-09-01", 1, 1)], dim, inv, layers)["Dim_ProductDashboard"].set_index("ProductKey")
+    assert p.loc["1", "StockAgeDays"] == 20 and p.loc["1", "StockAgeBucket"] == "0–30 days" and p.loc["1", "StockAgeSource"] == "layers"
+    assert p.loc["2", "StockAgeDays"] == 45 and p.loc["2", "StockAgeOldestDays"] == 150   # (30x10 + 10x150) / 40
+    # units and value split across buckets by layer, adding up to On Hand
+    assert p.loc["2", "AgeQty_0_30"] == 30 and p.loc["2", "AgeQty_91_180"] == 10
+    assert p.loc["2", "AgeValue_0_30"] == 300 and p.loc["2", "AgeValue_91_180"] == 100
+    assert p.loc["3", "StockAgeDays"] == 30 and p.loc["3", "StockAgeSource"] == "quant_in_date"   # no open layer: fallback
+    assert pd.isna(p.loc["4", "StockAgeDays"]) and p.loc["4", "AgeQty_365_plus"] == 0              # On Hand 0: no aging
 
 
 def test_aging_bucket_boundaries() -> None:
     b = ProductDashboardBuilder(ProductDashboardConfig.load(CONFIG), "2026-09-29")
-    ages = pd.Series([0, 90, 91, 180, 181, 365, 366, 730, 731, None])
-    assert b.aging_bucket(ages).tolist() == ["0–90 days", "0–90 days", "91–180 days", "91–180 days", "181–365 days", "181–365 days",
-                                             "1–2 years", "1–2 years", "> 2 years", pd.NA]
+    ages = pd.Series([0, 30, 31, 60, 61, 90, 91, 180, 181, 365, 366, None])
+    assert b.aging_bucket(ages).tolist() == ["0–30 days", "0–30 days", "31–60 days", "31–60 days", "61–90 days", "61–90 days",
+                                             "91–180 days", "91–180 days", "181–365 days", "181–365 days", "365+ days", pd.NA]
 
 
 def test_shipped_stock_and_frequency_config() -> None:
     raw = ProductDashboardConfig.load(CONFIG).raw
     assert raw["stock"]["isr_target_pct"] == 15 and raw["stock"]["isr_red_pct"] == 25
-    assert [b["max_days"] for b in raw["stock"]["aging_buckets"]] == [90, 180, 365, 730, None]
+    assert [b["max_days"] for b in raw["stock"]["aging_buckets"]] == [30, 60, 90, 180, 365, None]
     assert [(b["key"], b["max_gap_days"]) for b in raw["sales_frequency"]["buckets"]] == [
         ("Daily", 2), ("Weekly", 7), ("Monthly", 30), ("Quarterly", 90), ("Rarely", None)]

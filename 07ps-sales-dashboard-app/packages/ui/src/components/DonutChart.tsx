@@ -30,6 +30,9 @@ export interface DonutChartProps {
   /** Small caption above the legend list, e.g. "Invoice Class (YTD)". */
   legendTitle?: string;
   height?: number;
+  /** Grow with the card: the chart takes every pixel the card body has left (at least `height`), so a card stretched to
+   * its row's height has no empty band under the chart. Needs a parent with a definite height (ChartPanel in a grid row). */
+  fill?: boolean;
   /** Segments (and their legend rows) become clickable and invoke this with the clicked segment's
    * `id`. Clicking the already-selected segment is the caller's responsibility to treat as
    * "clear" -- this just reports clicks, same convention as ComboChart's onCategoryClick. */
@@ -136,6 +139,7 @@ export function DonutChart({
   valueFormatter = defaultFormatter,
   legendTitle,
   height = 280,
+  fill = false,
   onSegmentClick,
   selectedId = null,
   centerLabel,
@@ -159,7 +163,7 @@ export function DonutChart({
   }
 
   return (
-    <div style={{ width: '100%' }}>
+    <div style={fill ? { width: '100%', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : { width: '100%' }}>
       {(showTitle || canExport) && (
       <div
         style={{
@@ -191,8 +195,8 @@ export function DonutChart({
       </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--ps-space-2, 8px)' }}>
-        <div ref={containerRef} style={{ width: '100%', position: 'relative' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--ps-space-2, 8px)', ...(fill ? { flex: 1, minHeight: 0 } : {}) }}>
+        <div ref={containerRef} style={{ width: '100%', position: 'relative', ...(fill ? { flex: 1, minHeight: height } : {}) }}>
           {centerLabel && (
             <div
               aria-hidden
@@ -218,7 +222,7 @@ export function DonutChart({
               )}
             </div>
           )}
-          <ResponsiveContainer width="100%" height={height}>
+          <ResponsiveContainer width="100%" height={fill ? '100%' : height}>
             <PieChart>
               <Pie
                 data={segments}

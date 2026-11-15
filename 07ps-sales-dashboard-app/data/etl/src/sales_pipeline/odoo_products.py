@@ -85,7 +85,9 @@ def catalog(product_raw: pd.DataFrame | None) -> pd.DataFrame:
         "ProductName": col("name").map(_value).astype(object),
         "OdooProductName": col("display_name").map(_value).astype(object),
         "SKU": col("default_code").map(_value).astype(object),
-        "IsActive": col("active").map(lambda v: bool(v) if _present(v) else False),
+        # archived = product.product.active = False or its product.template.active = False
+        "IsActive": col("active").map(lambda v: bool(v) if _present(v) else False)
+        & (raw["template_active"].map(lambda v: v is not False) if "template_active" in raw.columns else True),
         "ProductCompanyID": company.map(_int).astype("Int64"),
         "ProductCompany": col("company_id").map(_value).astype(object),
         "CategoryID": col("categ_id_id").map(_int).astype("Int64"),

@@ -42,6 +42,8 @@ const PRODUCT_COLUMNS: DataGridColumn<BrandRow>[] = [
   { key: 'ProductName', header: 'Product', width: 260, render: (r) => <ProductName name={r.ProductName} href={r.odooUrl} />, rawValue: (r) => r.ProductName },
   { key: 'volume', header: 'Volume (Unit)', align: 'right', render: (r) => <span style={{ fontWeight: 600 }}>{fmtNum(r.volume)}</span>, rawValue: (r) => r.volume },
   { key: 'uom', header: 'UoM', rawValue: (r) => r.uom ?? '' },
+  // Odoo On Hand of the product in its company (every internal location; same figure on every Product page)
+  { key: 'onHandQty', header: 'Quantity On Hand', align: 'right', render: (r) => fmtNum(r.onHandQty), rawValue: (r) => r.onHandQty },
   // a card can group several Odoo vendors (Saquer Gulf & Lotus Tile): each product's own main vendor
   { key: 'Brand', header: 'Brand', rawValue: (r) => r.Brand ?? '' },
   { key: 'Company', header: 'Company', rawValue: (r) => r.Company },

@@ -774,6 +774,7 @@ export default function CustomerGrowthPage() {
                       <DonutChart
                         title="Customers Contribution"
                         showTitle={false}
+                        fill
                         segments={contributionSegments}
                         valueFormatter={(v) => formatCurrency(v)}
                         legendTitle="Group"
@@ -834,6 +835,7 @@ export default function CustomerGrowthPage() {
                       <DonutChart
                         title="Customers Category Share"
                         showTitle={false}
+                        fill
                         segments={categoryDonutSegments}
                         valueFormatter={(v) => formatCurrency(v)}
                         legendTitle={drilledCategoryRow ? 'Customer' : 'Category'}

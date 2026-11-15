@@ -53,8 +53,8 @@ describe('Product pages "?" and "i"', () => {
 
   it('Product Movement and the BCG classes are one line each, from the config values', () => {
     const t = bcgThresholds({ bcg: { movement_stable_band_pct: 10, volume_threshold: { Majaal: 3500, Tika: 25000 }, profit_threshold_pct: 35 }, lifecycle: { new_first_sale_within_days: 180 } });
-    expect(movementRule(t)).toBe('Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or no LYTD · Discontinued = archived in Odoo');
-    expect(bcgClassRule(t)).toBe('High volume = YTD qty ≥ company threshold: Majaal 3,500 / Tika 25,000; Stars / Strategic = GP% ≥ 35%, Cash Cows / Dogs below');
+    expect(movementRule(t)).toBe('Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or no LYTD · archived Odoo products are left out');
+    expect(bcgClassRule(t)).toBe('High volume = Volume ≥ Majaal 3,500 / Tika 25,000 units · High profit = GP% ≥ 35%');
   });
 
   it('Stock Velocity: every KPI card has its "?", the KPI cards have no "i"', () => {
@@ -63,16 +63,22 @@ describe('Product pages "?" and "i"', () => {
       expect(entry.help.formula, id).toBeTruthy();
       expect(entry.interactions, id).toBeUndefined();
     }
-    expect(VISUAL_HELP['product.stockVelocity.kpiDoh'].help.formula).toMatch(/units on hand ÷ average daily units sold/);
+    expect(VISUAL_HELP['product.stockVelocity.kpiDoh'].help.formula).toMatch(/Quantity On Hand ÷ average daily Quantity Sold/);
   });
 
   it('BCG class definitions read the config thresholds (Athena left out)', () => {
     const t = bcgThresholds({ bcg: { volume_threshold: { Majaal: 3500, Tika: 25000, Athena: 3500 }, profit_threshold_pct: 35 } });
-    expect(bcgClassDefinition('Stars', t)).toBe('High volume (YTD qty ≥ company threshold: Majaal 3,500 / Tika 25,000) AND GP% ≥ 35%');
-    expect(bcgClassDefinition('Cash Cows', t)).toBe('High volume (YTD qty ≥ company threshold: Majaal 3,500 / Tika 25,000), GP% < 35%');
-    expect(bcgClassDefinition('Strategic', t)).toBe('Low volume (below the company threshold), GP% ≥ 35%');
-    expect(bcgClassDefinition('Dogs', t)).toBe('Low volume (below the company threshold), GP% < 35%');
-    expect(bcgClassDefinition('Unclassified (no cost)', t)).toMatch(/No standard cost in Odoo/);
-    expect(bcgClassDefinition('Stars', bcgThresholds({ bcg: { volume_threshold: { Majaal: 4000 }, profit_threshold_pct: 40 } }))).toMatch(/Majaal 4,000\) AND GP% ≥ 40%/);
+    expect(bcgClassDefinition('Stars', t)).toBe('Volume ≥ Majaal 3,500 / Tika 25,000 units, GP% ≥ 35%');
+    expect(bcgClassDefinition('Cash Cows', t)).toBe('Volume ≥ Majaal 3,500 / Tika 25,000 units, GP% < 35%');
+    expect(bcgClassDefinition('Strategic', t)).toBe('Volume < Majaal 3,500 / Tika 25,000 units, GP% ≥ 35%');
+    expect(bcgClassDefinition('Dogs', t)).toBe('Volume < Majaal 3,500 / Tika 25,000 units, GP% < 35%');
+    expect(bcgClassDefinition('Unclassified (no cost)', t)).toMatch(/No sale with a standard cost/);
+    expect(bcgClassDefinition('Stars', bcgThresholds({ bcg: { volume_threshold: { Majaal: 4000 }, profit_threshold_pct: 40 } }))).toBe('Volume ≥ Majaal 4,000 units, GP% ≥ 40%');
+  });
+
+  it('no median text is left in the BCG help', () => {
+    for (const id of ['product.bcgMatrix.matrix', 'product.bcgMatrix.productDetail'] as const) {
+      expect(JSON.stringify(VISUAL_HELP[id]), id).not.toMatch(/median/i);
+    }
   });
 });

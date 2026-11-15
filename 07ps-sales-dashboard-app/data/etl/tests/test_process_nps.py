@@ -605,7 +605,8 @@ def test_reach_serving_views_reconcile_source_dates_companies_states_and_errors(
     views = re.findall(r"CREATE OR REPLACE VIEW (\w+) AS(.*?);", (MIGRATIONS / "0049_process_nps_reach.sql").read_text(encoding="utf-8"), re.S)
     with engine.begin() as conn:
         for name, query in views:
-            conn.execute(text(f"CREATE VIEW {name} AS {query}"))
+            # 0071 adds the column source ('etl' for these rows; its manual rows need MySQL and are checked on a real DB)
+            conn.execute(text(f"CREATE VIEW {name} AS SELECT v.*, 'etl' AS source FROM ({query}) v"))
         boxes = conn.execute(text("SELECT CompanyKey, total_reach, delivered, not_delivered, read_count, error_count, other_state "
                                   "FROM v_process_nps_reach ORDER BY CompanyKey")).fetchall()
         assert [tuple(row) for row in boxes] == [(1, 5, 1, 1, 0, 2, 1), (3, 1, 0, 0, 1, 0, 0)]
@@ -651,7 +652,8 @@ def test_reach_reconciliation_keeps_messages_that_left_the_source(npsjob, monkey
     views = re.findall(r"CREATE OR REPLACE VIEW (\w+) AS(.*?);", (MIGRATIONS / "0049_process_nps_reach.sql").read_text(encoding="utf-8"), re.S)
     with engine.begin() as conn:
         for name, query in views:
-            conn.execute(text(f"CREATE VIEW {name} AS {query}"))
+            # 0071 adds the column source ('etl' for these rows; its manual rows need MySQL and are checked on a real DB)
+            conn.execute(text(f"CREATE VIEW {name} AS SELECT v.*, 'etl' AS source FROM ({query}) v"))
         assert conn.execute(text("SELECT SUM(delivered) FROM v_process_nps_reach WHERE CompanyKey = 1")).scalar() == 1
         day = _dt.date(2026, 10, 17)
         assert reconcile_reach(conn, MESSAGES[1:], wa.ReachConfig.from_env(), "Africa/Tripoli", day, _dt.date(2026, 10, 18))

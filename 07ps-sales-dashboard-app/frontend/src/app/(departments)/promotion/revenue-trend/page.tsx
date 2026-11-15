@@ -28,6 +28,7 @@ import {
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { usePeriodTrend, useRevenueTrendOverview, useRefreshStatus } from '../../../../lib/hooks';
+import styles from './page.module.css';
 import type { PeriodGranularity, RevenueTrendPeriodPoint, RevenueTrendPeriods, RevenueTrendPerformanceRow, RevenueTrendVarianceCard } from '../../../../lib/api';
 import { DEFAULT_GRANULARITY, formatChange, usePeriodWindow, type PeriodWindowView } from '../../../../lib/periods';
 import { PeriodTrendSelector } from '../../../../components/PeriodTrendSelector';
@@ -319,14 +320,8 @@ export default function RevenueTrendPage() {
             </span>
             <PeriodTrendSelector value={granularity} onChange={setGranularity} label="Revenue Trend period" />
           </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
-              gap: 'var(--ps-space-3, 16px)',
-              alignItems: 'stretch',
-            }}
-          >
+          <div className={styles.trends}>
+          <div className={styles.charts}>
             <ChartPanel<TrendTableRow>
               title="Value trend"
               {...vh('promotion.revenueTrend.valueTrend')}
@@ -441,22 +436,17 @@ export default function RevenueTrendPage() {
               )}
             </ChartPanel>
 
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gridTemplateRows: 'repeat(2, 1fr)',
-                gap: 'var(--ps-space-3, 16px)',
-                minHeight: 360,
-              }}
-            >
-              <VarianceCard title="Value Variance to YTD Target" card={kpis?.valueVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
-              <VarianceCard title="Volume Variance to YTD Target" card={kpis?.volumeVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
-              <VarianceCard title="ASP Variance to YTD Target" card={kpis?.aspVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
-              <VarianceCard title="Value Variance to MTD Target" card={kpis?.valueVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
-              <VarianceCard title="Volume Variance to MTD Target" card={kpis?.volumeVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
-              <VarianceCard title="ASP Variance to MTD Target" card={kpis?.aspVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
-            </div>
+          </div>
+
+          {/* Row 2, always under the charts; paired Value / Volume / ASP to line up under their chart (page.module.css) */}
+          <div className={styles.cards} data-testid="variance-cards">
+            <div className={styles.ytd}><VarianceCard title="Value Variance to YTD Target" card={kpis?.valueVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
+            <div className={styles.mtd}><VarianceCard title="Value Variance to MTD Target" card={kpis?.valueVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
+            <div className={styles.ytd}><VarianceCard title="Volume Variance to YTD Target" card={kpis?.volumeVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
+            <div className={styles.mtd}><VarianceCard title="Volume Variance to MTD Target" card={kpis?.volumeVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
+            <div className={styles.ytd}><VarianceCard title="ASP Variance to YTD Target" card={kpis?.aspVarianceYtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
+            <div className={styles.mtd}><VarianceCard title="ASP Variance to MTD Target" card={kpis?.aspVarianceMtd} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} /></div>
+          </div>
           </div>
 
           {!overview.loading && !overview.error && (

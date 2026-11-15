@@ -35,6 +35,9 @@ export interface FunnelChartProps {
    * the secondary figure entirely, even if stages carry one. */
   secondaryValueFormatter?: (value: number) => string;
   height?: number;
+  /** Grow with the card: the chart takes every pixel the card body has left (at least `height`), so a card stretched to
+   * its row's height has no empty band under the chart. Needs a parent with a definite height (ChartPanel in a grid row). */
+  fill?: boolean;
   /** Segments become clickable and invoke this with the clicked stage's `id` -- same convention as
    * DonutChart's onSegmentClick. Optional: Pipeline Health's funnel isn't specified as interactive,
    * but the hook is here for consistency/reuse by any future caller. */
@@ -103,6 +106,7 @@ export function FunnelChart({
   valueFormatter = defaultFormatter,
   secondaryValueFormatter,
   height = 320,
+  fill = false,
   onStageClick,
 }: FunnelChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -120,7 +124,7 @@ export function FunnelChart({
   }
 
   return (
-    <div style={{ width: '100%' }}>
+    <div style={fill ? { width: '100%', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : { width: '100%' }}>
       <div
         style={{
           display: 'flex',
@@ -150,8 +154,8 @@ export function FunnelChart({
         )}
       </div>
 
-      <div ref={containerRef} style={{ width: '100%' }}>
-        <ResponsiveContainer width="100%" height={height}>
+      <div ref={containerRef} style={{ width: '100%', ...(fill ? { flex: 1, minHeight: height } : {}) }}>
+        <ResponsiveContainer width="100%" height={fill ? '100%' : height}>
           {/* margin.right reserves room for the right-side stage-name LabelList below. Recharts'
               Funnel.getRealWidthHeight subtracts left/right margin TWICE (once already applied by
               generateCategoricalChart's offset calc, then again inside Funnel itself) -- confirmed

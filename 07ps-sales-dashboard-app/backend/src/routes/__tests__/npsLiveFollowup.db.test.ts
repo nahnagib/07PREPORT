@@ -61,11 +61,11 @@ describe.skipIf(!RUN)('an edit on the follow-up page shows on the NPS page at on
   afterAll(async () => {
     if (snapshot) {
       await pool.query(
-        // stage only: status is a generated column (0066) and can't be written
+        // stage only: status is a generated column (0072) and can't be written
         `UPDATE nps_followup_case SET stage = ?, reason_id = ?, reason_note = ?, owner_user_id = ?, owner_name = ?, contacted_at = ?, resolved_at = ?,
-                rejected_at = ?, root_cause = ?, action_taken = ?, notes = ?, version = ?, updated_by = ?, updated_at = ? WHERE case_id = ?`,
+                root_cause = ?, action_taken = ?, notes = ?, version = ?, updated_by = ?, updated_at = ? WHERE case_id = ?`,
         [snapshot.stage, snapshot.reason_id, snapshot.reason_note ?? null, snapshot.owner_user_id, snapshot.owner_name ?? null, snapshot.contacted_at,
-          snapshot.resolved_at, snapshot.rejected_at, snapshot.root_cause, snapshot.action_taken, snapshot.notes, snapshot.version, snapshot.updated_by,
+          snapshot.resolved_at, snapshot.root_cause, snapshot.action_taken, snapshot.notes, snapshot.version, snapshot.updated_by,
           snapshot.updated_at, snapshot.case_id]);
       await pool.query('DELETE FROM nps_followup_audit WHERE case_id = ? AND audit_id > ?', [snapshot.case_id, lastAudit]);
     }
@@ -88,9 +88,12 @@ describe.skipIf(!RUN)('an edit on the follow-up page shows on the NPS page at on
     const countOf = (s: Json, key: string | null) => s.byReason.find((r: Json) => r.categoryKey === key)?.count ?? 0;
 
     // the status can never be written by a client
-    const refused = await call('PATCH', `/nps-followup/cases/${snapshot.case_id}`, { version: snapshot.version, status: 'CLOSE' });
+    const refused = await call('PATCH', `/nps-followup/cases/${snapshot.case_id}`, { version: snapshot.version, status: 'CLOSED' });
     expect(refused.status).toBe(400);
     expect(refused.body.code).toBe('case.statusReadOnly');
+    const rejected = await call('PATCH', `/nps-followup/cases/${snapshot.case_id}`, { version: snapshot.version, stage: 'rejected' });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.code).toBe('case.stage');
 
     const edit = await call('PATCH', `/nps-followup/cases/${snapshot.case_id}`, { version: snapshot.version, stage: 'IN_PROGRESS', reasonId: reason.reason_id });
     expect(edit.status).toBe(200);
@@ -105,8 +108,15 @@ describe.skipIf(!RUN)('an edit on the follow-up page shows on the NPS page at on
     const after = await call('GET', `/nps-score/followup-summary?${range}`);
     expect(countOf(after.body, reason.category_key)).toBe(countOf(before.body, reason.category_key) + 1);
     expect(after.body.detractors).toBe(before.body.detractors);
-    // still pending (In progress) and still Open, so the stage buckets and the status counts keep their totals
+    // Moving between Open stages changes the stage drilldown while leaving the status totals and ageing intact.
     expect(after.body.ageing.buckets).toEqual(before.body.ageing.buckets);
-    expect(after.body.byStatus).toEqual(before.body.byStatus);
+    const statusTotals = (body: Json) => body.byStatus.map(({ key, count }: Json) => ({ key, count }));
+    expect(statusTotals(after.body)).toEqual(statusTotals(before.body));
+    const openBefore = before.body.byStatus.find(({ key }: Json) => key === 'OPEN');
+    const openAfter = after.body.byStatus.find(({ key }: Json) => key === 'OPEN');
+    const stageDeltas: Record<string, number> = { [snapshot.stage]: -1, IN_PROGRESS: 1 };
+    expect(openAfter.stages).toEqual(openBefore.stages.map(({ stage, count }: Json) => ({
+      stage, count: count + (stageDeltas[stage] ?? 0),
+    })));
   });
 });

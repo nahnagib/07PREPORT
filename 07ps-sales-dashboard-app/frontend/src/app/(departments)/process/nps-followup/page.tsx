@@ -42,7 +42,7 @@ import {
  * NPS refresh (process_nps, in the 30-minute refresh and the 02:00 full run): a new detractor appears here within 30 minutes.
  *
  * Stage and status are separate (lib/nps/followup.ts): the board's columns are STAGES, New -> Contacted -> In progress
- * -> Resolved -> Rejected (Resolved shows the last 30 days only, Rejected has no window; Historical cases, rated before
+ * -> Resolved -> Unresolved (Resolved shows the last 30 days only, Unresolved has no window; Historical cases, rated before
  * the cut-over, are in the List view only); the badge on each card is its STATUS (Open / Close / Disputed, from the
  * stage), so every card of a column has the same badge. The Open / Close / Disputed KPIs come from the status, the
  * time KPIs from the stage and its times. List: every case, paged, newest first.
@@ -219,9 +219,9 @@ function FollowupBody() {
   );
 }
 
-const STATUS_KPI = { OPEN: 'open', CLOSE: 'close', DISPUTED: 'disputed' } as const;
-const STATUS_SHARE = { OPEN: 'openShare', CLOSE: 'closeShare', DISPUTED: 'disputedShare' } as const;
-const STATUS_HINT: Record<FollowupStatus, string> = { OPEN: 'New, Contacted, In progress', CLOSE: 'Resolved', DISPUTED: 'Unresolved, Rejected' };
+const STATUS_KPI = { OPEN: 'open', CLOSED: 'close', DISPUTED: 'disputed' } as const;
+const STATUS_SHARE = { OPEN: 'openShare', CLOSED: 'closeShare', DISPUTED: 'disputedShare' } as const;
+const STATUS_HINT: Record<FollowupStatus, string> = { OPEN: 'New, Contacted, In progress', CLOSED: 'Resolved', DISPUTED: 'Unresolved' };
 const sharePct = (v: number | null) => (v === null ? '—' : `${Math.round(v)}%`);
 
 /** Rating dates, stage, status, reason category and sub-reason, owner and search. */

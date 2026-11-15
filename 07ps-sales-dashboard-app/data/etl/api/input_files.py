@@ -92,15 +92,21 @@ def _parse_blocked(path: Path) -> dict[str, int]:
     return {"rows": len(_loaders().BlockedCustomersLoader(_quiet_logger()).load(path))}
 
 
-def _parse_product_exclusions(path: Path) -> dict[str, int]:
-    from sales_pipeline.product_exclusions import SHEETS, ProductExclusionsLoader
+def _parse_product_exclusions(path: Path) -> dict[str, Any]:
+    from sales_pipeline.product_exclusions import SHEETS, ExclusionsFileInvalid, ProductExclusionsLoader
 
-    ex = ProductExclusionsLoader().load(path)
-    if ex.issues:
-        # Invalid rows are never silently dropped: the upload is refused with every row that cannot be applied.
-        raise UploadRejected("ProductExclusions.xlsx has rows the ETL cannot apply.", problems=ex.issues)
-    counts = {f"{s.name.lower()}_active": len(ex.rules(s.name)) for s in SHEETS}
+    try:
+        ex = ProductExclusionsLoader().load(path)
+    except ExclusionsFileInvalid as exc:  # a missing sheet / column: rejected, the current (last valid) file stays
+        raise UploadRejected("ProductExclusions.xlsx does not have the structure the ETL expects.", problems=exc.problems) from exc
+    counts: dict[str, Any] = {f"{s.name.lower()}_active": len(ex.rules(s.name)) for s in SHEETS}
     counts.update({f"{s.name.lower()}_ignored": ex.ignored.get(s.name, 0) for s in SHEETS})
+    # A row with a missing / invalid id or an unknown Action, Company or Active value is skipped (the rest applies):
+    # accepted, with each skipped row listed as a warning (sheet + Excel row).
+    counts["rows_skipped"] = len(ex.skipped)
+    label = lambda x: f"{x['sheet']} row {x['row']}{' (' + x['name'] + ')' if x.get('name') else ''}"  # noqa: E731
+    counts["warnings"] = ([f"{label(x)}: {x['reason']} -- row skipped" for x in ex.skipped]
+                          + [f"{label(x)}: {x['reason']}" for x in ex.warnings])  # duplicates applied once
     return counts
 
 
@@ -303,13 +309,14 @@ def validate_file(name: str, path: Path) -> dict[str, Any]:
         raise
     except Exception as exc:  # noqa: BLE001 - any loader failure means the next run would fail too
         raise UploadRejected(f"{name} could not be read by the ETL's own loader: {exc}") from exc
+    warnings = counts.pop("warnings", []) if isinstance(counts.get("warnings"), list) else []
     empty = [label for label in spec.must_have_rows if counts.get(label, 0) <= 0]
     if empty:
         raise UploadRejected(
             f"{name} parsed to 0 {', '.join(empty)} -- replacing the current file with it would empty "
             f"{spec.feeds} on the next run."
         )
-    return {"sheets": sheets_used, "counts": counts}
+    return {"sheets": sheets_used, "counts": counts, "warnings": warnings}
 
 
 # ---------------------------------------------------------------------------------------------

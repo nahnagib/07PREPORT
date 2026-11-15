@@ -194,6 +194,34 @@ adminEtlControlRouter.get('/product-gaps', async (_req, res, next) => {
 });
 
 /**
+ * Product exclusions (2026-11-11): what the last sales build applied -- ProductExclusions.xlsx (upload time, active rows
+ * per sheet and action, rows skipped), the products excluded per reason (file product / file category / archived in
+ * Odoo / raw material), the sales lines excluded per customer rule, and the archived products Odoo still holds stock for.
+ * Read from the conform_sales task log (the 02:00 full refresh and the 30-minute build from the mirror both write it).
+ */
+adminEtlControlRouter.get('/product-exclusions', async (_req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT task_name AS taskName, DATE_FORMAT(finished_at_utc, '%Y-%m-%dT%H:%i:%sZ') AS finishedAtUtc,
+              JSON_EXTRACT(details, '$.product_exclusions') AS report
+       FROM etl_task_log
+       WHERE task_name IN ('conform_sales', 'conform_sales_from_mirror') AND status = 'success'
+         AND JSON_EXTRACT(details, '$.product_exclusions') IS NOT NULL
+       ORDER BY finished_at_utc DESC LIMIT 1`,
+    );
+    const row = (rows as { taskName: string; finishedAtUtc: string; report: unknown }[])[0];
+    if (!row) {
+      res.json({ report: null });
+      return;
+    }
+    const report = typeof row.report === 'string' ? JSON.parse(row.report) : row.report;
+    res.json({ report: { ...(report as object), finishedAtUtc: row.finishedAtUtc, taskName: row.taskName } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Are the ETL's manual input workbooks reachable and valid from the ETL service's own point of
  * view? Shown in the ETL panel before Run; `available: false` means the check itself couldn't run
  * (ETL API unreachable), which is reported but does not by itself block anything.

@@ -87,7 +87,7 @@ describe('time column: one row per rule of the SLA table', () => {
       'Close SLA missed by 2.0 d',
     ],
     ['UNRESOLVED', sla('unresolved', 'grey', null), 'grey', 'unresolved', 'Unresolved: no SLA'],
-    ['REJECTED', sla('rejected', 'grey', null), 'grey', 'rejected', 'Rejected: no SLA'],
+    ['UNRESOLVED', sla('unresolved', 'grey', null), 'grey', 'unresolved', 'Unresolved: no SLA'],
     [
       'HISTORICAL',
       sla('historical', 'grey', null),
@@ -150,10 +150,10 @@ describe('board card', () => {
       <CaseCard
         c={{
           ...base,
-          stage: 'REJECTED',
+          stage: 'UNRESOLVED',
           status: 'DISPUTED',
           hoursOpen: null,
-          sla: sla('rejected', 'grey', null),
+          sla: sla('unresolved', 'grey', null),
         }}
         onOpen={() => {}}
       />,

@@ -1,0 +1,118 @@
+/* Same shell as Critical Number: full-height column, 24px page padding, 24px between sections. */
+.page { min-height: 100vh; display: flex; flex-direction: column; padding-bottom: 64px; }
+.main { flex: 1; padding: var(--ps-space-4, 24px); display: flex; flex-direction: column; gap: var(--ps-space-4, 24px); min-width: 0; }
+.section { display: flex; flex-direction: column; gap: var(--ps-space-3, 16px); min-width: 0; }
+
+/* Section header = ChartPanel's header (14px bold title + help icons, actions on the right). */
+.sectionHeader { display: flex; align-items: center; justify-content: space-between; gap: var(--ps-space-2, 8px); flex-wrap: wrap; }
+.sectionTitle { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sectionTitle h2 { font-size: 14px; font-weight: 700; margin: 0; color: var(--ps-color-text); }
+.sectionActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.muted { color: var(--ps-color-muted-text); font-size: 12px; }
+.caption { color: var(--ps-color-muted-text); font-size: 12px; margin: 0 0 8px; }
+
+/* Status cards and the top-people cards share one grid (6 / 3 / 2 columns), so each top-people card sits under its
+ * status card; Team pulse stands under Total sales people. */
+.cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.statusCard { display: flex; flex-direction: column; text-align: left; min-width: 0; }
+.statusCard[role='button'] { cursor: pointer; }
+.statusCard[aria-pressed='true'] {
+  box-shadow: 0 0 0 2px var(--status), var(--ps-card-shadow);
+  background: color-mix(in srgb, var(--status) 8%, var(--ps-card-bg));
+}
+.cardTitle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ps-color-muted-text); min-width: 0; }
+.cardValue { font-size: 30px; font-weight: 700; color: var(--ps-color-text); margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+.cardSub { font-size: 12px; font-weight: 600; margin-bottom: 10px; }
+.ytdVariance { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ytdVariance .muted { font-size: 11px; font-weight: 400; }
+.benchmarkGap { font-size: 11px; fill: var(--ps-color-muted-text); }
+.benchmarkGap[data-met='true'] { fill: var(--ps-color-success); }
+.benchmarkGap[data-met='false'] { fill: var(--ps-color-alert); }
+.dot { width: 8px; height: 8px; border-radius: 999px; background: var(--status); flex-shrink: 0; display: inline-block; }
+
+/* Status pill: one colour per status (lib/salesPeoplePerformance.ts STATUS_COLOR), text always next to the colour. */
+.pill { --status: var(--ps-color-neutral-text); display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--ps-color-text);
+  background: color-mix(in srgb, var(--status) 14%, transparent); border: 1px solid color-mix(in srgb, var(--status) 45%, transparent); }
+
+/* Top people: the #1 person of a status, in the status card's layout. */
+.emptyCategory { margin: 0; padding: 12px 0; font-size: 12px; color: var(--ps-color-muted-text); }
+.personPick { display: flex; flex-direction: column; gap: 4px; flex: 1; margin-top: 6px; cursor: pointer; border-radius: 6px; min-width: 0; }
+.personPick[aria-pressed='true'] { outline: 2px solid var(--status); outline-offset: 4px; }
+.personPick:focus-visible { outline: 2px solid var(--ps-color-accent); outline-offset: 4px; }
+.personPick .cardValue { margin: 0; font-size: 24px; }
+.personName { font-size: 14px; font-weight: 700; color: var(--ps-color-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track { height: 6px; border-radius: 999px; background: var(--ps-color-border); overflow: hidden; margin-top: auto; }
+.track span { display: block; height: 100%; border-radius: 999px; background: var(--status); }
+.personFigures { font-size: 12px; font-weight: 600; color: var(--ps-color-text); font-variant-numeric: tabular-nums; margin-bottom: 4px; }
+
+/* Search + rank switch. */
+.search { display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; height: 32px; border-radius: 6px;
+  border: 1px solid var(--ps-color-border); background: var(--ps-color-surface); color: var(--ps-color-muted-text); }
+.search input { border: none; outline: none; background: transparent; color: var(--ps-color-text); font: inherit; font-size: 13px; width: 160px; }
+.search:focus-within { outline: 2px solid var(--ps-color-accent); outline-offset: 2px; }
+
+.exportButton { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--ps-color-muted-text);
+  background: var(--ps-color-muted-bg); border: 1px solid var(--ps-color-border); border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+.exportButton:disabled { cursor: not-allowed; opacity: 0.5; }
+
+/* Visible focus ring on every interactive element of the page (cards get it from .ps-card-clickable). */
+.exportButton:focus-visible, .legend button:focus-visible, .breadcrumb button:focus-visible,
+.pieLegend button:focus-visible {
+  outline: 2px solid var(--ps-color-accent); outline-offset: 2px; }
+
+.banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: var(--ps-space-3, 16px); }
+.monthPicker { width: 140px; }
+.panelActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Status mix key: solid = team share, hatched = benchmark. */
+.swatches { display: inline-flex; gap: 12px; margin-inline-start: 12px; }
+.swatches span { display: inline-flex; align-items: center; gap: 4px; }
+.swatchSolid, .swatchHatched { width: 12px; height: 10px; border-radius: 2px; display: inline-block; }
+.swatchSolid { background: var(--ps-color-muted-text); }
+.swatchHatched { border: 1px solid var(--ps-color-muted-text);
+  background: repeating-linear-gradient(45deg, var(--ps-color-muted-text) 0 2px, transparent 2px 5px); }
+
+/* MoM legend: one toggle per status line. */
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.legend button { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; font: inherit; font-size: 11px;
+  font-weight: 600; cursor: pointer; color: var(--ps-color-text); background: color-mix(in srgb, var(--status) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status) 45%, transparent); }
+.legend button[aria-pressed='false'] { opacity: 0.45; text-decoration: line-through; }
+
+/* Person contribution: breadcrumb, donut and its slice list. */
+.breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; font-size: 12px; color: var(--ps-color-muted-text); }
+.breadcrumb button { background: none; border: none; padding: 2px 4px; font: inherit; font-weight: 600; color: var(--ps-color-accent); cursor: pointer; border-radius: 4px; }
+.breadcrumb button[aria-current='page'] { color: var(--ps-color-text); cursor: default; }
+.pieWrap { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; align-items: center; }
+.pie { min-width: 0; }
+.pieLegend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
+.pieLegend button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 4px 6px; border: none; border-radius: 6px; background: none;
+  font: inherit; font-size: 12px; color: var(--ps-color-text); cursor: pointer; text-align: left; }
+.pieLegend button:hover:not(:disabled) { background: var(--ps-color-muted-bg); }
+.pieLegend button:disabled { cursor: default; }
+.pieLegend button[data-dimmed] { opacity: 0.45; }
+.pieLegend button[data-highlighted] { font-weight: 700; background: var(--ps-color-muted-bg); }
+
+/* Selected person: one-line share at every level, and the status-mix note. */
+.shareRow { margin: 0 0 6px; font-size: 12px; color: var(--ps-color-muted-text); }
+.shareRow strong { color: var(--ps-color-text); font-variant-numeric: tabular-nums; }
+.note { margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--ps-color-text);
+  background: var(--ps-color-muted-bg); border: 1px solid var(--ps-color-border); }
+.pieLegend i { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.pieLabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pieShare { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ps-color-muted-text); }
+
+@media (max-width: 1199px) {
+  .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 767px) {
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .cardValue { font-size: 26px; }
+  .pieWrap { grid-template-columns: 1fr; }
+  .sectionActions { width: 100%; }
+  .search { flex: 1; }
+  .search input { width: 100%; }
+}

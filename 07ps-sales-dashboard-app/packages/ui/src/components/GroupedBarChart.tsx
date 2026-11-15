@@ -29,6 +29,8 @@ export interface GroupedBarChartProps {
    * valueFormatter. */
   tooltipFormatters?: Record<string, (value: number) => string>;
   height?: number;
+  /** Grow with the card (at least `height`): no empty band under the chart in a stretched card. */
+  fill?: boolean;
   /** The whole plot area becomes clickable (pointer cursor) and invokes this with the clicked
    * category's `label` -- same convention as ComboChart's onCategoryClick. Used for both the
    * Customers Category Performance drill-down (category -> its individual customers) and, when
@@ -129,6 +131,7 @@ export function GroupedBarChart({
   valueFormatter = defaultFormatter,
   tooltipFormatters,
   height = 280,
+  fill = false,
   onCategoryClick,
   highlightedCategory = null,
   tooltipContent,
@@ -158,7 +161,7 @@ export function GroupedBarChart({
   }
 
   return (
-    <div style={{ width: '100%' }}>
+    <div style={fill ? { width: '100%', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : { width: '100%' }}>
       <div
         style={{
           display: 'flex',
@@ -187,8 +190,8 @@ export function GroupedBarChart({
         </button>
         )}
       </div>
-      <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default' }}>
-        <ResponsiveContainer width="100%" height={height}>
+      <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default', ...(fill ? { flex: 1, minHeight: height } : {}) }}>
+        <ResponsiveContainer width="100%" height={fill ? '100%' : height}>
           <BarChart
             data={points}
             layout="vertical"

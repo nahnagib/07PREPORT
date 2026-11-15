@@ -400,6 +400,7 @@ export default function PimContributionPage() {
                   valueFormatter={fmtLYD}
                   yAxisWidth={150}
                   height={Math.max(280, aspPoints.length * 30 + 60)}
+                  fill
                 />
               )}
             </ChartPanel>

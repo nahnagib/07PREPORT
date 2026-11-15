@@ -22,7 +22,6 @@ export type SlaRule =
   | 'resolved_in_sla' // resolved within closeDays
   | 'resolved_late' // resolved after closeDays
   | 'unresolved'
-  | 'rejected'
   | 'historical';
 
 export interface CaseSla {
@@ -58,10 +57,10 @@ export function caseSla(c: SlaInput, now: string): CaseSla {
     c.contactedAt && c.createdAt
       ? hoursBetween(c.createdAt, c.contactedAt) <= NPS_SLA.contactHours
       : null;
-  if (c.stage === 'UNRESOLVED' || c.stage === 'REJECTED')
+  if (c.stage === 'UNRESOLVED')
     return {
       band: 'grey',
-      rule: c.stage === 'UNRESOLVED' ? 'unresolved' : 'rejected',
+      rule: 'unresolved',
       hours: null,
       exactHours: null,
       overByHours: null,
@@ -187,7 +186,7 @@ export interface ResolutionAgeing {
   contactedInSla: { count: number; of: number };
 }
 
-/** The ageing chart and the two SLA lines, from cases with an SLA (Rejected / Historical are left out). */
+/** The ageing chart and the two SLA lines, from cases with an SLA (Unresolved / Historical are left out). */
 export function resolutionAgeing(
   cases: { stage: string; sla: CaseSla; contacted: boolean }[],
 ): ResolutionAgeing {

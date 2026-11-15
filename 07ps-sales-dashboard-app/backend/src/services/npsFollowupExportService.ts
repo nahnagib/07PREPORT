@@ -11,13 +11,12 @@ export const STAGE_LABEL: Record<FollowupStage, string> = {
   IN_PROGRESS: 'In progress',
   RESOLVED: 'Resolved',
   UNRESOLVED: 'Unresolved',
-  REJECTED: 'Rejected',
 };
 
 /** The outcome group (worked out from the stage). */
 export const STATUS_LABEL: Record<FollowupStatus, string> = {
   OPEN: 'Open',
-  CLOSE: 'Closed',
+  CLOSED: 'Closed',
   DISPUTED: 'Disputed',
 };
 
@@ -27,12 +26,12 @@ const COLUMNS: { header: string; width: number }[] = [
   { header: 'Branch', width: 18 }, { header: 'Salesperson', width: 22 },
   { header: 'Reason category', width: 22 }, { header: 'Sub-reason', width: 24 }, { header: 'Reason category (AR)', width: 22 },
   { header: 'Sub-reason (AR)', width: 24 }, { header: 'Reason note', width: 30 }, { header: 'Owner', width: 20 },
-  { header: 'Contacted at', width: 18 }, { header: 'Resolved at', width: 18 }, { header: 'Rejected at', width: 18 }, { header: 'Hours open', width: 11 },
+  { header: 'Contacted at', width: 18 }, { header: 'Resolved at', width: 18 }, { header: 'Hours open', width: 11 },
   { header: 'Root cause', width: 35 }, { header: 'Action taken', width: 35 }, { header: 'Notes', width: 35 },
   { header: 'Source changed', width: 30 },
 ];
 /** Root cause, Action taken, Notes (1-based). */
-const WRAP = [21, 22, 23];
+const WRAP = [20, 21, 22];
 
 /** The filtered cases (List view: every stage) as .xlsx; the comment column only when the caller may export comments. */
 export async function buildFollowupExport(pool: Pool, q: FollowupQuery, f: Filters, withComments: boolean): Promise<Buffer> {
@@ -47,7 +46,7 @@ export async function buildFollowupExport(pool: Pool, q: FollowupQuery, f: Filte
       c.caseId, c.ratedAt, STAGE_LABEL[c.stage], c.status ? STATUS_LABEL[c.status] : '', c.company, c.customer, c.orderRef, c.deliveryCode,
       c.teamBranch ?? c.salesTeam, c.salesperson,
       c.categoryEn, c.categoryEn ? (c.subReasonEn ?? 'Not specified') : null, c.categoryAr, c.categoryAr ? (c.subReasonAr ?? 'غير محدد') : null, c.reasonNote,
-      c.ownerName, c.contactedAt, c.resolvedAt, c.rejectedAt, c.hoursOpen, c.rootCause, c.actionTaken, c.notes,
+      c.ownerName, c.contactedAt, c.resolvedAt, c.hoursOpen, c.rootCause, c.actionTaken, c.notes,
       c.sourceChanged ? `${c.sourceChangeReason ?? 'yes'} (${c.sourceChangedAt ?? ''})` : '',
       ...(withComments ? [c.comment] : []),
     ]);

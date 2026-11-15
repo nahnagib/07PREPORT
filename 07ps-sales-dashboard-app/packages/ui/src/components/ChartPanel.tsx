@@ -94,7 +94,8 @@ export function ChartPanel<T extends Record<string, unknown>>({
         </div>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0 }}>{children}</div>
+      {/* a flex column, so a chart with `fill` takes the space its siblings (notes, breadcrumbs) leave */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>{children}</div>
 
       {expanded && canFocusTable && (
         <div

@@ -31,18 +31,19 @@ import {
 import {
   toProductFacts,
   isOverstocked,
-  fmtLYD,
   fmtNum,
-  fmtUnits,
-  fmtVolume,
   median,
   sum,
   distinctSorted,
   BCG_COLOR,
+  BCG_CLASSES,
+  UNCLASSIFIED_NO_COST,
+  UNCLASSIFIED_ZERO_REVENUE,
   STOCK_BAND_LABEL,
   agingBuckets,
   agingColor,
   averageSaleGap,
+  categoryMedianVelocity,
   dohRule,
   fmtDate,
   frequencyBucket,
@@ -62,24 +63,37 @@ import {
 } from '../../../../lib/materialsAnalogy/shared';
 import { ProductBarChart, type ProductBar } from '../../../../components/product/ProductBarChart';
 import { StackedShareBar, type ShareSegment } from '../../../../components/product/StackedShareBar';
+import { ExportButtons, ProductName, TooltipRow, exportProductCsv, exportProductPdf, type ExportColumn } from '../../../../components/product/ProductUi';
 import {
-  ExportButtons,
-  ltrLabel,
-  Pill,
-  ProductName,
-  ProductTooltip,
-  TooltipRow,
-  exportProductCsv,
-  exportProductPdf,
-  type ExportColumn,
-} from '../../../../components/product/ProductUi';
+  INV,
+  InventoryHover,
+  NO_SALES_REASON,
+  RISK_COLOR,
+  ShareLegend,
+  bcgClassName,
+  exportInventoryCsv,
+  exportInventoryPdf,
+  fmtMoney,
+  fmtQty,
+  fmtVelocity,
+  groupSummary,
+  inventoryExportColumns,
+  inventoryFileName,
+  overstockExcess,
+  stockOutRisk,
+  type InventoryLine,
+  type LegendItem,
+} from '../../../../components/product/InventoryVisual';
 
-/** Class buckets for the Overstock / Stock-out charts: the 4 BCG classes, products sold YTD without a
- * standard cost, and products with no sales this year (e.g. overstock that never sold). */
-const CLASS_BUCKETS = ['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Unclassified (no cost)', 'No sales YTD'] as const;
+/** Class buckets for the Overstock / Stock-out charts: the 4 BCG classes (the ETL's YTD class from the config thresholds,
+ * the BCG Matrix's own), products sold without a standard cost (Unclassified (no cost)), and products with no class.
+ * Shown with the BCG Class names of every inventory visual, in the BCG page order (Stars / Cash Cows / Strategic / Dogs / Not classified). */
+const NO_SALES = 'No sales in period';
+const CLASS_BUCKETS = [...BCG_CLASSES, UNCLASSIFIED_NO_COST, UNCLASSIFIED_ZERO_REVENUE, NO_SALES] as const;
 type ClassBucket = (typeof CLASS_BUCKETS)[number];
-const bucketOf = (r: ProductFact): ClassBucket => (r.bcg_class_YTD ?? 'No sales YTD') as ClassBucket;
+const bucketOf = (r: ProductFact): ClassBucket => (r.bcg_class_YTD ?? NO_SALES) as ClassBucket;
 const bucketColor = (b: ClassBucket) => BCG_COLOR[b] ?? 'var(--ps-color-neutral-text)';
+const bucketName = (b: ClassBucket) => bcgClassName(b === NO_SALES ? null : b);
 
 type BandFilter = 'All' | 'Overstock' | 'Normal' | 'StockOutRisk';
 const MOVER_COLOR: Record<MoverGroup, string> = { Fast: 'var(--ps-color-success)', Normal: 'var(--ps-color-neutral-text)', Slow: 'var(--ps-color-alert)' };
@@ -87,37 +101,12 @@ const NO_AGE = 'No arrival date';
 /** An exact count with thousands separators ("1,078"), for SKU counts in sentences. */
 const fmtCount = (n: number) => n.toLocaleString('en-US');
 
-const dohLabel = (r: ProductFact) => (r.daysOfInventory === null ? (r.stockQty > 0 ? 'no sales' : '—') : `${r.daysOfInventory.toFixed(0)}d`);
-const BASE_EXPORT: ExportColumn<ProductFact>[] = [
-  { header: 'Product Name', value: (r) => ltrLabel(r.ProductName) },
-  { header: 'Company', value: (r) => r.Company },
-  { header: 'Odoo ID', value: (r) => r.ProductKey },
-  { header: 'Category', value: (r) => r.Category },
-  { header: 'Class', value: (r) => bucketOf(r) },
-];
-const STOCK_EXPORT: ExportColumn<ProductFact>[] = [
-  ...BASE_EXPORT,
-  { header: 'Band', value: (r) => STOCK_BAND_LABEL[r.stockBand] },
-  { header: 'DOH (days)', align: 'right', value: (r) => r.daysOfInventory, text: dohLabel },
-  { header: 'Stock age (days)', align: 'right', value: (r) => r.stockAgeDays, text: (r) => (r.stockAgeDays === null ? '—' : r.stockAgeDays.toFixed(0)) },
-  { header: 'Stock (Unit)', align: 'right', value: (r) => r.stockQty, text: (r) => fmtNum(r.stockQty) },
-  { header: 'UoM', value: (r) => r.uom },
-  { header: 'Stock (LYD at cost)', align: 'right', value: (r) => r.stockValue, text: (r) => fmtLYD(r.stockValue) },
-];
-const SALES_EXPORT: ExportColumn<ProductFact>[] = [
-  ...BASE_EXPORT,
-  { header: 'DOH (days)', align: 'right', value: (r) => r.daysOfInventory, text: dohLabel },
-  { header: 'Volume (period, Unit)', align: 'right', value: (r) => r.volume, text: (r) => fmtNum(r.volume) },
-  { header: 'UoM', value: (r) => r.uom },
-  { header: 'Value (period, LYD)', align: 'right', value: (r) => r.value, text: (r) => fmtLYD(r.value) },
-];
-
 /** A help entry whose one formula line is built from the ETL config (thresholds are never hard-coded on the page). */
 function withFormula(hints: VisualHints, formula: string): VisualHints {
   return hints.help ? { ...hints, help: { ...hints.help, formula } } : hints;
 }
 
-/** SKU-count bar chart per category (BCG class / frequency bucket): hover = SKUs, units, LYD; click = drill. */
+/** SKU-count bar chart per category (BCG class / frequency bucket): hover = SKUs, quantity, LYD; click = drill. */
 interface CountPoint extends GroupedBarChartPoint {
   label: string;
   skus: number;
@@ -130,9 +119,9 @@ function countTooltip(unitsLabel: string, valueLabel: string) {
     return (
       <div style={{ ...tooltipBoxStyle, padding: '8px 10px', minWidth: 180 }}>
         <div style={{ fontWeight: 700, marginBottom: 4 }}>{p.label}</div>
-        <TooltipRow label="SKUs" value={String(p.skus)} />
-        <TooltipRow label={unitsLabel} value={fmtUnits(p._units as number)} />
-        <TooltipRow label={valueLabel} value={fmtLYD(p._value as number)} />
+        <TooltipRow label="SKUs" value={fmtCount(p.skus as number)} />
+        <TooltipRow label={unitsLabel} value={fmtQty(p._units as number)} />
+        <TooltipRow label={valueLabel} value={fmtMoney(p._value as number)} />
       </div>
     );
   };
@@ -201,6 +190,8 @@ export default function StockVelocityPage() {
   const overValue = sum(overRows, (r) => r.stockValue);
   const riskUnits = sum(riskRows, (r) => r.volume);
   const inStock = filtered.filter((r) => r.stockQty > 0);
+  // Stock Aging: every SKU with Odoo On Hand (all internal locations of its company)
+  const onHand = filtered.filter((r) => r.onHandQty > 0);
   const inventoryUnits = sum(filtered, (r) => r.stockQty);
   const inventoryValue = sum(filtered, (r) => r.stockValue);
   const inTransitUnits = sum(filtered, (r) => r.inTransitQty);
@@ -214,46 +205,129 @@ export default function StockVelocityPage() {
   const rule = moverRule(thresholds);
   const moving = filtered.filter((r) => r.velocity !== null && r.velocity > 0 && r.value > 0);
   const vsMedian = velocityVsCategoryMedian(moving);
+  const medianVelocity = categoryMedianVelocity(moving);
   const moverOf = (r: ProductFact): MoverGroup => moverGroupOf(vsMedian.get(r.id) ?? 100, rule);
   const moverRows: Record<MoverGroup, ProductFact[]> = { Fast: [], Normal: [], Slow: [] };
   moving.forEach((r) => moverRows[moverOf(r)].push(r));
   const moverSegments: ShareSegment[] = (['Fast', 'Normal', 'Slow'] as const).map((g) => ({
     key: g, label: `${g} movers`, color: MOVER_COLOR[g], skus: moverRows[g].length, units: sum(moverRows[g], (r) => r.volume), value: sum(moverRows[g], (r) => r.value),
-    valueLabel: 'Sold (LYD)',
+    unitsLabel: INV.qtySold, valueLabel: INV.salesValue,
   }));
-  const unitPerDay = (r: ProductFact, precision?: number) => {
-    const velocity = r.velocity ?? 0;
-    return `${velocity.toFixed(precision ?? (velocity >= 10 ? 0 : 2))} ${r.uom || 'Unit'}/day`;
-  };
   const toBars = (rows: ProductFact[], value: (r: ProductFact) => number, label: (r: ProductFact) => string): ProductBar[] =>
     rows.map((r) => ({ id: r.id, name: r.ProductName, company: r.Company, value: value(r), valueLabel: label(r), href: r.odooUrl }));
   const moversDrillRows = moversDrill ? [...moverRows[moversDrill]].sort((a, b) => (b.velocity as number) - (a.velocity as number)) : [];
 
-  // ---- Stock Aging: finished-goods SKUs on hand by the units-weighted age of their stock (ETL StockAgeBucket) ----
+  // ---- Stock Aging: SKUs with On Hand by the units-weighted age of the receipt layers still in stock (ETL StockAgeBucket) ----
   const agingSegments: ShareSegment[] = [
     ...ageBuckets.map((b) => ({ key: b.label, label: b.label, color: agingColor(ageBuckets, b.label) })),
     { key: NO_AGE, label: NO_AGE, color: 'var(--ps-color-muted-text)' },
   ].map((s) => {
-    const rows = inStock.filter((r) => (r.stockAgeBucket ?? NO_AGE) === s.key);
-    return { ...s, skus: rows.length, units: sum(rows, (r) => r.stockQty), value: sum(rows, (r) => r.stockValue), valueLabel: 'Stock (LYD at cost)' };
+    const rows = onHand.filter((r) => (r.stockAgeBucket ?? NO_AGE) === s.key);
+    return { ...s, skus: rows.length, units: sum(rows, (r) => r.onHandQty), value: sum(rows, (r) => r.onHandValue), unitsLabel: INV.qtyOnHand, valueLabel: INV.totalValue };
   }).filter((s) => s.key !== NO_AGE || s.skus > 0);
-  const agingDrillRows = agingDrill ? inStock.filter((r) => (r.stockAgeBucket ?? NO_AGE) === agingDrill).sort((a, b) => b.stockQty - a.stockQty) : [];
+  const agingDrillRows = agingDrill ? onHand.filter((r) => (r.stockAgeBucket ?? NO_AGE) === agingDrill).sort((a, b) => b.onHandQty - a.onHandQty) : [];
+  // ---- the four inventory exports: the 11 standard columns, the visual's own columns, a summary section (CSV) ----
+  const period = overview.data?.period;
+  const fileName = (base: string) => inventoryFileName(base, companyLabel, period?.from, period?.to);
+  const pdfSubtitle = (rows: number) => `${companyLabel} · ${period ? `${period.from} – ${period.to}` : ''} · ${fmtCount(rows)} SKUs`;
+  const STANDARD = inventoryExportColumns();
+  const sortByCompany = (rows: ProductFact[], key: (r: ProductFact) => number) => [...rows].sort((a, b) => a.Company.localeCompare(b.Company) || key(b) - key(a));
+
+  /** "Export aging data": ALL products of the visual (not only a drill), one row per product per company, with the
+   * Quantity On Hand and Total Value of each aging bucket (split by receipt layer), then the bucket totals. */
+  const AGING_EXPORT: ExportColumn<ProductFact>[] = [
+    ...STANDARD,
+    { header: 'Aging Bucket', value: (r) => r.stockAgeBucket ?? '–' },
+    ...ageBuckets.flatMap((b) => [
+      { header: `${INV.qtyOnHand} ${b.label} (Units)`, align: 'right' as const, value: (r: ProductFact) => r.agingBuckets.find((x) => x.key === b.key)?.qty ?? 0 },
+      { header: `${INV.totalValue} ${b.label} (LYD)`, align: 'right' as const, value: (r: ProductFact) => r.agingBuckets.find((x) => x.key === b.key)?.value ?? 0 },
+    ]),
+  ];
+  const agingRows = sortByCompany(onHand, (r) => r.onHandQty);
+  const agingSummary = () => {
+    const rows = ageBuckets.map((b) => {
+      const parts = agingRows.map((r) => r.agingBuckets.find((x) => x.key === b.key)).filter((x) => x && x.qty > 0);
+      return [b.label, parts.length, parts.reduce((t, x) => t + (x?.qty ?? 0), 0), parts.reduce((t, x) => t + (x?.value ?? 0), 0)];
+    });
+    rows.push(['Total', agingRows.length, sum(agingRows, (r) => r.onHandQty), sum(agingRows, (r) => r.onHandValue)]);
+    return { title: 'Bucket totals (split by receipt layer)', headers: ['Aging Bucket', 'SKUs', `${INV.qtyOnHand} (Units)`, `${INV.totalValue} (LYD)`], rows };
+  };
+  const exportAgingData = () => exportInventoryCsv(fileName('stock_aging'), AGING_EXPORT, agingRows, agingSummary());
+  const exportAgingPdf = () =>
+    exportInventoryPdf({ title: 'Stock Aging', subtitle: pdfSubtitle(agingRows.length), fileName: fileName('stock_aging'), columns: AGING_EXPORT.slice(0, STANDARD.length + 1), rows: agingRows });
 
   // ---- Overstock and Stock-out risk by class: SKU counts; hover = SKUs, units, LYD ----
   const classPoints = (rows: ProductFact[], units: (r: ProductFact) => number, value: (r: ProductFact) => number, keepEmpty: ClassBucket[] = []): CountPoint[] =>
     CLASS_BUCKETS.map((cls) => {
       const inClass = rows.filter((r) => bucketOf(r) === cls);
-      return { label: cls, skus: inClass.length, _units: sum(inClass, units), _value: sum(inClass, value), _color: bucketColor(cls) };
-    }).filter((p) => p.skus > 0 || keepEmpty.includes(p.label as ClassBucket));
-  const overstockPoints = classPoints(overRows, (r) => r.stockQty, (r) => r.stockValue, ['No sales YTD']);
+      return { label: bucketName(cls), _cls: cls, skus: inClass.length, _units: sum(inClass, units), _value: sum(inClass, value), _color: bucketColor(cls) };
+    }).filter((p) => p.skus > 0 || keepEmpty.includes(p._cls as ClassBucket));
+  const classOfLabel = (points: CountPoint[], label: string) => points.find((p) => p.label === label)?._cls as ClassBucket | undefined;
+  const legendOf = (points: CountPoint[]): LegendItem[] => points.map((p) => ({ key: p._cls as string, label: p.label, color: p._color, skus: p.skus }));
+  const overstockPoints = classPoints(overRows, (r) => r.onHandQty, (r) => r.onHandValue, [NO_SALES]);
   const overstockDrillRows = overstockDrill ? overRows.filter((r) => bucketOf(r) === overstockDrill).sort((a, b) => b.stockQty - a.stockQty) : [];
   // Stock-out risk: above-median sellers (units in the period) below the company minimum DOH; urgency = units ÷ (DOH + 1)
   const medianVolume = median(filtered.map((r) => r.volume));
   const riskCandidates = riskRows.filter((r) => r.volume > medianVolume);
-  const riskPoints = classPoints(riskCandidates, (r) => r.volume, (r) => r.value);
+  const riskPoints = classPoints(riskCandidates, (r) => r.onHandQty, (r) => r.onHandValue);
   const urgency = (r: ProductFact) => r.volume / ((r.daysOfInventory ?? 0) + 1);
   const riskDrillRows = riskDrill ? riskCandidates.filter((r) => bucketOf(r) === riskDrill).sort((a, b) => urgency(b) - urgency(a)) : [];
   const factById = new Map(filtered.map((r) => [r.id, r]));
+
+  const classSummary = (title: string, rows: ProductFact[]) =>
+    groupSummary(title, INV.bcgClass, CLASS_BUCKETS.map((c) => ({ label: bucketName(c), rows: rows.filter((r) => bucketOf(r) === c) })).filter((g) => g.rows.length > 0));
+  // Fast vs Slow Movers: every SKU sold in the period, its group and its category's median Sales Velocity
+  const MOVERS_EXPORT: ExportColumn<ProductFact>[] = [
+    ...STANDARD,
+    { header: 'Category Median Velocity (Unit/day)', align: 'right', value: (r) => Math.round((medianVelocity.get(r.id) ?? 0) * 10000) / 10000, text: (r) => fmtVelocity(medianVelocity.get(r.id) ?? null) },
+    { header: 'Mover Group', value: (r) => moverOf(r) },
+  ];
+  const moverExportRows = (['Fast', 'Normal', 'Slow'] as const).flatMap((g) => sortByCompany(moverRows[g], (r) => r.velocity ?? 0));
+  const exportMoversData = () =>
+    exportInventoryCsv(fileName('fast_slow_movers'), MOVERS_EXPORT, moverExportRows,
+      groupSummary('Summary by Mover Group', 'Mover Group', (['Fast', 'Normal', 'Slow'] as const).map((g) => ({ label: g, rows: moverRows[g] }))));
+  const exportMoversPdf = () =>
+    exportInventoryPdf({ title: 'Fast vs Slow Movers', subtitle: pdfSubtitle(moverExportRows.length), fileName: fileName('fast_slow_movers'), columns: MOVERS_EXPORT, rows: moverExportRows });
+  // Overstock: the finished-goods units above the company's overstock DOH
+  const OVERSTOCK_EXPORT: ExportColumn<ProductFact>[] = [
+    ...STANDARD,
+    { header: 'Excess Quantity (Units)', align: 'right', value: (r) => Math.round(overstockExcess(r, thresholds).qty * 100) / 100, text: (r) => fmtQty(overstockExcess(r, thresholds).qty) },
+    { header: 'Excess Value (LYD)', align: 'right', value: (r) => Math.round(overstockExcess(r, thresholds).value * 100) / 100, text: (r) => fmtMoney(overstockExcess(r, thresholds).value) },
+  ];
+  const overstockRows = sortByCompany(overRows, (r) => r.onHandValue);
+  const exportOverstockData = () => exportInventoryCsv(fileName('overstock'), OVERSTOCK_EXPORT, overstockRows, classSummary('Summary by BCG Class', overstockRows));
+  const exportOverstockPdf = () =>
+    exportInventoryPdf({ title: 'Overstock Products', subtitle: pdfSubtitle(overstockRows.length), fileName: fileName('overstock'), columns: OVERSTOCK_EXPORT, rows: overstockRows });
+  // Stock-Out Risk: risk level and days until stock-out (= DOH of the finished goods)
+  const RISK_EXPORT: ExportColumn<ProductFact>[] = [
+    ...STANDARD,
+    { header: 'Risk Level', value: (r) => stockOutRisk(r, thresholds).level },
+    { header: 'Days Until Stock-Out', align: 'right', value: (r) => { const d = stockOutRisk(r, thresholds).days; return d === null ? null : Math.round(d); } },
+  ];
+  const riskExportRows = [...riskCandidates].sort((a, b) => urgency(b) - urgency(a));
+  const exportRiskData = () => exportInventoryCsv(fileName('stock_out_risk'), RISK_EXPORT, riskExportRows, classSummary('Summary by BCG Class', riskExportRows));
+  const exportRiskPdf = () =>
+    exportInventoryPdf({ title: 'Stock-Out Risk', subtitle: pdfSubtitle(riskExportRows.length), fileName: fileName('stock_out_risk'), columns: RISK_EXPORT, rows: riskExportRows });
+
+  /** The one hover of the four inventory visuals (InventoryVisual), with the visual's own line(s) last. */
+  const hoverWith = (extra: (r: ProductFact) => InventoryLine[]) =>
+    function InventoryBarHover(bar: ProductBar) {
+      const r = factById.get(bar.id);
+      return r ? <InventoryHover r={r} extra={extra(r)} /> : null;
+    };
+  const moverHover = hoverWith((r) => [
+    { label: 'Mover Group', value: moverOf(r), color: MOVER_COLOR[moverOf(r)] },
+    { label: 'Category Median Velocity', value: fmtVelocity(medianVelocity.get(r.id) ?? null) },
+  ]);
+  const agingHover = hoverWith((r) => [{ label: 'Aging Bucket', value: r.stockAgeBucket ?? '–' }]);
+  const overstockHover = hoverWith((r) => {
+    const x = overstockExcess(r, thresholds);
+    return [{ label: 'Excess quantity / value', value: `${fmtQty(x.qty)} · ${fmtMoney(x.value)}` }];
+  });
+  const riskHover = hoverWith((r) => {
+    const x = stockOutRisk(r, thresholds);
+    return [{ label: 'Risk level / days until stock-out', value: `${x.level} · ${x.days === null ? `– ${NO_SALES_REASON}` : `${Math.round(x.days)} days`}`, color: RISK_COLOR[x.level] }];
+  });
 
   // ---- Sales Frequency: distinct selling days in the period -> average gap -> config buckets; bars = SKU counts ----
   const periodDays = overview.data?.period.days ?? 0;
@@ -270,58 +344,27 @@ export default function StockVelocityPage() {
   const FREQUENCY_EXPORT: ExportColumn<FrequencyGroup>[] = [
     { header: 'Bucket', value: (g) => frequencyLabel(freqBuckets, g.bucket) },
     { header: 'SKUs', align: 'right', value: (g) => g.count },
-    { header: 'Units sold (period)', align: 'right', value: (g) => g.units, text: (g) => fmtNum(g.units) },
-    { header: 'Revenue (period, LYD)', align: 'right', value: (g) => g.revenue, text: (g) => fmtLYD(g.revenue) },
+    { header: `${INV.qtySold} (Units)`, align: 'right', value: (g) => g.units, text: (g) => fmtQty(g.units) },
+    { header: `${INV.salesValue} (LYD)`, align: 'right', value: (g) => g.revenue, text: (g) => fmtMoney(g.revenue) },
   ];
   type FrequencyRow = ProductFact & Record<string, unknown> & { gap: number | null };
   const frequencyGridRows: FrequencyRow[] = frequencyRows.map((r) => ({ ...r, gap: averageSaleGap(r.orderDays, periodDays) }));
   const FREQUENCY_COLUMNS: DataGridColumn<FrequencyRow>[] = [
     { key: 'ProductName', header: 'Product', width: 240, render: (r) => <ProductName name={r.ProductName} href={r.odooUrl} />, rawValue: (r) => r.ProductName },
-    { key: 'volume', header: 'Units sold (period)', align: 'right', render: (r) => <strong>{fmtNum(r.volume)}</strong>, rawValue: (r) => r.volume },
+    { key: 'volume', header: INV.qtySold, align: 'right', render: (r) => <strong>{fmtNum(r.volume)}</strong>, rawValue: (r) => r.volume },
     { key: 'Company', header: 'Company', rawValue: (r) => r.Company },
     { key: 'Category', header: 'Category', render: (r) => <ProductName name={r.Category ?? '—'} />, rawValue: (r) => r.Category ?? '' },
     { key: 'orderDays', header: 'Selling days', align: 'right', rawValue: (r) => r.orderDays },
     { key: 'gap', header: 'Avg gap (days)', align: 'right', render: (r) => (r.gap === null ? '—' : r.gap.toFixed(1)), rawValue: (r) => (r.gap === null ? '' : Math.round(r.gap * 10) / 10), sortValue: (r) => r.gap ?? Number.POSITIVE_INFINITY },
     { key: 'uom', header: 'UoM', rawValue: (r) => r.uom ?? '' },
-    { key: 'value', header: 'Revenue (period)', align: 'right', render: (r) => fmtLYD(r.value), rawValue: (r) => r.value },
+    { key: 'value', header: INV.salesValue, align: 'right', render: (r) => fmtMoney(r.value), rawValue: (r) => r.value },
     { key: 'lastSaleDate', header: 'Last sale', render: (r) => fmtDate(r.lastSaleDate), rawValue: (r) => r.lastSaleDate ?? '' },
   ];
 
-  const MOVERS_EXPORT: ExportColumn<ProductFact>[] = [
-    ...BASE_EXPORT,
-    { header: 'Group', value: (r) => moverOf(r) },
-    { header: '% of category median', align: 'right', value: (r) => Math.round(vsMedian.get(r.id) ?? 100), text: (r) => `${Math.round(vsMedian.get(r.id) ?? 100)}%` },
-    { header: 'Velocity (per day)', align: 'right', value: (r) => r.velocity, text: (r) => unitPerDay(r, 2) },
-    { header: 'UoM', value: (r) => r.uom },
-    { header: 'Volume (period, Unit)', align: 'right', value: (r) => r.volume, text: (r) => fmtNum(r.volume) },
-    { header: 'Value (period, LYD)', align: 'right', value: (r) => r.value, text: (r) => fmtLYD(r.value) },
-  ];
-
-  /** Hover detail of a drilled product bar: class badge, the bar's metric, volume, DOH, stock, value. */
-  const drillTooltip = (metricLabel: string, metric: (r: ProductFact) => string, showStock: boolean) =>
-    function DrillTooltip(bar: ProductBar) {
-      const r = factById.get(bar.id);
-      if (!r) return null;
-      const cls = bucketOf(r);
-      return (
-        <ProductTooltip name={r.ProductName} company={r.Company} badges={<Pill color={bucketColor(cls)} label={cls} />}>
-          <TooltipRow label={metricLabel} value={metric(r)} />
-          <TooltipRow label="Volume (period)" value={fmtVolume(r)} />
-          {showStock ? <TooltipRow label="DOH" value={dohLabel(r)} /> : null}
-          {showStock ? <TooltipRow label="Stock" value={`${fmtUnits(r.stockQty)} · ${fmtLYD(r.stockValue)}`} /> : null}
-          {showStock && r.stockAgeDays !== null ? <TooltipRow label="Stock age" value={`${r.stockAgeDays.toFixed(0)} days`} /> : null}
-          <TooltipRow label="Value (period)" value={fmtLYD(r.value)} />
-        </ProductTooltip>
-      );
-    };
-
   const panelStyle = { height: 'auto', padding: 'clamp(8px, calc(5vw - 12px), var(--ps-card-padding, 16px))' } as const;
-  const exportList = (name: string, title: string, subtitle: string, columns: ExportColumn<ProductFact>[], rows: ProductFact[]) => (
-    <ExportButtons
-      label={title.toLowerCase()}
-      onCsv={() => exportProductCsv(`stock-velocity-${name}`, columns, rows)}
-      onPdf={() => exportProductPdf({ title, subtitle: `${companyLabel} · ${subtitle}`, fileName: `stock-velocity-${name}`, columns, rows })}
-    />
+  /** The export of every inventory card, same place and wording: "Export <name> data" (CSV) + "Export as PDF". */
+  const inventoryExport = (name: string, onCsv: () => Promise<void>, onPdf: () => Promise<void>) => (
+    <ExportButtons label={`all ${name} data`} csvText={`Export ${name} data`} onCsv={onCsv} onPdf={onPdf} />
   );
 
   return (
@@ -365,18 +408,18 @@ export default function StockVelocityPage() {
             <ErrorState message={overview.error} onRetry={overview.retry} />
           ) : (
             <>
-              <div data-testid="stock-velocity-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
+              <div data-testid="stock-velocity-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 160px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
                 <KpiTile label="DOH – Avg Days of Inventory" value={avgDOH === null ? '—' : `${Math.round(avgDOH)} days`} variance={`Based on the last ${lookback} days of sales`} status="neutral"
-                  help={withFormula(vh('product.stockVelocity.kpiDoh'), `DOH = finished-goods units on hand ÷ average daily units sold (last ${lookback} days)`).help} />
-                <KpiTile label="Overstocked SKUs" value={fmtCount(overRows.length)} variance={`${fmtNum(overUnits)} units on hand · ${fmtLYD(overValue)}`} status="watch"
+                  help={withFormula(vh('product.stockVelocity.kpiDoh'), `DOH = finished-goods Quantity On Hand ÷ average daily Quantity Sold (last ${lookback} days)`).help} />
+                <KpiTile label="Overstocked SKUs" value={fmtCount(overRows.length)} variance={`${fmtQty(overUnits)} · ${fmtMoney(overValue)}`} status="watch"
                   help={withFormula(vh('product.stockVelocity.kpiOverstock'), overRule).help} />
-                <KpiTile label="Stock-Out Risk SKUs" value={fmtCount(riskRows.length)} variance={`${fmtNum(riskUnits)} units sold in the period`} status="alert"
+                <KpiTile label="Stock-Out Risk SKUs" value={fmtCount(riskRows.length)} variance={`${INV.qtySold} ${fmtQty(riskUnits)}`} status="alert"
                   help={withFormula(vh('product.stockVelocity.kpiStockOut'), riskRule).help} />
                 <KpiTile label="Fast Movers" value={fmtCount(moverRows.Fast.length)} variance={`Out of ${fmtCount(moving.length)} SKUs sold in the period`} status="success"
                   help={withFormula(vh('product.stockVelocity.kpiFast'), moverRuleText(rule)).help} />
                 <KpiTile label="SKUs in Stock" value={fmtCount(inStock.length)} variance="In finished-goods locations" status="neutral"
                   help={vh('product.stockVelocity.kpiInStock').help} />
-                <KpiTile label="Inventory Value" value={fmtLYD(inventoryValue)} variance={`${fmtNum(inventoryUnits)} units on hand · ${fmtNum(inTransitUnits)} units in transit`} status="neutral"
+                <KpiTile label={INV.totalValue} value={fmtMoney(inventoryValue)} variance={`${fmtQty(inventoryUnits)} finished goods · ${fmtQty(inTransitUnits)} in transit`} status="neutral"
                   help={vh('product.stockVelocity.kpiInventory').help} />
               </div>
 
@@ -397,23 +440,23 @@ export default function StockVelocityPage() {
                       size={320}
                     />
                     <div style={{ fontSize: 12, color: 'var(--ps-color-muted-text)', marginTop: 4, textAlign: 'center' }}>
-                      {fmtLYD(inventoryValue)} on hand ÷ {fmtLYD(salesValue)} sold in the period
+                      {fmtMoney(inventoryValue)} on hand ÷ {fmtMoney(salesValue)} {INV.salesValue} in the period
                     </div>
                   </div>
               </Card>
 
               <ChartPanel {...withFormula(vh('product.stockVelocity.movers'), moverRuleText(rule))} title="Fast vs Slow Movers" style={panelStyle} wrapHeader
-                  headerActions={moversDrill ? exportList(`${moversDrill.toLowerCase()}-movers`, `${moversDrill} Movers`, `${moversDrillRows.length} products`, MOVERS_EXPORT, moversDrillRows) : null}
+                  headerActions={inventoryExport('movers', exportMoversData, exportMoversPdf)}
                 >
-                  <DrillBreadcrumb active={moversDrill ? `${moversDrill} movers` : null} rootLabel={`${fmtCount(moving.length)} SKUs sold in the period, compared with their category's median sales speed`} onReset={() => setMoversDrill(null)} />
+                  <DrillBreadcrumb active={moversDrill ? `${moversDrill} movers` : null} rootLabel={`${fmtCount(moving.length)} SKUs sold in the period, by ${INV.velocity} against their category's median`} onReset={() => setMoversDrill(null)} />
                   {moversDrill ? (
                     <ProductBarChart
                       key={moversDrill}
-                      rows={toBars(moversDrillRows, (r) => r.velocity as number, unitPerDay)}
-                      seriesName={`${moversDrill} movers (units per day)`}
+                      rows={toBars(moversDrillRows, (r) => r.velocity as number, (r) => fmtVelocity(r.velocity))}
+                      seriesName={`${INV.velocity} (Unit/day)`}
                       color={MOVER_COLOR[moversDrill]}
                       axisFormatter={(v) => `${Number(v.toFixed(v >= 10 ? 0 : 2))}/day`}
-                      tooltip={drillTooltip('Velocity', (r) => unitPerDay(r, 2), false)}
+                      tooltip={moverHover}
                       fileName={`stock-velocity-${moversDrill.toLowerCase()}-movers`}
                     />
                   ) : (
@@ -422,17 +465,17 @@ export default function StockVelocityPage() {
                 </ChartPanel>
 
               <ChartPanel {...vh('product.stockVelocity.aging')} title="Stock Aging" style={panelStyle} wrapHeader
-                headerActions={agingDrill ? exportList('aging', `Stock Aging — ${agingDrill}`, `${agingDrillRows.length} products`, STOCK_EXPORT, agingDrillRows) : null}
+                headerActions={inventoryExport('aging', exportAgingData, exportAgingPdf)}
               >
-                <DrillBreadcrumb active={agingDrill} rootLabel={`${fmtCount(inStock.length)} finished-goods SKUs on hand, by days since the stock arrived`} onReset={() => setAgingDrill(null)} />
+                <DrillBreadcrumb active={agingDrill} rootLabel={`${fmtCount(onHand.length)} SKUs with ${INV.qtyOnHand}, by the ${INV.stockAge.replace(' (days)', '')} of the stock still on hand`} onReset={() => setAgingDrill(null)} />
                 {agingDrill ? (
                   <ProductBarChart
                     key={agingDrill}
-                    rows={toBars(agingDrillRows, (r) => r.stockQty, (r) => fmtUnits(r.stockQty))}
-                    seriesName="Units on hand"
+                    rows={toBars(agingDrillRows, (r) => r.onHandQty, (r) => fmtQty(r.onHandQty))}
+                    seriesName={INV.qtyOnHand}
                     color={agingColor(ageBuckets, agingDrill)}
                     axisFormatter={fmtNum}
-                    tooltip={drillTooltip('Units on hand', (r) => fmtUnits(r.stockQty), true)}
+                    tooltip={agingHover}
                     fileName="stock-velocity-aging"
                   />
                 ) : (
@@ -468,7 +511,7 @@ export default function StockVelocityPage() {
                       bars={[{ key: 'skus', name: 'SKUs', color: 'var(--ps-color-accent)' }]}
                       colorForPoint={(p) => p._color as string}
                       valueFormatter={(v) => fmtNum(v)}
-                      tooltipContent={countTooltip('Units sold (period)', 'Revenue (period)')}
+                      tooltipContent={countTooltip(INV.qtySold, INV.salesValue)}
                       onCategoryClick={(label) => {
                         const p = frequencyPoints.find((x) => x.label === label);
                         if (p) setFrequencyDrill(p._bucket as string);
@@ -482,58 +525,64 @@ export default function StockVelocityPage() {
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))', gap: 'var(--ps-space-3, 16px)', alignItems: 'start' }}>
                 <ChartPanel {...withFormula(vh('product.stockVelocity.overstock'), overRule)} title="Overstock Products" style={panelStyle} wrapHeader
-                  headerActions={exportList('overstock', 'Overstock Products', overstockDrill ?? 'All Classes', STOCK_EXPORT, overstockDrill ? overstockDrillRows : [...overRows].sort((a, b) => b.stockQty - a.stockQty))}
+                  headerActions={inventoryExport('overstock', exportOverstockData, exportOverstockPdf)}
                 >
-                  <DrillBreadcrumb active={overstockDrill} rootLabel="SKUs per BCG class" onReset={() => setOverstockDrill(null)} />
+                  <DrillBreadcrumb active={overstockDrill ? bucketName(overstockDrill) : null} rootLabel={`${fmtCount(overRows.length)} overstocked SKUs per ${INV.bcgClass}`} onReset={() => setOverstockDrill(null)} />
                   {overstockDrill ? (
                     <ProductBarChart
                       key={overstockDrill}
-                      rows={toBars(overstockDrillRows, (r) => r.stockQty, (r) => fmtUnits(r.stockQty))}
-                      seriesName="Units on hand"
+                      rows={toBars(overstockDrillRows, (r) => r.onHandQty, (r) => fmtQty(r.onHandQty))}
+                      seriesName={INV.qtyOnHand}
                       color={bucketColor(overstockDrill)}
                       axisFormatter={fmtNum}
-                      tooltip={drillTooltip('Units on hand', (r) => fmtUnits(r.stockQty), true)}
+                      tooltip={overstockHover}
                       fileName="stock-velocity-overstock"
                     />
                   ) : (
-                    <GroupedBarChart
-                      showTitle={false}
-                      points={overstockPoints}
-                      bars={[{ key: 'skus', name: 'SKUs', color: 'var(--ps-color-accent)' }]}
-                      colorForPoint={(p) => p._color as string}
-                      valueFormatter={(v) => fmtNum(v)}
-                      tooltipContent={countTooltip('Units on hand', 'Stock (LYD at cost)')}
-                      yAxisWidth={150}
-                      onCategoryClick={(label) => setOverstockDrill(label as ClassBucket)}
-                    />
+                    <>
+                      <GroupedBarChart
+                        showTitle={false}
+                        points={overstockPoints}
+                        bars={[{ key: 'skus', name: 'SKUs', color: 'var(--ps-color-accent)' }]}
+                        colorForPoint={(p) => p._color as string}
+                        valueFormatter={(v) => fmtNum(v)}
+                        tooltipContent={countTooltip(INV.qtyOnHand, INV.totalValue)}
+                        yAxisWidth={150}
+                        onCategoryClick={(label) => setOverstockDrill(classOfLabel(overstockPoints, label) ?? null)}
+                      />
+                      <ShareLegend items={legendOf(overstockPoints)} onSelect={(k) => setOverstockDrill(k as ClassBucket)} />
+                    </>
                   )}
                 </ChartPanel>
 
                 <ChartPanel {...withFormula(vh('product.stockVelocity.stockOutRisk'), riskRule)} title="Stock-Out Risk" style={panelStyle} wrapHeader
-                  headerActions={exportList('risk', 'Stock-Out Risk', riskDrill ?? 'All Classes', SALES_EXPORT, riskDrill ? riskDrillRows : [...riskCandidates].sort((a, b) => urgency(b) - urgency(a)))}
+                  headerActions={inventoryExport('stock-out', exportRiskData, exportRiskPdf)}
                 >
-                  <DrillBreadcrumb active={riskDrill} rootLabel="SKUs per BCG class" onReset={() => setRiskDrill(null)} />
+                  <DrillBreadcrumb active={riskDrill ? bucketName(riskDrill) : null} rootLabel={`${fmtCount(riskCandidates.length)} above-median sellers at risk per ${INV.bcgClass}`} onReset={() => setRiskDrill(null)} />
                   {riskDrill ? (
                     <ProductBarChart
                       key={riskDrill}
-                      rows={toBars(riskDrillRows, (r) => r.volume, (r) => fmtUnits(r.volume))}
-                      seriesName="Units sold (period)"
+                      rows={toBars(riskDrillRows, (r) => r.volume, (r) => fmtQty(r.volume))}
+                      seriesName={INV.qtySold}
                       color="var(--ps-color-alert)"
                       axisFormatter={fmtNum}
-                      tooltip={drillTooltip('Units sold (period)', (r) => fmtUnits(r.volume), true)}
+                      tooltip={riskHover}
                       fileName="stock-velocity-risk"
                     />
                   ) : (
-                    <GroupedBarChart
-                      showTitle={false}
-                      points={riskPoints}
-                      bars={[{ key: 'skus', name: 'SKUs', color: 'var(--ps-color-alert)' }]}
-                      colorForPoint={(p) => p._color as string}
-                      valueFormatter={(v) => fmtNum(v)}
-                      tooltipContent={countTooltip('Units sold (period)', 'Sold (LYD)')}
-                      yAxisWidth={150}
-                      onCategoryClick={(label) => setRiskDrill(label as ClassBucket)}
-                    />
+                    <>
+                      <GroupedBarChart
+                        showTitle={false}
+                        points={riskPoints}
+                        bars={[{ key: 'skus', name: 'SKUs', color: 'var(--ps-color-alert)' }]}
+                        colorForPoint={(p) => p._color as string}
+                        valueFormatter={(v) => fmtNum(v)}
+                        tooltipContent={countTooltip(INV.qtyOnHand, INV.totalValue)}
+                        yAxisWidth={150}
+                        onCategoryClick={(label) => setRiskDrill(classOfLabel(riskPoints, label) ?? null)}
+                      />
+                      <ShareLegend items={legendOf(riskPoints)} onSelect={(k) => setRiskDrill(k as ClassBucket)} />
+                    </>
                   )}
                 </ChartPanel>
               </div>

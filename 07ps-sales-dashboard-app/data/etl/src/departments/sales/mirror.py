@@ -41,9 +41,10 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
 from departments.sales import sale_report as sr
-from sales_pipeline.inventory import RES_COMPANY_FIELDS, STOCK_LOCATION_FIELDS, STOCK_QUANT_FIELDS
+from sales_pipeline.inventory import (RES_COMPANY_FIELDS, STOCK_LOCATION_FIELDS, STOCK_QUANT_FIELDS, VALUATION_LAYER_DOMAIN,
+                                      VALUATION_LAYER_FIELDS)
 from sales_pipeline.odoo.crm_repository import CRM_LEAD_FIELDS, CRM_LOST_REASON_FIELDS, CRM_STAGE_FIELDS
-from sales_pipeline.odoo.product_cost_repository import PRODUCT_COST_FIELDS
+from sales_pipeline.odoo.product_cost_repository import PRODUCT_CATEGORY_FIELDS, PRODUCT_COST_FIELDS, PRODUCT_TEMPLATE_FIELDS
 from sales_pipeline.odoo_products import SUPPLIERINFO_FIELDS
 from sales_pipeline.odoo.sale_order_line_repository import SALE_ORDER_LINE_FIELDS
 from sales_pipeline.odoo.sale_order_repository import SALE_ORDER_FIELDS
@@ -85,9 +86,18 @@ SPECS: tuple[MirrorSpec, ...] = (
     MirrorSpec("product.product", _u(PRODUCT_COST_FIELDS, sr.PRODUCT_FIELDS), context=ARCHIVED, per_company=True),
     # vendor lines: the Brand is the main vendor (sales_pipeline.odoo_products.main_vendors); removing a line leaves no
     # write_date, so ids are re-checked every cycle
+    # archived templates (2026-11-11: archived = variant OR template inactive) and the category tree (sub-categories of an
+    # excluded category, Raw Materials categories); parent_path moves without the child's write_date, the 02:00 full check
+    # re-reads it
+    MirrorSpec("product.template", _u(PRODUCT_TEMPLATE_FIELDS), context=ARCHIVED),
+    MirrorSpec("product.category", _u(PRODUCT_CATEGORY_FIELDS)),
     MirrorSpec("product.supplierinfo", _u(SUPPLIERINFO_FIELDS), context=ARCHIVED, per_company=True, id_check_every_cycle=True),
     MirrorSpec("stock.quant", _u(STOCK_QUANT_FIELDS), id_check_every_cycle=True),
     MirrorSpec("stock.location", _u(STOCK_LOCATION_FIELDS), context=ARCHIVED),
+    # the open receipt layers (Stock Aging, 2026-11-10); a layer used up (remaining_qty 0) leaves the domain, so ids are
+    # re-checked every cycle and it is dropped
+    MirrorSpec("stock.valuation.layer", _u(VALUATION_LAYER_FIELDS), domain=tuple(tuple(t) for t in VALUATION_LAYER_DOMAIN),
+               id_check_every_cycle=True),
     MirrorSpec("res.company", _u(RES_COMPANY_FIELDS, ["name", "currency_id"]), context=ARCHIVED),
     MirrorSpec("uom.uom", _u(["name", "factor"]), context=ARCHIVED),
 )

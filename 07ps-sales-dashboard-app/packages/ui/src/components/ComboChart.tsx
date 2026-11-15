@@ -57,6 +57,9 @@ export interface ComboChartProps {
    * context such as a percentage of its total. Falls back to the axis formatter for that series. */
   tooltipFormatters?: Record<string, (value: number, point?: ComboChartPoint) => string>;
   height?: number;
+  /** Grow with the card: the chart takes every pixel the card body has left (at least `height`), so a card stretched to
+   * its row's height has no empty band under the chart. Needs a parent with a definite height (ChartPanel in a grid row). */
+  fill?: boolean;
   /** The whole plot area becomes clickable (pointer cursor) and invokes this with the clicked
    * point's `label` -- fires whether the click lands on a bar, a line point, or elsewhere in that
    * category's column, since Recharts resolves the nearest category from the click's X position
@@ -109,6 +112,7 @@ export function ComboChart({
   rightAxisFormatter = defaultFormatter,
   tooltipFormatters,
   height = 300,
+  fill = false,
   onCategoryClick,
   onAreaClick,
   highlightedCategory = null,
@@ -147,7 +151,7 @@ export function ComboChart({
   };
 
   return (
-    <div style={{ width: '100%' }}>
+    <div style={fill ? { width: '100%', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } : { width: '100%' }}>
       <div
         style={{
           display: 'flex',
@@ -176,8 +180,8 @@ export function ComboChart({
         </button>
         )}
       </div>
-      <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default' }}>
-        <ResponsiveContainer width="100%" height={height}>
+      <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default', ...(fill ? { flex: 1, minHeight: height } : {}) }}>
+        <ResponsiveContainer width="100%" height={fill ? '100%' : height}>
           <ComposedChart
             data={data}
             margin={{ top: topPadding ?? (lines.some((l) => l.labelFormatter) ? 24 : 4), right: hasRightAxis ? 8 : 24, left: 0, bottom: 0 }}
