@@ -1,3 +1,4 @@
+import { isPortfolio } from '../product/portfolio';
 import type { AgingBucketAmount, BcgMovement, LifecycleSegment, ProductCompanyPart, ProductStatus, ProductDashboardOverview, ProductDashboardRow, StockBand, UomQty } from '../api';
 
 /**
@@ -104,9 +105,10 @@ function daysBetween(fromIso: string | null, toIso: string | null): number | nul
   return Math.round((Date.parse(toIso) - Date.parse(fromIso)) / 86_400_000);
 }
 
+/** Every Product page's rows: the portfolio only (Active + Non Active, lib/product/portfolio.ts), Product-page companies. */
 export function toProductFacts(data: ProductDashboardOverview | null | undefined): ProductFact[] {
   if (!data) return [];
-  return data.products.filter((r) => isProductPageCompany(r.company)).map((r: ProductDashboardRow) => ({
+  return data.products.filter((r) => isProductPageCompany(r.company) && isPortfolio(r)).map((r: ProductDashboardRow) => ({
     id: r.productCompanyKey,
     odooUrl: r.odooUrl ?? null,
     ProductKey: r.productKey,

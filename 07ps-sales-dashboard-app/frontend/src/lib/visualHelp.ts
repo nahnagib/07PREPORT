@@ -549,7 +549,7 @@ export const VISUAL_HELP = {
   },
   // KPI cards (2026-11-15): the page fills each formula from the ETL config (lib/product/lifecycle.ts).
   'product.productLifecycle.kpiMature': {
-    help: { definition: 'SKUs in the Mature segment, as of the last data refresh.', formula: 'Sold, last 90 days within ±20% of the 90 before · % = Mature ÷ every SKU listed after the page filters' },
+    help: { definition: 'SKUs in the Mature segment, as of the last data refresh.', formula: 'Sold, last 90 days within ±20% of the 90 before · % = Mature ÷ portfolio (Active + Non Active) after the page filters' },
   },
   'product.productLifecycle.kpiDiscontinued': {
     help: { definition: 'SKUs in the Discontinued segment, as of the last data refresh.', formula: 'Archived in Odoo, or no sale in the last 365 days · sub-line = their units sold in the prior period' },

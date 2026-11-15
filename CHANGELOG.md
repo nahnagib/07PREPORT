@@ -6,6 +6,21 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (One definition of "our products": Active + Non Active, 2026-11-15)
+- Every SKU is in exactly one bucket: Unclassified > Dormant > Active > Non Active (never sold included). One shared helper
+  on each side: backend `measures/productPortfolio.ts` (`productStatusOf`, `combineStatuses`, `isPortfolioStatus`),
+  frontend `lib/product/portfolio.ts` (`isPortfolio`, `portfolioOf`), ETL `product_status()`.
+- The Product pages' product list is now the portfolio (Active + Non Active) by that rule, not "OnProductPages = 1".
+  `toProductFacts` filters again, so BCG, PIM + brand drill, Lifecycle and Stock Velocity all read the same rows. Dormant
+  and Unclassified are counted only by Total SKUs, their own cards and the status table's own tabs.
+- Live effect today: the lists go from 2,490 to 2,498 rows. The 4 shared pseudo-products (ids 5550–5553: PoS down
+  payment, gift card ×2, wallet top-up, one row per company) were counted as Non Active by the cards but shown on no page.
+  Now they are listed as Never sold, until ProductExclusions.xlsx excludes them. Archived and excluded = Unclassified
+  (146 SKUs at the next refresh).
+- Mature SKUs % = Mature ÷ portfolio after the page filters (`maturePct`): 13.05% → 13.01% today. Portfolio Freshness uses
+  the same helper: 6.99% → 6.97%.
+- `bcgExcludedCategory` (legacy, 0 rows today) keeps working; the portfolio rule comes first.
+
 ### Changed (ProductExclusions.xlsx: the 2026-11-15 structure and meaning, 2026-11-15)
 - The reader accepts the new file (sha1 `08a87554…`): Customers 36 rows, Categories 5, Products 695 (501 Exclude / Yes, 194
   Exclude / No). Every reference column is ignored. "Archived in Odoo" and "Product Type" are never matched on (archive

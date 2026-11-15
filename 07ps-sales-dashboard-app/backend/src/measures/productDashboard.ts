@@ -37,8 +37,9 @@
  *              Odoo UoM (2026-11-07 decision). volumeByUom keeps the split by UoM for reference.
  *   Velocity = Volume / days in the period (period end capped at today).
  *   Order days = distinct days in the period with at least one sales line of the product (Sales Frequency).
- * Product Status of the period: Unclassified (workbook product or category exclusion) and Dormant (archived in Odoo) come from the ETL; every
- * other product is Active when it sold (quantity > 0) in the period, else Non Active.
+ * Product Status of the period: one rule, measures/productPortfolio.ts -- Unclassified (ProductExclusions.xlsx / Raw
+ * Materials) > Dormant (archived in Odoo) > Active (sold, quantity > 0, in the period) > Non Active. The product list is the
+ * PORTFOLIO only (Active + Non Active); Dormant and Unclassified are counted by statusSummary / skuList alone.
  * BCG class: Active products only, always one of Stars / Cash Cows / Strategic / Dogs (measures/bcgLatestProfit.ts; no
  * cost data = low GP%, flagged missingCost). The thresholds never leave the server (publicThresholds).
  * Profit data -- profit, GP%, cost, missingCost -- is served only with View on `profit_data` (withoutProfit, the route).
@@ -58,6 +59,7 @@ import { buildWhereClause, type Filters } from './filters';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 import { BCG_CLASS_KEYS, bcgRule, classifyPeriod, fetchBcgPeriod, withBcgThresholds, type BcgClassKey, type BcgResult } from './bcgLatestProfit';
 import { resolveProductPeriod, type ProductPeriod } from '../lib/last12Months';
+import { combineStatuses, isPortfolioStatus, productStatusOf, PRODUCT_STATUSES, type ProductStatus } from './productPortfolio';
 
 export interface UomQty {
   uom: string;
@@ -144,8 +146,7 @@ export interface ProductDashboardRow {
   negativeStockRows: number;
 }
 
-export type ProductStatus = 'Unclassified' | 'Dormant' | 'Active' | 'NonActive';
-export const PRODUCT_STATUSES: ProductStatus[] = ['Unclassified', 'Dormant', 'Active', 'NonActive'];
+export { PRODUCT_STATUSES, type ProductStatus };
 export { BCG_CLASS_KEYS, type BcgClassKey };
 
 /** Total SKUs / Product Status / BCG cards of the BCG Matrix page (company view, the selected period). */
@@ -354,7 +355,7 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     inTransitValue: num(p.InTransitValue),
     avgDailySales: num(p.AvgDailySales),
     daysOfInventory: numOrNull(p.DaysOfInventory),
-    stockBand: String(p.StockBand) as ProductDashboardRow['stockBand'],
+    stockBand: (str(p.StockBand) ?? 'NoStockNoSales') as ProductDashboardRow['stockBand'],
     stockAgeDays: numOrNull(p.StockAgeDays),
     stockAgeBucket: str(p.StockAgeBucket),
     onHandQty: num(p.OnHandQty),
@@ -363,7 +364,7 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
     stockAgeSource: str(p.StockAgeSource),
     // only the buckets holding stock (consumers look a bucket up by key, missing = 0): a quarter of the response before
     agingBuckets: buckets.map((b) => ({ ...b, qty: num(p[`AgeQty_${b.key}`]), value: num(p[`AgeValue_${b.key}`]) })).filter((b) => b.qty !== 0 || b.value !== 0),
-    lifecycleSegment: String(p.LifecycleSegment) as ProductDashboardRow['lifecycleSegment'],
+    lifecycleSegment: (str(p.LifecycleSegment) ?? (p.FirstSaleDate ? 'Mature' : 'Never sold')) as ProductDashboardRow['lifecycleSegment'],
     firstSaleDate: isoDate(p.FirstSaleDate),
     lastSaleDate: isoDate(p.LastSaleDate),
     productStatus: 'NonActive',
@@ -492,14 +493,19 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   const orderDaysOf = new Map((orderDayRows as any[]).map((r) => [String(r.k), num(r.orderDays)]));
   const soldAnywhere = new Set((soldRows as any[]).map((r) => String(r.k)));
   const odooBase = odooConfiguredBaseUrl();
+  // Status of the period (productPortfolio.ts): Unclassified / Dormant from the ETL, else Active = sold in the period.
+  const bcgByKey = new Map(bcgWindows.map((w) => [w.k, w]));
+  const statusOf = (p: any): ProductStatus => productStatusOf(p, Boolean(bcgByKey.get(String(p?.ProductCompanyKey))?.sold));
   const products: ProductDashboardRow[] = [];
   const viewRows = (productRows as any[]).filter((r) => {
     const company = String(r.Company ?? '');
     return (!allowedCompanies || allowedCompanies.has(company)) && (view === 'BMH' || company === view);
   });
   const rawByKey = new Map(viewRows.map((r) => [String(r.ProductCompanyKey), r]));
-  // OnProductPages = 0: an archived / excluded / catalog-only product -- only the status cards count it.
-  for (const p of viewRows.filter(onProductPages)) {
+  // The pages list the PORTFOLIO only (2026-11-15): Active + Non Active, whatever OnProductPages says -- Dormant and
+  // Unclassified are counted by the status cards alone. (A catalog-only product the ETL kept off the pages, e.g. a PoS gift
+  // card, is Non Active: it is listed, like any never-sold product, until ProductExclusions.xlsx excludes it.)
+  for (const p of viewRows.filter((r) => isPortfolioStatus(statusOf(r)))) {
     const key = String(p.ProductCompanyKey);
     const a = byProduct.get(key);
     const soldInScope = Boolean(a && (a.lines > 0 || a.linesPrior > 0));
@@ -510,14 +516,6 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
   // Status of the period (Active = sold in it, company-wide), BCG of the Active products, movement vs the prior period.
   const rule = bcgRule(thresholds);
   const volumeScale = period.isDefault ? 1 : period.days / 365;
-  const bcgByKey = new Map(bcgWindows.map((w) => [w.k, w]));
-  const statusOf = (p: any): ProductStatus => {
-    const etl = str(p.ProductStatus);
-    if (num(p.ExcludedByProduct) === 1 || num(p.ExcludedByCategory) === 1) return 'Unclassified';
-    if (etl === 'Unclassified' || etl === 'Dormant') return etl;
-    if (etl === null && p.IsActive !== null && p.IsActive !== undefined && num(p.IsActive) === 0) return 'Dormant';
-    return bcgByKey.get(String(p.ProductCompanyKey))?.sold ? 'Active' : 'NonActive';
-  };
   const classOf = new Map<string, BcgResult>();
   for (const p of viewRows) {
     const key = String(p.ProductCompanyKey);
@@ -632,10 +630,6 @@ function movementOf(r: ProductDashboardRow, period: ProductPeriod, rule: Movemen
   return 'Stable';
 }
 
-function onProductPages(p: any): boolean {
-  return p.OnProductPages === null || p.OnProductPages === undefined || num(p.OnProductPages) !== 0;
-}
-
 /** The SKUs of the status cards: the view's company rows grouped by Odoo variant id (a nullable OdooProductID marks
  * catalog membership even when core conformance uses ProductKey = -1). Rows without a real id are not SKUs. Shared by
  * the cards (statusSummaryOf) and the status table (skuListOf), so both count the same SKUs. */
@@ -701,9 +695,9 @@ export function skuListOf(rows: any[], statuses: Map<string, ProductStatus>, cla
       archived: parts.some((p) => p.IsActive !== null && p.IsActive !== undefined && num(p.IsActive) === 0),
       archivedDate: null,
       exclusionRule: status !== 'Unclassified' ? null
-        : byProductSheet ? 'ProductExclusions.xlsx · Products sheet (product excluded)'
+        : (parts.map((p) => str(p.ExclusionRule)).find((r) => r !== null) ?? null) ?? (byProductSheet ? 'ProductExclusions.xlsx · Products sheet (product excluded)'
           : byCategorySheet ? `ProductExclusions.xlsx · Categories sheet · ${str(byCategorySheet.Category) ?? 'category'}`
-            : 'Unclassified by the ETL (rule not recorded)',
+            : 'Unclassified by the ETL (rule not recorded)'),
     });
   }
   return out;
@@ -730,8 +724,9 @@ export interface StatusInput {
 
 /** Shared variants count once. Prefer a workbook match in any in-scope company, then a sale in the period. */
 export function combineSkuStatus(parts: StatusInput[]): StatusInput {
+  const combined = combineStatuses(parts.map((part) => part.status));
   const excluded = parts.find((part) => part.status === 'Unclassified');
-  if (excluded) return excluded;
+  if (combined === 'Unclassified' && excluded) return excluded;
 
   const active = parts.filter((part) => part.status === 'Active');
   if (active.length) {
@@ -751,7 +746,7 @@ export function combineSkuStatus(parts: StatusInput[]): StatusInput {
     };
   }
   return {
-    status: parts.every((part) => part.status === 'Dormant') ? 'Dormant' : 'NonActive',
+    status: combined,
     onHandQty: parts.reduce((total, part) => total + part.onHandQty, 0),
     onHandValue: parts.reduce((total, part) => total + part.onHandValue, 0),
     bcg: null,

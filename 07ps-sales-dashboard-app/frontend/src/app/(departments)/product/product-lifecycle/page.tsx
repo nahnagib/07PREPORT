@@ -41,7 +41,7 @@ import {
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
 import { ProductName } from '../../../../components/product/ProductUi';
-import { lifecycleConfig, portfolioFreshness, segmentDefinitions } from '../../../../lib/product/lifecycle';
+import { lifecycleConfig, maturePct, portfolioFreshness, segmentDefinitions } from '../../../../lib/product/lifecycle';
 
 const SEGMENTS = LIFECYCLE_SEGMENTS;
 interface TableRow extends ProductFact, Record<string, unknown> {
@@ -82,7 +82,7 @@ export default function ProductLifecyclePage() {
   const segDef = segmentDefinitions(lc);
   const withFormula = (entry: ReturnType<typeof vh>, formula: string) => (entry.help ? { ...entry.help, formula } : undefined);
   const kpiHelp = {
-    mature: withFormula(vh('product.productLifecycle.kpiMature'), `${segDef.Mature} · % = Mature ÷ every SKU listed after the page filters`),
+    mature: withFormula(vh('product.productLifecycle.kpiMature'), `${segDef.Mature} · % = Mature ÷ portfolio (Active + Non Active) after the page filters`),
     discontinued: withFormula(vh('product.productLifecycle.kpiDiscontinued'), `${segDef.Discontinued} · sub-line = their units sold in the prior period`),
     freshness: withFormula(vh('product.productLifecycle.kpiFreshness'),
       `Freshness = SKUs first sold in the last ${lc.newDays} days ÷ (Active + Non Active SKUs after the page filters) · Dormant and Unclassified left out`),
@@ -196,7 +196,7 @@ export default function ProductLifecyclePage() {
             <KpiTile
               label="Mature SKUs"
               value={String(matureRows.length)}
-              variance={filtered.length ? `${((matureRows.length / filtered.length) * 100).toFixed(1)}% of filtered portfolio` : undefined}
+              variance={(() => { const pct = maturePct(filtered); return pct === null ? undefined : `${pct.toFixed(1)}% of portfolio`; })()}
               status="neutral"
               help={kpiHelp.mature}
             />

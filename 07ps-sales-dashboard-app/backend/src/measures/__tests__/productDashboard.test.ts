@@ -317,7 +317,7 @@ describe('computeProductDashboard', () => {
     expect(by['Majaal|6']).toMatchObject({ productStatus: 'NonActive', bcgClass: null, bcgProfit: null });
     expect(by['Tika|7'].bcgClass).toBe('Strategic');
     expect(by['Majaal|8']).toMatchObject({ bcgClass: 'Dogs', bcgGrossProfitPct: null, missingCost: true });
-    expect(by['Majaal|10']).toMatchObject({ productStatus: 'Dormant', bcgClass: null }); // archived: sold, but never classified
+    expect(by['Majaal|10']).toBeUndefined(); // archived = Dormant: never listed, never classified (portfolio only, 2026-11-15)
     // the cards: 7 Active = Stars 1 + Cash Cows 1 + Strategic 2 + Dogs 3; 4 with missing cost
     expect(out.statusSummary?.active.count).toBe(7);
     expect(out.statusSummary?.bcg.classes.map((c) => [c.key, c.count])).toEqual([['Stars', 1], ['Cash Cows', 1], ['Strategic', 2], ['Dogs', 3]]);
@@ -375,10 +375,17 @@ describe('computeProductDashboard', () => {
     ];
     const windows = [win('Majaal|1', 1000, 4000, 100), win('Tika|7', 70, 7, 0, { costed: false })];
 
-    it('the period decides Active / Non Active; every product counted once; the pages list only OnProductPages = 1', async () => {
+    it('the period decides Active / Non Active; every product counted once; the pages list the portfolio only', async () => {
       const { pool } = makePool([], rows, META, [], [], windows);
       const out = await computeProductDashboard(pool, {});
-      expect(out.products.map((p) => p.productCompanyKey)).toEqual(['Majaal|1', 'Majaal|2', 'Majaal|3', 'Tika|7']);
+      // 2026-11-15: Active + Non Active, whatever OnProductPages says (Majaal|6: off the ETL pages, not excluded, not archived
+      // = Non Active, so listed); the Dormant (4) and Unclassified (5) rows only in the cards
+      expect(out.products.map((p) => p.productCompanyKey)).toEqual(['Majaal|1', 'Majaal|2', 'Majaal|3', 'Majaal|6', 'Tika|7']);
+      expect(out.products.map((p) => p.productStatus).every((s) => s === 'Active' || s === 'NonActive')).toBe(true);
+      // an off-page row has no ETL lifecycle / stock band: never sold, no stock
+      const offPage = product('Majaal|12', 'Majaal', { IsActive: 1, OnProductPages: 0, LifecycleSegment: null, StockBand: null });
+      const listed = await computeProductDashboard(makePool([], [offPage], META).pool, {});
+      expect([listed.products[0].lifecycleSegment, listed.products[0].stockBand]).toEqual(['Never sold', 'NoStockNoSales']);
       expect(out.statusSummaryError).toBeNull();
       expect(out.statusSummary).toMatchObject({
         total: 7,

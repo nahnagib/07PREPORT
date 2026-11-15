@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProductFact } from '../../materialsAnalogy/shared';
-import { lifecycleConfig, portfolioFreshness, segmentDefinitions } from '../lifecycle';
+import { lifecycleConfig, maturePct, portfolioFreshness, segmentDefinitions } from '../lifecycle';
 
 const fact = (id: number, productStatus: ProductFact['productStatus'], lifecycle: ProductFact['lifecycle']) =>
   ({ id: String(id), productStatus, lifecycle }) as unknown as ProductFact;
@@ -26,5 +26,13 @@ describe('lifecycle definitions come from the ETL config', () => {
     expect(d.Discontinued).toBe('Archived in Odoo, or no sale in the last 300 days.');
     expect(d.Growing).toMatch(/last 60 days more than 15% above/);
     expect(d.Mature).toMatch(/within ±15%/);
+  });
+});
+
+describe('Mature SKUs % (2026-11-15): over the portfolio only', () => {
+  it('Dormant / Unclassified rows never enter the denominator', () => {
+    const rows = [fact(1, 'Active', 'Mature'), fact(2, 'NonActive', 'Never sold'), fact(3, 'Dormant', 'Mature'), fact(4, 'Unclassified', 'Mature')];
+    expect(maturePct(rows)).toBe(50);
+    expect(maturePct([])).toBeNull();
   });
 });
