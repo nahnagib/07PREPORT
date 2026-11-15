@@ -606,21 +606,30 @@ export function withoutProfit(o: ProductDashboardOverview): ProductDashboardOver
 interface MovementRule {
   bandPct: number;
   newWithinDays: number;
+  /** Discontinued = no sale in this many days (lifecycle.discontinued_no_sales_days, the Product Lifecycle rule). */
+  noSalesDays: number;
 }
 
 function movementConfig(thresholds: Record<string, unknown>): MovementRule {
   const bcg = (thresholds.bcg ?? {}) as { movement_stable_band_pct?: number };
-  const lifecycle = (thresholds.lifecycle ?? {}) as { new_first_sale_within_days?: number };
-  return { bandPct: Number(bcg.movement_stable_band_pct ?? 10), newWithinDays: Number(lifecycle.new_first_sale_within_days ?? 180) };
+  const lifecycle = (thresholds.lifecycle ?? {}) as { new_first_sale_within_days?: number; discontinued_no_sales_days?: number };
+  return {
+    bandPct: Number(bcg.movement_stable_band_pct ?? 10),
+    newWithinDays: Number(lifecycle.new_first_sale_within_days ?? 180),
+    noSalesDays: Number(lifecycle.discontinued_no_sales_days ?? 365),
+  };
 }
 
-/** Product Movement on volume, the period vs the prior period of the same length: Discontinued = archived in Odoo;
- * New = first sale within the config days of the period end, or nothing sold in the prior period; Improved / Drop =
- * growth above +band / below -band; Stable within. Not sold in either period = no movement. */
-function movementOf(r: ProductDashboardRow, period: ProductPeriod, rule: MovementRule): ProductDashboardRow['bcgMovement'] {
-  if (r.lines <= 0 && r.volumePrior === 0 && r.valuePrior === 0) return null;
-  if (r.isActive === 0) return 'Discontinued';
+/** Product Movement on volume, the period vs the prior period of the same length (2026-11-15):
+ * Discontinued = no sale in the last `noSalesDays` days before the period end -- the Product Lifecycle rule, so the word
+ * means one thing everywhere (archived products are Dormant and never listed); New = first sale within the config days
+ * of the period end, or nothing sold in the prior period; Improved / Drop = growth above +band / below -band; Stable
+ * within. Never sold, or not sold in either period while still sold within the no-sales window = no movement. */
+export function movementOf(r: ProductDashboardRow, period: ProductPeriod, rule: MovementRule): ProductDashboardRow['bcgMovement'] {
   const end = DateTime.fromISO(period.to);
+  const last = r.lastSaleDate ? DateTime.fromISO(r.lastSaleDate) : null;
+  if (last && end.diff(last, 'days').days >= rule.noSalesDays) return 'Discontinued';
+  if (r.lines <= 0 && r.volumePrior === 0 && r.valuePrior === 0) return null;
   const first = r.firstSaleDate ? DateTime.fromISO(r.firstSaleDate) : null;
   if ((first && end.diff(first, 'days').days < rule.newWithinDays) || (r.volumePrior <= 0 && r.volume > 0)) return 'New';
   if (r.volumePrior <= 0) return 'Stable';

@@ -336,15 +336,16 @@ def test_product_movement_is_on_volume_last_12_months_vs_the_12_before_with_the_
         2: (True, [("2025-03-01", 100), ("2026-03-01", 110)], "Stable"),        # +10% exactly: inside the band
         3: (True, [("2025-03-01", 100), ("2026-03-01", 90)], "Stable"),         # -10% exactly: inside the band
         4: (True, [("2025-03-01", 100), ("2026-03-01", 89)], "Drop"),           # -11%
-        5: (True, [("2025-03-01", 100)], "Drop"),                               # sold last year, nothing this year, still active
+        5: (True, [("2025-03-01", 100)], "Discontinued"),                       # no sale in 365 days (2026-11-15: the Lifecycle rule)
         6: (True, [("2024-05-01", 40), ("2026-03-01", 50)], "New"),             # nothing in the prior 12 months (old product back on sale)
         7: (True, [("2026-06-01", 5)], "New"),                                  # first sale within 180 days
         8: (False, [("2025-03-01", 100), ("2026-03-01", 300)], "excluded"),     # archived in Odoo: off every Product page
         9: (False, [("2026-06-01", 5)], "excluded"),
-        10: (True, [("2024-05-01", 40)], None),                                 # not sold in either period
+        10: (True, [("2024-05-01", 40)], "Discontinued"),                       # last sale 2024: no sale in 365 days
         11: (True, [("2025-03-01", 100), ("2026-03-01", 110.01)], "Improved"),  # just over +10%
         12: (True, [("2025-03-01", 100), ("2026-03-01", 89.99)], "Drop"),       # just under -10%
-        13: (True, [("2025-09-28", 100), ("2025-09-29", 100)], "Stable"),       # window edges: the day before = prior, the start day = last 12
+        13: (True, [("2025-09-28", 100), ("2025-09-29", 100)], "Discontinued"), # last sale exactly 365 days ago: the Lifecycle rule
+        15: (True, [("2025-09-28", 100), ("2025-09-29", 50), ("2026-09-01", 50)], "Stable"),  # window edges: day before = prior, start day = last 12
         14: (True, [("2024-09-28", 900), ("2025-03-01", 100), ("2026-03-01", 100)], "Stable"),  # older than the prior 12 months: not counted
     }
     dim = _dim(*({"id": i, "name": f"P{i}", "company": "Majaal", "active": active} for i, (active, _, _) in cases.items()))
@@ -426,3 +427,14 @@ def test_shipped_stock_and_frequency_config() -> None:
     assert [b["max_days"] for b in raw["stock"]["aging_buckets"]] == [30, 60, 90, 180, 365, None]
     assert [(b["key"], b["max_gap_days"]) for b in raw["sales_frequency"]["buckets"]] == [
         ("Daily", 2), ("Weekly", 7), ("Monthly", 30), ("Quarterly", 90), ("Rarely", None)]
+
+
+def test_movement_discontinued_is_no_sale_in_365_days_not_archived() -> None:
+    import pandas as pd
+    from sales_pipeline.product_dashboard import ProductDashboardBuilder, ProductDashboardConfig
+    b = ProductDashboardBuilder(ProductDashboardConfig.load(CONFIG), "2026-09-29")
+    idx = ["archived, sold this year", "active, last sale 2 years ago", "active, never sold"]
+    bcg = pd.DataFrame({"QtyYTD": [10, 0, 0], "QtyLYTD": [10, 0, 0], "BcgClassYTD": ["Stars", None, None], "BcgClassLYTD": ["Stars", None, None]}, index=idx)
+    products = pd.DataFrame({"FirstSaleDate": ["2023-01-01", "2023-01-01", None], "LastSaleDate": ["2026-09-01", "2024-09-01", None],
+                             "IsActive": [0, 1, 1]}, index=idx)
+    assert b._movement(bcg, products).tolist() == ["Stable", "Discontinued", None]

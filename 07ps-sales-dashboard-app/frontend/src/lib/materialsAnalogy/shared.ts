@@ -261,19 +261,23 @@ export interface MovementConfig {
   /** Stable band (± %) and "New" = first sale within these days. */
   movementBandPct: number | null;
   newWithinDays: number | null;
+  /** lifecycle.discontinued_no_sales_days: Discontinued = no sale in this many days. */
+  noSalesDays: number | null;
 }
 export function movementConfig(thresholds: Record<string, unknown> | undefined): MovementConfig {
   const bcg = (thresholds?.bcg ?? {}) as { movement_stable_band_pct?: number };
-  const lifecycle = (thresholds?.lifecycle ?? {}) as { new_first_sale_within_days?: number };
+  const lifecycle = (thresholds?.lifecycle ?? {}) as { new_first_sale_within_days?: number; discontinued_no_sales_days?: number };
   const num = (v: unknown) => (typeof v === 'number' ? v : null);
-  return { movementBandPct: num(bcg.movement_stable_band_pct), newWithinDays: num(lifecycle.new_first_sale_within_days) };
+  return { movementBandPct: num(bcg.movement_stable_band_pct), newWithinDays: num(lifecycle.new_first_sale_within_days),
+    noSalesDays: num(lifecycle.discontinued_no_sales_days) };
 }
 
 /** The Product Movement rule in one line, with the config values (the "?" of the Product Movement donut). */
 export function movementRule(t: MovementConfig): string {
   const band = t.movementBandPct === null ? 'X%' : `${t.movementBandPct}%`;
   const days = t.newWithinDays === null ? 'N days' : `${t.newWithinDays} days`;
-  return `Improved > +${band} · Drop < −${band} · Stable within ±${band} · New = first sale ≤ ${days} or none in the prior period · archived Odoo products are left out`;
+  const dead = t.noSalesDays === null ? '365 days' : `${t.noSalesDays} days`;
+  return `Improved > +${band} · Drop < −${band} · Stable within ±${band} · New = first sale ≤ ${days} or none in the prior period · Discontinued = no sale in ${dead}`;
 }
 
 /** Each class in words, no thresholds (they stay on the server). Products without cost data count as low margin. */
@@ -327,7 +331,8 @@ export const MOVEMENT_COLOR: Record<BcgMovement, string> = {
   Stable: 'var(--ps-color-gold)',
   Improved: 'var(--ps-color-success)',
   Drop: 'var(--ps-color-alert)',
-  Discontinued: 'var(--ps-color-neutral-text)',
+  // the Product Lifecycle colour: Discontinued is one rule (no sale in 365 days) on both pages
+  Discontinued: SEGMENT_COLOR.Discontinued,
 };
 
 export const MOVEMENT_LABEL: Record<BcgMovement, string> = {

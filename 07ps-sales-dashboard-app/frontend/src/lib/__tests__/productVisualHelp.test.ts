@@ -55,7 +55,7 @@ describe('Product pages "?" and "i"', () => {
 
   it('Product Movement is one line from the config values; the BCG help has no thresholds', () => {
     const t = movementConfig({ bcg: { movement_stable_band_pct: 10 }, lifecycle: { new_first_sale_within_days: 180 } });
-    expect(movementRule(t)).toBe('Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior period · archived Odoo products are left out');
+    expect(movementRule(t)).toBe('Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior period · Discontinued = no sale in 365 days');
     const text = JSON.stringify(VISUAL_HELP['product.bcgMatrix.matrix']);
     expect(text).not.toMatch(/3,500|25,000|35%|≥|Not classified/);
   });

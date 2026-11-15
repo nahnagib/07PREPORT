@@ -995,13 +995,13 @@ class ProductDashboardBuilder:
         """Product Movement, on VOLUME: invoiced quantity of the last 12 months vs the 12 months before (QtyYTD vs QtyLYTD,
         which hold those two windows since 2026-11-14),
         for every product sold in either period. In this order:
-          Discontinued  archived in Odoo (product.product active = False; archiving a template archives its variants)
-                        -- we stopped supplying it, whatever it sold
+          Discontinued  no sale in the last lifecycle.discontinued_no_sales_days (365) days -- the Product Lifecycle rule
+                        (2026-11-15; archived products are Dormant and never on the Product pages)
           New           first sale within lifecycle.new_first_sale_within_days, or nothing sold in the prior 12 months
           Improved      volume growth > +bcg.movement_stable_band_pct
           Drop          volume growth < -band (sold in the prior 12 months and nothing in the last 12, still active, is -100%)
           Stable        within +-band, or no positive volume in either period (returns only)
-        Not sold in either period -> no movement (None)."""
+        Never sold, or not sold in either period but sold within the no-sales window -> no movement (None)."""
         band = float(self.config.section("bcg").get("movement_stable_band_pct", 10))
         new_days = int(self.config.section("lifecycle").get("new_first_sale_within_days", 180))
         qty_y = pd.to_numeric(b["QtyYTD"], errors="coerce").fillna(0.0)
@@ -1009,18 +1009,20 @@ class ProductDashboardBuilder:
         sold = b["BcgClassYTD"].notna() | b["BcgClassLYTD"].notna()
         first = pd.to_datetime(products["FirstSaleDate"], errors="coerce")
         is_new_product = first.notna() & first.ge(self.as_of - pd.Timedelta(days=new_days - 1))
-        archived = pd.to_numeric(products["IsActive"], errors="coerce").eq(0)
+        dead_days = int(self.config.section("lifecycle").get("discontinued_no_sales_days", 365))
+        last = pd.to_datetime(products["LastSaleDate"], errors="coerce") if "LastSaleDate" in products.columns else pd.Series(pd.NaT, index=b.index)
+        discontinued = last.notna() & last.lt(self.as_of - pd.Timedelta(days=dead_days - 1))
         growth = (qty_y - qty_l).div(qty_l.where(qty_l > 0)) * 100
         return pd.Series(np.select(
             [
-                archived,
+                discontinued,
                 is_new_product | (qty_l.le(0) & qty_y.gt(0)),
                 growth.gt(band),
                 growth.lt(-band),
             ],
             ["Discontinued", "New", "Improved", "Drop"],
             default="Stable",
-        ), index=b.index).where(sold, None)
+        ), index=b.index).where(sold | discontinued, None)
 
     # ------------------------------------------------------------------ logs
     def odoo_gaps(self, lines: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:

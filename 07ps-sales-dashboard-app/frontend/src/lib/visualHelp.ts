@@ -436,7 +436,7 @@ export const VISUAL_HELP = {
   },
   'product.bcgMatrix.movement': {
     // the page puts the config band and "new" window in the formula line (shared.ts movementRule)
-    help: { definition: 'Volume of the selected period vs the prior period of the same length, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior period' },
+    help: { definition: 'Volume of the selected period vs the prior period of the same length, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior period · Discontinued = no sale in 365 days' },
     interactions: ['Click a slice to list its products', 'Click a product to open it in Odoo', 'Hover a product for its figures', 'Export the list to CSV or PDF'],
   },
   'product.bcgMatrix.productDetail': {
