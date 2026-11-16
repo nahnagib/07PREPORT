@@ -827,8 +827,11 @@ function DebtTotalBand({ all, currencies, snapshotDate, ytdSales }: {
   const mix = currencies
     .map((c) => ({ currency: c.currency, amount: c.kpis.openAmountCompany, share: all.openAmount ? c.kpis.openAmountCompany / all.openAmount : 0 }))
     .filter((m) => m.amount > 0);
-  // amounts need more width than counts: on a phone the two amounts take a line each, the two counts share one
-  const stat = (label: string, value: string, sub: string, color: string, title?: string, basis = 150) => (
+  // Debt to YTD Sales % (2026-11-16): no box of its own -- in brackets next to the total, its details in the total's hint
+  const ratio = ytdSales ? debtToSales(all.openAmount, ytdSales.value, ytdSales.bands) : null;
+  const ratioDetail = ytdSales ? debtToSalesDetail(ytdSales) : '';
+  // the four boxes share the row equally (each at least 140 px: on a phone they wrap two by two)
+  const stat = (label: string, value: string, sub: string, color: string, title?: string, basis = 140) => (
     <div title={title} style={{ flex: `1 1 ${basis}px`, minWidth: 0, padding: '10px 14px', borderRadius: 10, background: 'var(--ps-color-surface)', border: '1px solid var(--ps-color-border)' }}>
       <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 700, color, fontVariantNumeric: 'tabular-nums', lineHeight: 1.3, overflowWrap: 'anywhere' }}>{value}</div>
@@ -846,18 +849,25 @@ function DebtTotalBand({ all, currencies, snapshotDate, ytdSales }: {
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 24px', alignItems: 'center' }}>
         <div style={{ flex: '1 1 280px', minWidth: 0 }} title={`${approx}${formatMoney(all.currency, all.openAmount)}. ${OPEN_INVOICES_NOTE}.`}>
-          <h2 style={{ ...h2, margin: 0, fontSize: 15 }}>Total debt: all currencies ({all.currency} equivalent) <InfoHint label="Total debt" detail={`${approx}${formatMoney(all.currency, all.openAmount)}. ${OPEN_INVOICES_NOTE}. ${converted ? `≈ Converted at Odoo’s booked rate on each invoice’s date. ` : ''}Snapshot: ${formatDate(snapshotDate)}.`} /></h2>
+          <h2 style={{ ...h2, margin: 0, fontSize: 15 }}>Total debt: all currencies ({all.currency} equivalent) <InfoHint label="Total debt" detail={`${approx}${formatMoney(all.currency, all.openAmount)}. ${OPEN_INVOICES_NOTE}. ${converted ? `≈ Converted at Odoo’s booked rate on each invoice’s date. ` : ''}Snapshot: ${formatDate(snapshotDate)}.${ratioDetail ? ` ${ratioDetail}` : ''}`} /></h2>
           <div style={{ fontSize: 'clamp(34px, 4.2vw, 46px)', fontWeight: 800, lineHeight: 1.15, marginTop: 6, color: 'var(--ps-color-text)', fontVariantNumeric: 'tabular-nums' }}>
             {approx}
             {formatCompactMoney(all.currency, all.openAmount)}
+            {ytdSales && ratio && (
+              <span data-testid="debt-to-sales" data-tone={ratio.tone} title={ratioDetail}
+                style={{ fontSize: 'clamp(14px, 1.4vw, 17px)', fontWeight: 500, color: 'var(--ps-color-muted-text)', marginInlineStart: 10, whiteSpace: 'nowrap' }}>
+                {ratio.pct === null || ytdSales.value === null
+                  ? '(YTD sales not available)'
+                  : <>(<span style={{ color: TONE_COLOR[ratio.tone], fontWeight: 700 }}>{ratio.pct.toFixed(1)}%</span> of YTD sales)</>}
+              </span>
+            )}
           </div>
         </div>
         <div style={{ flex: '2 1 460px', minWidth: 0, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
           {stat('Overdue', `${approx}${formatCompactMoney(all.currency, all.overdueAmount)}`, `${pctLabel(all.overduePctOfOpen)} of total debt`, 'var(--ps-color-alert)', `${approx}${formatMoney(all.currency, all.overdueAmount)}`)}
           {stat('Not yet due', `${approx}${formatCompactMoney(all.currency, all.notDueAmount)}`, `${pctLabel(all.notDuePctOfOpen)} of total debt`, 'var(--ps-color-success)', `${approx}${formatMoney(all.currency, all.notDueAmount)}`)}
-          {stat('Customers', formatNumber(all.customers), '', 'var(--ps-color-text)', 'Customers with an open invoice. A customer owing in several currencies counts once.', 100)}
-          {stat('Invoices', formatNumber(all.openDocuments), '', 'var(--ps-color-text)', 'Posted invoices with an amount due.', 100)}
-          {ytdSales && <DebtToSalesTile debt={all.openAmount} ytdSales={ytdSales} approx={approx} />}
+          {stat('Customers', formatNumber(all.customers), '', 'var(--ps-color-text)', 'Customers with an open invoice. A customer owing in several currencies counts once.')}
+          {stat('Invoices', formatNumber(all.openDocuments), '', 'var(--ps-color-text)', 'Posted invoices with an amount due.')}
         </div>
       </div>
       {/* the currency mix: the shared ShareBar (also the NPS "Detractors by Branch" bar) */}
@@ -872,25 +882,13 @@ function DebtTotalBand({ all, currencies, snapshotDate, ytdSales }: {
   );
 }
 
-/** Debt to YTD Sales % (2026-11-15): the band's total debt ÷ YTD sales of the same filters; green / yellow / red bands. */
-function DebtToSalesTile({ debt, ytdSales, approx }: { debt: number; ytdSales: NonNullable<DebtOverview['ytdSales']>; approx: string }) {
-  const { pct, tone } = debtToSales(debt, ytdSales.value, ytdSales.bands);
+/** Debt to YTD Sales % (2026-11-15; since 2026-11-16 in brackets next to Total debt): the base and the formula, for the
+ * Total debt hint -- everything the former box showed. */
+function debtToSalesDetail(ytdSales: NonNullable<DebtOverview['ytdSales']>): string {
   const { greenMaxPct: g, yellowMaxPct: y } = ytdSales.bands;
-  const detail = `Debt to YTD Sales % = Total debt (LYD equivalent) ÷ YTD sales (LYD) × 100. YTD sales = the Tachometer's YTD Value for the same filters (${formatDate(ytdSales.from)} – ${formatDate(ytdSales.to)}). 0–${g}% green · ${g}–${y}% yellow · ${y}% and above red.`;
-  return (
-    <div data-testid="debt-to-sales" data-tone={tone} title={detail}
-      style={{ flex: '1 1 150px', minWidth: 0, padding: '10px 14px', borderRadius: 10, background: 'var(--ps-color-surface)', border: '1px solid var(--ps-color-border)', borderLeft: `4px solid ${TONE_COLOR[tone]}` }}>
-      <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)', display: 'flex', alignItems: 'center', gap: 4 }}>
-        Debt to YTD Sales % <InfoHint label="Debt to YTD Sales %" detail={detail} />
-      </div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: TONE_COLOR[tone], fontVariantNumeric: 'tabular-nums', lineHeight: 1.3 }}>
-        {pct === null ? '—' : `${approx}${pct.toFixed(1)}%`}
-      </div>
-      <div style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)' }}>
-        {ytdSales.value === null ? 'YTD sales not available' : `of YTD sales (${formatCompactMoney(ytdSales.currency, ytdSales.value)})`}
-      </div>
-    </div>
-  );
+  const base = ytdSales.value === null ? 'YTD sales not available' : `YTD sales ${formatCompactMoney(ytdSales.currency, ytdSales.value)}`;
+  return `Debt to YTD Sales %: ${base} (${formatDate(ytdSales.from)} – ${formatDate(ytdSales.to)}, the Tachometer's YTD Value for the same filters). `
+    + `Debt to YTD Sales % = Total debt (LYD equivalent) ÷ YTD sales (LYD) × 100. 0–${g}% green · ${g}–${y}% yellow · ${y}% and above red.`;
 }
 
 /**

@@ -2632,14 +2632,20 @@ export type ProductStatus = 'Unclassified' | 'Dormant' | 'Active' | 'NonActive';
 export type BcgClassKey = 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs';
 
 /** Total SKUs / Product Status / BCG cards (company view; backend summarizeProductStatus checks both sums). */
+/** Quantity on hand and its value of a status's SKUs (2026-11-16; absent from an API older than that). */
+export interface OnHandTotals {
+  onHandQty?: number;
+  onHandValue?: number;
+}
+
 export interface ProductStatusSummary {
   total: number;
-  active: { count: number; units: number; value: number };
+  active: { count: number; units: number; value: number } & OnHandTotals;
   /** withStock = stock but no sales; withSales (= zeroStock) = sales but no stock (2026-11-15 rules). */
-  nonActive: { count: number; withStock: number; withSales?: number; zeroStock: number; stockUnits: number; stockValue: number };
+  nonActive: { count: number; withStock: number; withSales?: number; zeroStock: number; stockUnits: number; stockValue: number } & OnHandTotals;
   /** archived = archived in Odoo; idle = no stock and no sales in the period. */
-  dormant: { count: number; archived?: number; idle?: number };
-  unclassified: { count: number };
+  dormant: { count: number; archived?: number; idle?: number } & OnHandTotals;
+  unclassified: { count: number } & OnHandTotals;
   /** Stars + Cash Cows + Strategic + Dogs = active.count + nonActive.count (2026-11-15). profit / missingCost: profit access only. */
   bcg: { classes: { key: BcgClassKey; count: number; units: number; value: number; profit?: number }[]; missingCost?: number };
 }
@@ -2745,6 +2751,83 @@ export interface ProductStatusList {
 export function fetchProductStatusList(token: string, scope: ProductDashboardScope = {}): Promise<ProductStatusList> {
   const qs = buildProductDashboardQuery(scope);
   return request(`/product-dashboard/bcg-matrix/products${qs ? `?${qs}` : ''}`, token);
+}
+
+// ---- SKU Trend (Product Portfolio page, 2026-11-16; backend measures/skuTrend.ts) ----------------------------------
+/** The three Product Status buckets of the trend (Unclassified is not on it). */
+export type SkuTrendStatus = 'active' | 'nonActive' | 'dormant';
+/** The drill-down: one status (a line point) or every SKU of the period ('all', the total bar). */
+export type SkuTrendSelection = SkuTrendStatus | 'all';
+
+export interface SkuTrendCounts {
+  active: number;
+  nonActive: number;
+  dormant: number;
+  total: number;
+}
+
+/** One period: Active / Non Active / Dormant SKUs with the Product Status cards' rules -- sales in the period, stock on hand
+ * at its end (today for the period in progress). counts null = the stock of that period end is not loaded. */
+export interface SkuTrendPoint {
+  start: string;
+  end: string;
+  inProgress: boolean;
+  stockDate: string;
+  counts: SkuTrendCounts | null;
+  /** the period before: the WoW / MoM / YoY change */
+  previous: SkuTrendCounts | null;
+}
+
+export interface SkuTrend {
+  granularity: PeriodGranularity;
+  view: ProductDashboardOverview['view'];
+  from: string;
+  to: string;
+  points: SkuTrendPoint[];
+  /** false = no closed period has stock history yet (run the backfill script) */
+  stockLoaded: boolean;
+  missingStockDates: string[];
+}
+
+export interface SkuTrendSku {
+  odooProductId: string;
+  sku: string | null;
+  productName: string;
+  companies: string[];
+  /** units / LYD sold in the period */
+  units: number;
+  value: number;
+  /** on hand at the period end */
+  onHandQty: number;
+  archived: boolean;
+  /** its status in that period */
+  status: SkuTrendStatus;
+  odooUrl: string | null;
+}
+
+export interface SkuTrendSkuList {
+  granularity: PeriodGranularity;
+  status: SkuTrendSelection;
+  period: { start: string; end: string; stockDate: string };
+  skus: SkuTrendSku[];
+}
+
+/** The SKU Trend query: the Product pages' Company, the To Date of their Date filter (default today) and the period. */
+function skuTrendQuery(scope: ProductDashboardScope, granularity: PeriodGranularity, extra: Record<string, string> = {}): string {
+  const params = new URLSearchParams({ granularity, ...extra });
+  if (scope.toDate) params.set('toDate', scope.toDate);
+  if (scope.company && scope.company !== 'All') params.set('company', scope.company);
+  return params.toString();
+}
+
+/** GET /product-dashboard/bcg-matrix/sku-trend: every period of the window in one response. */
+export function fetchSkuTrend(token: string, scope: ProductDashboardScope, granularity: PeriodGranularity): Promise<SkuTrend> {
+  return request(`/product-dashboard/bcg-matrix/sku-trend?${skuTrendQuery(scope, granularity)}`, token);
+}
+
+/** GET /product-dashboard/bcg-matrix/sku-trend/skus: the SKUs behind the total bar or one status point (the drill-down). */
+export function fetchSkuTrendSkus(token: string, scope: ProductDashboardScope, granularity: PeriodGranularity, period: string, status: SkuTrendSelection): Promise<SkuTrendSkuList> {
+  return request(`/product-dashboard/bcg-matrix/sku-trend/skus?${skuTrendQuery(scope, granularity, { period, status })}`, token);
 }
 
 // ---- Debt Report (Price / Finance department; backend routes/debtReport.ts) -----------------------------------------

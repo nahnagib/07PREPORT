@@ -23,6 +23,7 @@ import {
   LoadingSkeleton,
   ErrorState,
   VisualInfoIcons,
+  chartTooltipProps,
   type SelectOption,
   type DataGridColumn,
 } from '@07ps/ui';
@@ -107,8 +108,27 @@ export default function ProductLifecyclePage() {
   let cum = 0;
   const paretoPoints = segEntries.map(([label, o]) => {
     cum += Math.max(0, o.units);
-    return { label, units: o.units, unitsLY: o.unitsLY, cumPct: (cum / totalUnits) * 100 };
+    return { label, skus: o.n, units: o.units, unitsLY: o.unitsLY, cumPct: (cum / totalUnits) * 100 };
   });
+  // The hover (2026-11-16): the segment, its SKUs (the same rows the bar adds up), then the three series
+  const paretoTooltip = ({ active, label }: { active?: boolean; label?: unknown }) => {
+    const p = active ? paretoPoints.find((x) => x.label === label) : undefined;
+    if (!p) return null;
+    const rows: [string, string, string][] = [
+      ['SKUs', p.skus.toLocaleString('en-US'), 'var(--ps-tooltip-fg)'],
+      ['Units sold (period)', fmtNum(p.units), 'var(--ps-color-accent)'],
+      ['Prior period', fmtNum(p.unitsLY), 'var(--ps-color-last-year)'],
+      ['Cumulative %', `${p.cumPct.toFixed(0)}%`, 'var(--ps-color-gold)'],
+    ];
+    return (
+      <div style={chartTooltipProps.contentStyle} data-testid="pareto-tooltip">
+        <div style={chartTooltipProps.labelStyle}>{p.label}</div>
+        {rows.map(([name, value, color]) => (
+          <div key={name} style={{ ...chartTooltipProps.itemStyle, color }}>{name} : {value}</div>
+        ))}
+      </div>
+    );
+  };
 
   // ---- Product Detail: the app's standard grid (sort, search, column filters, pinning, paging, CSV / Excel / PDF,
   // copy), volume first, highest volume first ----
@@ -227,6 +247,7 @@ export default function ProductLifecyclePage() {
                 { key: 'cumPct', name: 'Cumulative %', color: 'var(--ps-color-gold)', yAxisId: 'right' },
               ]}
               rightAxisFormatter={(v) => `${v.toFixed(0)}%`}
+              tooltipContent={paretoTooltip}
               height={360}
             />
             <dl data-testid="lifecycle-segment-definitions" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: '6px 16px', margin: '12px 0 0', fontSize: 12 }}>

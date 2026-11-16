@@ -84,6 +84,8 @@ vi.mock('../../../../lib/hooks', () => ({
     return { data: null, loading: true, error: null, retry: () => {} };
   },
   useRefreshStatus: () => ({ data: mocked.refresh, loading: false, error: null }),
+  // SKU Trend section (2026-11-16): not under test here
+  useSkuTrend: () => ({ data: null, loading: true, error: null, retry: () => {} }),
   useRevenueTrendOverview: () => ({ data: null, loading: true, error: null, retry: () => {} }),
   usePeriodTrend: () => ({ data: null, loading: true, error: null, retry: () => {} }),
 }));

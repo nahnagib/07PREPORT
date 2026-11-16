@@ -1,4 +1,5 @@
 import type { ProductDashboardScope, ProductStatus, ProductStatusSkuRow, ProductStatusSummary } from '../api';
+import { fmtLYD, fmtUnits } from '../materialsAnalogy/shared';
 
 /**
  * BCG Matrix → status table (/product/bcg-matrix/products, 2026-11-15). The Product Status cards and the Total SKUs chips
@@ -21,10 +22,18 @@ export const STATUS_LABEL: Record<ProductStatus, string> = {
   Unclassified: 'Unclassified',
 };
 export const STATUS_DEFINITION: Record<ProductStatus, string> = {
-  Active: 'sales and stock',
-  NonActive: 'sales or stock, not both',
+  Active: 'Units sold and in stock',
+  NonActive: 'Units sold but not in stock, OR in stock but not sold',
   Dormant: 'archived, or no stock and no sales',
   Unclassified: 'SKUs not for sale',
+};
+
+/** One colour per status: the Total SKUs chips, the status cards and the SKU Trend columns (2026-11-16). */
+export const STATUS_COLOR: Record<StatusKey, string> = {
+  active: 'var(--ps-color-success)',
+  non_active: 'var(--ps-color-watch)',
+  dormant: 'var(--ps-color-alert)',
+  unclassified: 'var(--ps-color-neutral-text)',
 };
 
 export function parseStatusKey(v: string | null | undefined): StatusKey {
@@ -72,4 +81,15 @@ export function statusMatchesCards(skus: ProductStatusSkuRow[], summary: Product
 
 export function rowsForStatus(skus: ProductStatusSkuRow[], status: ProductStatus, stock: StockFilter = 'all'): ProductStatusSkuRow[] {
   return skus.filter((r) => r.status === status && (status !== 'NonActive' || stock === 'all' || (stock === 'with') === r.withStock));
+}
+
+/** "412.3K Unit · LYD 18.6M": the quantity on hand of a status's SKUs and its value (2026-11-16, every status card). */
+export function onHandLine(b: { onHandQty?: number; onHandValue?: number }): string {
+  return `${fmtUnits(b.onHandQty ?? 0)} · ${fmtLYD(b.onHandValue ?? 0)}`;
+}
+
+/** "LYD 57.27": a class's ASP = sales value ÷ units sold in the period, 2 decimals; "–" when nothing was sold. */
+export function fmtAsp(value: number, units: number): string {
+  if (!units) return '–';
+  return `LYD ${(value / units).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }

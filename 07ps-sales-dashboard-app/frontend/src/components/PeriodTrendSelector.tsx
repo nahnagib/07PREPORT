@@ -13,15 +13,18 @@ export function PeriodTrendSelector({
   value,
   onChange,
   label = 'Trend period',
+  granularities = PERIOD_GRANULARITIES,
 }: {
   value: PeriodGranularity;
   onChange: (g: PeriodGranularity) => void;
   /** the group's accessible name, e.g. "Sales Trend period" */
   label?: string;
+  /** the periods offered (default all four); e.g. SKU Trend offers Weekly / Monthly / Yearly */
+  granularities?: readonly PeriodGranularity[];
 }) {
   return (
     <div className="ps-nps-switch ps-period-selector" role="group" aria-label={label} data-testid="period-trend-selector">
-      {PERIOD_GRANULARITIES.map((g) => (
+      {granularities.map((g) => (
         <Button
           key={g}
           variant={g === value ? 'primary' : 'secondary'}

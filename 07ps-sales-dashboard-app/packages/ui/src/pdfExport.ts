@@ -21,6 +21,8 @@ export interface PdfExportOptions {
   fileName: string;
   /** Page-local filters (beyond the app-wide ones the shared export context supplies). */
   extraFilterParts?: string[];
+  /** Replaces the app-wide filters in "Filters applied" (a page with its own filters, e.g. the Product pages' Company + Date). */
+  filterParts?: string[];
 }
 
 function buildTable(columns: PdfExportColumn[], rows: string[][]): HTMLTableElement {
@@ -91,7 +93,7 @@ function buildContainer(): HTMLDivElement {
  * same hard-capped, pre-chunked, one-container-per-page technique, not a measured/sliced single
  * image.
  */
-export async function exportRowsAsPdf({ title, subtitle, columns, rows, fileName, extraFilterParts }: PdfExportOptions): Promise<void> {
+export async function exportRowsAsPdf({ title, subtitle, columns, rows, fileName, extraFilterParts, filterParts }: PdfExportOptions): Promise<void> {
   // chunkRows returns [] (zero pages) for zero rows -- this exporter always produces at least one
   // page (a header-only table), matching its pre-pagination behavior for an empty `rows`.
   const rowChunks = rows.length === 0 ? [[]] : chunkRows(rows);
@@ -110,7 +112,7 @@ export async function exportRowsAsPdf({ title, subtitle, columns, rows, fileName
     container.appendChild(titleEl);
 
     if (pageIndex === 0) {
-      appendPdfMetaBlock(container, { extraFilterParts });
+      appendPdfMetaBlock(container, { extraFilterParts, filterParts });
     }
 
     container.appendChild(buildTable(columns, chunkOfRows));

@@ -13,6 +13,8 @@ export interface PeopleMonth extends PeopleFigures {
   achievementChange: number | null; previousStatus: MonthStatus;
 }
 export interface SalesPersonPerformance extends PeopleFigures {
+  /** A B2B / B2C Director is a person like any other (2026-11-16): key = -segmentKey, actual = the channel's sales,
+   * target = the channel's full target. */
   key: number; name: string; status: PeopleStatus; lastYear: number; fullYearTarget: number | null; months: PeopleMonth[];
 }
 export interface PeopleStatusDefinition {
@@ -28,14 +30,6 @@ export interface TotalFigures extends PeopleFigures {
   status: MonthStatus; fullYearTarget: number;
 }
 export type DirectorChannel = 'B2B' | 'B2C';
-/** A channel owner (B2B / B2C Director): the channel's YTD actual and target, not a sales person. */
-export interface DirectorPerformance extends TotalFigures {
-  channel: DirectorChannel; segmentKey: number; roleLabel: string; names: string[];
-  /** false = the page's Customer Group filter (or the channel filter) leaves this channel out: shown dimmed */
-  inFilter: boolean;
-  /** 'director_rows' = TargetLevel = Director rows of sales_targets.xlsx; 'channel' = every target row of the channel */
-  targetSource: 'director_rows' | 'channel';
-}
 export type ReconciliationReason = 'no_target' | 'vacant_seat' | 'director' | 'unassigned' | 'other';
 /** Admins only: what of the company total is on no listed person. */
 export interface PeopleReconciliation {
@@ -48,7 +42,8 @@ export interface PeopleOverview {
   contributions: ContributionAtom[];
   /** The company total = the Tachometer YTD Value card (2026-11-15). Optional for older API responses. */
   company?: TotalFigures;
-  directors?: DirectorPerformance[];
+  /** Director seats nobody holds ("B2C Director"): not a person, named in the Team tiers info. */
+  directorVacancies?: string[];
   reconciliation?: PeopleReconciliation | null;
 }
 
@@ -144,8 +139,8 @@ export function monthlyStatusPerformance(people: SalesPersonPerformance[]) {
   return months.map((month, i) => ({
     month,
     statuses: Object.fromEntries(STATUS_ORDER.map((status) => {
-      const sums = peopleSummary(people.map((p) => p.months[i]).filter((m) => m.status === status));
-      return [status, sums];
+      const inTier = people.filter((p) => p.months[i]?.status === status);
+      return [status, { ...peopleSummary(inTier.map((p) => p.months[i])), count: inTier.length }];
     })) as Record<PeopleStatus, ReturnType<typeof peopleSummary>>,
   }));
 }

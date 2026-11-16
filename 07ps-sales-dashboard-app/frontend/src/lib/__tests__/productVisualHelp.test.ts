@@ -15,8 +15,11 @@ const INTERACTIVE: VisualHelpId[] = [
   'product.stockVelocity.movers', 'product.stockVelocity.overstock', 'product.stockVelocity.frequency', 'product.stockVelocity.stockOutRisk',
   'product.stockVelocity.aging',
   'product.pimContribution.hierarchy', 'product.pimContribution.brandProducts', 'product.pimContribution.brands',
-  'product.productLifecycle.productDetail',
+  'product.productLifecycle.productDetail', 'product.bcgMatrix.skuTrend',
 ];
+
+/** Asked for longer help (2026-11-16): SKU Trend explains each status (one formula line each) and its stock source (a note). */
+const LONG_HELP: VisualHelpId[] = ['product.bcgMatrix.skuTrend'];
 
 describe('Product pages "?" and "i"', () => {
   it('every Product visual on the pages has a help entry, and every Product entry is used', () => {
@@ -34,13 +37,13 @@ describe('Product pages "?" and "i"', () => {
       'product.stockVelocity.aging', 'product.stockVelocity.isr', 'product.stockVelocity.kpiDoh', 'product.stockVelocity.kpiOverstock',
       'product.stockVelocity.kpiStockOut', 'product.stockVelocity.kpiFast', 'product.stockVelocity.kpiInStock', 'product.stockVelocity.kpiInventory',
       'product.pimContribution.asp', 'product.productLifecycle.pareto',
-      'product.bcgMatrix.totalSkus', 'product.bcgMatrix.productStatus', 'product.bcgMatrix.statusTable',
+      'product.bcgMatrix.totalSkus', 'product.bcgMatrix.productStatus', 'product.bcgMatrix.statusTable', 'product.bcgMatrix.skuTrend',
       'product.productLifecycle.kpiMature', 'product.productLifecycle.kpiDiscontinued', 'product.productLifecycle.kpiFreshness',
     ];
     for (const id of productIds) {
       const hint = vh(id);
       if (WITH_HELP.includes(id)) {
-        expect(typeof hint.help?.formula, id).toBe('string');                 // one formula line
+        if (!LONG_HELP.includes(id)) expect(typeof hint.help?.formula, id).toBe('string');                 // one formula line
         expect(hint.help!.definition.length, id).toBeLessThanOrEqual(90);    // one short definition
       } else {
         expect(hint.help, `${id} is self-explanatory: no "?"`).toBeUndefined();
@@ -82,10 +85,20 @@ describe('Product pages "?" and "i"', () => {
     for (const id of productIds) {
       const help = vh(id).help as { definition: string; notes?: string } | undefined;
       if (!help) continue;
-      expect(help.notes, id).toBeUndefined();
+      if (!LONG_HELP.includes(id)) expect(help.notes, id).toBeUndefined();
       expect(help.definition.length, id).toBeLessThanOrEqual(90);
     }
     expect(vh('product.bcgMatrix.matrix').help?.definition).toBe('BCG class of each Active + Non Active product by volume and margin (no sales = Dogs).');
+  });
+
+  it('SKU Trend: one line per status, the stock source, non-storable products and the archived rule', () => {
+    const help = vh('product.bcgMatrix.skuTrend').help!;
+    expect(help.formula).toHaveLength(3);
+    expect(help.notes).toMatch(/on hand at each period end/);
+    expect(help.notes).toMatch(/Only storable products have stock history: any other product counts as no stock/);
+    expect(help.notes).toMatch(/archived today is Dormant only in periods with no sales and no stock/);
+    expect(help.definition).toMatch(/^Bars = total SKUs; lines = SKUs per status/);
+    expect((VISUAL_HELP['product.bcgMatrix.skuTrend'] as { interactions?: readonly string[] }).interactions?.join(' ')).toMatch(/Click a bar to list every SKU of that period, or a line point/);
   });
 
   it('no median text is left in the BCG help', () => {

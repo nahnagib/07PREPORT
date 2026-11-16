@@ -6,6 +6,17 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (page edits round 6, SKU Trend data, directors as plain sales people, 2026-11-16)
+- **Salesforce Performance: B2B / B2C Directors are sales people like anyone else.** One row builder (`personRow`) for every
+  person; a director's is fed with the channel's Tachometer figures (actual = the channel's sales, target = its full
+  target) and gets the channel's contribution rows, so selecting them works in every chart. The "Director · B2B" label and
+  the "everyone but directors" LYD sums (`moneyPeople`) are gone; a customer filter now narrows a director's figures
+  instead of hiding them. Total sales people / Team pulse stay the company figures (Tachometer YTD Value).
+- **SKU Trend data** (section still hidden): migration 0079 `product_stock_period_end`, an ETL step that keeps each period
+  end's on hand, a one-time read-only backfill script, API `/product-dashboard/bcg-matrix/sku-trend`.
+- **Page edits**: BCG status cards with on-hand qty / value and class ASP, PIM brand ASP, Lifecycle Pareto SKUs tooltip,
+  Stock Velocity DOH thresholds, Receivables Debt to YTD Sales % inline, ComboChart optional props (unchanged by default).
+
 ### Fixed (ETL: ProductExclusions.xlsx from the admin side, sales_build mirror repair, one Critical Number tab, 2026-11-15)
 - **ProductExclusions.xlsx can be replaced from ETL Control Center** although the server's input folder is read-only: the
   upload is validated, the current file backed up, and the new one saved in the writable `ETL_INPUT_UPLOAD_DIR`

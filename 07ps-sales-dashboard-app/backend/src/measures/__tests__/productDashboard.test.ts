@@ -467,13 +467,17 @@ describe('computeProductDashboard', () => {
       const out = summarizeProductStatus([
         input('Active', cls('Stars')), input('Active', cls('Dogs', true)), input('Active', cls('Cash Cows', true)), input('Active', cls('Strategic')),
         input('NonActive', cls('Dogs'), { onHandQty: 3, onHandValue: 30 }), input('NonActive', cls('Strategic'), { sold: true }),
-        input('Dormant', null, { archived: true }), input('Dormant', null, { archived: false }), input('Unclassified'),
+        input('Dormant', null, { archived: true, onHandQty: 2, onHandValue: 8 }), input('Dormant', null, { archived: false }),
+        input('Unclassified', null, { onHandQty: 5, onHandValue: 50 }),
       ]);
       expect(out.total).toBe(out.active.count + out.nonActive.count + out.dormant.count + out.unclassified.count);
       expect(out.bcg.classes.reduce((t, c) => t + c.count, 0)).toBe(out.active.count + out.nonActive.count);
       expect([out.total, out.active.count, out.bcg.missingCost]).toEqual([9, 4, 2]);
       expect(out.nonActive).toMatchObject({ count: 2, withStock: 1, withSales: 1 });
-      expect(out.dormant).toEqual({ count: 2, archived: 1, idle: 1 });
+      expect(out.dormant).toEqual({ count: 2, archived: 1, idle: 1, onHandQty: 2, onHandValue: 8 });
+      // every status card: the On Hand quantity and value of its SKUs (2026-11-16)
+      expect([out.nonActive.onHandQty, out.nonActive.onHandValue, out.unclassified.onHandQty, out.unclassified.onHandValue]).toEqual([3, 30, 5, 50]);
+      expect([out.active.onHandQty, out.active.onHandValue]).toEqual([0, 0]);
       expect(out.bcg).not.toHaveProperty('notClassified');
     });
 

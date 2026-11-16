@@ -71,6 +71,8 @@ vi.mock('../../../../components/product/useProductFilters', () => ({
 vi.mock('../../../../lib/hooks', () => ({
   useProductDashboard: () => ({ data: access.profit ? OVERVIEW : withoutProfit(OVERVIEW), loading: false, error: null, retry: () => {} }),
   useRefreshStatus: () => ({ data: null, loading: false, error: null }),
+  // SKU Trend section (2026-11-16): not under test here
+  useSkuTrend: () => ({ data: null, loading: true, error: null, retry: () => {} }),
 }));
 vi.mock('@07ps/ui', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@07ps/ui')>()),
@@ -123,7 +125,7 @@ describe('Product tables use the standard grid, volume first, and every product 
     const kpis = screen.getByTestId('bcg-kpis');
     const row = (id: string) => [...kpis.querySelector(`section[aria-labelledby="${id}"] > div`)!.children];
     const labels = (id: string) => row(id).map((tile) => tile.getAttribute('aria-label'));
-    expect([...kpis.querySelectorAll('h2')].map((h) => h.textContent?.trim())).toEqual(['Total SKUs', 'Product Status', 'BCG Matrix (Active + Non Active products)']);
+    expect([...kpis.querySelectorAll('h2')].map((h) => h.textContent?.trim())).toEqual(['Total SKUs', 'Product Status', 'BCG Summary']);
     expect(screen.getByTestId('total-skus-value').textContent).toBe('12');
     expect([...screen.getByTestId('total-skus-chips').querySelectorAll('button')].map((b) => b.textContent))
       .toEqual(['Active 4', 'Non Active 5', 'Dormant 2', 'Unclassified 1']);
@@ -131,13 +133,17 @@ describe('Product tables use the standard grid, volume first, and every product 
     expect(labels('row-product-status')).toEqual(['Active 4: list the products', 'Non Active 5: list the products', 'Dormant 2: list the products', 'Unclassified 1: list the products']);
     expect(row('row-product-status').map((t) => t.getAttribute('role'))).toEqual(['link', 'link', 'link', 'link']);
     expect(row('row-product-status').map((t) => t.querySelector('[aria-label]')?.getAttribute('aria-label')))
-      .toEqual(['Active · sales and stock', 'Non Active · sales or stock, not both', 'Dormant · archived, or no stock and no sales', 'Unclassified · SKUs not for sale']);
-    expect(row('row-product-status')[1].textContent).toMatch(/2 with stock · no sales \| 3 with sales · no stock/);
+      .toEqual(['Active · Units sold and in stock', 'Non Active · Units sold but not in stock, OR in stock but not sold',
+        'Dormant · archived, or no stock and no sales', 'Unclassified · SKUs not for sale']);
+    // every status card: quantity on hand · its value (2026-11-16); the old breakdown is the card's hover
+    for (const tile of row('row-product-status')) expect(tile.textContent).toMatch(/[0-9.,]+[KM]? Unit · LYD [0-9.,]+[KM]?/);
+    expect(row('row-product-status')[1].getAttribute('title')).toBe('Non Active: 2 in stock but not sold · 3 sold but not in stock');
     // the BCG cards carry their quadrant definition, the same words as the class panels (2026-11-15)
     expect(row('row-bcg').map((t) => t.querySelector('[data-testid="kpi-tile-footnote"]')?.textContent))
       .toEqual(['High volume · high margin', 'High volume · low margin', 'Low volume · high margin', 'Low volume · low margin']);
     expect(labels('row-bcg')).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs']);
     expect(row('row-bcg')[0].textContent).toMatch(/profit LYD/); // profit access (this user)
+    expect(row('row-bcg')[0].textContent).toMatch(/ · ASP (LYD [0-9,]+\.[0-9]{2}|–)/); // class ASP = value ÷ units, 2 decimals (2026-11-16)
     // the missing-cost note is an admin-only data quality row (2026-11-15): not for this (non-admin) user
     expect(screen.queryByTestId('bcg-data-quality')).toBeNull();
     expect(container.textContent).not.toMatch(/missing cost|no cost in Odoo/);

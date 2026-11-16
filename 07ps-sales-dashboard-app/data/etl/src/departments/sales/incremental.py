@@ -202,7 +202,12 @@ def write_sales_from_mirror(ctx: RunContext) -> TaskResult:
             specs.append(q.min_rows(table, 1, name=f"min_rows:{table}", severity="fail" if table == "fact_sales_lines" else "warn"))
         # the same checks as the full refresh, on the written tables, before the transaction commits
         q.raise_for_failures(ctx.quality.evaluate(specs, conn, task_name="write_sales_from_mirror", table_overrides=overrides))
-    today = _dt.datetime.now(ZoneInfo(ctx.config.business_timezone)).date().isoformat()
+    if mode == "incremental":  # the live snapshot was just written: on a period end keep its on hand (SKU Trend, 0079)
+        from departments.sales.stock_period_end import snapshot_period_end
+
+        with ctx.engine.begin() as conn:
+            changes["product_stock_period_end"] = snapshot_period_end(conn)
+    today =_dt.datetime.now(ZoneInfo(ctx.config.business_timezone)).date().isoformat()
     log.info("sales_build (%s): %s row(s) written or deleted: %s", mode, f"{written:,}",
              {t: (c.get("inserted", 0), c.get("updated", 0), c.get("deleted", 0)) for t, c in changes.items()})
     return TaskResult(rows_loaded=written, details={

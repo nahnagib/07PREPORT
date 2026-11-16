@@ -174,6 +174,16 @@ export default function StockVelocityPage() {
   const lookback = lookbackDays(thresholds);
   const overRule = `${dohRule(thresholds, 'overstock_days', '>')} DOH; stock with no sales in ${lookback} days counts as overstock`;
   const riskRule = `${dohRule(thresholds, 'stockout_risk_days', '<')} DOH`;
+  // The DOH card's "?" is the ONE place listing the KPI thresholds per company (2026-11-16), all read from the ETL config
+  // (overview.thresholds); the other cards only compare a SKU with them ("see DOH card").
+  const perCompanyDoh = (key: 'overstock_days' | 'stockout_risk_days', sign: '>' | '<') => dohRule(thresholds, key, sign).replace(/ days/g, ' days DOH');
+  const moverKpi = moverRule(thresholds);
+  const dohKpis = [
+    `DOH = finished-goods Quantity On Hand ÷ average daily Quantity Sold (last ${lookback} days)`,
+    `Overstock: ${perCompanyDoh('overstock_days', '>')} (or stock with no sales in ${lookback} days)`,
+    `Stock-out risk: ${perCompanyDoh('stockout_risk_days', '<')}`,
+    `Fast mover: Sales Velocity ≥ ${moverKpi.fastPct}% of the category median · Slow mover ≤ ${moverKpi.slowPct}%`,
+  ].join(' · ');
   const bands = isrBands(thresholds);
   const isrRule = `ISR = inventory on hand (LYD at cost) ÷ net sales (LYD) in the period · target ≤ ${bands.targetPct}% · red from ${bands.redPct}%`;
   const freqBuckets = frequencyBuckets(thresholds);
@@ -414,13 +424,13 @@ export default function StockVelocityPage() {
             <>
               <div data-testid="stock-velocity-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 160px), 1fr))', gap: 'var(--ps-space-3, 16px)' }}>
                 <KpiTile label="DOH – Avg Days of Inventory" value={avgDOH === null ? '—' : `${Math.round(avgDOH)} days`} variance={`Last ${lookback} days`} status="neutral"
-                  help={withFormula(vh('product.stockVelocity.kpiDoh'), `DOH = finished-goods Quantity On Hand ÷ average daily Quantity Sold (last ${lookback} days)`).help} />
+                  help={withFormula(vh('product.stockVelocity.kpiDoh'), dohKpis).help} />
                 <KpiTile label="Overstocked SKUs" value={fmtCount(overRows.length)} variance={`${fmtQty(overUnits)} · ${fmtMoney(overValue)}`} status="watch"
-                  help={withFormula(vh('product.stockVelocity.kpiOverstock'), overRule).help} />
+                  help={withFormula(vh('product.stockVelocity.kpiOverstock'), `DOH > the company overstock KPI (see DOH card) · plus stock with no sales in ${lookback} days`).help} />
                 <KpiTile label="Stock-Out Risk SKUs" value={fmtCount(riskRows.length)} variance={`${INV.qtySold} ${fmtQty(riskUnits)}`} status="alert"
-                  help={withFormula(vh('product.stockVelocity.kpiStockOut'), riskRule).help} />
+                  help={withFormula(vh('product.stockVelocity.kpiStockOut'), 'DOH < the company stock-out KPI (see DOH card)').help} />
                 <KpiTile label="Fast Movers" value={fmtCount(moverRows.Fast.length)} variance={`of ${fmtCount(moving.length)} sold`} status="success"
-                  help={withFormula(vh('product.stockVelocity.kpiFast'), moverRuleText(rule)).help} />
+                  help={withFormula(vh('product.stockVelocity.kpiFast'), 'Sales Velocity = Quantity Sold ÷ days in period · Fast ≥ the fast-mover KPI · Slow ≤ the slow-mover KPI (see DOH card)').help} />
                 <KpiTile label="SKUs in Stock" value={fmtCount(inStock.length)} variance="Finished goods" status="neutral"
                   help={vh('product.stockVelocity.kpiInStock').help} />
                 <KpiTile label={INV.totalValue} value={fmtMoney(inventoryValue)} variance={`${fmtQty(inventoryUnits)} finished goods · ${fmtQty(inTransitUnits)} in transit`} status="neutral"

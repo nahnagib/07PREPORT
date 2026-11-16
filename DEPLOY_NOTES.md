@@ -1,3 +1,22 @@
+# Deploy notes: page edits round 6, SKU Trend data, directors as plain sales people (2026-11-16, evening)
+
+One migration (0079), one optional one-time backfill, rebuild **etl-api / etl-worker**, **backend** and **frontend**.
+
+1. **Migration 0079** `data/warehouse/migrations/0079_product_stock_period_end.sql`: table `product_stock_period_end` (on hand
+   per product at each period end, for SKU Trend). Down: `data/warehouse/down/0079_product_stock_period_end_down.sql`.
+   Apply it before the next ETL run. If it is missing, the ETL's new period-end snapshot step logs a warning and the sales
+   load still succeeds (the step never fails the load).
+2. **One-time backfill (optional, read-only on Odoo)**: from `data/etl`, `python scripts/backfill_stock_period_end.py --dry-run`
+   (counts, timing, validation; writes nothing), then without `--dry-run`. Locally: 28 period ends, 80,323 rows, ~170 s,
+   96.8% match. The SKU Trend section is still hidden on the BCG Matrix page ("postponed"), so this can wait.
+3. **No other data change.** Page edits: BCG status cards show on-hand qty and value, class ASP; PIM brand ASP; Lifecycle Pareto
+   SKUs in the tooltip; Stock Velocity DOH thresholds in the "?"; Receivables "Debt to YTD Sales %" inline.
+4. **Salesforce Performance: a director is a sales person like any other.** Same row, tiers, ranking, search, selection and
+   donut (the director's rows = the channel's); no "Director · B2B" label; tier LYD sums include the director. Company
+   figures (Total sales people, Team pulse) are still the Tachometer YTD Value card. An unassigned seat stays off the page.
+
+---
+
 # Deploy notes: ETL fixes -- ProductExclusions.xlsx from the admin side, sales_build mirror repair (2026-11-15, evening)
 
 No migration. One compose change; rebuild and restart **etl-api** (and the frontend / backend images for the UI text).

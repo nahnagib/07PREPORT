@@ -149,12 +149,13 @@ export function rowsFor<T>(columns: ExportColumn<T>[], rows: T[]): TableExportCe
   return rows.map((r) => columns.map((c) => c.value(r)));
 }
 
-export function exportProductPdf<T>(opts: { title: string; subtitle?: string; fileName: string; columns: ExportColumn<T>[]; rows: T[] }): Promise<void> {
-  const { title, subtitle, fileName, columns, rows } = opts;
+export function exportProductPdf<T>(opts: { title: string; subtitle?: string; fileName: string; columns: ExportColumn<T>[]; rows: T[]; filterParts?: string[] }): Promise<void> {
+  const { title, subtitle, fileName, columns, rows, filterParts } = opts;
   return exportRowsAsPdf({
     title,
     subtitle,
     fileName,
+    filterParts,
     columns: columns.map((c) => ({ header: c.header, align: c.align })),
     rows: rows.map((r) => columns.map((c) => (c.text ? c.text(r) : String(c.value(r) ?? '—')))),
   });
@@ -257,6 +258,7 @@ export function SortableProductTable<T>({
   fileName,
   pdfTitle,
   pdfSubtitle,
+  pdfFilterParts,
   maxHeight = 560,
   rowTooltip,
   searchPlaceholder = 'Search product…',
@@ -270,6 +272,8 @@ export function SortableProductTable<T>({
   fileName: string;
   pdfTitle: string;
   pdfSubtitle?: string;
+  /** "Filters applied" of the PDF, replacing the app-wide filters (the Product pages' own Company / Date). */
+  pdfFilterParts?: string[];
   maxHeight?: number;
   /** Hover detail for a row (shown next to the first cell). */
   rowTooltip?: (row: T) => React.ReactNode;
@@ -311,7 +315,7 @@ export function SortableProductTable<T>({
         <ExportButtons
           label={pdfTitle}
           onCsv={() => exportProductCsv(fileName, columns, shown)}
-          onPdf={() => exportProductPdf({ title: pdfTitle, subtitle: pdfSubtitle, fileName, columns, rows: shown })}
+          onPdf={() => exportProductPdf({ title: pdfTitle, subtitle: pdfSubtitle, fileName, columns, rows: shown, filterParts: pdfFilterParts })}
         />
       </div>
       <div style={{ overflow: 'auto', maxHeight, border: '1px solid var(--ps-color-border)', borderRadius: 8 }}>

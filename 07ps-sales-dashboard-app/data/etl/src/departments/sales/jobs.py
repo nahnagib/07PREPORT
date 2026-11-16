@@ -31,6 +31,7 @@ from core.keys import UNKNOWN
 from core.resolve import KeyMaps
 from departments.sales import conform as cf
 from departments.sales import incremental as inc
+from departments.sales.stock_period_end import snapshot_period_end
 from etl_platform import quality as q
 from etl_platform.load import atomic_swap_many, upsert
 from etl_platform.registry import REGISTRY, DatasetSpec, JobSpec, TaskSpec
@@ -223,6 +224,9 @@ def load_sales_marts(ctx: RunContext) -> TaskResult:
         q.raise_for_failures(results)
 
     counts = atomic_swap_many(ctx.engine, frames, before_swap=check)
+    # SKU Trend (2026-11-16): on a period end, keep that day's on hand (product_stock_period_end, migration 0079)
+    with ctx.engine.begin() as conn:
+        period_end = snapshot_period_end(conn)
     reg = _regression_dir()
     if reg is not None:  # totals of the loaded marts, read back through the serving views
         from sqlalchemy import create_engine
@@ -236,7 +240,7 @@ def load_sales_marts(ctx: RunContext) -> TaskResult:
             capture(engine, "new", reg / "new")
         finally:
             engine.dispose()
-    return TaskResult(rows_loaded=sum(counts.values()), details={"rows": counts, "dropped_columns": dropped})
+    return TaskResult(rows_loaded=sum(counts.values()), details={"rows": counts, "dropped_columns": dropped, "stock_period_end": period_end})
 
 
 def sales_watermark(conn) -> dict[str, Any]:

@@ -1,4 +1,5 @@
 'use client';
+import { fmtAsp } from '../../../../lib/product/statusTable';
 import { vh } from '../../../../lib/visualHelp';
 import React, { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -553,6 +554,8 @@ function BrandCard({ b, onClick, showGp }: { b: FoundBrandStats; onClick: () => 
             below Revenue instead, keeping every stat's own text at full size. */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
           <SecondaryStat label="Revenue (period)" value={fmtLYD(b.revenue)} />
+          {/* ASP (2026-11-16) = the period's revenue ÷ its units, the same filters and period as Revenue / Volume */}
+          <SecondaryStat label="ASP (period)" value={fmtAsp(b.revenue, b.volume)} />
           {showGp && <SecondaryStat label="GP%" value={b.gp === null ? '—' : `${b.gp.toFixed(1)}%`} />}
           <SecondaryStat label="SKUs in catalog" value={String(b.skuCount)} />
           <SecondaryStat label="SKUs sold in the period" value={String(b.skuSold)} />

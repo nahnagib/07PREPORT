@@ -18,6 +18,7 @@ import {
   TachometerOverview,
   TachometerTrend,
   fetchProductDashboard,
+  fetchSkuTrend,
   fetchProductStatusList,
   type ProductStatusList,
   fetchDebtReport,
@@ -26,6 +27,7 @@ import {
   type ProductDashboardOverview,
   type ProductDashboardPage,
   type ProductDashboardScope,
+  type SkuTrend,
   fetchBranches,
   fetchBusinessUnits,
   fetchCriticalNumberMissingTrend,
@@ -698,6 +700,29 @@ export function useTachometerTrend(
 }
 
 /** Product pages' data -- same authGate/AsyncState/makeRetry template as every other overview hook. */
+/** SKU Trend of the Product Portfolio page (Company + To Date of the Product pages' filters, the selected period). */
+export function useSkuTrend(token: string | null, authError: string | null, retryAuth: () => void, scope: ProductDashboardScope, granularity: PeriodGranularity) {
+  const dataVersion = useDataVersion();
+  const latest = useLatestRequest();
+  const [state, setState] = useState<AsyncState<SkuTrend>>({ data: null, loading: true, error: null });
+
+  const load = useCallback(() => {
+    if (authGate(token, authError, setState)) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    const isCurrent = latest.begin();
+    fetchSkuTrend(token as string, scope, granularity)
+      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
+      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion, token, authError, granularity, scope.company, scope.toDate]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return { ...state, retry: makeRetry(token, retryAuth, load) };
+}
+
 export function useProductDashboard(
   token: string | null,
   authError: string | null,

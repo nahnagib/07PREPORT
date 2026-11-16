@@ -316,16 +316,12 @@ export const VISUAL_HELP = {
         '% vs target = (Σ Actual − Σ Target) ÷ Σ Target of the people in the card',
       ],
       notes: 'Only people with a positive YTD target are included. Critical ≤50% · Need attention >50–90% · '
-        + 'Behind target >90–<100% · On target 100–110% · Top performer >110%.',
+        + 'Behind target >90–<100% · On target 100–110% · Top performer >110%. '
+        + 'B2B / B2C Directors are sales people like anyone else (headcount, tiers and their LYD sums): actual = the channel\'s YTD '
+        + 'sales, target = the channel\'s full YTD target. Total sales people LYD is the Tachometer YTD Value (the company, '
+        + 'not a sum of people).',
     },
     interactions: ['Click a tier card to filter the whole page to that tier (kept in the link)', 'Click it again, Total sales people or the chip × to show everyone'],
-  },
-  'promotion.salesPeople.directors': {
-    help: {
-      definition: 'B2B and B2C Directors: the channel\'s YTD sales against its target.',
-      formula: 'Actual = Tachometer YTD Value with Customer Group = the channel · Target = Director rows of sales_targets.xlsx, else the channel\'s target rows',
-    },
-    interactions: ['Click a director to show that channel only (kept in the link)', 'Click it again or the chip × to show every channel', 'Export as PDF (with the company total)'],
   },
   'promotion.salesPeople.reconciliation': {
     help: {
@@ -436,6 +432,25 @@ export const VISUAL_HELP = {
     help: { definition: 'Volume of the selected period vs the prior period of the same length, per product.', formula: 'Improved > +10% · Drop < −10% · Stable within ±10% · New = first sale ≤ 180 days or none in the prior period · Discontinued = no sale in 365 days' },
     interactions: ['Click a slice to list its products', 'Click a product to open it in Odoo', 'Hover a product for its figures', 'Export the list to CSV or PDF'],
   },
+  'product.bcgMatrix.skuTrend': {
+    // 2026-11-16 (round 3), asked for: the status rules + where the stock comes from (an exception to the short "?" rule)
+    help: {
+      definition: 'Bars = total SKUs; lines = SKUs per status, with the Product Status cards’ rules.',
+      formula: [
+        'Active = sales in the period and stock on hand at its end',
+        'Non Active = sales but no stock, or stock but no sales',
+        'Dormant = archived, or no stock and no sales · Unclassified (ProductExclusions.xlsx) is not on the chart',
+      ],
+      notes: 'Stock = on hand at each period end (from Odoo stock valuation, then kept by the ETL at every week / month / year end); '
+        + 'the current period uses today’s On Hand, like the cards. Only storable products have stock history: any other product counts as no stock. '
+        + 'Odoo keeps no archive date: a SKU archived today is Dormant only in periods with no sales and no stock, otherwise it is classified by them. '
+        + 'A past period counts a SKU from its first sale or first stock.',
+    },
+    interactions: ['Switch Weekly (last 12 weeks, Sat–Fri) / Monthly (12 months) / Yearly (5 years); the last period is to date',
+      'Hover a period for its total and each status: count, % and the change vs the period before',
+      'Click a bar to list every SKU of that period, or a line point to list that status’s SKUs; export them to CSV or PDF',
+      'Export the chart as an image or the periods as a PDF; expand to see the table'],
+  },
   'product.bcgMatrix.productDetail': {
     help: {
       definition: 'Per product: status, BCG class, volume, value, growth and Quantity On Hand.',
@@ -446,14 +461,14 @@ export const VISUAL_HELP = {
   'product.bcgMatrix.totalSkus': {
     help: {
       definition: 'Every Odoo product variant, active and archived, every category; counted once.',
-      formula: 'Total SKUs = Active + Non Active + Dormant + Unclassified',
+      formula: 'Total SKUs = Active + Non Active + Dormant + Unclassified · Active = units sold and in stock · Non Active = units sold but not in stock, or in stock but not sold',
     },
     interactions: ['Click a status chip to list its products'],
   },
   'product.bcgMatrix.productStatus': {
     help: {
       definition: 'One status per SKU, checked in order: not for sale, archived, then sales and stock.',
-      formula: 'Unclassified = not for sale (exclusion rule) · Dormant = archived, or no stock and no sales · Active = sales and stock > 0 · Non Active = sales but no stock, or stock but no sales',
+      formula: 'Unclassified = not for sale (exclusion rule) · Dormant = archived, or no stock and no sales · Active = units sold and in stock · Non Active = units sold but not in stock, or in stock but not sold · Each card: quantity on hand · its value',
     },
     interactions: ['Click a card to list its products'],
   },
@@ -466,17 +481,18 @@ export const VISUAL_HELP = {
   },
   // Stock Velocity: the page replaces the threshold lines (days on hand, ISR, buckets) with the ETL config values.
   'product.stockVelocity.kpiDoh': {
-    help: { definition: 'Days on Hand (DOH).', formula: 'DOH = finished-goods Quantity On Hand ÷ average daily Quantity Sold (last 90 days)' },
+    // the page fills the formula with the KPI thresholds per company from the ETL config (the one place that lists them)
+    help: { definition: 'Days on Hand (DOH), and the DOH KPIs every other card compares with.', formula: 'DOH = finished-goods Quantity On Hand ÷ average daily Quantity Sold (last 90 days) · Overstock / Stock-out risk / Fast mover KPIs per company' },
   },
   'product.stockVelocity.kpiOverstock': {
-    help: { definition: 'SKUs above the company overstock DOH, plus stock with no sales.', formula: 'Tika > 60 days · Majaal > 180 days DOH; stock with no sales in 90 days counts as overstock' },
+    help: { definition: 'SKUs with DOH above the company overstock KPI (see DOH card).', formula: 'DOH > the company overstock KPI (see DOH card) · plus stock with no sales in 90 days' },
   },
   'product.stockVelocity.kpiStockOut': {
-    help: { definition: 'SKUs below the company minimum DOH.', formula: 'Tika < 30 days · Majaal < 60 days DOH' },
+    help: { definition: 'SKUs with DOH below the stock-out KPI (see DOH card).', formula: 'DOH < the company stock-out KPI (see DOH card)' },
   },
   'product.stockVelocity.kpiFast': {
-    // the page puts the config values in the formula line (shared.ts moverRuleText)
-    help: { definition: 'Fast movers.', formula: 'Sales Velocity = Quantity Sold ÷ days in the selected period. Fast ≥ 150% of the category median · Slow ≤ 50%' },
+    // the thresholds are on the DOH card (2026-11-16); this card only compares with them
+    help: { definition: 'Fast movers: SKUs above the fast-mover KPI (see DOH card).', formula: 'Sales Velocity = Quantity Sold ÷ days in period · Fast ≥ the fast-mover KPI · Slow ≤ the slow-mover KPI (see DOH card)' },
   },
   'product.stockVelocity.kpiInStock': {
     help: { definition: 'SKUs with finished goods on hand.', formula: 'Finished-goods Quantity On Hand > 0; in-transit and raw materials not included' },

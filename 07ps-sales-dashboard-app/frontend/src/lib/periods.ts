@@ -48,6 +48,12 @@ export function periodTitle(start: string, g: PeriodGranularity): string {
   return periodAxisLabel(start, g);
 }
 
+/** A day of a period, for date ranges in tooltips and tables: "07 Nov 2026" (fixed English month names). */
+export function periodDayLabel(iso: string): string {
+  const { y, m, d } = parts(iso);
+  return `${dd(d)} ${MONTHS[m - 1]} ${y}`;
+}
+
 export interface PeriodWindowView {
   granularity: PeriodGranularity;
   /** 30 / 12 / 12 / 5 */

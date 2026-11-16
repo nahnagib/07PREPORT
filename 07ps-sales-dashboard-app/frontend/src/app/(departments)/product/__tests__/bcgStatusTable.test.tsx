@@ -75,6 +75,8 @@ const OVERVIEW = { view: 'Tika', asOfDate: null, builtAtUtc: null, period: PERIO
 const list = vi.hoisted(() => ({ data: null as ProductStatusList | null }));
 vi.mock('../../../../lib/hooks', () => ({
   useRefreshStatus: () => ({ data: null }),
+  // SKU Trend section (2026-11-16): not under test here
+  useSkuTrend: () => ({ data: null, loading: true, error: null, retry: () => {} }),
   useProductStatusList: () => ({ data: list.data, loading: false, error: null, retry: () => {} }),
   useProductDashboard: () => ({ data: OVERVIEW, loading: false, error: null, retry: () => {} }),
 }));

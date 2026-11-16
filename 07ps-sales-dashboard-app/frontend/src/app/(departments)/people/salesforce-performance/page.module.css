@@ -132,8 +132,6 @@
 .filterChip button { border: none; background: none; color: var(--ps-color-text); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 6px; border-radius: 999px; }
 .filterChip button:focus-visible { outline: 2px solid var(--ps-color-accent); }
 
-/* Directors row (2026-11-15): two channel-owner cards in the people cards' style. */
-.directorCards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: var(--ps-space-3, 16px); }
 /* Admin reconciliation breakdown, under the data quality row. */
 .reconciliationWrap { padding: 8px var(--ps-space-4, 24px) 0; }
 .reconciliation { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }

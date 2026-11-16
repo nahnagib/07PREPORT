@@ -47,8 +47,10 @@ import {
 } from '../../../../lib/materialsAnalogy/shared';
 import { bcgClassName } from '../../../../components/product/InventoryVisual';
 import { PeriodNote, periodDates, periodLabel } from '../../../../components/product/PeriodNote';
+// postponed (2026-11-16): SKU Trend is not rendered for now; its component, hook and API stay -- re-enable here and below
+// import { SkuTrend } from '../../../../components/product/SkuTrend';
 import type { BcgMovement, ProductDashboardOverview, ProductDashboardScope, ProductStatusSummary } from '../../../../lib/api';
-import { statusTableHref, type StatusKey, type StockFilter } from '../../../../lib/product/statusTable';
+import { STATUS_COLOR, fmtAsp, onHandLine, statusTableHref, type StatusKey, type StockFilter } from '../../../../lib/product/statusTable';
 import { useProductDashboard, useRefreshStatus } from '../../../../lib/hooks';
 import {
   ExportButtons,
@@ -78,6 +80,7 @@ import {
  *     period has zero volume (Dogs). No thresholds on
  *     screen or in the API (server-side only).
  *   - Profit data (profit, GP%, missing-cost flag) only with profit_data access (the API strips it otherwise).
+ *   - SKU Trend (components/product/SkuTrend.tsx): postponed 2026-11-16 -- not rendered (code, hook and API kept).
  */
 
 type BcgFact = ProductFact;
@@ -422,6 +425,10 @@ export default function BcgMatrixPage() {
             )}
           </Card>
 
+          {/* postponed (2026-11-16): SKU Trend, below Product Movement. Not rendered, so its API is not called either.
+              Re-enable: restore the import above and
+              <SkuTrend scope={scope} companyLabel={companyLabel} hints={vh('product.bcgMatrix.skuTrend')} /> */}
+
           <Card id="product-detail">
             <div className={styles.sectionTitle} style={{ marginBottom: 2 }}>
               Product Detail <VisualInfoIcons title="Product Detail" {...vh('product.bcgMatrix.productDetail')} />
@@ -456,21 +463,16 @@ export default function BcgMatrixPage() {
  * checks (Total = the 4 statuses, the 4 classes = Active) the backend enforces. Profit lines only with profit access.
  * 2026-11-15: Total SKUs is a full-width hero (the Critical Number card's layout: global .ps-cn-hero, 40px number) with
  * one chip per status; the chips and the 4 Product Status cards open the status table (/product/bcg-matrix/products)
- * with the page's Company + Date filters. */
-const STATUS_COLOR: Record<StatusKey, string> = {
-  active: 'var(--ps-color-success)',
-  non_active: 'var(--ps-color-watch)',
-  dormant: 'var(--ps-color-alert)',
-  unclassified: 'var(--ps-color-neutral-text)',
-};
+ * with the page's Company + Date filters. Status colours: STATUS_COLOR (lib/product/statusTable.ts), shared with SKU Trend. */
 
 /** A KpiTile that opens a page: the app's .ps-card-clickable (hover lift, focus ring), Enter / Space like a button. */
-function ClickableTile({ label, onOpen, children }: { label: string; onOpen: () => void; children: React.ReactNode }) {
+function ClickableTile({ label, onOpen, children, hover }: { label: string; onOpen: () => void; children: React.ReactNode; hover?: string }) {
   return (
     <div
       role="link"
       tabIndex={0}
       aria-label={label}
+      title={hover}
       className={`ps-card-clickable ${styles.clickTile}`}
       onClick={onOpen}
       onKeyDown={(e) => {
@@ -552,19 +554,22 @@ function StatusRows({
         <div className={styles.kpiGrid}>
           {loading || !s ? skeletons(4) : (
             <>
-              <ClickableTile label={`Active ${fmtCount(s.active.count)}: list the products`} onOpen={() => open('active')}>
-                <KpiTile label="Active · sales and stock" value={fmtCount(s.active.count)} subValue={`${fmtUnits(s.active.units)} · ${fmtLYD(s.active.value)}`} status="success" />
+              <ClickableTile label={`Active ${fmtCount(s.active.count)}: list the products`} onOpen={() => open('active')}
+                hover={`Active: ${fmtUnits(s.active.units)} sold · ${fmtLYD(s.active.value)} sales in the period`}>
+                <KpiTile label="Active · Units sold and in stock" value={fmtCount(s.active.count)} subValue={onHandLine(s.active)} status="success" />
               </ClickableTile>
-              <ClickableTile label={`Non Active ${fmtCount(s.nonActive.count)}: list the products`} onOpen={() => open('non_active')}>
-                <KpiTile label="Non Active · sales or stock, not both" value={fmtCount(s.nonActive.count)}
-                  subValue={`${fmtCount(s.nonActive.withStock)} with stock · no sales | ${fmtCount(s.nonActive.withSales ?? s.nonActive.zeroStock)} with sales · no stock`} status="watch" />
+              <ClickableTile label={`Non Active ${fmtCount(s.nonActive.count)}: list the products`} onOpen={() => open('non_active')}
+                hover={`Non Active: ${fmtCount(s.nonActive.withStock)} in stock but not sold · ${fmtCount(s.nonActive.withSales ?? s.nonActive.zeroStock)} sold but not in stock`}>
+                <KpiTile label="Non Active · Units sold but not in stock, OR in stock but not sold" value={fmtCount(s.nonActive.count)}
+                  subValue={onHandLine(s.nonActive)} status="watch" />
               </ClickableTile>
-              <ClickableTile label={`Dormant ${fmtCount(s.dormant.count)}: list the products`} onOpen={() => open('dormant')}>
-                <KpiTile label="Dormant · archived, or no stock and no sales" value={fmtCount(s.dormant.count)}
-                  subValue={s.dormant.archived !== undefined ? `${fmtCount(s.dormant.archived)} archived | ${fmtCount(s.dormant.idle ?? 0)} no stock · no sales` : undefined} status="alert" />
+              <ClickableTile label={`Dormant ${fmtCount(s.dormant.count)}: list the products`} onOpen={() => open('dormant')}
+                hover={s.dormant.archived !== undefined ? `Dormant: ${fmtCount(s.dormant.archived)} archived · ${fmtCount(s.dormant.idle ?? 0)} no stock and no sales` : undefined}>
+                <KpiTile label="Dormant · archived, or no stock and no sales" value={fmtCount(s.dormant.count)} subValue={onHandLine(s.dormant)} status="alert" />
               </ClickableTile>
-              <ClickableTile label={`Unclassified ${fmtCount(s.unclassified.count)}: list the products`} onOpen={() => open('unclassified')}>
-                <KpiTile label="Unclassified · SKUs not for sale" value={fmtCount(s.unclassified.count)} subValue="ProductExclusions.xlsx rules" status="neutral" />
+              <ClickableTile label={`Unclassified ${fmtCount(s.unclassified.count)}: list the products`} onOpen={() => open('unclassified')}
+                hover="Unclassified: excluded by the ProductExclusions.xlsx rules (or the Raw Materials category)">
+                <KpiTile label="Unclassified · SKUs not for sale" value={fmtCount(s.unclassified.count)} subValue={onHandLine(s.unclassified)} status="neutral" />
               </ClickableTile>
             </>
           )}
@@ -573,14 +578,14 @@ function StatusRows({
       </section>
 
       <section aria-labelledby="row-bcg">
-        <h2 id="row-bcg" className={styles.sectionTitle}>BCG Matrix (Active + Non Active products)</h2>
+        <h2 id="row-bcg" className={styles.sectionTitle}>BCG Summary</h2>
         <div className={styles.kpiGrid}>
           {loading || !s ? skeletons(4) : s.bcg.classes.map((c) => (
             <KpiTile
               key={c.key}
               label={c.key}
               value={fmtCount(c.count)}
-              subValue={`${fmtUnits(c.units)} · ${fmtLYD(c.value)}${showProfit && c.profit !== undefined ? ` · profit ${fmtLYD(c.profit)}` : ''}`}
+              subValue={`${fmtUnits(c.units)} · ${fmtLYD(c.value)}${showProfit && c.profit !== undefined ? ` · profit ${fmtLYD(c.profit)}` : ''} · ASP ${fmtAsp(c.value, c.units)}`}
               footnote={BCG_DEFINITION[c.key]}
               valueColor={BCG_COLOR[c.key]}
             />

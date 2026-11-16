@@ -1,7 +1,7 @@
 import type { Pool } from 'mysql2/promise';
 import { variancePct } from './classify';
 import { buildWhereClause, dateOnlyUTC, lytdWindow, monthElapsedFraction, type Filters, PEOPLE_TARGETS } from './filters';
-import { computeBreakdown, computeYtdCard, type BreakdownRow } from './tachometer';
+import { computeBreakdown, computeMtdCard, computeYtdCard, type BreakdownRow } from './tachometer';
 
 export const PERFORMANCE_STATUSES = [
   { key: 'critical', label: 'Critical', range: '≤50%', benchmark: 0.05, direction: 'max' },
@@ -42,7 +42,8 @@ function index(rows: BreakdownRow[]) {
   return new Map(rows.map((row) => [String(row.groupKey), row]));
 }
 
-/** The two channel owners shown above the people (2026-11-15). Not sales people: their actual is the channel's total. */
+/** The two channel owners (2026-11-15). Since 2026-11-16 a director IS a sales person: the same row (personRow), the same
+ * tiers, ranking and drill-down; only the numbers differ -- actual = the channel's sales, target = the channel's full target. */
 export const DIRECTOR_CHANNELS = [
   { channel: 'B2B', segmentKey: 1, roleName: 'B2B_DIRECTOR', roleLabel: 'B2B Director' },
   { channel: 'B2C', segmentKey: 2, roleName: 'B2C_DIRECTOR', roleLabel: 'B2C Director' },
@@ -50,8 +51,8 @@ export const DIRECTOR_CHANNELS = [
 export type DirectorChannel = (typeof DIRECTOR_CHANNELS)[number]['channel'];
 
 export interface SalesforceOptions {
-  /** Per channel, the filters the director card is computed with: the page filters with Customer Group = that channel,
-   * narrowed by the caller's role scope (null = the caller may not see that channel: no card). Absent = no directors. */
+  /** Per channel, the filters a director is computed with: the page filters with Customer Group = that channel,
+   * narrowed by the caller's role scope (null = the caller may not see that channel: no director). Absent = no directors. */
   directorFilters?: Partial<Record<DirectorChannel, Filters | null>>;
   /** The reconciliation of the company total with the listed people (admins only). */
   withReconciliation?: boolean;
@@ -82,6 +83,72 @@ async function directorNames(pool: Pool): Promise<Map<string, { names: string[];
   return out;
 }
 
+/** Actual and target-to-date of one person in one period (a breakdown row, or a Tachometer card for a director). */
+type PeriodFigures = { actual: number; targetToDate: number | null } | undefined;
+
+/** One row of the people list -- every sales person and every director, the same fields from the same inputs: YTD, the
+ * full year (its target), the same period last year (its actual) and each month end, December first (January's MoM
+ * baseline). */
+function personRow(key: number, name: string, ytd: PeriodFigures, fullYear: PeriodFigures, lastYear: PeriodFigures,
+  months: { month: string; through: string }[], monthFigures: PeriodFigures[]) {
+  return {
+    key, name,
+    ...performanceFigures(ytd?.actual ?? 0, ytd?.targetToDate ?? null),
+    lastYear: lastYear?.actual ?? 0,
+    fullYearTarget: fullYear?.targetToDate ?? null,
+    months: months.slice(1).map((month, i) => {
+      const row = monthFigures[i + 1];
+      const previous = monthFigures[i];
+      const figures = performanceFigures(row?.actual ?? 0, row?.targetToDate ?? null);
+      const previousFigures = performanceFigures(previous?.actual ?? 0, previous?.targetToDate ?? null);
+      return {
+        month: month.month, through: month.through, ...figures,
+        previousActual: previousFigures.actual,
+        momVariancePct: variancePct(figures.actual, previousFigures.actual),
+        achievementChange: figures.achievement != null && previousFigures.achievement != null
+          ? figures.achievement - previousFigures.achievement : null,
+        previousStatus: previousFigures.status,
+      };
+    }),
+  };
+}
+
+/**
+ * A director as a person (2026-11-16): personRow fed with the channel's figures -- the Tachometer's own cards with
+ * Customer Group = the channel (YTD actual and prorated target = the channel's FULL target, the same period last year,
+ * the full-year target, each month's MTD card at the month end) -- and the channel's contribution rows (company /
+ * segment / team) as the director's own. key = -segmentKey (never a salesperson key).
+ */
+export async function directorPerson(pool: Pool, anchor: Date, filters: Filters, d: (typeof DIRECTOR_CHANNELS)[number], names: string[],
+  monthEnds: { month: string; through: string; end: Date }[]) {
+  const [ytd, actualAtoms, targetAtoms, ...monthCards] = await Promise.all([
+    computeYtdCard(pool, anchor, filters, 'value'),
+    fetchContributionAtoms(pool, anchor, filters, 'actual'),
+    fetchContributionAtoms(pool, anchor, filters, 'target'),
+    ...monthEnds.map((m) => computeMtdCard(pool, m.end, filters, 'value')),
+  ]);
+  const key = -d.segmentKey;
+  const person = personRow(key, names.join(', '),
+    { actual: ytd.actual, targetToDate: ytd.targetToDate },
+    { actual: 0, targetToDate: ytd.fullPeriodTarget },
+    { actual: ytd.lastYearSamePeriod, targetToDate: null },
+    monthEnds, monthCards.map((c) => ({ actual: c.actual, targetToDate: c.targetToDate })));
+  const atoms = allocateAtoms(asOnePerson(actualAtoms, key), asOnePerson(targetAtoms, key),
+    new Map([[String(key), { targetToDate: person.target }]]));
+  // eslint-disable-next-line no-unused-vars -- the amount is dropped from the response on purpose
+  return { person, contributions: [...atoms.values()].map(({ amount: _amount, ...a }) => a) };
+}
+
+/** The channel's contribution rows as one person's: summed per company / segment / team under `key`. */
+function asOnePerson(atoms: ContributionAtom[], key: number) {
+  const out = new Map<string, ContributionAtom>();
+  for (const a of atoms) {
+    const id = `${a.companyKey}:${a.segmentKey}:${a.teamKey}`;
+    out.set(id, { ...a, personKey: key, amount: (out.get(id)?.amount ?? 0) + a.amount });
+  }
+  return [...out.values()];
+}
+
 /** A director's card: the channel's YTD actual (the Tachometer measure, Customer Group = the channel); the target from
  * the TargetLevel = Director rows of sales_targets.xlsx when that channel has any this year, else the channel's people
  * target (every target row of the channel, same proration and overrides). */
@@ -110,12 +177,12 @@ export async function computeSalesPeoplePerformance(pool: Pool, anchor: Date, fi
     fetchContributionAtoms(pool, anchor, filters, 'actual'),
     fetchContributionAtoms(pool, anchor, filters, 'target'),
   ]);
-  const months: { month: string; through: string; rows: BreakdownRow[] }[] = [];
+  const months: { month: string; through: string; end: Date; rows: BreakdownRow[] }[] = [];
   // Include December as January's MoM baseline; bound concurrency to the shared DB pool.
   for (let m = 0; m <= throughMonth; m++) {
     const end = m === throughMonth ? anchor : dateOnlyUTC(year, m + 1, 0);
     months.push({
-      month: end.toISOString().slice(0, 7), through: end.toISOString().slice(0, 10),
+      month: end.toISOString().slice(0, 7), through: end.toISOString().slice(0, 10), end,
       rows: await computeBreakdown(pool, end, filters, 'mtd', 'value', 'salesperson'),
     });
   }
@@ -127,26 +194,9 @@ export async function computeSalesPeoplePerformance(pool: Pool, anchor: Date, fi
     .filter((r) => r.groupKey != null && Number(r.groupKey) > 0)
     .map((r) => [String(r.groupKey), r]));
   const monthlyIndexes = months.map((m) => index(m.rows));
-  const people = [...roster].map(([key, person]) => ({
-    key: Number(key), name: person.groupLabel,
-    ...performanceFigures(current.get(key)?.actual ?? 0, current.get(key)?.targetToDate ?? null),
-    lastYear: prior.get(key)?.actual ?? 0,
-    fullYearTarget: full.get(key)?.targetToDate ?? null,
-    months: months.slice(1).map((month, i) => {
-      const row = monthlyIndexes[i + 1].get(key);
-      const previous = monthlyIndexes[i].get(key);
-      const figures = performanceFigures(row?.actual ?? 0, row?.targetToDate ?? null);
-      const previousFigures = performanceFigures(previous?.actual ?? 0, previous?.targetToDate ?? null);
-      return {
-        month: month.month, through: month.through, ...figures,
-        previousActual: previousFigures.actual,
-        momVariancePct: variancePct(figures.actual, previousFigures.actual),
-        achievementChange: figures.achievement != null && previousFigures.achievement != null
-          ? figures.achievement - previousFigures.achievement : null,
-        previousStatus: previousFigures.status,
-      };
-    }),
-  })).filter((p) => p.status !== 'no_target' && !isVacantSalesSeat(p.name)).sort((a, b) => b.actual - a.actual || a.name.localeCompare(b.name));
+  const people = [...roster].map(([key, person]) => personRow(Number(key), person.groupLabel, current.get(key), full.get(key),
+    prior.get(key), months, monthlyIndexes.map((m) => m.get(key))))
+    .filter((p) => p.status !== 'no_target' && !isVacantSalesSeat(p.name));
   // YTD actual and allocated target per person x company x segment x team, for the contribution pie.
   const kept = new Set(people.map((p) => p.key));
   const contributions = [...allocateAtoms(actualAtoms, targetAtoms, current).values()]
@@ -159,23 +209,30 @@ export async function computeSalesPeoplePerformance(pool: Pool, anchor: Date, fi
   // The company total = the Tachometer's YTD Value card for the same filters (2026-11-15).
   const directorInfo = options.directorFilters || options.withReconciliation
     ? await directorNames(pool) : new Map<string, { names: string[]; salespersonKeys: number[] }>();
-  const [companyCard, directorCards] = await Promise.all([
+  // Directors (2026-11-16): people like any other when the caller may see the channel and the page's filters keep it: a
+  // Customer Group filter without the channel, or a Salesperson filter (a director is not one of the picked people), leaves
+  // them out; every other filter (company, team, customer ...) narrows their channel figures like anyone's. A seat nobody
+  // holds is no person: it is named in directorVacancies ("B2C Director") for the page's info line, and its holder is
+  // listed as soon as an active user gets the role.
+  const directorVacancies: string[] = [];
+  const [companyCard, directorRows] = await Promise.all([
     computeYtdCard(pool, anchor, filters, 'value'),
     Promise.all(DIRECTOR_CHANNELS.map(async (d) => {
       const f = options.directorFilters?.[d.channel];
       if (!f) return null;
+      const names = directorInfo.get(d.roleName)?.names ?? [];
+      if (!names.length) {
+        directorVacancies.push(d.roleLabel);
+        return null;
+      }
       const requested = filters.segmentKeys;
-      return {
-        channel: d.channel, segmentKey: d.segmentKey, roleLabel: d.roleLabel,
-        names: directorInfo.get(d.roleName)?.names ?? [],
-        // the page's Customer Group filter (or the ?channel= choice) leaves this channel out: the card is dimmed
-        inFilter: !requested?.length || requested.includes(d.segmentKey),
-        ...(await directorCard(pool, anchor, f)),
-      };
+      if ((requested?.length && !requested.includes(d.segmentKey)) || filters.salespersonKeys?.length) return null;
+      return directorPerson(pool, anchor, f, d, names, months);
     })),
   ]);
   const company = totalFigures(companyCard);
-  const directors = directorCards.filter((d): d is NonNullable<typeof d> => d != null);
+  // same rule as the people: no positive YTD target = not on the page
+  const directors = directorRows.filter((d): d is NonNullable<typeof d> => d != null && d.person.status !== 'no_target');
 
   let reconciliation = null;
   if (options.withReconciliation) {
@@ -188,6 +245,7 @@ export async function computeSalesPeoplePerformance(pool: Pool, anchor: Date, fi
             : r.targetToDate == null || r.targetToDate <= 0 ? 'no_target' : 'other';
       return { key, name: r.groupLabel, reason, actual: r.actual, target: r.targetToDate ?? 0 };
     }).filter((r) => r.actual !== 0 || r.target !== 0);
+    // the sales people's own invoices: a director's figures are the channel's, already on its people (admin check only)
     const listed = people.reduce((t, p) => ({ actual: t.actual + p.actual, target: t.target + (p.target ?? 0) }), { actual: 0, target: 0 });
     const gap = { actual: company.actual - listed.actual, target: (company.target ?? 0) - listed.target };
     const explained = rows.reduce((t, r) => ({ actual: t.actual + r.actual, target: t.target + r.target }), { actual: 0, target: 0 });
@@ -201,8 +259,10 @@ export async function computeSalesPeoplePerformance(pool: Pool, anchor: Date, fi
   }
 
   return {
-    anchorDate: anchor.toISOString().slice(0, 10), monthsElapsed, statuses: PERFORMANCE_STATUSES, people, contributions,
-    company, directors, reconciliation,
+    anchorDate: anchor.toISOString().slice(0, 10), monthsElapsed, statuses: PERFORMANCE_STATUSES,
+    // a director is a person: everywhere on the page, in every count and sum
+    people: [...people, ...directors.map((d) => d.person)].sort((a, b) => b.actual - a.actual || a.name.localeCompare(b.name)),
+    contributions: [...contributions, ...directors.flatMap((d) => d.contributions)], company, directorVacancies, reconciliation,
   };
 }
 
@@ -248,7 +308,8 @@ async function fetchContributionAtoms(pool: Pool, anchor: Date, filters: Filters
 
 /** Revenue per atom, plus each person's override-aware YTD target allocated once, using the source plan's YTD
  * proportions. A person serving several companies/segments/teams must not get their full annual override in each. */
-function allocateAtoms(actuals: ContributionAtom[], targetWeights: ContributionAtom[], personTotals: Map<string, BreakdownRow>) {
+function allocateAtoms(actuals: ContributionAtom[], targetWeights: ContributionAtom[],
+  personTotals: Map<string, { targetToDate: number | null }>) {
   const weights = new Map<number, { total: number; count: number }>();
   for (const atom of targetWeights) {
     const weight = weights.get(atom.personKey) ?? { total: 0, count: 0 };

@@ -151,14 +151,20 @@ export { PRODUCT_STATUSES, type ProductStatus };
 export { BCG_CLASS_KEYS, type BcgClassKey };
 
 /** Total SKUs / Product Status / BCG cards of the BCG Matrix page (company view, the selected period). */
+/** Quantity on hand and its value (Odoo On Hand of the SKUs of a status, 2026-11-16: every status card shows them). */
+export interface OnHandTotals {
+  onHandQty: number;
+  onHandValue: number;
+}
+
 export interface ProductStatusSummary {
   total: number;
-  active: { count: number; units: number; value: number };
+  active: { count: number; units: number; value: number } & OnHandTotals;
   /** withStock = stock but no sales; withSales (= zeroStock) = sales but no stock (2026-11-15 rules). */
-  nonActive: { count: number; withStock: number; withSales: number; zeroStock: number; stockUnits: number; stockValue: number };
+  nonActive: { count: number; withStock: number; withSales: number; zeroStock: number; stockUnits: number; stockValue: number } & OnHandTotals;
   /** archived = archived in Odoo; idle = no stock and no sales in the period. */
-  dormant: { count: number; archived: number; idle: number };
-  unclassified: { count: number };
+  dormant: { count: number; archived: number; idle: number } & OnHandTotals;
+  unclassified: { count: number } & OnHandTotals;
   /** Stars + Cash Cows + Strategic + Dogs = active.count + nonActive.count (the portfolio, 2026-11-15). Non Active SKUs
    * with no sales in the period have zero volume and no margin: Dogs. profit / missingCost: PROFIT DATA. */
   bcg: { classes: { key: BcgClassKey; count: number; units: number; value: number; profit?: number }[]; missingCost?: number };
@@ -295,6 +301,21 @@ export function resolveView(company?: string): ProductDashboardView {
   return 'BMH';
 }
 
+/** The Company view of a request (`company` = Majaal / Tika, else every company) within the role's companies: a role
+ * limited to some companies never sees another one, and a single allowed company always gets its company view. Shared by
+ * every Product pages measure (the overview, SKU Trend). */
+export async function resolveCompanyView(pool: Pool, company: string | undefined, companyKeys: number[]): Promise<{ view: ProductDashboardView; allowedCompanies?: Set<string> }> {
+  let view = resolveView(company);
+  if (companyKeys.length === 0) return { view };
+  const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM v_sales_product_dashboard WHERE CompanyKey IN (?) AND Company NOT IN (?)', [companyKeys, EXCLUDED_COMPANIES]);
+  const allowed = (allowedRows as any[]).map((r) => String(r.Company));
+  if (view !== 'BMH' && !allowed.includes(view)) {
+    throw new ProductScopeError(`Company ${view} is outside this role's permitted data scope.`);
+  }
+  if (view === 'BMH' && allowed.length === 1) view = resolveView(allowed[0]);
+  return { view, allowedCompanies: new Set(allowed) };
+}
+
 export type Agg = {
   value: number;
   lines: number;
@@ -391,19 +412,7 @@ function toRow(key: string, p: any, a: Agg | undefined, days: number, companies:
 
 export async function computeProductDashboard(pool: Pool, query: ProductDashboardQuery = {}): Promise<ProductDashboardOverview> {
   const period = resolvePeriod(query.fromDate, query.toDate);
-  let requestedView = resolveView(query.company);
-  const companyKeys = query.filters?.companyKeys ?? [];
-  let allowedCompanies: Set<string> | undefined;
-  if (companyKeys.length > 0) {
-    // Role limited to some companies: never show another company -- a single allowed company always gets its company view.
-    const [allowedRows] = await pool.query('SELECT DISTINCT Company FROM v_sales_product_dashboard WHERE CompanyKey IN (?) AND Company NOT IN (?)', [companyKeys, EXCLUDED_COMPANIES]);
-    const allowed = (allowedRows as any[]).map((r) => String(r.Company));
-    allowedCompanies = new Set(allowed);
-    if (requestedView !== 'BMH' && !allowed.includes(requestedView)) {
-      throw new ProductScopeError(`Company ${requestedView} is outside this role's permitted data scope.`);
-    }
-    if (requestedView === 'BMH' && allowed.length === 1) requestedView = resolveView(allowed[0]);
-  }
+  const { view: requestedView, allowedCompanies } = await resolveCompanyView(pool, query.company, query.filters?.companyKeys ?? []);
   const scope = buildWhereClause(query.filters ?? {}, 'd');
   const scoped = scope.clause !== '1=1';
   const companyClause = requestedView === 'BMH' ? '' : ' AND d.Company = ?';
@@ -793,10 +802,10 @@ export function combineSkuStatus(parts: StatusInput[]): StatusInput {
 export function summarizeProductStatus(rows: StatusInput[]): ProductStatusSummary {
   const out: ProductStatusSummary = {
     total: rows.length,
-    active: { count: 0, units: 0, value: 0 },
-    nonActive: { count: 0, withStock: 0, withSales: 0, zeroStock: 0, stockUnits: 0, stockValue: 0 },
-    dormant: { count: 0, archived: 0, idle: 0 },
-    unclassified: { count: 0 },
+    active: { count: 0, units: 0, value: 0, onHandQty: 0, onHandValue: 0 },
+    nonActive: { count: 0, withStock: 0, withSales: 0, zeroStock: 0, stockUnits: 0, stockValue: 0, onHandQty: 0, onHandValue: 0 },
+    dormant: { count: 0, archived: 0, idle: 0, onHandQty: 0, onHandValue: 0 },
+    unclassified: { count: 0, onHandQty: 0, onHandValue: 0 },
     bcg: { classes: BCG_CLASS_KEYS.map((key) => ({ key, count: 0, units: 0, value: 0, profit: 0 })), missingCost: 0 },
   };
   const addBcg = (r: StatusInput) => {
@@ -808,7 +817,15 @@ export function summarizeProductStatus(rows: StatusInput[]): ProductStatusSummar
     cls.profit = (cls.profit ?? 0) + (r.bcg.profit ?? 0);
     if (r.bcg.missingCost) out.bcg.missingCost = (out.bcg.missingCost ?? 0) + 1;
   };
+  // every status: the On Hand of its SKUs (quantity and value), the same per-SKU On Hand the status rule read
+  const addOnHand = (bucket: OnHandTotals, r: StatusInput) => {
+    bucket.onHandQty += r.onHandQty;
+    bucket.onHandValue += r.onHandValue;
+  };
   for (const r of rows) {
+    const bucket: OnHandTotals | null = r.status === 'Unclassified' ? out.unclassified : r.status === 'Dormant' ? out.dormant
+      : r.status === 'NonActive' ? out.nonActive : r.status === 'Active' ? out.active : null;
+    if (bucket) addOnHand(bucket, r);
     switch (r.status) {
       case 'Unclassified':
         out.unclassified.count += 1;

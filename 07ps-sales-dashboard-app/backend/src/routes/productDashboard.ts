@@ -5,6 +5,8 @@ import { requirePasswordChangeCleared, requirePermission } from '../middleware/p
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
 import { computeProductDashboard, ProductScopeError, withoutProfit } from '../measures/productDashboard';
 import { allows, getRequestPermissions } from '../services/permissionService';
+import { computeSkuTrend, computeSkuTrendSkus, SkuTrendQueryError } from '../measures/skuTrend';
+import { businessToday, parseGranularity, PeriodQueryError } from '../lib/periods';
 
 /**
  * Product pages' data (measures/productDashboard.ts). One router per page so each keeps its own
@@ -62,6 +64,42 @@ export function productDashboardRouter(pageKey: string): Router {
   };
   router.get('/overview', handler(false));
   router.get('/products', handler(true));
+  if (pageKey === PRODUCT_DASHBOARD_PAGES['bcg-matrix']) {
+    // SKU Trend (2026-11-16, measures/skuTrend.ts): ?granularity=week|month|year&company=Tika&toDate=YYYY-MM-DD, the
+    // Active / Non Active / Dormant SKUs of every period of the window ending with the To Date (default today);
+    // /sku-trend/skus adds &period=<period start>&status=all|active|nonActive|dormant: the SKUs behind the total bar (all) or one status line point.
+    const trendQuery = (req: Request) => {
+      const { company, toDate } = req.query;
+      if (toDate !== undefined && (typeof toDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(toDate))) throw new PeriodQueryError('toDate must be YYYY-MM-DD');
+      // like the Product Status cards: only the role's companies narrow the SKUs (no Customer Group / Channel / ...)
+      return {
+        granularity: parseGranularity(req.query.granularity),
+        to: typeof toDate === 'string' ? toDate : businessToday(),
+        company: typeof company === 'string' ? company : undefined,
+        filters: { companyKeys: req.scopedFilters?.companyKeys },
+      };
+    };
+    const trendHandler = (skus: boolean) => async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const q = trendQuery(req);
+        res.json(skus
+          ? await computeSkuTrendSkus(pool, { ...q, period: String(req.query.period ?? ''), status: String(req.query.status ?? '') })
+          : await computeSkuTrend(pool, q));
+      } catch (err) {
+        if (err instanceof PeriodQueryError || err instanceof SkuTrendQueryError) {
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        if (err instanceof ProductScopeError) {
+          res.status(403).json({ error: 'Forbidden: request is outside your assigned scope.' });
+          return;
+        }
+        next(err);
+      }
+    };
+    router.get('/sku-trend', trendHandler(false));
+    router.get('/sku-trend/skus', trendHandler(true));
+  }
   return router;
 }
 

@@ -38,7 +38,7 @@ import {
   CONTRIBUTION_LEVEL_LABEL, STATUS_COLOR, STATUS_ORDER, benchmarkMet, contributionSlices, filterPeople,
   monthlyStatusPerformance, peopleSummary, personPath, personShares, showsBest, statusMix, teamPulse, topPerson,
   CHANNEL_SEGMENT, RECONCILIATION_REASON_LABEL, parseChannel, totalPulse,
-  type DirectorChannel, type DirectorPerformance, type DrillStep, type PeopleReconciliation, type PeopleStatus,
+  type DirectorChannel, type DrillStep, type PeopleReconciliation, type PeopleStatus,
   type PeopleStatusDefinition, type SalesPersonPerformance, type TotalFigures,
 } from '../../../../lib/salesPeoplePerformance';
 import { DataQualityRow } from '../../../../components/DataQualityRow';
@@ -77,12 +77,15 @@ function StatusPill({ status, label }: { status: PeopleStatus; label: string }) 
 
 /** The same header ChartPanel draws (14px bold title + help icons + actions on the right), for the sections that are
  * not a single panel. */
-function SectionHeader({ title, helpId, children }: { title: string; helpId: VisualHelpId; children?: React.ReactNode }) {
+function SectionHeader({ title, helpId, note, children }: { title: string; helpId: VisualHelpId; note?: string; children?: React.ReactNode }) {
+  // `note`: one more line in the "?" (e.g. a director seat nobody holds)
+  const hints = vh(helpId);
+  const help = note && hints.help ? { ...hints, help: { ...hints.help, notes: [hints.help.notes, note].filter(Boolean).join(' ') } } : hints;
   return (
     <div className={styles.sectionHeader}>
       <div className={styles.sectionTitle}>
         <h2>{title}</h2>
-        <VisualInfoIcons title={title} {...vh(helpId)} />
+        <VisualInfoIcons title={title} {...help} />
       </div>
       {children && <div className={styles.sectionActions}>{children}</div>}
     </div>
@@ -233,34 +236,6 @@ function TeamPulseCard({ pulse, title }: { pulse: ReturnType<typeof teamPulse>; 
   );
 }
 
-/** A channel owner (2026-11-15): the channel's YTD actual and target, in the people cards' style, with the tier colour.
- * Click = filter the page to that channel (?channel=). Dimmed when the tier filter or the Customer Group leaves it out. */
-function DirectorCard({ director, tierLabel, pressed, dimmed, onPress }: {
-  director: DirectorPerformance; tierLabel: string; pressed: boolean; dimmed: boolean; onPress: () => void;
-}) {
-  const color = director.status === 'no_target' ? 'var(--ps-color-muted-text)' : STATUS_COLOR[director.status];
-  const name = director.names.join(', ') || 'Not assigned';
-  return (
-    <Card {...pressable(onPress)} aria-pressed={pressed} aria-label={`${director.roleLabel}: ${name}`} data-dimmed={dimmed || undefined}
-      data-testid={`director-card-${director.channel}`} className={`ps-card-clickable ${styles.statusCard}`}
-      style={{ '--status': color, borderInlineStart: `4px solid ${color}` } as React.CSSProperties}>
-      <span className={styles.cardTitle}><span className={styles.dot} aria-hidden />{director.roleLabel} · {tierLabel}</span>
-      <div className={styles.personPick} style={{ cursor: 'inherit' }}>
-        <span className={styles.personName} title={name}>{name}</span>
-        <span className={styles.cardValue} style={{ color: varianceColor(director.variancePct) }}>
-          {dash(formatSignedPercent(director.variancePct))}
-        </span>
-        <VsTarget people={[]} total={director} />
-        <span className={styles.personFigures} title={`${formatCurrency(director.actual)} of ${formatCurrency(director.target)}`}>
-          {compact(director.actual)} <span className={styles.muted}>of {compact(director.target)} · {director.channel} channel
-            {director.targetSource === 'director_rows' ? ' · director target' : ''}</span>
-        </span>
-        <ProgressBar label={`${director.roleLabel} achievement`} value={director.achievement} />
-      </div>
-    </Card>
-  );
-}
-
 /** Admins only: why the listed people do not add up to the company total, by reason and by salesperson. */
 function ReconciliationTable({ data }: { data: PeopleReconciliation }) {
   const byReason = new Map<string, { actual: number; target: number; count: number }>();
@@ -371,7 +346,8 @@ export default function SalesPeoplePerformancePage() {
   const clearPage = () => { setStatus(null); setChannel(null); setSearch(''); setPersonKey(null); setDrill([]); };
   const chooseChannel = (next: DirectorChannel | null) => { setChannel(next); setPersonKey(null); setDrill([]); };
   const company = overview.data?.company;
-  const directors = overview.data?.directors ?? [];
+  // director seats nobody holds: named in the Team tiers "?" (not a person card)
+  const vacancies = overview.data?.directorVacancies ?? [];
   const reconciliation = overview.data?.reconciliation ?? null;
   const monthsElapsed = overview.data?.monthsElapsed ?? 0;
   const tierPeople = status ? filterPeople(people, status) : people;
@@ -381,7 +357,6 @@ export default function SalesPeoplePerformancePage() {
   const pulseTitle = selected ? `Pulse · ${selected.name}`
     : status ? `Pulse · ${label(status)} (${tierPeople.length} ${tierPeople.length === 1 ? 'person' : 'people'})`
       : channel ? `Team pulse · ${channel} channel` : 'Team pulse';
-  const tierText = (d: DirectorPerformance) => (d.status === 'no_target' ? 'No target' : label(d.status as PeopleStatus));
   const toggleLine = (key: PeopleStatus) => setHiddenLines((current) => {
     const next = new Set(current);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -482,15 +457,6 @@ export default function SalesPeoplePerformancePage() {
       setDownloading(null);
     }
   }
-  const figureRow = (name: string, f: TotalFigures | undefined, tier: string) => f
-    ? [name, formatCurrency(f.actual), formatCurrency(f.target), formatCurrency(f.variance), dash(formatSignedPercent(f.variancePct)),
-      formatCurrency(f.fullYearTarget), tier]
-    : [name, '—', '—', '—', '—', '—', tier];
-  const exportDirectors = () => exportPdf('directors', 'Directors and company total',
-    ['', 'Actual YTD', 'Target to date', 'Variance', 'Variance %', 'Full-year target', 'Tier'],
-    [figureRow('Company total (= Tachometer YTD Value)', company, company && company.status !== 'no_target' ? label(company.status as PeopleStatus) : ''),
-      ...directors.map((d) => figureRow(`${d.roleLabel}${d.names.length ? ` (${d.names.join(', ')})` : ''}`, d, tierText(d)))],
-    [`Anchor date: ${anchorDate}`]);
   const exportMix = () => exportPdf('mix', 'Tier mix', ['Tier', 'People', 'Team share', 'Benchmark', 'Gap'],
     mixRows.map((r) => [r.label, String(r.count), peoplePercent.format(r.share), r.benchmarkLabel, r.gap]),
     [`Period: ${mixPeriodLabel}`, `Team size: ${headcount(mix.total)}`], mixNote ? [mixNote] : []);
@@ -560,7 +526,8 @@ export default function SalesPeoplePerformancePage() {
               )}
               {/* 1. Team tiers: one card per tier, click = filter the whole page to that tier (?tier=). */}
               <section aria-label="YTD tier summary" className={styles.section}>
-                <SectionHeader title="Team tiers" helpId="promotion.salesPeople.statusCards">
+                <SectionHeader title="Team tiers" helpId="promotion.salesPeople.statusCards"
+                  note={vacancies.length ? vacancies.map((v) => `${v}: not assigned.`).join(' ') : undefined}>
                   <span className={styles.muted}>YTD 1 Jan – {anchorDate}</span>
                 </SectionHeader>
                 <div className={styles.cards}>
@@ -572,22 +539,6 @@ export default function SalesPeoplePerformancePage() {
                   ))}
                 </div>
               </section>
-
-              {/* 1b. Directors (channel owners, 2026-11-15): not counted in any people figure. Click = that channel only. */}
-              {directors.length > 0 && (
-                <section aria-label="Directors" className={styles.section} data-testid="directors-row">
-                  <SectionHeader title="Directors" helpId="promotion.salesPeople.directors">
-                    <ExportPdfButton onClick={exportDirectors} downloading={downloading === 'directors'} />
-                  </SectionHeader>
-                  <div className={styles.directorCards}>
-                    {directors.map((d) => (
-                      <DirectorCard key={d.channel} director={d} tierLabel={tierText(d)} pressed={channel === d.channel}
-                        dimmed={!d.inFilter || (status != null && d.status !== status)}
-                        onPress={() => chooseChannel(channel === d.channel ? null : d.channel)} />
-                    ))}
-                  </div>
-                </section>
-              )}
 
               {/* 2. The #1 person per status, each card under its Team status card. */}
               <section aria-label="Top people by category" className={styles.section}>
