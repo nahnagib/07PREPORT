@@ -57,9 +57,10 @@ import type { Pool } from 'mysql2/promise';
 import { DateTime } from 'luxon';
 import { buildWhereClause, type Filters } from './filters';
 import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
-import { BCG_CLASS_KEYS, bcgRule, classifyPeriod, fetchBcgPeriod, withBcgThresholds, type BcgClassKey, type BcgResult } from './bcgLatestProfit';
+import { FRESHNESS_TARGET_PCT } from '../config/productTargets';
+import { BCG_CLASS_KEYS, bcgRule, classify, classifyPeriod, fetchBcgPeriod, withBcgThresholds, type BcgClassKey, type BcgResult } from './bcgLatestProfit';
 import { resolveProductPeriod, type ProductPeriod } from '../lib/last12Months';
-import { combineStatuses, isPortfolioStatus, productStatusOf, PRODUCT_STATUSES, type ProductStatus } from './productPortfolio';
+import { isArchivedRow, isPortfolioStatus, productStatusOf, statusFromSalesAndStock, PRODUCT_STATUSES, type ProductStatus } from './productPortfolio';
 
 export interface UomQty {
   uom: string;
@@ -153,10 +154,13 @@ export { BCG_CLASS_KEYS, type BcgClassKey };
 export interface ProductStatusSummary {
   total: number;
   active: { count: number; units: number; value: number };
-  nonActive: { count: number; withStock: number; zeroStock: number; stockUnits: number; stockValue: number };
-  dormant: { count: number };
+  /** withStock = stock but no sales; withSales (= zeroStock) = sales but no stock (2026-11-15 rules). */
+  nonActive: { count: number; withStock: number; withSales: number; zeroStock: number; stockUnits: number; stockValue: number };
+  /** archived = archived in Odoo; idle = no stock and no sales in the period. */
+  dormant: { count: number; archived: number; idle: number };
   unclassified: { count: number };
-  /** Stars + Cash Cows + Strategic + Dogs = active.count. profit / missingCost: PROFIT DATA. */
+  /** Stars + Cash Cows + Strategic + Dogs = active.count + nonActive.count (the portfolio, 2026-11-15). Non Active SKUs
+   * with no sales in the period have zero volume and no margin: Dogs. profit / missingCost: PROFIT DATA. */
   bcg: { classes: { key: BcgClassKey; count: number; units: number; value: number; profit?: number }[]; missingCost?: number };
 }
 
@@ -221,6 +225,10 @@ export interface ProductStatusSkuRow {
   odooUrl: string | null;
   /** Non Active: On Hand > 0 (the card's "with stock"). */
   withStock: boolean;
+  /** Non Active with sales in the period but no stock (2026-11-15). */
+  withSales?: boolean;
+  /** Dormant because of no stock and no sales (not archived). */
+  idle?: boolean;
   /** Archived in Odoo (Dormant). The archive date is not loaded (null). */
   archived: boolean;
   archivedDate: string | null;
@@ -513,15 +521,21 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     products.push(toRow(key, p, a, period.days, [String(p.Company ?? '')], [partOf(p, a)], orderDaysOf.get(key) ?? 0, odooBase, buckets));
   }
 
-  // Status of the period (Active = sold in it, company-wide), BCG of the Active products, movement vs the prior period.
+  // Status of the period, BCG of the PORTFOLIO (Active + Non Active, 2026-11-15), movement vs the prior period. A Non Active
+  // product with no sale in the period has zero volume and no margin: Dogs (never "missing cost": there is no sale to cost).
   const rule = bcgRule(thresholds);
   const volumeScale = period.isDefault ? 1 : period.days / 365;
   const classOf = new Map<string, BcgResult>();
   for (const p of viewRows) {
     const key = String(p.ProductCompanyKey);
+    if (!isPortfolioStatus(statusOf(p))) continue;
     const w = bcgByKey.get(key);
-    if (w && statusOf(p) === 'Active') classOf.set(key, classifyPeriod(w, rule, volumeScale));
+    classOf.set(key, w && w.sold ? classifyPeriod(w, rule, volumeScale) : {
+      bcgClass: classify(String(p.Company ?? ''), w?.qty ?? 0, null, rule, volumeScale),
+      volume: w?.qty ?? 0, value: w?.value ?? 0, profit: null, grossProfitPct: null, missingCost: false, dataAsOf: w?.lastDate ?? null,
+    });
   }
+  const soldKeys = new Set(bcgWindows.filter((w) => w.sold).map((w) => w.k));
   const movementRule = movementConfig(thresholds);
   for (const r of products) {
     r.productStatus = statusOf(rawByKey.get(r.productCompanyKey));
@@ -556,13 +570,13 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     builtAtUtc: meta.BuiltAtUtc ? new Date(meta.BuiltAtUtc).toISOString() : null,
     period,
     lookbackDays: num(meta.LookbackDays) || 90,
-    thresholds: publicThresholds(thresholds),
+    thresholds: { ...publicThresholds(thresholds), freshness_targets: { ...FRESHNESS_TARGET_PCT } },
     products,
     totals: { value: totalValue, lines: totalLines, volumeByUom: uomList(totalQty) },
     intercompanyValue,
     profitAccess: true,
-    ...statusSummaryOf(viewRows, statuses, classOf),
-    ...(query.includeSkuList ? { skuList: skuListOf(viewRows, statuses, classOf, byProduct, odooBase) } : {}),
+    ...statusSummaryOf(viewRows, statuses, classOf, soldKeys),
+    ...(query.includeSkuList ? { skuList: skuListOf(viewRows, statuses, classOf, byProduct, odooBase, soldKeys) } : {}),
   };
 }
 
@@ -654,22 +668,25 @@ export function groupBySku(rows: any[]): Map<string, any[]> {
   return catalog;
 }
 
-function statusInputOf(p: any, statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>): StatusInput {
+function statusInputOf(p: any, statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>, soldKeys: Set<string>): StatusInput {
+  const key = String(p.ProductCompanyKey);
   return {
-    status: statuses.get(String(p.ProductCompanyKey)) ?? null,
+    status: statuses.get(key) ?? null,
+    sold: soldKeys.has(key),
+    archived: isArchivedRow(p),
     onHandQty: num(p.OnHandQty),
     onHandValue: num(p.OnHandValue),
-    bcg: classOf.get(String(p.ProductCompanyKey)) ?? null,
+    bcg: classOf.get(key) ?? null,
   };
 }
 
 /** The status table (GET <page>/products): one row per SKU of groupBySku, its status from combineSkuStatus -- the cards'
  * own rule -- so the rows per status equal the cards. Period sums add up the variant's company rows. */
 export function skuListOf(rows: any[], statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>,
-  byProduct: Map<string, Agg>, odooBase: string | null): ProductStatusSkuRow[] {
+  byProduct: Map<string, Agg>, odooBase: string | null, soldKeys: Set<string> = new Set()): ProductStatusSkuRow[] {
   const out: ProductStatusSkuRow[] = [];
   for (const [id, parts] of groupBySku(rows)) {
-    const combined = combineSkuStatus(parts.map((p) => statusInputOf(p, statuses, classOf)));
+    const combined = combineSkuStatus(parts.map((p) => statusInputOf(p, statuses, classOf, soldKeys)));
     const status = combined.status as ProductStatus;
     const aggOf = (p: any) => byProduct.get(String(p.ProductCompanyKey));
     // The row's face: the excluded company row for Unclassified, else the company row with the most sales.
@@ -691,7 +708,7 @@ export function skuListOf(rows: any[], statuses: Map<string, ProductStatus>, cla
       category: str(primary.Category),
       brand: str(primary.Brand),
       status,
-      bcgClass: status === 'Active' ? ((combined.bcg?.bcgClass as BcgClassKey | undefined) ?? null) : null,
+      bcgClass: isPortfolioStatus(status) ? ((combined.bcg?.bcgClass as BcgClassKey | undefined) ?? null) : null,
       units: aggs.reduce((t, a) => t + (a ? sumQty(a.qty) : 0), 0),
       unitsPrior: aggs.reduce((t, a) => t + (a ? sumQty(a.qtyPrior) : 0), 0),
       value,
@@ -701,6 +718,8 @@ export function skuListOf(rows: any[], statuses: Map<string, ProductStatus>, cla
       lastSaleDate: lastSale,
       odooUrl: odooFormUrl(odooBase, 'product.product', Number(primary.ProductKey), numOrNull(primary.CompanyKey)),
       withStock: status === 'NonActive' && combined.onHandQty > 0,
+      withSales: status === 'NonActive' && combined.sold,
+      idle: status === 'Dormant' && !combined.archived,
       archived: parts.some((p) => p.IsActive !== null && p.IsActive !== undefined && num(p.IsActive) === 0),
       archivedDate: null,
       exclusionRule: status !== 'Unclassified' ? null
@@ -713,9 +732,9 @@ export function skuListOf(rows: any[], statuses: Map<string, ProductStatus>, cla
 }
 
 /** The status cards, or why they cannot be shown (never fails the whole response: the other Product pages share it). */
-function statusSummaryOf(rows: any[], statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>) {
+function statusSummaryOf(rows: any[], statuses: Map<string, ProductStatus>, classOf: Map<string, BcgResult>, soldKeys: Set<string>) {
   try {
-    const skus = [...groupBySku(rows).values()].map((parts) => combineSkuStatus(parts.map((p) => statusInputOf(p, statuses, classOf))));
+    const skus = [...groupBySku(rows).values()].map((parts) => combineSkuStatus(parts.map((p) => statusInputOf(p, statuses, classOf, soldKeys))));
     return { statusSummary: summarizeProductStatus(skus), statusSummaryError: null };
   } catch (err) {
     console.error('[productDashboard] status summary check failed:', err);
@@ -725,53 +744,69 @@ function statusSummaryOf(rows: any[], statuses: Map<string, ProductStatus>, clas
 
 export interface StatusInput {
   status: string | null;
+  /** Sold in the selected period (any company row of the SKU). */
+  sold?: boolean;
+  /** Archived in Odoo (every company row of the SKU, once combined). */
+  archived?: boolean;
   onHandQty: number;
   onHandValue: number;
-  /** The Active product's BCG of the period (units, value, profit); null otherwise. */
+  /** The portfolio (Active / Non Active) product's BCG of the period (units, value, profit); null otherwise. */
   bcg: Pick<BcgResult, 'bcgClass' | 'volume' | 'value' | 'profit' | 'missingCost'> | null;
 }
 
-/** Shared variants count once. Prefer a workbook match in any in-scope company, then a sale in the period. */
+/** Shared variants count once (2026-11-15 rules on the SKU): any Unclassified row > every row archived (Dormant) > the
+ * live rows' sales in the period and summed stock on hand (Active / Non Active / Dormant). The BCG comes from the live
+ * portfolio row with the most sales value; units, value and profit add up over those rows. */
 export function combineSkuStatus(parts: StatusInput[]): StatusInput {
-  const combined = combineStatuses(parts.map((part) => part.status));
   const excluded = parts.find((part) => part.status === 'Unclassified');
-  if (combined === 'Unclassified' && excluded) return excluded;
-
-  const active = parts.filter((part) => part.status === 'Active');
-  if (active.length) {
-    // The leading company by sales value supplies the class; the amounts span all active company rows.
-    const ordered = [...active].sort((a, b) => (b.bcg?.value ?? 0) - (a.bcg?.value ?? 0));
-    const primary = ordered[0];
-    if (!primary.bcg || active.some((part) => !part.bcg)) return { ...primary, bcg: null };
-    return {
-      ...primary,
-      bcg: {
-        bcgClass: primary.bcg.bcgClass,
-        volume: active.reduce((total, part) => total + part.bcg!.volume, 0),
-        value: active.reduce((total, part) => total + part.bcg!.value, 0),
-        profit: active.reduce((total, part) => total + (part.bcg!.profit ?? 0), 0),
-        missingCost: active.some((part) => part.bcg!.missingCost),
-      },
-    };
+  if (excluded) return excluded;
+  // eslint-disable-next-line no-unused-vars -- parameter names of a function type (the base rule misreads them)
+  const sum = (rows: StatusInput[], f: (r: StatusInput) => number) => rows.reduce((t, r) => t + f(r), 0);
+  const archived = (part: StatusInput) => part.archived ?? part.status === 'Dormant';
+  const live = parts.filter((part) => !archived(part));
+  if (live.length === 0) {
+    return { status: 'Dormant', sold: parts.some((p) => p.sold), archived: true, onHandQty: sum(parts, (p) => p.onHandQty),
+      onHandValue: sum(parts, (p) => p.onHandValue), bcg: null };
   }
+  const sold = live.some((part) => part.sold ?? part.status === 'Active');
+  const onHandQty = sum(live, (p) => p.onHandQty);
+  const status = statusFromSalesAndStock(sold, onHandQty > 0);
+  const base = { status, sold, archived: false, onHandQty, onHandValue: sum(live, (p) => p.onHandValue) };
+  if (status === 'Dormant') return { ...base, bcg: null };
+  const classed = live.filter((part) => part.bcg);
+  if (classed.length === 0) return { ...base, bcg: null };
+  const primary = [...classed].sort((x, y) => (y.bcg!.value) - (x.bcg!.value))[0];
   return {
-    status: combined,
-    onHandQty: parts.reduce((total, part) => total + part.onHandQty, 0),
-    onHandValue: parts.reduce((total, part) => total + part.onHandValue, 0),
-    bcg: null,
+    ...base,
+    bcg: {
+      bcgClass: primary.bcg!.bcgClass,
+      volume: sum(classed, (p) => p.bcg!.volume),
+      value: sum(classed, (p) => p.bcg!.value),
+      profit: sum(classed, (p) => p.bcg!.profit ?? 0),
+      missingCost: classed.some((p) => p.bcg!.missingCost),
+    },
   };
 }
 
-/** Total SKUs = Unclassified + Dormant + Active + Non Active, and Stars + Cash Cows + Strategic + Dogs = Active. Throws
- * when a row has no known status, an Active product has no class, or either sum does not match. */
+/** Total SKUs = Unclassified + Dormant + Active + Non Active, and Stars + Cash Cows + Strategic + Dogs = Active + Non Active
+ * (the portfolio, 2026-11-15). Throws when a row has no known status, a portfolio product has no class, or a sum is off. */
 export function summarizeProductStatus(rows: StatusInput[]): ProductStatusSummary {
   const out: ProductStatusSummary = {
     total: rows.length,
     active: { count: 0, units: 0, value: 0 },
-    nonActive: { count: 0, withStock: 0, zeroStock: 0, stockUnits: 0, stockValue: 0 },
-    dormant: { count: 0 },
+    nonActive: { count: 0, withStock: 0, withSales: 0, zeroStock: 0, stockUnits: 0, stockValue: 0 },
+    dormant: { count: 0, archived: 0, idle: 0 },
     unclassified: { count: 0 },
     bcg: { classes: BCG_CLASS_KEYS.map((key) => ({ key, count: 0, units: 0, value: 0, profit: 0 })), missingCost: 0 },
+  };
+  const addBcg = (r: StatusInput) => {
+    const cls = out.bcg.classes.find((c) => c.key === r.bcg?.bcgClass);
+    if (!cls || !r.bcg) throw new Error(`Product status check failed: a ${r.status} product has no BCG class`);
+    cls.count += 1;
+    cls.units += r.bcg.volume;
+    cls.value += r.bcg.value;
+    cls.profit = (cls.profit ?? 0) + (r.bcg.profit ?? 0);
+    if (r.bcg.missingCost) out.bcg.missingCost = (out.bcg.missingCost ?? 0) + 1;
   };
   for (const r of rows) {
     switch (r.status) {
@@ -780,6 +815,8 @@ export function summarizeProductStatus(rows: StatusInput[]): ProductStatusSummar
         break;
       case 'Dormant':
         out.dormant.count += 1;
+        if (r.archived ?? true) out.dormant.archived += 1;
+        else out.dormant.idle += 1;
         break;
       case 'NonActive':
         out.nonActive.count += 1;
@@ -788,36 +825,31 @@ export function summarizeProductStatus(rows: StatusInput[]): ProductStatusSummar
           out.nonActive.stockUnits += r.onHandQty;
           out.nonActive.stockValue += r.onHandValue;
         } else {
-          out.nonActive.zeroStock += 1;
+          out.nonActive.withSales += 1;
         }
+        addBcg(r);
         break;
-      case 'Active': {
-        const cls = out.bcg.classes.find((c) => c.key === r.bcg?.bcgClass);
-        if (!cls || !r.bcg) throw new Error('Product status check failed: an Active product has no BCG class');
+      case 'Active':
         out.active.count += 1;
-        out.active.units += r.bcg.volume;
-        out.active.value += r.bcg.value;
-        cls.count += 1;
-        cls.units += r.bcg.volume;
-        cls.value += r.bcg.value;
-        cls.profit = (cls.profit ?? 0) + (r.bcg.profit ?? 0);
-        if (r.bcg.missingCost) out.bcg.missingCost = (out.bcg.missingCost ?? 0) + 1;
+        out.active.units += r.bcg?.volume ?? 0;
+        out.active.value += r.bcg?.value ?? 0;
+        addBcg(r);
         break;
-      }
       default:
         throw new Error(`Product status check failed: unknown ProductStatus ${JSON.stringify(r.status)}`);
     }
   }
+  out.nonActive.zeroStock = out.nonActive.withSales;
   const statusSum = out.unclassified.count + out.dormant.count + out.active.count + out.nonActive.count;
   if (statusSum !== out.total) {
     throw new Error(`Product status check failed: Total SKUs ${out.total} != Unclassified + Dormant + Active + Non Active ${statusSum}`);
   }
   const bcgSum = out.bcg.classes.reduce((t, c) => t + c.count, 0);
-  if (bcgSum !== out.active.count) {
-    throw new Error(`Product status check failed: Stars + Cash Cows + Strategic + Dogs ${bcgSum} != Active ${out.active.count}`);
+  if (bcgSum !== out.active.count + out.nonActive.count) {
+    throw new Error(`Product status check failed: Stars + Cash Cows + Strategic + Dogs ${bcgSum} != Active + Non Active ${out.active.count + out.nonActive.count}`);
   }
-  if (out.nonActive.withStock + out.nonActive.zeroStock !== out.nonActive.count) {
-    throw new Error('Product status check failed: Non Active with stock + zero stock != Non Active');
+  if (out.nonActive.withStock + out.nonActive.withSales !== out.nonActive.count) {
+    throw new Error('Product status check failed: Non Active with stock + with sales != Non Active');
   }
   return out;
 }

@@ -527,6 +527,8 @@ export default function PipelineHealthPage() {
     try {
       await exportRowsAsPdf({
         title,
+        // The Status donut's centre travels with its PDF: "Won / Lost Ratio 1.14 : 1 · Win rate 53.3%".
+        subtitle: key === 'status' ? [`${winLoss.label} ${winLoss.main}`, winLoss.caption].filter(Boolean).join(' · ') : undefined,
         columns: columns.map((c) => ({ header: c.header, align: c.align })),
         rows: rowsToPdfRows(columns, rows),
         fileName: title.toLowerCase().replace(/\s+/g, '-'),
@@ -623,7 +625,7 @@ export default function PipelineHealthPage() {
             {/* First row: the open pipeline's value, full width (hero card, styled like the Daily Critical Number) */}
             <TotalPipelineValueCard openPipeline={data?.openPipeline} loading={overview.loading} error={overview.error ?? undefined} onRetry={overview.retry} />
             <div data-testid="pipeline-top-grid" className={styles.grid}>
-              {/* Row 1 -- where opportunities are heading: Opportunity by Status (1/3) | Expected Closure Opportunity (2/3) */}
+              {/* Row 1 (2026-11-15) -- where opportunities are: Opportunity by Status | Opportunity by Stage */}
               <div data-testid="pipeline-row-1" className={styles.rowStatusClosure}>
                 {/* Opportunity by Status -- the outcome (Odoo won_status: Won / Lost / Pending), never the stage */}
                 <ChartPanel<StatusTableRow>
@@ -659,8 +661,8 @@ export default function PipelineHealthPage() {
                       segments={statusSegments}
                       valueFormatter={(v) => `${v.toLocaleString(DISPLAY_LOCALE)} opportunit${v === 1 ? 'y' : 'ies'}`}
                       legendTitle="Status"
+                      centerTopLabel={winLoss.label}
                       centerLabel={winLoss.main}
-                      centerSubLabel={winLoss.label}
                       centerCaption={winLoss.caption}
                       legendTotal={{ label: 'Total', value: `${statusTotal.toLocaleString(DISPLAY_LOCALE)} opportunit${statusTotal === 1 ? 'y' : 'ies'}` }}
                       onSegmentClick={(id) => openDetails({ type: 'status', value: id })}
@@ -669,6 +671,49 @@ export default function PipelineHealthPage() {
                   )}
                 </ChartPanel>
 
+                {/* Opportunity by Stage (open only) */}
+                <ChartPanel<StageValueTableRow>
+                  title="Opportunity by Stage"
+                  wrapHeader
+                  {...vh('promotion.pipelineHealth.byStage')}
+                  style={{ minHeight: 380 }}
+                  tableColumns={overview.error ? undefined : stageValueTableColumns}
+                  tableRows={overview.error ? undefined : stageValueTableRows}
+                  getRowId={(row) => row.id}
+                  headerActions={
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <DrillIndicator hint="Click a stage segment to see its opportunities" />
+                      {!overview.error && (
+                        <PdfButton
+                          label="Export as PDF"
+                          downloading={downloadingChartPdf === 'stage'}
+                          disabled={stageValueTableRows.length === 0}
+                          onClick={() => handleDownloadChartPdf('stage', 'Opportunity by Stage', stageValueTableColumns, stageValueTableRows)}
+                        />
+                      )}
+                    </div>
+                  }
+                >
+                  {overview.loading ? (
+                    <LoadingSkeleton variant="chart" />
+                  ) : overview.error ? (
+                    <ErrorState message={overview.error} onRetry={overview.retry} />
+                  ) : (
+                    <DonutChart
+                      title="Opportunity by Stage"
+                      showTitle={false}
+                      segments={stageSegments}
+                      valueFormatter={(v) => formatCurrency(v)}
+                      legendTitle="Stage"
+                      onSegmentClick={(id) => openDetails({ type: 'stage', value: id })}
+                      showPercentLabels
+                    />
+                  )}
+                </ChartPanel>
+              </div>
+
+              {/* Row 2 (2026-11-15) -- Expected Closure Opportunity (widest, bar + line) | Full Pipeline (funnel) | Stage Benchmark */}
+              <div data-testid="pipeline-row-2" className={styles.rowStages}>
                 {/* Expected Closure Opportunity */}
                 <ChartPanel<ClosureTableRow>
                   title="Expected Closure Opportunity"
@@ -709,50 +754,6 @@ export default function PipelineHealthPage() {
                         expectedCount: (v) => v.toLocaleString(DISPLAY_LOCALE),
                       }}
                       onCategoryClick={(label) => openDetails({ type: 'month', value: label })}
-                    />
-                  )}
-                </ChartPanel>
-
-              </div>
-
-              {/* Row 2 -- stage progression: Opportunity by Stage | Full Pipeline (funnel) | Stage Benchmark */}
-              <div data-testid="pipeline-row-2" className={styles.rowStages}>
-                {/* Opportunity by Stage (open only) */}
-                <ChartPanel<StageValueTableRow>
-                  title="Opportunity by Stage"
-                  wrapHeader
-                  {...vh('promotion.pipelineHealth.byStage')}
-                  style={{ minHeight: 380 }}
-                  tableColumns={overview.error ? undefined : stageValueTableColumns}
-                  tableRows={overview.error ? undefined : stageValueTableRows}
-                  getRowId={(row) => row.id}
-                  headerActions={
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <DrillIndicator hint="Click a stage segment to see its opportunities" />
-                      {!overview.error && (
-                        <PdfButton
-                          label="Export as PDF"
-                          downloading={downloadingChartPdf === 'stage'}
-                          disabled={stageValueTableRows.length === 0}
-                          onClick={() => handleDownloadChartPdf('stage', 'Opportunity by Stage', stageValueTableColumns, stageValueTableRows)}
-                        />
-                      )}
-                    </div>
-                  }
-                >
-                  {overview.loading ? (
-                    <LoadingSkeleton variant="chart" />
-                  ) : overview.error ? (
-                    <ErrorState message={overview.error} onRetry={overview.retry} />
-                  ) : (
-                    <DonutChart
-                      title="Opportunity by Stage"
-                      showTitle={false}
-                      segments={stageSegments}
-                      valueFormatter={(v) => formatCurrency(v)}
-                      legendTitle="Stage"
-                      onSegmentClick={(id) => openDetails({ type: 'stage', value: id })}
-                      showPercentLabels
                     />
                   )}
                 </ChartPanel>

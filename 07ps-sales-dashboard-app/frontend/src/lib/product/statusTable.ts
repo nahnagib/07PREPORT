@@ -21,10 +21,10 @@ export const STATUS_LABEL: Record<ProductStatus, string> = {
   Unclassified: 'Unclassified',
 };
 export const STATUS_DEFINITION: Record<ProductStatus, string> = {
-  Active: 'sold in the period',
-  NonActive: 'not sold in the period',
-  Dormant: 'archived in Odoo',
-  Unclassified: 'active exclusion rules',
+  Active: 'sales and stock',
+  NonActive: 'sales or stock, not both',
+  Dormant: 'archived, or no stock and no sales',
+  Unclassified: 'SKUs not for sale',
 };
 
 export function parseStatusKey(v: string | null | undefined): StatusKey {

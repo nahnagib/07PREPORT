@@ -92,7 +92,7 @@ function ProductStatusTable() {
     { key: 'category', header: 'Category', render: (r) => <ProductName name={r.category ?? '—'} />, rawValue: (r) => r.category ?? '' },
     { key: 'brand', header: 'Vendor', render: brandOf, rawValue: brandOf },
     { key: 'status', header: 'Status', render: (r) => STATUS_LABEL[r.status], rawValue: (r) => STATUS_LABEL[r.status] },
-    ...(status === 'Active'
+    ...(status === 'Active' || status === 'NonActive'
       ? [{ key: 'bcgClass', header: 'BCG Class', rawValue: (r: Row) => r.bcgClass ?? '',
           render: (r: Row) => <span style={{ color: (r.bcgClass && BCG_COLOR[r.bcgClass]) || 'var(--ps-color-muted-text)', fontWeight: 700 }}>{r.bcgClass ?? '—'}</span> } as DataGridColumn<Row>]
       : []),
@@ -108,11 +108,11 @@ function ProductStatusTable() {
     { key: 'onHandQty', header: 'Qty on hand', align: 'right', render: (r) => fmtNum(r.onHandQty), rawValue: (r) => r.onHandQty },
     { key: 'lastSaleDate', header: 'Last sale', render: (r) => r.lastSaleDate ?? '—', rawValue: (r) => r.lastSaleDate ?? '' },
     ...(status === 'NonActive'
-      ? [{ key: 'withStock', header: 'Stock', render: (r: Row) => (r.withStock ? 'With stock' : 'Zero stock'), rawValue: (r: Row) => (r.withStock ? 'With stock' : 'Zero stock') } as DataGridColumn<Row>]
+      ? [{ key: 'withStock', header: 'Stock', render: (r: Row) => (r.withStock ? 'Stock · no sales' : 'Sales · no stock'), rawValue: (r: Row) => (r.withStock ? 'Stock · no sales' : 'Sales · no stock') } as DataGridColumn<Row>]
       : []),
     ...(status === 'Dormant'
       ? ([
-          { key: 'archived', header: 'Odoo status', render: (r) => (r.archived ? 'Archived in Odoo' : '—'), rawValue: (r) => (r.archived ? 'Archived in Odoo' : '') },
+          { key: 'archived', header: 'Why Dormant', render: (r) => (r.archived ? 'Archived in Odoo' : 'No stock · no sales'), rawValue: (r) => (r.archived ? 'Archived in Odoo' : 'No stock · no sales') },
           { key: 'archivedDate', header: 'Archive date', render: (r) => r.archivedDate ?? 'not loaded', rawValue: (r) => r.archivedDate ?? '' },
         ] as DataGridColumn<Row>[])
       : []),
@@ -169,7 +169,7 @@ function ProductStatusTable() {
 
           {status === 'NonActive' && list.data && (
             <div role="radiogroup" aria-label="Stock" data-testid="stock-filter" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {([['all', `All ${fmtCount(counts.NonActive)}`], ['with', `With stock ${fmtCount(withStockCount)}`], ['zero', `Zero stock ${fmtCount(zeroStockCount)}`]] as const).map(([key, label]) => (
+              {([['all', `All ${fmtCount(counts.NonActive)}`], ['with', `Stock · no sales ${fmtCount(withStockCount)}`], ['zero', `Sales · no stock ${fmtCount(zeroStockCount)}`]] as const).map(([key, label]) => (
                 <button key={key} type="button" role="radio" aria-checked={stock === key} data-testid={`stock-filter-${key}`}
                   onClick={() => go('non_active', key)} style={{ ...tabStyle(stock === key), fontWeight: 600 }}>
                   {label}

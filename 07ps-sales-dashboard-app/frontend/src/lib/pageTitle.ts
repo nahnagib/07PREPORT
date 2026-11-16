@@ -10,7 +10,6 @@ import { DEPARTMENTS } from './departments';
  * the title by itself; no page hardcodes its own title.
  *
  *   /promotion/tachometer           Promotion — Tachometer
- *   /promotion/tachometer/ytdValue  Promotion — Tachometer › YTD Value Breakdown   (subTitle passed by the page)
  *   /promotion                      Promotion Dashboard                           (department hub)
  *   /admin/users                    Admin — Users
  *   /                               7Ps Dashboard Hub

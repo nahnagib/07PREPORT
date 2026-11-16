@@ -6,11 +6,14 @@ import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { CreditPolicyChart } from '../../../../components/debt/CreditPolicyChart';
+import { debtToSales, TONE_COLOR } from '../../../../lib/debt/debtToSales';
 import { InfoHint } from '../../../../components/debt/InfoHint';
 import { DebtDrilldownModal, type DebtDrillTarget } from '../../../../components/debt/DebtDrilldownModal';
 import { CollectionsDrilldownModal, CollectionsTrendPanel } from '../../../../components/debt/CollectionsTrend';
 import { useAuth } from '../../../../lib/AuthProvider';
 import { useDebtReport } from '../../../../lib/hooks';
+import { useFilterState } from '../../../../components/FilterProvider';
+import { ShareBar } from '../../../../components/ShareBar';
 import type { CollectionGrain, CollectionPoint, CollectionsDrilldown, CollectionsTrend, DebtAging, DebtCurrencyOverview, DebtCustomerRow, DebtCustomers, DebtDrilldown, DebtDrillKind, DebtMeta, DebtOverview, DebtTrend } from '../../../../lib/api';
 import { formatCompactMoney, formatDate, formatMoney, formatNumber, formatTimestamp } from '../../../../lib/format';
 import {
@@ -149,7 +152,10 @@ export default function ReceivablesCollectionsPage() {
       return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
     });
   }, [meta.loading, meta.data, meta.scopeKey, metaScope, isSalesperson]);
-  const overview = useDebtReport<DebtOverview>(token, authError, retryAuth, 'overview', scope, undefined, allowed);
+  // Debt to YTD Sales %: YTD sales to the app's anchor date -- the Tachometer's own date (FilterProvider), not the snapshot
+  const { anchorDate: salesAnchorDate } = useFilterState();
+  const overviewExtra = useMemo(() => ({ anchorDate: salesAnchorDate }), [salesAnchorDate]);
+  const overview = useDebtReport<DebtOverview>(token, authError, retryAuth, 'overview', scope, overviewExtra, allowed);
   const trend = useDebtReport<DebtTrend>(token, authError, retryAuth, 'trend', scope, undefined, allowed);
   const customers = useDebtReport<DebtCustomers>(token, authError, retryAuth, 'customers', scope, undefined, allowed);
   const drillExtra = useMemo<Record<string, string | number>>(
@@ -470,7 +476,7 @@ export default function ReceivablesCollectionsPage() {
             <EmptyState message="No open receivable matches these filters." onResetFilters={() => setFilters(DEFAULT_DEBT_FILTERS)} />
           ) : (
             <>
-              {overview.data ? <DebtTotalBand all={overview.data.allCurrencies} currencies={currencies} snapshotDate={overview.data.snapshotDate} /> : null}
+              {overview.data ? <DebtTotalBand all={overview.data.allCurrencies} currencies={currencies} snapshotDate={overview.data.snapshotDate} ytdSales={overview.data.ytdSales} /> : null}
               <h2 style={{ ...h2, margin: '4px 0 -8px', fontSize: 15, color: 'var(--ps-color-muted-text)' }}>
                 By currency <InfoHint label="Currency selection" detail={`Click a currency row to show it alone on the whole page; click it again to show all currencies. ${OPEN_INVOICES_NOTE}.`} />
               </h2>
@@ -813,7 +819,9 @@ function CurrencyBadge({ currency }: { currency: string }) {
  * per-currency rows. "≈" marks it as soon as a converted (non-LYD) amount is in it; the mix bar shows each currency's
  * share in the colours of the rows' badges.
  */
-function DebtTotalBand({ all, currencies, snapshotDate }: { all: CardTotals & { currency: string }; currencies: DebtCurrencyOverview[]; snapshotDate: string | null }) {
+function DebtTotalBand({ all, currencies, snapshotDate, ytdSales }: {
+  all: CardTotals & { currency: string }; currencies: DebtCurrencyOverview[]; snapshotDate: string | null; ytdSales?: DebtOverview['ytdSales'];
+}) {
   const converted = currencies.some((c) => c.currency !== all.currency && c.kpis.openAmountCompany !== 0);
   const approx = converted ? '≈ ' : '';
   const mix = currencies
@@ -849,30 +857,39 @@ function DebtTotalBand({ all, currencies, snapshotDate }: { all: CardTotals & { 
           {stat('Not yet due', `${approx}${formatCompactMoney(all.currency, all.notDueAmount)}`, `${pctLabel(all.notDuePctOfOpen)} of total debt`, 'var(--ps-color-success)', `${approx}${formatMoney(all.currency, all.notDueAmount)}`)}
           {stat('Customers', formatNumber(all.customers), '', 'var(--ps-color-text)', 'Customers with an open invoice. A customer owing in several currencies counts once.', 100)}
           {stat('Invoices', formatNumber(all.openDocuments), '', 'var(--ps-color-text)', 'Posted invoices with an amount due.', 100)}
+          {ytdSales && <DebtToSalesTile debt={all.openAmount} ytdSales={ytdSales} approx={approx} />}
         </div>
       </div>
-      {mix.length > 0 ? (
-        <div style={{ minWidth: 0 }}>
-          <div
-            role="img"
-            aria-label={`Currency mix: ${mix.map((m) => `${m.currency} ${pctLabel(m.share)}`).join(', ')}`}
-            style={{ display: 'flex', gap: 2, height: 10, borderRadius: 5, overflow: 'hidden' }}
-          >
-            {mix.map((m) => (
-              <span key={m.currency} title={`${m.currency}: ${approx}${formatMoney(all.currency, m.amount)} (${pctLabel(m.share)})`} style={{ flex: `${m.share} 0 4px`, background: currencyTone(m.currency) }} />
-            ))}
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', marginTop: 8, fontSize: 12.5, color: 'var(--ps-color-muted-text)' }}>
-            {mix.map((m) => (
-              <span key={m.currency} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: currencyTone(m.currency) }} />
-                <strong style={{ color: 'var(--ps-color-text)' }}>{m.currency}</strong> {pctLabel(m.share)}
-              </span>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      {/* the currency mix: the shared ShareBar (also the NPS "Detractors by Branch" bar) */}
+      <ShareBar
+        ariaLabel={`Currency mix: ${mix.map((m) => `${m.currency} ${pctLabel(m.share)}`).join(', ')}`}
+        items={mix.map((m) => ({
+          key: m.currency, label: m.currency, detail: pctLabel(m.share), share: m.share, color: currencyTone(m.currency),
+          title: `${m.currency}: ${approx}${formatMoney(all.currency, m.amount)} (${pctLabel(m.share)})`,
+        }))}
+      />
     </section>
+  );
+}
+
+/** Debt to YTD Sales % (2026-11-15): the band's total debt ÷ YTD sales of the same filters; green / yellow / red bands. */
+function DebtToSalesTile({ debt, ytdSales, approx }: { debt: number; ytdSales: NonNullable<DebtOverview['ytdSales']>; approx: string }) {
+  const { pct, tone } = debtToSales(debt, ytdSales.value, ytdSales.bands);
+  const { greenMaxPct: g, yellowMaxPct: y } = ytdSales.bands;
+  const detail = `Debt to YTD Sales % = Total debt (LYD equivalent) ÷ YTD sales (LYD) × 100. YTD sales = the Tachometer's YTD Value for the same filters (${formatDate(ytdSales.from)} – ${formatDate(ytdSales.to)}). 0–${g}% green · ${g}–${y}% yellow · ${y}% and above red.`;
+  return (
+    <div data-testid="debt-to-sales" data-tone={tone} title={detail}
+      style={{ flex: '1 1 150px', minWidth: 0, padding: '10px 14px', borderRadius: 10, background: 'var(--ps-color-surface)', border: '1px solid var(--ps-color-border)', borderLeft: `4px solid ${TONE_COLOR[tone]}` }}>
+      <div style={{ fontSize: 13, color: 'var(--ps-color-muted-text)', display: 'flex', alignItems: 'center', gap: 4 }}>
+        Debt to YTD Sales % <InfoHint label="Debt to YTD Sales %" detail={detail} />
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: TONE_COLOR[tone], fontVariantNumeric: 'tabular-nums', lineHeight: 1.3 }}>
+        {pct === null ? '—' : `${approx}${pct.toFixed(1)}%`}
+      </div>
+      <div style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)' }}>
+        {ytdSales.value === null ? 'YTD sales not available' : `of YTD sales (${formatCompactMoney(ytdSales.currency, ytdSales.value)})`}
+      </div>
+    </div>
   );
 }
 

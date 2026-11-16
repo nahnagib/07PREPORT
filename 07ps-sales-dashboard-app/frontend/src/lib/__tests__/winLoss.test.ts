@@ -4,13 +4,13 @@ import { formatPercent, formatVariance } from '../format';
 
 describe('Opportunity by Status centre (Won/Lost ratio, win rate)', () => {
   it('Won ÷ Lost with 2 decimals, win rate = Won ÷ (Won + Lost) with 1 decimal', () => {
-    expect(winLossCentre(279, 157)).toMatchObject({ main: '1.78 : 1', label: 'Won / Lost', caption: 'Win rate 64.0%' });
+    expect(winLossCentre(279, 157)).toMatchObject({ main: '1.78 : 1', label: 'Won / Lost Ratio', caption: 'Win rate 64.0%' });
     expect(winLossCentre(1, 3)).toMatchObject({ main: '0.33 : 1', caption: 'Win rate 25.0%' });
   });
 
   it('no lost deals: "All won", never Infinity', () => {
     const c = winLossCentre(12, 0);
-    expect(c).toMatchObject({ main: 'All won', label: 'Won / Lost', caption: 'Win rate 100.0%', ratio: null });
+    expect(c).toMatchObject({ main: 'All won', label: 'Won / Lost Ratio', caption: 'Win rate 100.0%', ratio: null });
   });
 
   it('no won deals: ratio 0.00 and win rate 0.0%', () => {

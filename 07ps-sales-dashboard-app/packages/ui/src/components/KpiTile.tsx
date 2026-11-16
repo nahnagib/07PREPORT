@@ -14,6 +14,8 @@ export interface KpiTileProps {
   emphasizeLabel?: boolean;
   /** Optional secondary title, such as a translated metric name. */
   labelDetail?: string;
+  /** Optional small line under the label, e.g. a BCG class definition "High volume · high margin" (2026-11-15). */
+  footnote?: string;
   /** Signed variance, e.g. "+8.20%" - Section 3.6 Variance KPI cards */
   variance?: string;
   status?: SemanticStatus;
@@ -54,7 +56,7 @@ const statusColorVar: Record<SemanticStatus, string> = {
  * Color-coding follows the single semantic scale (3.9); KPIs with no target use neutral grey/white.
  * Color is never the only signal (Section 5.10) - the numeric value is always shown alongside it.
  */
-export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelDetail, variance, status = 'neutral', loading, icon, accentColor, badgeLabel, help, valueColor }: KpiTileProps) {
+export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelDetail, footnote, variance, status = 'neutral', loading, icon, accentColor, badgeLabel, help, valueColor }: KpiTileProps) {
   const hasHeader = icon !== undefined && accentColor !== undefined && badgeLabel !== undefined;
 
   if (loading) {
@@ -101,6 +103,7 @@ export function KpiTile({ label, value, subValue, emphasizeLabel = false, labelD
           {help && <VisualInfoIcons title={label} help={help} size={13} />}
         </div>
       )}
+      {footnote && <div data-testid="kpi-tile-footnote" style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{footnote}</div>}
       {variance && (
         <div
           style={{

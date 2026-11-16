@@ -71,9 +71,11 @@ import {
  * BCG Matrix (Product department), 2026-11-14 round 2:
  *   - Filters: Company and Date only (useProductFilters); every number follows the selected period (default the Last 12
  *     Months), compared with the prior period of the same length. Labels use the API's `period` (periodLabel).
- *   - Rows: Total SKUs · Product Status (Active / Non Active / Dormant / Unclassified) · BCG Matrix of the Active products,
- *     all shared KpiTile cards in the app's standard grid. Stars + Cash Cows + Strategic + Dogs = Active (the API checks).
- *   - Exactly 4 classes; an Active product without cost data counts as low margin (Cash Cows / Dogs). No thresholds on
+ *   - Rows: Total SKUs · Product Status (Active / Non Active / Dormant / Unclassified) · BCG Matrix of the Active + Non
+ *     Active products (2026-11-15), all shared KpiTile cards in the app's standard grid. Stars + Cash Cows + Strategic + Dogs
+ *     = Active + Non Active (the API checks).
+ *   - Exactly 4 classes; a product without cost data counts as low margin (Cash Cows / Dogs), one without sales in the
+ *     period has zero volume (Dogs). No thresholds on
  *     screen or in the API (server-side only).
  *   - Profit data (profit, GP%, missing-cost flag) only with profit_data access (the API strips it otherwise).
  */
@@ -145,8 +147,8 @@ export default function BcgMatrixPage() {
   const pLabel = periodLabel(period);
   const allFacts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const eligible = useMemo(() => allFacts.filter((r) => !r.bcgExcludedCategory), [allFacts]);
-  // BCG runs on the Active products only (sold in the period): every one of them has a class.
-  const classified = useMemo(() => eligible.filter((r) => r.productStatus === 'Active' && isBcgClassified(r)), [eligible]);
+  // BCG runs on the portfolio (2026-11-15): Active + Non Active, every one of them has a class.
+  const classified = useMemo(() => eligible.filter((r) => (r.productStatus === 'Active' || r.productStatus === 'NonActive') && isBcgClassified(r)), [eligible]);
   const movementRows = useMemo(() => eligible.filter((r) => r.bcg_movement !== null), [eligible]);
   const mvConfig = useMemo(() => movementConfig(overview.data?.thresholds), [overview.data?.thresholds]);
   const summary = overview.data?.statusSummary ?? null;
@@ -182,7 +184,7 @@ export default function BcgMatrixPage() {
     [classified],
   );
 
-  /** Export BCG: one .xlsx with a Summary sheet and one sheet per class, every Active product. */
+  /** Export BCG: one .xlsx with a Summary sheet and one sheet per class, every Active + Non Active product. */
   const exportWholeBcg = () => {
     const summaryHeaders = ['Class', 'Products', 'Volume (Unit)', 'Value (LYD)', ...(profit.export ? ['Profit (LYD)'] : [])];
     const classRows: TableExportCell[][] = classStats.map((c) => [
@@ -192,7 +194,7 @@ export default function BcgMatrixPage() {
       c.allSorted.reduce((t, r) => t + r.value, 0),
       ...(profit.export ? [c.allSorted.reduce((t, r) => t + (r.bcgProfit ?? 0), 0)] : []),
     ]);
-    const total: TableExportCell[] = ['Total (Active)', classified.length, classified.reduce((t, r) => t + r.volume, 0), classified.reduce((t, r) => t + r.value, 0),
+    const total: TableExportCell[] = ['Total (Active + Non Active)', classified.length, classified.reduce((t, r) => t + r.volume, 0), classified.reduce((t, r) => t + r.value, 0),
       ...(profit.export ? [classified.reduce((t, r) => t + (r.bcgProfit ?? 0), 0)] : [])];
     const meta: TableExportCell[][] = [
       [],
@@ -314,7 +316,7 @@ export default function BcgMatrixPage() {
         {user?.isAdmin === true && missingCost > 0 && (
           <DataQualityRow
             testId="bcg-data-quality"
-            summary={`${fmtCount(missingCost)} Active products have no cost in Odoo (counted as low margin)`}
+            summary={`${fmtCount(missingCost)} Active + Non Active products have no cost in Odoo (counted as low margin)`}
             onOpen={openMissingCost}
           />
         )}
@@ -343,7 +345,7 @@ export default function BcgMatrixPage() {
             </div>
             {!overview.loading && !overview.error && (
               <div data-testid="bcg-subtitle" style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 12 }}>
-                {fmtCount(classified.length)} Active products · {pLabel} · Top {MATRIX_CELL_TOP_N} per class by volume
+                {fmtCount(classified.length)} Active + Non Active products · {pLabel} · Top {MATRIX_CELL_TOP_N} per class by volume
               </div>
             )}
             {overview.loading ? (
@@ -367,7 +369,7 @@ export default function BcgMatrixPage() {
                       const fileName = `bcg-matrix-${s.key.toLowerCase().replace(/\s+/g, '-')}`;
                       return kind === 'csv'
                         ? exportProductCsv(fileName, exportColumns, s.allSorted)
-                        : exportProductPdf({ title: 'BCG Matrix', subtitle: exportSubtitle(`${s.key} · ${s.allSorted.length} products`), fileName, columns: exportColumns, rows: s.allSorted });
+                        : exportProductPdf({ title: 'BCG Matrix', subtitle: exportSubtitle(`${s.key} (${BCG_DEFINITION[s.key]}) · ${s.allSorted.length} Active + Non Active products`), fileName, columns: exportColumns, rows: s.allSorted });
                     }}
                   />
                 ))}
@@ -406,10 +408,15 @@ export default function BcgMatrixPage() {
               </>
             ) : (
               <DonutChart
+                title="Product Movement"
                 showTitle={false}
                 segments={movementSegments}
                 valueFormatter={(v) => `${v} SKU${v === 1 ? '' : 's'}`}
                 legendTitle="Number of SKUs"
+                // On-chart labels (2026-11-15): "% · SKUs" outside each slice, so an exported image explains itself
+                showPercentLabels
+                percentLabelContent={(p, v) => `${(p * 100).toFixed(1)}% · ${v.toLocaleString('en-US')}`}
+                height={320}
                 onSegmentClick={(id) => setMovementDrill(id as BcgMovement)}
               />
             )}
@@ -546,17 +553,18 @@ function StatusRows({
           {loading || !s ? skeletons(4) : (
             <>
               <ClickableTile label={`Active ${fmtCount(s.active.count)}: list the products`} onOpen={() => open('active')}>
-                <KpiTile label="Active · sold in the period" value={fmtCount(s.active.count)} subValue={`${fmtUnits(s.active.units)} · ${fmtLYD(s.active.value)}`} status="success" />
+                <KpiTile label="Active · sales and stock" value={fmtCount(s.active.count)} subValue={`${fmtUnits(s.active.units)} · ${fmtLYD(s.active.value)}`} status="success" />
               </ClickableTile>
               <ClickableTile label={`Non Active ${fmtCount(s.nonActive.count)}: list the products`} onOpen={() => open('non_active')}>
-                <KpiTile label="Non Active · not sold in the period" value={fmtCount(s.nonActive.count)}
-                  subValue={`${fmtCount(s.nonActive.withStock)} with stock · ${fmtCount(s.nonActive.zeroStock)} zero stock`} status="watch" />
+                <KpiTile label="Non Active · sales or stock, not both" value={fmtCount(s.nonActive.count)}
+                  subValue={`${fmtCount(s.nonActive.withStock)} with stock · no sales | ${fmtCount(s.nonActive.withSales ?? s.nonActive.zeroStock)} with sales · no stock`} status="watch" />
               </ClickableTile>
               <ClickableTile label={`Dormant ${fmtCount(s.dormant.count)}: list the products`} onOpen={() => open('dormant')}>
-                <KpiTile label="Dormant · archived in Odoo" value={fmtCount(s.dormant.count)} status="alert" />
+                <KpiTile label="Dormant · archived, or no stock and no sales" value={fmtCount(s.dormant.count)}
+                  subValue={s.dormant.archived !== undefined ? `${fmtCount(s.dormant.archived)} archived | ${fmtCount(s.dormant.idle ?? 0)} no stock · no sales` : undefined} status="alert" />
               </ClickableTile>
               <ClickableTile label={`Unclassified ${fmtCount(s.unclassified.count)}: list the products`} onOpen={() => open('unclassified')}>
-                <KpiTile label="Unclassified · active exclusion rules" value={fmtCount(s.unclassified.count)} status="neutral" />
+                <KpiTile label="Unclassified · SKUs not for sale" value={fmtCount(s.unclassified.count)} subValue="ProductExclusions.xlsx rules" status="neutral" />
               </ClickableTile>
             </>
           )}
@@ -565,7 +573,7 @@ function StatusRows({
       </section>
 
       <section aria-labelledby="row-bcg">
-        <h2 id="row-bcg" className={styles.sectionTitle}>BCG Matrix (Active products)</h2>
+        <h2 id="row-bcg" className={styles.sectionTitle}>BCG Matrix (Active + Non Active products)</h2>
         <div className={styles.kpiGrid}>
           {loading || !s ? skeletons(4) : s.bcg.classes.map((c) => (
             <KpiTile
@@ -573,6 +581,7 @@ function StatusRows({
               label={c.key}
               value={fmtCount(c.count)}
               subValue={`${fmtUnits(c.units)} · ${fmtLYD(c.value)}${showProfit && c.profit !== undefined ? ` · profit ${fmtLYD(c.profit)}` : ''}`}
+              footnote={BCG_DEFINITION[c.key]}
               valueColor={BCG_COLOR[c.key]}
             />
           ))}

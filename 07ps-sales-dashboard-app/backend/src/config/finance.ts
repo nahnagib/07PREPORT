@@ -60,3 +60,13 @@ export function odooWebBaseUrl(): string {
 
 /** Number of customers in the "Overdue by customer" chart. */
 export const DEBT_TOP_CUSTOMERS = 15;
+
+/**
+ * Debt to YTD Sales % (2026-11-15): Total debt (LYD equivalent) ÷ YTD sales (LYD, the revenue pages' definition: the
+ * Tachometer's v_sales_lines value) × 100. Colour bands, in %: below DEBT_TO_SALES_GREEN_MAX = green, below
+ * DEBT_TO_SALES_YELLOW_MAX = yellow, from it = red.
+ */
+export const DEBT_TO_SALES_BANDS = Object.freeze({
+  greenMaxPct: numberEnv('DEBT_TO_SALES_GREEN_MAX', 10),
+  yellowMaxPct: numberEnv('DEBT_TO_SALES_YELLOW_MAX', 20),
+});

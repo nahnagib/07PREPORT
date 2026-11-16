@@ -114,8 +114,8 @@ def test_exclude_keep_precedence_all_vs_company_and_category_with_a_product_keep
     dim_out = out["Dim_ProductDashboard"]
     status = dict(zip(dim_out["ProductCompanyKey"], dim_out["ProductStatus"]))
     assert status["Tika|1"] == "Unclassified"          # sub-category follows its parent
-    assert status["Tika|2"] == "Active"                # Products Keep overrides the category
-    assert status["Tika|5"] == "Active"                # Tika's Keep wins over the All Exclude for Tika
+    assert status["Tika|2"] == "NonActive"             # Products Keep overrides the category (sold, no stock: Non Active)
+    assert status["Tika|5"] == "NonActive"             # Tika's Keep wins over the All Exclude for Tika
     assert status["Majaal|5"] == "Unclassified"        # the All row applies to Majaal
     rule = dict(zip(dim_out["ProductCompanyKey"], dim_out["ExclusionRule"]))
     assert rule["Tika|1"] == "Categories sheet · All · Packaging · row 2 · Packaging, not sold"
@@ -151,3 +151,13 @@ def test_one_status_rule_unclassified_beats_dormant_beats_active() -> None:
     sold = pd.Series([True, True, True, True, False], index=idx)
     assert product_status(excluded, archived, sold).tolist() == ["Unclassified", "Unclassified", "Dormant", "Active", "NonActive"]
     assert PRODUCT_STATUSES == ("Unclassified", "Dormant", "Active", "NonActive")
+
+
+def test_status_rules_with_stock_2026_11_15() -> None:
+    # sales + stock = Active; one of them = Non Active; neither = Dormant; archived = Dormant whatever the stock
+    idx = pd.RangeIndex(5)
+    no = pd.Series(False, index=idx)
+    archived = pd.Series([False, False, False, False, True], index=idx)
+    sold = pd.Series([True, True, False, False, True], index=idx)
+    stock = pd.Series([True, False, True, False, True], index=idx)
+    assert product_status(no, archived, sold, stock).tolist() == ["Active", "NonActive", "NonActive", "Dormant", "Dormant"]

@@ -61,3 +61,32 @@ export function portfolioFreshness(rows: ProductFact[]) {
     portfolioNonActive: portfolio.filter((r) => r.productStatus === 'NonActive').length,
   };
 }
+
+/** Portfolio Freshness targets per company, % (backend config/productTargets.ts, served as thresholds.freshness_targets). */
+export function freshnessTargets(thresholds: Record<string, unknown> | undefined | null): Record<string, number> {
+  const raw = ((thresholds ?? {}) as Record<string, unknown>).freshness_targets as Record<string, unknown> | undefined;
+  const out: Record<string, number> = {};
+  for (const [company, v] of Object.entries(raw ?? {})) if (Number.isFinite(Number(v))) out[company.trim().toUpperCase()] = Number(v);
+  return out;
+}
+
+export interface CompanyFreshness {
+  company: string;
+  pct: number;
+  fresh: number;
+  portfolio: number;
+  /** null = no target configured for the company */
+  target: number | null;
+  onTrack: boolean | null;
+}
+
+/** Portfolio Freshness per company against its own target (2026-11-15): one entry per company in the rows, sorted by
+ * name. Company = "All" shows every company's own figure; a single company shows one entry. */
+export function freshnessByCompany(rows: ProductFact[], targets: Record<string, number>): CompanyFreshness[] {
+  const companies = [...new Set(rows.map((r) => String(r.Company ?? '')).filter(Boolean))].sort();
+  return companies.map((company) => {
+    const f = portfolioFreshness(rows.filter((r) => r.Company === company));
+    const target = targets[company.toUpperCase()] ?? null;
+    return { company, pct: f.pct, fresh: f.fresh, portfolio: f.portfolio, target, onTrack: target === null || f.portfolio === 0 ? null : f.pct >= target };
+  });
+}

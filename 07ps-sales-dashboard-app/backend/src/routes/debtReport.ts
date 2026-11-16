@@ -1,8 +1,12 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
+import type { Pool } from 'mysql2/promise';
 import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { requirePasswordChangeCleared, requirePermission } from '../middleware/permission';
 import { attachUserContext, resolveScopedFilters } from '../middleware/scopeContext';
+import { DEBT_TO_SALES_BANDS } from '../config/finance';
+import { computeYtdCard } from '../measures/tachometer';
+import { parseAnchorDate } from '../measures/filters';
 import type { Filters } from '../measures/filters';
 import { applyRoleDataScope, applySalespersonLock } from '../measures/filters';
 import { fetchDepartmentFreshness } from '../measures/departmentFreshness';
@@ -54,6 +58,7 @@ export const debtReportRouter = Router();
 
 debtReportRouter.use(requireAuth, requirePasswordChangeCleared, requirePermission('debt_report', 'view'), attachUserContext, resolveScopedFilters);
 
+// eslint-disable-next-line no-unused-vars -- parameter names of a function type (the base rule misreads them)
 type Handler = (req: Request) => Promise<unknown>;
 
 function handle(fn: Handler) {
@@ -106,8 +111,29 @@ debtReportRouter.get(
 
 debtReportRouter.get(
   '/overview',
-  handle((req) => fetchDebtOverview(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req))),
+  handle(async (req) => {
+    const overview = await fetchDebtOverview(pool, parseDebtQuery(req.query as Record<string, unknown>), scoped(req));
+    return { ...overview, ytdSales: await ytdSalesFor(parseAnchorDate(req.query.anchorDate), scoped(req)) };
+  }),
 );
+
+/**
+ * YTD sales for "Debt to YTD Sales %" = the Tachometer's YTD Value (2026-11-15): the very same function
+ * (measures/tachometer.ts computeYtdCard, its `actual`), the same anchor date (the app's anchorDate parameter, parsed by
+ * the Tachometer's own parseAnchorDate: today by default -- NOT the receivables snapshot date) and the same scoped filters
+ * (company, customer group, channel, branch, salesperson, customer). Bands: config/finance.ts.
+ */
+export async function ytdSalesFor(anchor: Date, filters: Filters, db: Pool = pool) {
+  const to = anchor.toISOString().slice(0, 10);
+  let value: number | null = null;
+  try {
+    value = (await computeYtdCard(db, anchor, filters, 'value')).actual;
+  } catch (err) {
+    // the debt figures never fail because of this one KPI: the tile shows "—"
+    console.error('[debtReport] YTD sales for Debt to YTD Sales % failed:', err);
+  }
+  return { from: `${to.slice(0, 4)}-01-01`, to, value, currency: 'LYD', bands: { ...DEBT_TO_SALES_BANDS } };
+}
 
 debtReportRouter.get(
   '/trend',

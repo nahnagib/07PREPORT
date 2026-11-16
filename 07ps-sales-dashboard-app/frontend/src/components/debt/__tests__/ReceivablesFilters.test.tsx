@@ -15,6 +15,8 @@ const mocked = vi.hoisted(() => ({
 vi.mock('../../../lib/AuthProvider', () => ({ useAuth: () => ({ canView: () => true, isSalesperson: false, isAdmin: mocked.isAdmin }) }));
 vi.mock('../../../lib/debt/useUrlCurrency', () => ({ useUrlCurrency: () => ({ currency: null, ready: true, setCurrency: () => {} }) }));
 vi.mock('../../../components/AppHeader', () => ({ AppHeader: () => null }));
+// the app's anchor date (the Tachometer's) for Debt to YTD Sales %: the page sits inside the app-wide FilterProvider
+vi.mock('../../../components/FilterProvider', () => ({ useFilterState: () => ({ anchorDate: '2026-11-15' }) }));
 vi.mock('../../../components/BottomNavBar', () => ({ BottomNavBar: () => null }));
 vi.mock('../../../components/AuthGuard', () => ({ PermissionGuard: ({ children }: { children: React.ReactNode }) => children }));
 vi.mock('../../../components/FilterBar', () => ({ FilterBar: ({ extraFields, onReset }: { extraFields: React.ReactNode; onReset: () => void }) => <div>{extraFields}<button onClick={onReset}>Reset filters</button></div> }));

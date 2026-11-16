@@ -35,26 +35,22 @@ export const VISUAL_HELP = {
       definition: 'Net sales value (LYD, untaxed, confirmed orders) from 1 Jan to the as-of date, against the target to date.',
       notes: 'LYTD = same dates last year; LFY = the full last year.',
     },
-    interactions: ['Click the card to see YTD Value by salesperson, branch, customer group and more'],
   },
   'promotion.tachometer.ytdVolume': {
     help: {
       definition: 'Invoiced quantity from 1 Jan to the as-of date, against the volume target to date.',
     },
-    interactions: ['Click the card to see YTD Volume by salesperson, branch, customer group and more'],
   },
   'promotion.tachometer.mtdValue': {
     help: {
       definition: 'Net sales value (LYD) from the 1st of the month to the as-of date, against the month target to date.',
       notes: 'LMTD = same days of the same month last year.',
     },
-    interactions: ['Click the card to see MTD Value by salesperson, branch, customer group and more'],
   },
   'promotion.tachometer.mtdVolume': {
     help: {
       definition: 'Invoiced quantity from the 1st of the month to the as-of date, against the month volume target to date.',
     },
-    interactions: ['Click the card to see MTD Volume by salesperson, branch, customer group and more'],
   },
   'promotion.tachometer.ytdAsp': {
     help: {
@@ -68,19 +64,6 @@ export const VISUAL_HELP = {
   },
   'promotion.tachometer.valueDetails': PERF_DETAILS('YTD and MTD Value'),
   'promotion.tachometer.volumeAspDetails': PERF_DETAILS('YTD and MTD Volume and ASP'),
-  // ---- Tachometer breakdown -----------------------------------------------------------------------------------------
-  'promotion.tachometerBreakdown.headline': {
-    help: { definition: 'The metric you opened, for the whole selection, with its target to date.', },
-  },
-  'promotion.tachometerBreakdown.totalGroups': { help: { definition: 'How many groups (e.g. salespeople) of the chosen dimension have data for this metric.' } },
-  'promotion.tachometerBreakdown.onTarget': { help: { definition: 'Groups whose actual reached their own target to date.', } },
-  'promotion.tachometerBreakdown.critical': { help: { definition: 'Groups more than 10% below their target to date.', } },
-  'promotion.tachometerBreakdown.topPerformer': { help: { definition: 'The group with the best variance to its target.', } },
-  'promotion.tachometerBreakdown.needsAttention': { help: { definition: 'The group with the worst variance to its target.', } },
-  'promotion.tachometerBreakdown.table': {
-    help: { definition: 'The metric per group of the chosen dimension: actual, target to date, variance and status.', },
-    interactions: ['Switch the dimension (salesperson, branch, customer group …) above the table'],
-  },
   // ---- Critical Number ------------------------------------------------------------------------------------------------
   'promotion.criticalNumber.daily': {
     help: {
@@ -273,7 +256,7 @@ export const VISUAL_HELP = {
   },
   'promotion.pipelineHealth.byStatus': {
     help: {
-      definition: 'Opportunities created this year by Odoo status: Won, Lost or Pending (still open). Status = the outcome, set by the Won / Lost buttons in Odoo, whatever the stage. The centre shows the Won/Lost ratio and the win rate; the total is the last legend row.',
+      definition: 'Opportunities created this year by Odoo status: Won, Lost or Pending (still open). Status = the outcome, set by the Won / Lost buttons in Odoo, whatever the stage. The centre shows the Won / Lost Ratio (won ÷ lost, e.g. 1.14 : 1) and the win rate (won ÷ (won + lost)); the total is the last legend row.',
       formula: 'Won/Lost ratio = won ÷ lost opportunities. Win rate = won ÷ (won + lost). Pending deals are not included in either.',
       notes: 'Records archived in Odoo without being marked Lost are left out.',
     },
@@ -443,7 +426,7 @@ export const VISUAL_HELP = {
   'product.bcgMatrix.matrix': {
     // no thresholds on screen: they stay on the server (2026-11-14)
     help: {
-      definition: 'BCG class of each Active product by volume and margin.',
+      definition: 'BCG class of each Active + Non Active product by volume and margin (no sales = Dogs).',
       formula: 'Stars = high volume + high margin · Cash Cows = high volume + low margin · Strategic = low volume + high margin · Dogs = low volume + low margin',
     },
     interactions: ['Click a product to open it in Odoo', 'Hover a product for its figures', 'Export the whole BCG to Excel, or a class to CSV or PDF'],
@@ -469,8 +452,8 @@ export const VISUAL_HELP = {
   },
   'product.bcgMatrix.productStatus': {
     help: {
-      definition: 'Sold in the period, not sold, archived in Odoo, or matched by an exclusion rule.',
-      formula: 'Unclassified = exclusion rule · Dormant = archived · Active = sold in the period · Non Active = not sold',
+      definition: 'One status per SKU, checked in order: not for sale, archived, then sales and stock.',
+      formula: 'Unclassified = not for sale (exclusion rule) · Dormant = archived, or no stock and no sales · Active = sales and stock > 0 · Non Active = sales but no stock, or stock but no sales',
     },
     interactions: ['Click a card to list its products'],
   },
@@ -625,6 +608,10 @@ export const VISUAL_HELP = {
   'process.npsScore.respondersTrend': {
     help: { definition: 'Responders per period (bars) with Promoters, Passives and Detractors (lines).', },
     interactions: ['Switch day / week / month / year'],
+  },
+  'process.npsScore.detractorsByBranch': {
+    help: { definition: 'One bar = every detractor; each segment is a branch (sales team), sized by its share, biggest first.', formula: 'Segment = branch detractors ÷ all detractors · Σ segments = Detractors card' },
+    interactions: ['Hover a segment for the branch, count and share', 'Export image or PDF'],
   },
   'process.npsScore.reach': {
     help: { definition: 'WhatsApp feedback messages by message date and company: Delivered, Read, Not Delivered and Error. Measured from 03 Oct 2026; 12 Jul – 02 Oct is the approved manual reach (12 Jul – 12 Aug estimated, 13 Aug – 02 Oct from Meta exports; 13–31 Aug Delivered/Read estimated), spread evenly over the days. Card tooltips show the measured, Meta manual and estimated figures.' },

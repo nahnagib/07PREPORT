@@ -21,7 +21,7 @@ import {
 import { useAuth } from '../../../../lib/AuthProvider';
 import { PermissionGuard } from '../../../../components/AuthGuard';
 import { useTachometerOverview, useTachometerTrend, useRefreshStatus } from '../../../../lib/hooks';
-import type { TachometerFilters, TachometerCard, AspCard, TachometerMetricKey } from '../../../../lib/api';
+import type { TachometerFilters, TachometerCard, AspCard } from '../../../../lib/api';
 import {
   toSemanticStatus,
   formatCompactCurrency,
@@ -107,20 +107,6 @@ function fullPeriodVariancePct(actual: number, target: number): number | null {
 function lyVariancePct(actual: number, ly: number): number | null {
   if (!ly || ly <= 0) return null;
   return (actual - ly) / ly;
-}
-
-/**
- * Builds the /promotion/tachometer/[metric] drill-down URL, carrying forward the current
- * filters/anchorDate.
- */
-function buildBreakdownHref(metric: TachometerMetricKey, anchorDate: string, filters: TachometerFilters): string {
-  const params = new URLSearchParams({ anchorDate });
-  (filters.companyKeys ?? []).forEach((v) => params.append('companyKeys', String(v)));
-  (filters.segmentKeys ?? []).forEach((v) => params.append('segmentKeys', String(v)));
-  (filters.channelKeys ?? []).forEach((v) => params.append('channelKeys', String(v)));
-  (filters.salesTeamKeys ?? []).forEach((v) => params.append('salesTeamKeys', v));
-  (filters.salespersonKeys ?? []).forEach((v) => params.append('salespersonKeys', String(v)));
-  return `/promotion/tachometer/${metric}?${params.toString()}`;
 }
 
 /**
@@ -470,7 +456,6 @@ export default function TachometerPage() {
                   loading={overview.loading}
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
-                  onClick={() => router.push(buildBreakdownHref('ytdValue', anchorDate, effectiveFilters))}
                 />
               </div>
 
@@ -524,7 +509,6 @@ export default function TachometerPage() {
                   loading={overview.loading}
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
-                  onClick={() => router.push(buildBreakdownHref('ytdVolume', anchorDate, effectiveFilters))}
                 />
               </div>
 
@@ -545,7 +529,6 @@ export default function TachometerPage() {
                   loading={overview.loading}
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
-                  onClick={() => router.push(buildBreakdownHref('mtdValue', anchorDate, effectiveFilters))}
                 />
               </div>
 
@@ -566,7 +549,6 @@ export default function TachometerPage() {
                   loading={overview.loading}
                   error={overview.error ?? undefined}
                   onRetry={overview.retry}
-                  onClick={() => router.push(buildBreakdownHref('mtdVolume', anchorDate, effectiveFilters))}
                 />
               </div>
             </div>

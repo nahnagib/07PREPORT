@@ -46,6 +46,8 @@ export interface DonutChartProps {
    * page's Daily/Monthly/Yearly counters; generic enough for any donut that wants a headline
    * figure in the middle instead of only a surrounding legend. */
   centerLabel?: string;
+  /** Small label ABOVE centerLabel, e.g. "Won / Lost Ratio" (2026-11-15). Ignored if centerLabel is unset. */
+  centerTopLabel?: string;
   /** Small caption under centerLabel, e.g. "Working Days". Ignored if centerLabel is unset. */
   centerSubLabel?: string;
   /** Optional third, smaller line in the centre (e.g. "Win rate 64.0%"). Ignored if centerLabel is unset. */
@@ -61,6 +63,8 @@ export interface DonutChartProps {
    * percentages. Opt-in -- defaults to false so every existing caller's ring stays exactly as
    * before. */
   showPercentLabels?: boolean;
+  /** Text of each outside label (with showPercentLabels), e.g. (p, v) => `${(p * 100).toFixed(1)}% · ${v}`. Default: the %. */
+  percentLabelContent?: (percent: number, value: number) => string;
   /** Set false to hide the "Export image" button for this chart (e.g. Critical Number page's
    * Daily/Monthly/Yearly counters). Defaults to true, so every existing caller is unaffected. */
   showExportButton?: boolean;
@@ -81,17 +85,25 @@ const RADIAN = Math.PI / 180;
 const LINE_START = 2;
 const LINE_END = 10;
 const LABEL_GAP = 14;
+/* Small slices next to each other (2026-11-15): every other slice under SMALL_SLICE of the whole is pushed STAGGER px
+ * further out (line and text), so two thin neighbours never print on top of each other. */
+const SMALL_SLICE = 0.08;
+const STAGGER = 14;
+
+function stagger(percent: number, index: number): number {
+  return percent < SMALL_SLICE && index % 2 === 1 ? STAGGER : 0;
+}
 
 function polar(cx: number, cy: number, r: number, midAngle: number): [number, number] {
   return [cx + r * Math.cos(-midAngle * RADIAN), cy + r * Math.sin(-midAngle * RADIAN)];
 }
 
 /** Recharts `<Pie label>` renderer: each segment's share of the whole, just outside the ring at that slice's midpoint. */
-export function renderPercentLabel(props: any): React.ReactElement {
-  const { cx, cy, midAngle, outerRadius, percent } = props;
+export function renderPercentLabel(props: any, content?: (percent: number, value: number) => string): React.ReactElement {
+  const { cx, cy, midAngle, outerRadius, percent, index = 0, value } = props;
   const cos = Math.cos(-midAngle * RADIAN);
   const sin = Math.sin(-midAngle * RADIAN);
-  const [x, y] = polar(cx, cy, outerRadius + LABEL_GAP, midAngle);
+  const [x, y] = polar(cx, cy, outerRadius + LABEL_GAP + stagger(percent, index), midAngle);
   const nearVertical = Math.abs(cos) < 0.35;
   const textAnchor = nearVertical ? 'middle' : cos > 0 ? 'start' : 'end';
   // Near the top the text sits above its point, near the bottom below it, otherwise centred on it.
@@ -113,16 +125,16 @@ export function renderPercentLabel(props: any): React.ReactElement {
         strokeLinejoin: 'round',
       }}
     >
-      {`${(percent * 100).toFixed(1)}%`}
+      {content ? content(percent, Number(value) || 0) : `${(percent * 100).toFixed(1)}%`}
     </text>
   );
 }
 
 /** Leader line from the ring to just short of the label, so it never crosses the text. */
 export function renderPercentLabelLine(props: any): React.ReactElement {
-  const { cx, cy, midAngle, outerRadius } = props;
+  const { cx, cy, midAngle, outerRadius, percent = 1, index = 0 } = props;
   const [x1, y1] = polar(cx, cy, outerRadius + LINE_START, midAngle);
-  const [x2, y2] = polar(cx, cy, outerRadius + LINE_END, midAngle);
+  const [x2, y2] = polar(cx, cy, outerRadius + LINE_END + stagger(percent, index), midAngle);
   return <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--ps-color-muted-text)" strokeWidth={1} />;
 }
 
@@ -143,10 +155,12 @@ export function DonutChart({
   onSegmentClick,
   selectedId = null,
   centerLabel,
+  centerTopLabel,
   centerSubLabel,
   centerCaption,
   legendTotal,
   showPercentLabels = false,
+  percentLabelContent,
   showExportButton = true,
   labelDirection = 'auto',
 }: DonutChartProps) {
@@ -155,7 +169,19 @@ export function DonutChart({
 
   const canExport = useCanExport() && showExportButton;
   const handleExportImage = () => {
-    exportSvgAsImage(containerRef.current, (title ?? 'donut-chart').replace(/\s+/g, '-').toLowerCase());
+    // the centre text and the legend are HTML around the SVG: drawn into the image too, so it explains itself
+    exportSvgAsImage(containerRef.current, (title ?? 'donut-chart').replace(/\s+/g, '-').toLowerCase(), {
+      centerLines: centerLabel ? [
+        ...(centerTopLabel ? [{ text: centerTopLabel, size: 11, muted: true }] : []),
+        { text: centerLabel, size: 20, bold: true },
+        ...(centerSubLabel ? [{ text: centerSubLabel, size: 11, muted: true }] : []),
+        ...(centerCaption ? [{ text: centerCaption, size: 10.5, bold: true, muted: true }] : []),
+      ] : undefined,
+      legend: [
+        ...segments.map((s) => ({ color: s.color, label: s.label, value: `${valueFormatter(s.value)} (${((s.value / total) * 100).toFixed(2)}%)` })),
+        ...(legendTotal ? [{ label: legendTotal.label, value: legendTotal.value, bold: true }] : []),
+      ],
+    });
   };
 
   if (segments.length === 0 || total === 0) {
@@ -211,6 +237,9 @@ export function DonutChart({
                 textAlign: 'center',
               }}
             >
+              {centerTopLabel && (
+                <span data-testid="donut-center-top-label" style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginBottom: 2 }}>{centerTopLabel}</span>
+              )}
               <span style={{ fontSize: 20, fontWeight: 700, color: 'var(--ps-color-text)', lineHeight: 1.15 }}>{centerLabel}</span>
               {centerSubLabel && (
                 <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>{centerSubLabel}</span>
@@ -233,7 +262,7 @@ export function DonutChart({
                 paddingAngle={2}
                 isAnimationActive={false}
                 onClick={onSegmentClick ? (d: any) => onSegmentClick(d?.id ?? d?.payload?.id) : undefined}
-                label={showPercentLabels ? renderPercentLabel : undefined}
+                label={showPercentLabels ? (p: any) => renderPercentLabel(p, percentLabelContent) : undefined}
                 labelLine={showPercentLabels ? renderPercentLabelLine : false}
               >
                 {segments.map((s) => {

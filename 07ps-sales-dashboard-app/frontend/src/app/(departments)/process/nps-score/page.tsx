@@ -10,6 +10,7 @@ import { useFilterState, useScopedFilterOptions } from '../../../../components/F
 import { FollowupCharts } from '../../../../components/nps/FollowupCharts';
 import { NpsReach } from '../../../../components/nps/NpsReach';
 import { NpsTopRow } from '../../../../components/nps/NpsTopRow';
+import { DetractorsByBranch } from '../../../../components/nps/DetractorsByBranch';
 import { NpsTrendChart, RespondersTrend } from '../../../../components/nps/NpsTrends';
 import { OdooLink } from '../../../../components/OdooLink';
 import { StagePill, StatusBadge, TimeOpen } from '../../../../components/nps-followup/FollowupBits';
@@ -17,6 +18,7 @@ import { useAuth } from '../../../../lib/AuthProvider';
 import { useNpsScore } from '../../../../lib/hooks';
 import type {
   NpsDetractor,
+  NpsDetractorsByBranch,
   NpsFollowupSummary,
   NpsMeta,
   NpsOverview,
@@ -102,6 +104,7 @@ function NpsScoreBody() {
   const reach = useNpsScore<ReachData>(token, authError, retryAuth, 'reach', scope, undefined, allowed);
   const rate = useNpsScore<NpsResponseRate>(token, authError, retryAuth, 'response-rate', scope, undefined, allowed);
   const followup = useNpsScore<NpsFollowupSummary>(token, authError, retryAuth, 'followup-summary', scope, undefined, allowed);
+  const byBranch = useNpsScore<NpsDetractorsByBranch>(token, authError, retryAuth, 'detractors-by-branch', scope, undefined, allowed);
   const canSeeDetractors = meta.data?.canSeeDetractors === true;
   const detractors = useNpsScore<NpsPage<NpsDetractor>>(token, authError, retryAuth, 'detractors', scope,
     { page: 1, pageSize: LIST_PAGE * listPages }, allowed && canSeeDetractors);
@@ -165,6 +168,9 @@ function NpsScoreBody() {
                 />
               ))}
             </section>
+
+            {/* Row 2b (2026-11-15): where the detractors are -- one line over the branches, next to the responder cards */}
+            <DetractorsByBranch state={byBranch} cardTotal={totals.detractors} />
 
             {/* Row 3: WhatsApp message reach (section 4) */}
             <NpsReach state={reach} part="boxes" responseRate={rate.loading || rate.error ? null : rate.data} />

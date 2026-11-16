@@ -291,7 +291,7 @@ def test_a_dedicated_raw_materials_category_is_excluded_automatically_with_its_s
     # 2026-11-15: an automatic Raw Materials product is Unclassified (one bucket), never counted Non Active
     dim_out = out["Dim_ProductDashboard"]
     status = dict(zip(dim_out["ProductKey"].astype(str), dim_out["ProductStatus"]))
-    assert (status["1"], status["2"], status["3"]) == ("Unclassified", "Unclassified", "Active")
+    assert (status["1"], status["2"], status["3"]) == ("Unclassified", "Unclassified", "NonActive")  # 3: kept, sold, no stock
     assert dict(zip(dim_out["ProductKey"].astype(str), dim_out["ExclusionRule"]))["1"] == "Automatic · Raw Materials category"
 
 

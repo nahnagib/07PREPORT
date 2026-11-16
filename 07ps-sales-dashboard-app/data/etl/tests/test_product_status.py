@@ -33,7 +33,7 @@ def test_one_packaging_rule_counts_all_60_variants_without_sales_and_deduplicate
                         pd.DataFrame([_inv("Majaal", 1, -2, -20)]), line_costs=pd.Series([1.0]), categories=categories)
     counts = builder.exclusion_report()["sku_counts"]["Majaal"]
     assert counts == {"total": 62, "category": 60, "individual": 2, "overlap": 1, "unclassified": 61}
-    assert out["Dim_ProductDashboard"]["ProductStatus"].value_counts().to_dict() == {"Unclassified": 61, "Active": 1}
+    assert out["Dim_ProductDashboard"]["ProductStatus"].value_counts().to_dict() == {"Unclassified": 61, "NonActive": 1}  # 62: sold, no stock
     assert set(out["Fact_ProductSalesDaily"]["ProductKey"]) == {"62"}
     assert set(out["Dim_ProductDashboard"].query("OnProductPages == 1")["ProductKey"]) == {"62"}
     assert out["QA_ProductDataQuality"].empty
@@ -87,21 +87,24 @@ def test_every_product_gets_exactly_one_status_in_order_and_total_equals_the_sum
                                "complete_name": ["All", "All / Tiles", "All / Packaging", "All / Raw Materials"],
                                "parent_path": ["1/", "1/10/", "1/39/", "1/70/"]})
     ex = _rules(categories=[["All", 39, "Exclude", "Packaging"]], products=[["Majaal", 8, "Keep"]])
-    dim_out = _build(lines, dim, ex, inventory=[_inv("Majaal", 2, 4, 40)], categories=categories)["Dim_ProductDashboard"]
+    dim_out = _build(lines, dim, ex, inventory=[_inv("Majaal", 1, 3, 30), _inv("Majaal", 2, 4, 40)], categories=categories)["Dim_ProductDashboard"]
     status = dim_out.set_index("ProductKey")["ProductStatus"].to_dict()
     assert status == {
-        "1": "Active", "2": "NonActive", "3": "NonActive", "4": "Dormant", "5": "Unclassified", "6": "Unclassified",
+        # 2026-11-15 rules: 1 sold + stock = Active; 2 stock, no sales / 8 sold, no stock = Non Active; 3, 9, 10 no stock and
+        # no sales in the window = Dormant; 4, 11 archived = Dormant
+        "1": "Active", "2": "NonActive", "3": "Dormant", "4": "Dormant", "5": "Unclassified", "6": "Unclassified",
         # 7 = the automatic Raw Materials category: Unclassified (2026-11-15; before it was off the pages yet counted Non Active)
-        "7": "Unclassified", "8": "Active", "9": "NonActive", "10": "NonActive", "11": "Dormant",
+        "7": "Unclassified", "8": "NonActive", "9": "Dormant", "10": "Dormant", "11": "Dormant",
     }
     assert len(dim_out) == dim_out["ProductCompanyKey"].nunique() == 11            # one row per product, every product
     counts = dim_out["ProductStatus"].value_counts()
     assert counts.sum() == len(dim_out) and set(counts.index) <= {"Unclassified", "Dormant", "Active", "NonActive"}
     pages = dim_out.set_index("ProductKey")["OnProductPages"].to_dict()
     assert {k for k, v in pages.items() if v == 0} == {"4", "5", "6", "7", "11"}    # excluded / archived: counted, not on the pages
-    # one bucket: every row off the pages is Dormant or Unclassified; every page row is Active or Non Active
+    # one bucket: every row off the pages is Dormant or Unclassified; a page row is Active, Non Active or (no stock, no
+    # sales) Dormant
     assert {status[k] for k, v in pages.items() if v == 0} <= {"Dormant", "Unclassified"}
-    assert {status[k] for k, v in pages.items() if v == 1} <= {"Active", "NonActive"}
+    assert {k for k, v in pages.items() if v == 1 and status[k] == "Dormant"} == {"3", "9", "10"}
     on_hand = dim_out.set_index("ProductKey")["OnHandQty"]
     assert on_hand["2"] == 4 and on_hand["3"] == 0                                   # Non Active: with stock / zero stock
 
@@ -119,7 +122,7 @@ def test_category_ids_expand_to_descendants_and_missing_ids_warn(caplog) -> None
     ex = _rules(categories=[["All", 81, "Exclude", "  different reference label "], ["All", 9998, "Exclude", "Nothing Like This"]])
     out = _build(lines, dim, ex, categories=categories)
     status = out["Dim_ProductDashboard"].set_index("ProductKey")["ProductStatus"].to_dict()
-    assert status == {"1": "Unclassified", "2": "Unclassified", "3": "Active"}       # sub-category follows its parent
+    assert status == {"1": "Unclassified", "2": "Unclassified", "3": "NonActive"}    # sub-category follows its parent; 3 sold, no stock
     assert set(out["Fact_ProductSalesDaily"]["ProductKey"]) == {"3"}                 # the same rule leaves them off the pages
     assert "matches no Odoo category" in caplog.text and "9998" in caplog.text
 
@@ -160,7 +163,8 @@ def test_keep_wins_archived_excluded_is_unclassified_names_match_and_the_refresh
     status = out["Dim_ProductDashboard"].set_index("ProductKey")["ProductStatus"].to_dict()
     # 1 category + Products sheet (once) · 2 archived in an excluded sub-category: Unclassified, not Dormant · 3 Keep wins
     # 4 matched by the row's NAME (id 9999 is not in Odoo) · 5 Products sheet only
-    assert status == {"1": "Unclassified", "2": "Unclassified", "3": "Active", "4": "Unclassified", "5": "Unclassified", "6": "Active"}
+    # 3, 6: sold, no stock = Non Active (2026-11-15 rules)
+    assert status == {"1": "Unclassified", "2": "Unclassified", "3": "NonActive", "4": "Unclassified", "5": "Unclassified", "6": "NonActive"}
     assert set(out["Dim_ProductDashboard"].query("OnProductPages == 1")["ProductKey"]) == {"3", "6"}
     rep = builder.exclusion_report()["unclassified"]
     assert [(c["category_id"], c["products"], c["archived"]) for c in rep["categories"]] == [(39, 2, 1), (9999, 1, 0)]

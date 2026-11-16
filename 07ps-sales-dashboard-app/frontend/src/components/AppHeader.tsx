@@ -40,7 +40,7 @@ const buLogo: Record<string, { light: string; dark: string; alt: string } | null
 
 export interface AppHeaderProps {
   /** The title is "<Department> — <Page>", derived from the route and the nav config (lib/pageTitle.ts). Only a deeper
-   * page names its extra level here: a Tachometer metric, a brand, a Kaizen card, a user ("› YTD Value Breakdown"). */
+   * page names its extra level here: a brand, a Kaizen card, a user ("› <brand>"). */
   subTitle?: string | null;
   anchorDate: string;
   onAnchorDateChange: (date: string) => void;

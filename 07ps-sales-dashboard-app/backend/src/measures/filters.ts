@@ -566,6 +566,17 @@ export function parsePipelineAnchor(raw: unknown): Date {
 }
 
 /** Year-to-Date: start of the selected year through the selected date (inclusive). */
+/** The `anchorDate` query parameter (YYYY-MM-DD) as a UTC date; anything else = today. The Tachometer's own rule, shared
+ * with every page that must show the Tachometer's YTD figures (Receivables' Debt to YTD Sales %, 2026-11-15). */
+export function parseAnchorDate(raw: unknown): Date {
+  if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const now = new Date();
+    return dateOnlyUTC(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+  }
+  const [y, m, d] = raw.split('-').map(Number);
+  return dateOnlyUTC(y, m, d);
+}
+
 export function ytdWindow(anchor: Date): DateWindow {
   const y = anchor.getUTCFullYear();
   return { start: dateOnlyUTC(y, 1, 1), end: anchor };

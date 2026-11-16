@@ -50,6 +50,8 @@ export interface ComboChartProps {
   showTitle?: boolean;
   points: ComboChartPoint[];
   bars: ComboBarSeries[];
+  /** Every category label on the X axis, angled (e.g. branch names, 2026-11-15). Default: Recharts thins them out. */
+  showAllCategories?: boolean;
   lines?: ComboLineSeries[];
   leftAxisFormatter?: (value: number) => string;
   rightAxisFormatter?: (value: number) => string;
@@ -112,6 +114,7 @@ export function ComboChart({
   rightAxisFormatter = defaultFormatter,
   tooltipFormatters,
   height = 300,
+  showAllCategories = false,
   fill = false,
   onCategoryClick,
   onAreaClick,
@@ -124,6 +127,10 @@ export function ComboChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
   const hasRightAxis = lines.some((l) => (l.yAxisId ?? 'right') === 'right');
+  const labelPx = (label: unknown) => String(label ?? '').length * 6.2;
+  // cos 30° of the first label, minus the Y axis' own ~44 px; sin 30° of the longest label + the tick gap
+  const allCategoriesLeft = showAllCategories && points.length ? Math.max(0, Math.ceil(labelPx(points[0].label) * 0.87) - 44) : 0;
+  const allCategoriesHeight = showAllCategories ? Math.min(160, Math.ceil(Math.max(0, ...points.map((p) => labelPx(p.label))) * 0.5) + 16) : 30;
   const ipIndex = inProgressIndex(points, inProgressLabel);
   const data = withInProgressSegment(points, lines.map((l) => l.key), ipIndex);
 
@@ -181,10 +188,12 @@ export function ComboChart({
         )}
       </div>
       <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default', ...(fill ? { flex: 1, minHeight: height } : {}) }}>
+        {/* showAllCategories: the -30° labels hang left of their tick, so the left margin makes room for the first one and the
+            axis is as tall as the longest one (≈ 6.2 px per 11 px character): no label is ever clipped, on screen or exported. */}
         <ResponsiveContainer width="100%" height={fill ? '100%' : height}>
           <ComposedChart
             data={data}
-            margin={{ top: topPadding ?? (lines.some((l) => l.labelFormatter) ? 24 : 4), right: hasRightAxis ? 8 : 24, left: 0, bottom: 0 }}
+            margin={{ top: topPadding ?? (lines.some((l) => l.labelFormatter) ? 24 : 4), right: hasRightAxis ? 8 : 24, left: allCategoriesLeft, bottom: 0 }}
             onClick={handleChartClick}
           >
             <CartesianGrid stroke="var(--ps-color-border)" strokeDasharray="3 3" vertical={false} />
@@ -193,6 +202,7 @@ export function ComboChart({
               tick={{ fontSize: 11, fill: 'var(--ps-color-muted-text)' }}
               axisLine={{ stroke: 'var(--ps-color-border)' }}
               tickLine={false}
+              {...(showAllCategories ? { interval: 0, angle: -30, textAnchor: 'end', height: allCategoriesHeight } : {})}
             />
             <YAxis
               yAxisId="left"

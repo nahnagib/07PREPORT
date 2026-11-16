@@ -8,6 +8,7 @@ import type { Filters } from '../measures/filters';
 import {
   NpsQueryError,
   fetchNpsDetractors,
+  fetchNpsDetractorsByBranch,
   fetchNpsFollowupSummary,
   fetchNpsMeta,
   fetchNpsOverview,
@@ -53,6 +54,7 @@ export const npsScoreRouter = Router();
 
 npsScoreRouter.use(requireAuth, requirePasswordChangeCleared, requirePermission('nps_score', 'view'), attachUserContext, resolveScopedFilters);
 
+// eslint-disable-next-line no-unused-vars -- parameter names of a function type (the base rule misreads them)
 type Handler = (req: Request) => Promise<unknown>;
 
 function handle(fn: Handler) {
@@ -86,6 +88,8 @@ npsScoreRouter.get('/reach', handle((req) => fetchNpsReach(pool, query(req), sco
 npsScoreRouter.get('/response-rate', handle((req) => fetchNpsResponseRate(pool, query(req), scoped(req), req.userContext!)));
 
 npsScoreRouter.get('/followup-summary', handle((req) => fetchNpsFollowupSummary(pool, query(req), scoped(req))));
+
+npsScoreRouter.get('/detractors-by-branch', handle((req) => fetchNpsDetractorsByBranch(pool, query(req), scoped(req))));
 
 npsScoreRouter.get(
   '/detractors',

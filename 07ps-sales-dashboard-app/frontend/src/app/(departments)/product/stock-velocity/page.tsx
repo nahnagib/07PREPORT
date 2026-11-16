@@ -404,7 +404,8 @@ export default function StockVelocityPage() {
 
         <main style={{ flex: 1, padding: 'clamp(8px, calc(5vw - 12px), var(--ps-space-4, 24px))', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)' }}>
 
-          <PeriodNote period={overview.data?.period} />
+          {/* Every KPI, chart, table and export below uses the portfolio only (toProductFacts): Dormant and Unclassified never count */}
+          <PeriodNote period={overview.data?.period} base="Based on Active + Non Active SKUs" />
           {overview.loading && !overview.data ? (
             <LoadingSkeleton variant="chart" />
           ) : overview.error ? (

@@ -85,7 +85,7 @@ describe('Product pages "?" and "i"', () => {
       expect(help.notes, id).toBeUndefined();
       expect(help.definition.length, id).toBeLessThanOrEqual(90);
     }
-    expect(vh('product.bcgMatrix.matrix').help?.definition).toBe('BCG class of each Active product by volume and margin.');
+    expect(vh('product.bcgMatrix.matrix').help?.definition).toBe('BCG class of each Active + Non Active product by volume and margin (no sales = Dogs).');
   });
 
   it('no median text is left in the BCG help', () => {

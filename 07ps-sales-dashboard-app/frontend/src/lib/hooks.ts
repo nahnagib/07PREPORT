@@ -5,7 +5,6 @@ import {
   type NpsEndpoint,
   type NpsScope,
   fetchNpsScore,
-  BreakdownGroupBy,
   CriticalNumberMissingTrend,
   CriticalNumberOverview,
   CustomerGrowthOverview,
@@ -15,9 +14,7 @@ import {
   InvoicesEngineScope,
   RefreshStatus,
   RevenueTrendOverview,
-  TachometerBreakdown,
   TachometerFilters,
-  TachometerMetricKey,
   TachometerOverview,
   TachometerTrend,
   fetchProductDashboard,
@@ -44,7 +41,6 @@ import {
   fetchRefreshStatus,
   fetchRevenueTrendOverview,
   fetchSalespersons,
-  fetchTachometerBreakdown,
   fetchTachometerOverview,
   fetchTachometerTrend,
   ActivityMomentumOverview,
@@ -378,41 +374,6 @@ export function useRefreshStatus(token: string | null, authError: string | null,
       .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message }));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `latest` is a stable ref (useLatestRequest)
   }, [dataVersion, token, authError]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  return { ...state, retry: makeRetry(token, retryAuth, load) };
-}
-
-/** Drill-down breakdown for one metric card (Tachometer page -> per-metric detail page). */
-export function useTachometerBreakdown(
-  token: string | null,
-  anchorDate: string,
-  filters: TachometerFilters,
-  metric: TachometerMetricKey,
-  groupBy: BreakdownGroupBy,
-  authError: string | null,
-  retryAuth: () => void,
-) {
-  const dataVersion = useDataVersion();
-  const latest = useLatestRequest();
-  const [state, setState] = useState<AsyncState<TachometerBreakdown>>({
-    data: null,
-    loading: true,
-    error: null,
-  });
-
-  const load = useCallback(() => {
-    if (authGate(token, authError, setState)) return;
-    setState((s) => ({ ...s, loading: true, error: null }));
-    const isCurrent = latest.begin();
-    fetchTachometerBreakdown(token as string, anchorDate, filters, metric, groupBy)
-      .then((data) => isCurrent() && setState({ data, loading: false, error: null }))
-      .catch((err) => isCurrent() && setState({ data: null, loading: false, error: err.message ?? 'Failed to load.' }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataVersion, token, authError, anchorDate, JSON.stringify(filters), metric, groupBy]);
 
   useEffect(() => {
     load();

@@ -148,11 +148,11 @@ describe('status table page', () => {
     expect(nav.replaced).toEqual(['/product/bcg-matrix/products?status=dormant&company=Tika&fromDate=2026-01-01&toDate=2026-06-30']);
   });
 
-  it('Non Active: With stock / Zero stock match the card; Dormant: archived in Odoo, date not loaded', () => {
+  it('Non Active: Stock · no sales / Sales · no stock match the card; Dormant: archived in Odoo, date not loaded', () => {
     list.data = LIST;
     nav.params = new URLSearchParams('status=non_active&stock=with');
     render(<ProductStatusTablePage />);
-    expect(['all', 'with', 'zero'].map((k) => screen.getByTestId(`stock-filter-${k}`).textContent)).toEqual(['All 3', 'With stock 1', 'Zero stock 2']);
+    expect(['all', 'with', 'zero'].map((k) => screen.getByTestId(`stock-filter-${k}`).textContent)).toEqual(['All 3', 'Stock · no sales 1', 'Sales · no stock 2']);
     expect(screen.getByTestId('status-table-count').textContent).toMatch(/^1 SKUs/);
     cleanup();
     nav.params = new URLSearchParams('status=dormant');
@@ -192,7 +192,7 @@ describe('missing cost: an admin-only data quality row (2026-11-15)', () => {
     Element.prototype.scrollIntoView = vi.fn();
     render(<BcgMatrixPage />);
     const row = screen.getByTestId('bcg-data-quality');
-    expect(row.textContent).toMatch(/^Data Quality1 Active products have no cost in Odoo \(counted as low margin\)/);
+    expect(row.textContent).toMatch(/^Data Quality1 Active \+ Non Active products have no cost in Odoo \(counted as low margin\)/);
     expect(row.textContent).not.toMatch(/Behind Target|On Target|Critical/); // no status badge: a count, not a verdict
     const grid = document.getElementById('product-detail')!;
     expect(grid.textContent).toContain('Fully costed');

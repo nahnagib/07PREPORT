@@ -16,6 +16,11 @@ export const SERIES = {
 
 /** Eight distinguishable colours for the event types (index = position in the API's byType keys). */
 export const CATEGORICAL_8 = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#56B4E9', '#D55E00', '#7A5195', '#8C8C8C'] as const;
+/** Fourteen distinguishable colours, no grey (grey = "Unknown"), neighbours far apart in hue: the parts of a share bar in
+ * order (e.g. NPS Detractors by Branch, 2026-11-15). Okabe-Ito first, then Dark2 / Tableau. */
+export const CATEGORICAL_14 = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#56B4E9', '#D55E00', '#7A5195', '#F0E442',
+  '#1B9E77', '#E7298A', '#66A61E', '#4E79A7', '#A6761D', '#FF9DA7'] as const;
+export const UNKNOWN_GREY = '#8C8C8C';
 export const CATEGORICAL_5 = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#56B4E9'] as const;
 
 /** Lifecycle statuses (campaigns and events). Deliberately not the RAG colours. */

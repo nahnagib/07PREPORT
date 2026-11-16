@@ -41,7 +41,7 @@ import {
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
 import { ProductName } from '../../../../components/product/ProductUi';
-import { lifecycleConfig, maturePct, portfolioFreshness, segmentDefinitions } from '../../../../lib/product/lifecycle';
+import { freshnessByCompany, freshnessTargets, lifecycleConfig, maturePct, portfolioFreshness, segmentDefinitions, type CompanyFreshness } from '../../../../lib/product/lifecycle';
 
 const SEGMENTS = LIFECYCLE_SEGMENTS;
 interface TableRow extends ProductFact, Record<string, unknown> {
@@ -78,6 +78,8 @@ export default function ProductLifecyclePage() {
   const discRows = filtered.filter((r) => r.lifecycle === 'Discontinued');
   // Portfolio Freshness (2026-11-15): Active + Non Active only (lib/product/lifecycle.ts portfolioFreshness)
   const fresh = portfolioFreshness(filtered);
+  // Freshness vs each company's own target (2026-11-15, backend config/productTargets.ts): never one blended number
+  const freshByCompany = freshnessByCompany(filtered, freshnessTargets(overview.data?.thresholds));
   const lc = lifecycleConfig(overview.data?.thresholds);
   const segDef = segmentDefinitions(lc);
   const withFormula = (entry: ReturnType<typeof vh>, formula: string) => (entry.help ? { ...entry.help, formula } : undefined);
@@ -85,7 +87,8 @@ export default function ProductLifecyclePage() {
     mature: withFormula(vh('product.productLifecycle.kpiMature'), `${segDef.Mature} · % = Mature ÷ portfolio`),
     discontinued: withFormula(vh('product.productLifecycle.kpiDiscontinued'), `${segDef.Discontinued} · sub-line = units sold in the prior period`),
     freshness: withFormula(vh('product.productLifecycle.kpiFreshness'),
-      `Freshness = SKUs first sold ≤ ${lc.newDays} d ÷ (Active + Non Active)`),
+      `Freshness = SKUs first sold ≤ ${lc.newDays} d ÷ (Active + Non Active), per company · On Track at or above the company target${
+        freshByCompany.some((c) => c.target !== null) ? ` (${freshByCompany.filter((c) => c.target !== null).map((c) => `${c.company} ≥ ${c.target}%`).join(', ')})` : ''}`),
   };
 
   // ---- Pareto on volume: units sold in the period per lifecycle segment (added up as Unit), the same period last year,
@@ -207,13 +210,7 @@ export default function ProductLifecyclePage() {
               status="alert"
               help={kpiHelp.discontinued}
             />
-            <KpiTile
-              label="Portfolio Freshness"
-              value={`${fresh.pct.toFixed(1)}%`}
-              variance={`${fresh.fresh} new SKUs · ${fresh.active} Active · ${fresh.nonActive} Non Active`}
-              status="neutral"
-              help={kpiHelp.freshness}
-            />
+            <FreshnessCard companies={freshByCompany} fallback={fresh} help={kpiHelp.freshness} />
           </div>
 
           <ChartPanel {...vh("product.productLifecycle.pareto")}
@@ -278,5 +275,50 @@ function PillField({ label, children }: { label: string; children: React.ReactNo
       <span style={{ display: 'block', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--ps-color-muted-text)', marginBottom: 4 }}>{label}</span>
       <div style={{ display: 'flex', gap: 6, height: 38, alignItems: 'center' }}>{children}</div>
     </div>
+  );
+}
+
+/** Portfolio Freshness (2026-11-15): one company = its % against its target with On Track / Below Target; "All" = one
+ * line per company against its own target ("Tika 8.1% / 10% · Majaal 22.4% / 20%"), never a blended number. */
+function FreshnessCard({ companies, fallback, help }: {
+  companies: CompanyFreshness[]; fallback: ReturnType<typeof portfolioFreshness>; help: React.ComponentProps<typeof KpiTile>['help'];
+}) {
+  const pill = (c: CompanyFreshness) => c.onTrack === null ? null : (
+    <span data-testid={`freshness-status-${c.company}`} style={{ fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 999, whiteSpace: 'nowrap',
+      color: c.onTrack ? 'var(--ps-color-success)' : 'var(--ps-color-alert)', border: `1px solid ${c.onTrack ? 'var(--ps-color-success)' : 'var(--ps-color-alert)'}` }}>
+      {c.onTrack ? 'On Track' : 'Below Target'}
+    </span>
+  );
+  if (companies.length === 1) {
+    const c = companies[0];
+    return (
+      <KpiTile label="Portfolio Freshness" value={`${c.pct.toFixed(1)}%`}
+        variance={`${c.target !== null ? `Target ≥ ${c.target}% · ${c.onTrack ? 'On Track' : 'Below Target'} · ` : ''}${c.fresh} new of ${c.portfolio} SKUs`}
+        status={c.onTrack === null ? 'neutral' : c.onTrack ? 'success' : 'alert'} help={help} />
+    );
+  }
+  if (companies.length === 0) {
+    return <KpiTile label="Portfolio Freshness" value={`${fallback.pct.toFixed(1)}%`} status="neutral" help={help} />;
+  }
+  return (
+    <Card data-testid="freshness-by-company" role="group" aria-label="Portfolio Freshness" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--ps-color-muted-text)' }}>
+        Portfolio Freshness {help && <VisualInfoIcons title="Portfolio Freshness" help={help} size={13} />}
+      </div>
+      {companies.map((c) => (
+        <div key={c.company} data-testid={`freshness-${c.company}`} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, minWidth: 56 }}>{c.company}</span>
+          <span style={{ fontSize: 22, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+            color: c.onTrack === null ? 'var(--ps-color-text)' : c.onTrack ? 'var(--ps-color-success)' : 'var(--ps-color-alert)' }}>
+            {c.pct.toFixed(1)}%
+          </span>
+          {c.target !== null && <span style={{ fontSize: 13, color: 'var(--ps-color-muted-text)' }}>/ {c.target}%</span>}
+          {pill(c)}
+        </div>
+      ))}
+      <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>
+        {companies.map((c) => `${c.company} ${c.fresh} new of ${c.portfolio}`).join(' · ')}
+      </div>
+    </Card>
   );
 }

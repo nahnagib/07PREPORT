@@ -1571,51 +1571,6 @@ export interface DataScopeRule {
 }
 
 // ---------------------------------------------------------------------------
-// Tachometer drill-down (breakdown by filter dimension) -- powers the detail page reached by
-// clicking a gauge card on the Tachometer summary page.
-// ---------------------------------------------------------------------------
-
-/** Matches the 4 clickable gauge cards on the Tachometer page 1:1. */
-export type TachometerMetricKey = 'ytdValue' | 'ytdVolume' | 'mtdValue' | 'mtdVolume';
-
-export type BreakdownGroupBy = 'salesperson' | 'salesTeam' | 'segment';
-
-export interface BreakdownRow {
-  groupKey: string | number | null;
-  groupLabel: string;
-  actual: number;
-  targetToDate: number | null;
-  status: TargetStatus;
-  variancePct: number | null;
-}
-
-export interface TachometerBreakdown {
-  anchorDate: string;
-  metric: TachometerMetricKey;
-  groupBy: BreakdownGroupBy;
-  rows: BreakdownRow[];
-}
-
-/**
- * Fetches the grouped breakdown for one metric card (e.g. "YTD Value by Salesperson"). Carries
- * forward the exact same filters/anchorDate as the summary page's /overview call, so the
- * drill-down is always scoped identically to whatever the user was looking at when they clicked
- * through.
- */
-export function fetchTachometerBreakdown(
-  token: string,
-  anchorDate: string,
-  filters: TachometerFilters,
-  metric: TachometerMetricKey,
-  groupBy: BreakdownGroupBy,
-): Promise<TachometerBreakdown> {
-  const params = new URLSearchParams(buildQuery(anchorDate, filters));
-  params.set('metric', metric);
-  params.set('groupBy', groupBy);
-  return request(`/tachometer/breakdown?${params.toString()}`, token);
-}
-
-// ---------------------------------------------------------------------------
 // Monthly trend series (Revenue/Volume/ASP/Monthly Achievement charts).
 // ---------------------------------------------------------------------------
 
@@ -2680,10 +2635,12 @@ export type BcgClassKey = 'Stars' | 'Cash Cows' | 'Strategic' | 'Dogs';
 export interface ProductStatusSummary {
   total: number;
   active: { count: number; units: number; value: number };
-  nonActive: { count: number; withStock: number; zeroStock: number; stockUnits: number; stockValue: number };
-  dormant: { count: number };
+  /** withStock = stock but no sales; withSales (= zeroStock) = sales but no stock (2026-11-15 rules). */
+  nonActive: { count: number; withStock: number; withSales?: number; zeroStock: number; stockUnits: number; stockValue: number };
+  /** archived = archived in Odoo; idle = no stock and no sales in the period. */
+  dormant: { count: number; archived?: number; idle?: number };
   unclassified: { count: number };
-  /** Stars + Cash Cows + Strategic + Dogs = active.count. profit / missingCost: profit access only. */
+  /** Stars + Cash Cows + Strategic + Dogs = active.count + nonActive.count (2026-11-15). profit / missingCost: profit access only. */
   bcg: { classes: { key: BcgClassKey; count: number; units: number; value: number; profit?: number }[]; missingCost?: number };
 }
 
@@ -2934,6 +2891,9 @@ export interface DebtOverview {
   /** every currency together, every amount in LYD (Odoo's Amount Due): the charts of the "All currencies (≈ LYD)" view */
   all: DebtCurrencyOverview;
   allCurrencies: DebtAllCurrencies;
+  /** Debt to YTD Sales % (2026-11-15): YTD sales = the Tachometer's YTD Value (computeYtdCard) for the same filters and the
+   * app's anchor date (1 Jan – anchorDate); bands in % from the backend config (config/finance.ts). value null = not available. */
+  ytdSales?: { from: string; to: string; value: number | null; currency: string; bands: { greenMaxPct: number; yellowMaxPct: number } };
 }
 
 export interface DebtTrend {
@@ -3202,7 +3162,12 @@ export function fetchDebtReport<T>(token: string, endpoint: DebtReportEndpoint, 
 }
 
 // -- NPS Score (Process; backend routes/npsScore.ts, measures/npsScore.ts, config/npsThresholds.ts) -----------------
-export type NpsEndpoint = 'meta' | 'overview' | 'trend' | 'detractors' | 'reach' | 'response-rate' | 'followup-summary';
+export type NpsEndpoint = 'meta' | 'overview' | 'trend' | 'detractors' | 'reach' | 'response-rate' | 'followup-summary' | 'detractors-by-branch';
+/** Detractors by Branch (2026-11-15): the Detractors card's rows by effective branch; the counts add up to `total`. */
+export interface NpsDetractorsByBranch {
+  total: number;
+  branches: { key: string | null; branch: string; count: number; share: number | null }[];
+}
 export type NpsBand = 'red' | 'yellow' | 'green';
 /** A visual's bands: yellow from `yellowFrom`, green from `greenFrom` (both inclusive), the target, the drawn scale. */
 export interface NpsBandScale {

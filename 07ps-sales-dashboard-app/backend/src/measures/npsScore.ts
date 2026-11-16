@@ -30,7 +30,7 @@
  * resolveScopedFilters applied the role's data scope and the salesperson lock. Parameterised SQL only.
  */
 import type { Pool } from 'mysql2/promise';
-import { buildWhereClause, type Filters, type UserContext } from './filters';
+import { buildWhereClause, effectiveSalesTeamExpr, type Filters, type UserContext } from './filters';
 import { fetchDepartmentFreshness, type DepartmentFreshness } from './departmentFreshness';
 import {
   CSAT_SCALE, NPS_SCALE, RESPONSE_RATE_SCALE, csatBand, minResponders, npsBand, responseRateBand, type Band, type BandScale,
@@ -178,6 +178,28 @@ export async function fetchNpsOverview(pool: Pool, q: NpsQuery, f: Filters): Pro
   const total = (rows as Record<string, unknown>[])[0];
   const min = minResponders();
   return { dateFrom: q.dateFrom, dateTo: q.dateTo, totals: { ...toCounts(total, min), withComment: Number(total?.with_comment ?? 0) }, minResponders: min };
+}
+
+/** Detractors by branch (2026-11-15): the Detractors card's own WHERE (rating dates + every scoped filter), grouped by the
+ * effective branch (sales team, the admin override applied -- the Branch filter's own rule), so the branches always add
+ * up to the card. Biggest first; a response without a branch is "Unknown". */
+export interface NpsDetractorsByBranch {
+  total: number;
+  branches: { key: string | null; branch: string; count: number; share: number | null }[];
+}
+
+export async function fetchNpsDetractorsByBranch(pool: Pool, q: NpsQuery, f: Filters): Promise<NpsDetractorsByBranch> {
+  const w = npsWhere(q, f);
+  const [rows] = await pool.query(
+    `SELECT t.k, COALESCE(dt.SalesTeam, 'Unknown') AS branch, t.n
+       FROM (SELECT ${effectiveSalesTeamExpr('f')} AS k, COUNT(*) AS n
+               FROM v_process_nps_response f WHERE f.nps_level = 1 AND ${w.sql} GROUP BY k) t
+       LEFT JOIN dim_sales_team dt ON dt.SalesTeamKey = t.k
+      ORDER BY t.n DESC, branch`,
+    w.params);
+  const list = (rows as Record<string, unknown>[]).map((r) => ({ key: r.k === null || r.k === undefined ? null : String(r.k), branch: String(r.branch ?? 'Unknown'), count: Number(r.n ?? 0) }));
+  const total = list.reduce((t, b) => t + b.count, 0);
+  return { total, branches: list.map((b) => ({ ...b, share: total > 0 ? b.count / total : null })) };
 }
 
 export interface NpsTrendPoint extends NpsCounts {

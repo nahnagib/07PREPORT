@@ -66,19 +66,23 @@ from sales_pipeline.product_matching import normalize_match_company
 
 UNCLASSIFIED_NO_COST = "Unclassified (no cost)"
 
-# One definition of "our products" (2026-11-15). Every SKU is in exactly one bucket, first match wins:
-#   Unclassified (an active ProductExclusions.xlsx rule, or the automatic Raw Materials category) > Dormant (archived in
-#   Odoo) > Active (sold in the period) > Non Active (not sold, never sold included).
+# One definition of "our products" (2026-11-15 rules). Every SKU is in exactly one bucket, checked in this order:
+#   Unclassified (SKUs not for sale: an active ProductExclusions.xlsx rule, or the automatic Raw Materials category) >
+#   Dormant (archived in Odoo) > Active (sales in the period AND Quantity On Hand > 0) > Non Active (sales but no stock, or
+#   stock but no sales) > Dormant (no stock and no sales).
 # The portfolio of every Product page calculation is Active + Non Active; Dormant and Unclassified are counted only by
 # Total SKUs, their own cards and the status table (backend measures/productPortfolio.ts mirrors this).
 PRODUCT_STATUSES = ("Unclassified", "Dormant", "Active", "NonActive")
 PORTFOLIO_STATUSES = ("Active", "NonActive")
 
 
-def product_status(excluded: pd.Series, archived: pd.Series, sold: pd.Series) -> pd.Series:
-    """The bucket of each row by the precedence above (the three masks share one index)."""
-    return pd.Series(np.select([excluded.astype(bool), archived.astype(bool), sold.astype(bool)], list(PRODUCT_STATUSES[:3]),
-                               default=PRODUCT_STATUSES[3]), index=excluded.index)
+def product_status(excluded: pd.Series, archived: pd.Series, sold: pd.Series, in_stock: pd.Series | None = None) -> pd.Series:
+    """The bucket of each row by the precedence above (the masks share one index). `in_stock` = Quantity On Hand > 0; without
+    it every row counts as in stock (sold = Active, not sold = Non Active)."""
+    sold = sold.astype(bool)
+    stock = pd.Series(True, index=excluded.index) if in_stock is None else in_stock.astype(bool)
+    return pd.Series(np.select([excluded.astype(bool), archived.astype(bool), sold & stock, sold | stock],
+                               ["Unclassified", "Dormant", "Active", "NonActive"], default="Dormant"), index=excluded.index)
 
 
 def rule_text(rule: dict[str, Any]) -> str:
@@ -660,7 +664,8 @@ class ProductDashboardBuilder:
         excluded = out["ExcludedByProduct"].eq(1) | out["ExcludedByCategory"].eq(1)
         archived = key.map(info["Archived"]).eq(True)
         active = key.astype(str).isin(self.sold_last_12m) & out["OnProductPages"].eq(1)
-        out["ProductStatus"] = product_status(excluded, archived, active)
+        in_stock = pd.to_numeric(out["OnHandQty"], errors="coerce").fillna(0.0).gt(0) if "OnHandQty" in out.columns else None
+        out["ProductStatus"] = product_status(excluded, archived, active, in_stock)
         log.info("Product pages: Odoo SKU counts as of %s: %s", self.as_of.date(), self._sku_counts())
         return out
 

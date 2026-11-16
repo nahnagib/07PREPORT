@@ -123,7 +123,7 @@ describe('Product tables use the standard grid, volume first, and every product 
     const kpis = screen.getByTestId('bcg-kpis');
     const row = (id: string) => [...kpis.querySelector(`section[aria-labelledby="${id}"] > div`)!.children];
     const labels = (id: string) => row(id).map((tile) => tile.getAttribute('aria-label'));
-    expect([...kpis.querySelectorAll('h2')].map((h) => h.textContent?.trim())).toEqual(['Total SKUs', 'Product Status', 'BCG Matrix (Active products)']);
+    expect([...kpis.querySelectorAll('h2')].map((h) => h.textContent?.trim())).toEqual(['Total SKUs', 'Product Status', 'BCG Matrix (Active + Non Active products)']);
     expect(screen.getByTestId('total-skus-value').textContent).toBe('12');
     expect([...screen.getByTestId('total-skus-chips').querySelectorAll('button')].map((b) => b.textContent))
       .toEqual(['Active 4', 'Non Active 5', 'Dormant 2', 'Unclassified 1']);
@@ -131,8 +131,11 @@ describe('Product tables use the standard grid, volume first, and every product 
     expect(labels('row-product-status')).toEqual(['Active 4: list the products', 'Non Active 5: list the products', 'Dormant 2: list the products', 'Unclassified 1: list the products']);
     expect(row('row-product-status').map((t) => t.getAttribute('role'))).toEqual(['link', 'link', 'link', 'link']);
     expect(row('row-product-status').map((t) => t.querySelector('[aria-label]')?.getAttribute('aria-label')))
-      .toEqual(['Active · sold in the period', 'Non Active · not sold in the period', 'Dormant · archived in Odoo', 'Unclassified · active exclusion rules']);
-    expect(row('row-product-status')[1].textContent).toMatch(/2 with stock · 3 zero stock/);
+      .toEqual(['Active · sales and stock', 'Non Active · sales or stock, not both', 'Dormant · archived, or no stock and no sales', 'Unclassified · SKUs not for sale']);
+    expect(row('row-product-status')[1].textContent).toMatch(/2 with stock · no sales \| 3 with sales · no stock/);
+    // the BCG cards carry their quadrant definition, the same words as the class panels (2026-11-15)
+    expect(row('row-bcg').map((t) => t.querySelector('[data-testid="kpi-tile-footnote"]')?.textContent))
+      .toEqual(['High volume · high margin', 'High volume · low margin', 'Low volume · high margin', 'Low volume · low margin']);
     expect(labels('row-bcg')).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs']);
     expect(row('row-bcg')[0].textContent).toMatch(/profit LYD/); // profit access (this user)
     // the missing-cost note is an admin-only data quality row (2026-11-15): not for this (non-admin) user
@@ -161,7 +164,7 @@ describe('Product tables use the standard grid, volume first, and every product 
     expect(screen.getByTestId('bcg-kpis').textContent).toMatch(/Stars/);
   });
 
-  it('Export BCG: one workbook, a Summary sheet + one sheet per class with every Active product; profit columns only with access', async () => {
+  it('Export BCG: one workbook, a Summary sheet + one sheet per class with every Active + Non Active product; profit columns only with access', async () => {
     const run = async () => {
       render(<BcgMatrixPage />);
       fireEvent.click(screen.getByText('Export BCG'));
@@ -174,7 +177,7 @@ describe('Product tables use the standard grid, volume first, and every product 
     expect(full.fileName).toBe('bcg-matrix');
     expect(full.sheets.map((sh) => sh.name)).toEqual(['Summary', 'Stars', 'Cash Cows', 'Strategic', 'Dogs']);
     expect(full.sheets[0].headers).toEqual(['Class', 'Products', 'Volume (Unit)', 'Value (LYD)', 'Profit (LYD)']);
-    expect(full.sheets[0].rows.map((r) => r[0])).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Total (Active)', undefined, 'Period', 'Compared with', 'Company filter']);
+    expect(full.sheets[0].rows.map((r) => r[0])).toEqual(['Stars', 'Cash Cows', 'Strategic', 'Dogs', 'Total (Active + Non Active)', undefined, 'Period', 'Compared with', 'Company filter']);
     const meta = Object.fromEntries(full.sheets[0].rows.filter((r) => typeof r[0] === 'string' && r.length === 2).map((r) => [r[0], r[1]]));
     expect(meta).toEqual({ Period: 'Last 12 Months · 7 Nov 2025 – 7 Nov 2026', 'Compared with': '6 Nov 2024 – 6 Nov 2025', 'Company filter': 'Majaal + Tika' });
     expect(full.sheets[1].headers).toEqual(['Product', 'Vendor', 'Class', 'Value (LYD)', 'Volume (Unit)', 'Volume prior period (Unit)', 'Growth %', 'Qty on hand (Unit)', 'Profit (LYD)', 'GP%', 'Missing cost data']);
@@ -199,8 +202,9 @@ describe('Product tables use the standard grid, volume first, and every product 
       const card = screen.getByLabelText(label, { selector: '[aria-label]:not(button)' });
       expect(within(card).getByTestId('visual-help'), label).toBeTruthy();
     }
-    // every fixture row is Active, none New: 0 of 3
-    expect(screen.getByText('0 new SKUs · 0 Active · 0 Non Active')).toBeTruthy();
+    // Company = All: one line per company against its own target (2026-11-15), never one blended number; none New here
+    const fresh = screen.getByTestId('freshness-by-company');
+    expect(within(fresh).getAllByTestId(/^freshness-(Majaal|Tika)$/).map((e) => e.textContent?.split('%')[0])).toEqual(['Majaal0.0', 'Tika0.0']);
     const defs = screen.getByTestId('lifecycle-segment-definitions');
     expect([...defs.querySelectorAll('dt')].map((d) => d.textContent)).toEqual(['New', 'Growing', 'Mature', 'Declining', 'Discontinued', 'Never sold']);
     expect(defs.textContent).toMatch(/First sale ≤ 180 d/);

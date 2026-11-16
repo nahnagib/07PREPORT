@@ -29,7 +29,7 @@ describe('header title "<Department> — <Page>" from the nav config', () => {
   });
 
   it('a deeper page adds one level: the page\'s subTitle, else the nav config\'s sub-page', () => {
-    expect(text('/promotion/tachometer/ytdValue', 'YTD Value Breakdown')).toBe('Promotion — Tachometer › YTD Value Breakdown');
+    expect(text('/product/pim-contribution/brand/x', 'Brand X')).toContain('› Brand X');
     expect(text('/process/kaizen-board/manage')).toBe('Process — Kaizen Board › Manage Kaizen Cards');
     expect(text('/process/kaizen-board/manage/new')).toBe('Process — Kaizen Board › New Kaizen Card');
     expect(text('/process/nps-followup/reasons')).toBe('Process — Detractor Follow-up › Reasons');

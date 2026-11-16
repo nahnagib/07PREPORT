@@ -18,7 +18,7 @@ export function formatWinLossRatio(won: number, lost: number): string {
 export interface WinLossCentre {
   /** "1.78 : 1", "All won" or "—". */
   main: string;
-  /** "Won / Lost", or "No closed deals". */
+  /** "Won / Lost Ratio" (shown above the number), or "No closed deals". */
   label: string;
   /** "Win rate 64.0%", or null when there are no closed deals. */
   caption: string | null;
@@ -32,5 +32,5 @@ export function winLossCentre(won: number, lost: number): WinLossCentre {
   if (w + l === 0) return { main: '—', label: 'No closed deals', caption: null, ratio: null, winRate: null };
   const winRate = w / (w + l);
   const caption = `Win rate ${(winRate * 100).toLocaleString(DISPLAY_LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
-  return { main: formatWinLossRatio(w, l), label: 'Won / Lost', caption, ratio: l === 0 ? null : w / l, winRate };
+  return { main: formatWinLossRatio(w, l), label: 'Won / Lost Ratio', caption, ratio: l === 0 ? null : w / l, winRate };
 }
