@@ -171,7 +171,7 @@ describe('Daily Critical Number share from sales_targets.xlsx', () => {
     expect(scopedCondition(calls[0].sql)).toBe('1=1');
     expect(calls[0].params).toEqual([]);
     // the denominator has no user filter; only the director rows are left out (2026-11-15: they never add to a total)
-    expect(calls[0].sql).toMatch(/WHERE LOWER\(TRIM\(COALESCE\(t\.TargetLevel, ''\)\)\) <> 'director'\s+GROUP BY/);
+    expect(calls[0].sql).toMatch(/WHERE LOWER\(TRIM\(COALESCE\(t\.TargetLevel, ''\)\)\) = 'salesperson'\s+GROUP BY/);
     expect(schedule.shareFor(D)).toEqual({ share: 1, shareYear: 2026, shareSource: 'current' });
     expect(schedule(D)).toBe(BASE);
     await expect(computeTargetShare(pool, {}, 2026)).resolves.toEqual({ share: 1, shareYear: 2026, shareSource: 'current' });

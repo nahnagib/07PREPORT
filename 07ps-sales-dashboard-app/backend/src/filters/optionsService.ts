@@ -1,6 +1,7 @@
 import { RowDataPacket } from 'mysql2';
 import { pool } from '../db/pool';
 import { Combo, DIMENSIONS, Dimension, Selection, computeCascade } from './cascade';
+import { DIRECTOR_TARGETS } from '../measures/filters';
 
 /**
  * Backs GET /filters/options: loads (and caches) the distinct dimension combinations in the sales
@@ -106,7 +107,7 @@ async function loadCombos(window: DateWindow): Promise<Combo[]> {
     params,
   );
   const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
-  return rows.map((r) => ({
+  const combos: Combo[] = rows.map((r) => ({
     companyKeys: str(r.co),
     segmentKeys: str(r.sg),
     channelKeys: str(r.ch),
@@ -114,6 +115,30 @@ async function loadCombos(window: DateWindow): Promise<Combo[]> {
     salespersonKeys: str(r.sp),
     customerKeys: str(r.cu),
   }));
+  return [...combos, ...(await directorCombos(combos))];
+}
+
+/**
+ * B2B / B2C Directors (TargetLevel = Director rows of sales_targets.xlsx, 2026-11-17) are measured on their whole channel
+ * (Salesforce Performance: actual = the segment's sales), so a director matches every combination of their segment --
+ * picking one keeps every company / channel / branch / customer of the channel, and the channel keeps the director.
+ */
+async function directorCombos(combos: Combo[]): Promise<Combo[]> {
+  const [directors] = await pool.query<RowDataPacket[]>(
+    `SELECT DISTINCT t.SalespersonKey AS sp, t.SegmentKey AS sg FROM v_sales_targets t
+     WHERE ${DIRECTOR_TARGETS('t')} AND t.SalespersonKey > 0`,
+  );
+  const seen = new Set(combos.map((c) => DIMENSIONS.map((d) => c[d]).join('|')));
+  const out: Combo[] = [];
+  for (const d of directors) {
+    for (const c of combos) {
+      if (c.segmentKeys !== String(d.sg)) continue;
+      const combo = { ...c, salespersonKeys: String(d.sp) };
+      const id = DIMENSIONS.map((dim) => combo[dim]).join('|');
+      if (!seen.has(id)) { seen.add(id); out.push(combo); }
+    }
+  }
+  return out;
 }
 
 interface NamedOption {

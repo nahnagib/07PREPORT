@@ -3,7 +3,7 @@ import { pool } from '../db/pool';
 import { requireAuth } from '../middleware/auth';
 import { requireAnyDashboardView, requirePasswordChangeCleared } from '../middleware/permission';
 import { attachUserContext } from '../middleware/scopeContext';
-import { DataScopeError, SalespersonLockError, applyRoleDataScope, applySalespersonLock, type Filters } from '../measures/filters';
+import { DataScopeError, SalespersonLockError, applyRoleDataScope, applySalespersonLock, DIRECTOR_TARGETS, type Filters } from '../measures/filters';
 import { emptySelection, type Selection } from '../filters/cascade';
 import { getFilterOptions } from '../filters/optionsService';
 
@@ -395,6 +395,19 @@ filtersRouter.get('/salespersons', async (req, res, next) => {
          ORDER BY ds.salesperson`,
         params,
       )) as [Record<string, unknown>[], unknown];
+      // B2B / B2C Directors (TargetLevel = Director rows of sales_targets.xlsx, 2026-11-17) own their whole channel: listed
+      // whenever the Customer Group filter keeps their channel, whatever their own invoices.
+      const [directors] = (await pool.query(
+        `SELECT DISTINCT ds.SalespersonKey AS salesperson_key, COALESCE(sap.admin_name_override, ds.salesperson) AS salesperson_name, ds.salesperson
+         FROM v_sales_targets t
+         JOIN dim_salesperson ds ON ds.SalespersonKey = t.SalespersonKey
+         LEFT JOIN salesperson_admin_profile sap ON sap.salesperson_key = ds.SalespersonKey
+         WHERE ${DIRECTOR_TARGETS('t')}${segmentKeys.length ? ` AND t.SegmentKey IN (${segmentKeys.map(() => '?').join(', ')})` : ''}`,
+        segmentKeys,
+      )) as [Record<string, unknown>[], unknown];
+      const listed = new Set(rows.map((r) => Number(r.salesperson_key)));
+      rows = [...rows, ...directors.filter((d) => !listed.has(Number(d.salesperson_key)))]
+        .sort((a, b) => String(a.salesperson).localeCompare(String(b.salesperson)));
     }
     res.json(scopeRows(rows, 'salesperson_key', allowedValues(req, 'salespersonKeys')));
   } catch (err) {

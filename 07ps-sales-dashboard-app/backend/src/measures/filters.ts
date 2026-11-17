@@ -161,14 +161,14 @@ const OVERRIDE_EXPR: Partial<Record<keyof Filters, (alias: string) => string>> =
 };
 
 /**
- * Target rows by level (2026-11-15). sales_targets.xlsx rows are per salesperson (TargetLevel Salesperson / SalesTeam);
- * a `TargetLevel = Director` row is a channel owner's own target (SalesSegment B2B / B2C). Director rows replace the
- * channel sum on that director's card only and must never add to a company, team or person total, so every target sum
- * uses PEOPLE_TARGETS and only the director cards use DIRECTOR_TARGETS.
+ * Target rows by level (2026-11-17). sales_targets.xlsx rows are TargetLevel = Salesperson, one per salesperson; a
+ * `TargetLevel = Director` row is a B2B / B2C Director's own target (the director's SalespersonKey, SalesSegment B2B /
+ * B2C, = the sum of that segment's Salesperson rows). Every company, segment, company-unit and team total -- and every
+ * person's own target -- sums PEOPLE_TARGETS (Salesperson rows ONLY), so the company target never counts a director;
+ * only the director people of Salesforce Performance read DIRECTOR_TARGETS.
  */
-export const PEOPLE_TARGETS = (alias: string) => `LOWER(TRIM(COALESCE(${alias}.TargetLevel, ''))) <> 'director'`;
+export const PEOPLE_TARGETS = (alias: string) => `LOWER(TRIM(COALESCE(${alias}.TargetLevel, ''))) = 'salesperson'`;
 export const DIRECTOR_TARGETS = (alias: string) => `LOWER(TRIM(COALESCE(${alias}.TargetLevel, ''))) = 'director'`;
-export type TargetLevel = 'people' | 'director';
 
 export function buildWhereClause(
   filters: Filters,

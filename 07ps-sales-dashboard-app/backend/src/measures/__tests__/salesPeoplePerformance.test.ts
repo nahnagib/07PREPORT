@@ -124,16 +124,18 @@ it('omits vacant seats from contribution denominators and direct lookups', async
   expect((await computePersonContributions(db, anchor, {}, 3)).rows).toEqual([]);
 });
 
-describe('company total, directors and reconciliation (2026-11-15)', () => {
-  // two listed people (1, 2), one without a target (3), a vacant seat (4), unassigned lines (-1)
+
+describe('company total, directors and reconciliation (2026-11-17: directors from the TargetLevel = Director rows)', () => {
+  // two listed people (1, 2), the B2B Director's own invoices (3, no Salesperson target), a vacant seat (4), unassigned (-1)
   const breakdown = [row(1, 100, 80), row(2, 50, 100), row(3, 30, null), { ...row(4, 0, 20), groupLabel: 'Sales Person 1' }, row(-1, 5, null)];
+  // sales_targets.xlsx: Mustapha Shaddad (key 3) = B2B Director, 20 a month (240 a year); no B2C Director rows
+  const directorRows = Array.from({ length: 12 }, (_, i) => ({ personKey: 3, segmentKey: 1, month: i + 1, name: 'Mustapha Shaddad', target: 20 }));
+  const isDirectorSql = (sql: string) => sql.includes("= 'director'");
   // a plain function: beforeEach's resetAllMocks would wipe a vi.fn implementation
-  const query = async (sql: string) => (sql.includes('FROM app_user') ? [[
-    { roleName: 'B2B_DIRECTOR', name: 'Nour', salespersonKey: 3 },
-  ]] : [[]]);
+  const query = async (sql: string) => (isDirectorSql(sql) ? [directorRows] : [[]]);
   const db = { query } as unknown as Pool;
 
-  it('the company figures are the Tachometer YTD Value card, not the sum of the people', async () => {
+  it('the company figures are the Tachometer YTD Value card (Salesperson targets only), not the sum of the people', async () => {
     vi.mocked(computeBreakdown).mockResolvedValue(breakdown);
     vi.mocked(computeYtdCard).mockResolvedValue(card(185, 200, 400));
     const out = await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), { segmentKeys: [1, 2] });
@@ -144,56 +146,81 @@ describe('company total, directors and reconciliation (2026-11-15)', () => {
     expect(out.reconciliation).toBeNull();
   });
 
-  it('directors are people (2026-11-16): the same row as anyone, the channel actual and full target, same tiers, months; an empty seat is no person', async () => {
+  it('a director is a person under their own key: the channel actual, their own Director-row target, same tiers and months', async () => {
     vi.mocked(computeBreakdown).mockResolvedValue(breakdown);
     vi.mocked(computeYtdCard).mockImplementation(async (_p, _a, f) =>
       (f.segmentKeys?.length === 1 && f.segmentKeys[0] === 1 ? { ...card(125, 100, 200), lastYearSamePeriod: 90 } : card(185, 200, 400)));
-    vi.mocked(computeMtdCard).mockImplementation(async (_p, end) => card(end.getUTCMonth() === 5 ? 30 : 20, 20, 20));
+    vi.mocked(computeMtdCard).mockImplementation(async (_p, end) => card(end.getUTCMonth() === 5 ? 30 : 20, 999, 999));
     const out = await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), {}, {
       directorFilters: { B2B: { segmentKeys: [1] }, B2C: { segmentKeys: [2] } },
     });
-    const director = out.people.find((p) => p.key === -1)!;
-    expect(director).toMatchObject({ key: -1, name: 'Nour', actual: 125, target: 100, status: 'top_performer', lastYear: 90, fullYearTarget: 200 });
+    const director = out.people.find((p) => p.key === 3)!;
+    // target = 6 months x 20 of the Director rows (not the channel card's 100); actual = the channel's 125
+    expect(director).toMatchObject({ key: 3, name: 'Mustapha Shaddad', actual: 125, target: 120, status: 'on_target',
+      lastYear: 90, fullYearTarget: 240 });
     // exactly the fields of a sales person: no director-only field
     expect(Object.keys(director).sort()).toEqual(Object.keys(out.people.find((p) => p.key === 1)!).sort());
-    // the people's own target level (every target row of the channel): never the Director rows
-    expect(vi.mocked(computeYtdCard).mock.calls.every((c) => c[4] === undefined)).toBe(true);
-    // each month from the MTD card at the month end, December as January's baseline
+    // each month: the channel's MTD actual, the director's own month target; December as January's baseline
     expect(director.months).toHaveLength(6);
     expect(director.months[5]).toMatchObject({ month: '2026-06', actual: 30, target: 20, previousActual: 20, status: 'top_performer' });
-    // sorted with everyone by actual; the B2C seat (nobody holds it) is not a person
-    expect(out.people.map((p) => p.key)).toEqual([-1, 1, 2]);
+    // listed once (never also as a plain person with their own invoices), sorted with everyone by actual
+    expect(out.people.map((p) => p.key)).toEqual([3, 1, 2]);
+    // the company total never includes the director: the Tachometer card as is
+    expect(out.company).toMatchObject({ actual: 185, target: 200 });
     expect(out.directorVacancies).toEqual(['B2C Director']);
   });
 
-  it('a director outside the filters is left out: a channel the caller may not see, another Customer Group, a salesperson filter; a customer filter keeps them', async () => {
+  it('under a company / channel / team filter the Director rows cannot be cut: the target is that slice of the Salesperson targets', async () => {
+    vi.mocked(computeBreakdown).mockResolvedValue(breakdown);
+    vi.mocked(computeYtdCard).mockResolvedValue(card(125, 100, 200));
+    vi.mocked(computeMtdCard).mockResolvedValue(card(20, 15, 15));
+    const out = await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), { companyKeys: [3] },
+      { directorFilters: { B2B: { segmentKeys: [1], companyKeys: [3] }, B2C: null } });
+    expect(out.people.find((p) => p.key === 3)).toMatchObject({ target: 100, fullYearTarget: 200 });
+  });
+
+  it('a director outside the filters is left out: a channel the caller may not see, another Customer Group, a Salesperson filter without them', async () => {
     vi.mocked(computeBreakdown).mockResolvedValue(breakdown);
     vi.mocked(computeYtdCard).mockResolvedValue(card(125, 100, 200));
     const keys = async (filters: object, b2b: object | null = { segmentKeys: [1] }) => (await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), filters,
       { directorFilters: { B2B: b2b as never, B2C: null } })).people.map((p) => p.key);
-    expect(await keys({})).toContain(-1);
-    expect(await keys({}, null)).not.toContain(-1);
-    expect(await keys({ segmentKeys: [2] })).not.toContain(-1);
-    expect(await keys({ salespersonKeys: [1] })).not.toContain(-1);
+    expect(await keys({})).toContain(3);
+    expect(await keys({}, null)).not.toContain(3);
+    expect(await keys({ segmentKeys: [2] })).not.toContain(3);
+    expect(await keys({ salespersonKeys: [1] })).not.toContain(3);
     // like anyone: a customer filter narrows the director's (channel) figures, it does not remove them
-    expect(await keys({ customerKeys: [7] })).toContain(-1);
+    expect(await keys({ customerKeys: [7] })).toContain(3);
   });
 
-  it("a director's contribution rows are the channel's, summed per company / segment / team under the director key", async () => {
+  it('the Salesperson filter can pick a director: the director alone, and the total is the picked people', async () => {
+    vi.mocked(computeBreakdown).mockImplementation(async (_p, _a, f) =>
+      breakdown.filter((r) => f.salespersonKeys?.includes(Number(r.groupKey)) ?? true));
+    vi.mocked(computeYtdCard).mockImplementation(async (_p, _a, f) => (f.salespersonKeys?.length ? card(30, 0, 0) : card(125, 100, 200)));
+    const out = await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), { salespersonKeys: [3] },
+      { directorFilters: { B2B: { segmentKeys: [1] }, B2C: null } });
+    expect(out.people.map((p) => [p.key, p.actual, p.target])).toEqual([[3, 125, 120]]);
+    expect(out.company).toMatchObject({ actual: 125, target: 120, fullYearTarget: 240 });
+    // no company total to reconcile: the admin Data Quality line is not sent
+    const admin = await computeSalesPeoplePerformance(db, new Date('2026-06-30Z'), { salespersonKeys: [3] },
+      { directorFilters: { B2B: { segmentKeys: [1] }, B2C: null }, withReconciliation: true });
+    expect(admin.reconciliation).toBeNull();
+  });
+
+  it('the contribution rows of a director are the channel rows, summed per company / segment / team under the director key', async () => {
     vi.mocked(computeBreakdown).mockResolvedValue(breakdown);
     vi.mocked(computeYtdCard).mockResolvedValue(card(125, 100, 200));
     vi.mocked(computeMtdCard).mockResolvedValue(card(20, 20, 20));
     const atom = (personKey: number, teamKey: string, amount: number) => ({ personKey, companyKey: 3, companyName: 'Majaal',
       segmentKey: 1, segmentName: 'B2B', teamKey, teamName: `Team ${teamKey}`, amount });
     // the channel's rows of two people in team 10 and one in team 20 (actuals and target weights alike)
-    const atomQuery = async (sql: string) => (sql.includes('FROM app_user') ? [[{ roleName: 'B2B_DIRECTOR', name: 'Nour', salespersonKey: 3 }]]
+    const atomQuery = async (sql: string) => (isDirectorSql(sql) ? [directorRows]
       : sql.includes('v_sales_') ? [[atom(1, '10', 60), atom(2, '10', 40), atom(2, '20', 25)]] : [[]]);
     const out = await computeSalesPeoplePerformance({ query: atomQuery } as unknown as Pool, new Date('2026-06-30Z'), {},
       { directorFilters: { B2B: { segmentKeys: [1] }, B2C: null } });
-    const nour = out.contributions.filter((c) => c.personKey === -1);
-    expect(nour.map((c) => [c.teamKey, c.revenue])).toEqual([['10', 100], ['20', 25]]);
-    // the director's own target (the channel's) allocated by the channel's target weights
-    expect(nour.reduce((t, c) => t + c.target, 0)).toBeCloseTo(100);
+    const director = out.contributions.filter((c) => c.personKey === 3);
+    expect(director.map((c) => [c.teamKey, c.revenue])).toEqual([['10', 100], ['20', 25]]);
+    // the director's own target allocated by the channel's target weights
+    expect(director.reduce((t, c) => t + c.target, 0)).toBeCloseTo(120);
   });
 
   it('reconciliation: what is not on a listed person, by reason, adding up to company - people', async () => {
@@ -205,7 +232,7 @@ describe('company total, directors and reconciliation (2026-11-15)', () => {
     expect(r.gap).toEqual({ actual: 35, target: 20 });
     const by = Object.fromEntries(r.rows.map((x) => [x.reason, { actual: x.actual, target: x.target }]));
     expect(by).toEqual({
-      director: { actual: 30, target: 0 },       // person 3 is the B2B Director's salesperson (no target)
+      director: { actual: 30, target: 0 },       // key 3 = the B2B Director's own invoices (no Salesperson target)
       unassigned: { actual: 5, target: 0 },
       vacant_seat: { actual: 0, target: 20 },
     });

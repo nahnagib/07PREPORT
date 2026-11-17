@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +32,8 @@ import pandas as pd
 
 from core.keys import UNKNOWN, UNKNOWN_TEXT
 from core.resolve import KeyMaps, _int_or_none
+
+log = logging.getLogger(__name__)
 
 LEGACY_UNKNOWN_TEAM = "MJ-TIK-00"
 # fact -> does a document without an Odoo team take its salesperson's team? (legacy behaviour per fact, measured on
@@ -390,23 +393,45 @@ def target_sheet_rows(sheet: pd.DataFrame) -> pd.DataFrame:
 
 
 DIRECTOR_SEGMENT_KEYS = (1, 2)  # B2B, B2C
+DIRECTOR_TARGET_TOLERANCE = 1.0  # LYD: a director month differing by less than this from its people's sum matches
 
 
 def is_director_row(sheet: pd.DataFrame) -> pd.Series:
-    """TargetLevel = Director (case and spaces ignored): a channel owner's own target (2026-11-15)."""
+    """TargetLevel = Director (case and spaces ignored): a channel owner's own target row (2026-11-15)."""
     if "TargetLevel" not in sheet.columns:
         return pd.Series(False, index=sheet.index)
     return sheet["TargetLevel"].map(_ident_text).str.lower().eq("director")
 
 
+def director_target_mismatches(sheet: pd.DataFrame) -> list[dict[str, Any]]:
+    """Per month and segment (B2B / B2C) where the sheet has Director rows: the Director target must equal the sum of
+    the TargetLevel = Salesperson targets of that segment (all companies). Returns the months that differ (2026-11-17)."""
+    level = sheet["TargetLevel"].map(_ident_text).str.lower() if "TargetLevel" in sheet.columns else pd.Series("", index=sheet.index)
+    seg = sheet["SalesSegment"].map(_ident_text).str.upper()
+    revenue = pd.to_numeric(sheet["Target_Revenue"], errors="coerce").fillna(0.0)
+    period = sheet["Year"].astype("Int64").astype(str) + "-" + sheet["Month"].astype("Int64").astype(str).str.zfill(2)
+    frame = pd.DataFrame({"YearMonth": period, "Segment": seg, "Level": level, "Revenue": revenue})
+    directors = frame[frame["Level"].eq("director")].groupby(["YearMonth", "Segment"])["Revenue"].sum()
+    people = frame[frame["Level"].eq("salesperson")].groupby(["YearMonth", "Segment"])["Revenue"].sum()
+    out = []
+    for (ym, segment), director in directors.items():
+        expected = float(people.get((ym, segment), 0.0))
+        if abs(float(director) - expected) >= DIRECTOR_TARGET_TOLERANCE:
+            out.append({"YearMonth": ym, "SalesSegment": segment, "director": float(director), "salespeople": expected,
+                        "difference": float(director) - expected})
+    return out
+
+
 def conform_targets(fact: pd.DataFrame, keys: pd.DataFrame, out: "Conformed") -> pd.DataFrame:
-    """Fact_Targets with the sheet's own keys. Every Salesperson / SalesTeam row needs its SalespersonKey; a
-    TargetLevel = Director row (2026-11-15) has no salesperson (SalespersonKey Unknown) and must name its channel
-    (SalesSegment B2B or B2C, SegmentKey 1 / 2): the app uses those rows only for the director cards, never in a total."""
+    """Fact_Targets with the sheet's own keys. Every row needs its SalespersonKey -- since 2026-11-17 a TargetLevel =
+    Director row carries the director's own key (the director is a sales person in the app) -- and a Director row must
+    name its channel (SalesSegment B2B or B2C, SegmentKey 1 / 2). Director rows never enter a company, segment or team
+    total (the app sums TargetLevel = Salesperson only); a Director month that differs from the sum of its segment's
+    Salesperson rows is logged as a WARNING and listed in the task notes, never an error."""
     t = fact.copy().reset_index(drop=True)
     check_target_alignment(t, keys)
     director = is_director_row(keys).to_numpy()
-    missing = keys["SalespersonKey"].isna().to_numpy() & ~director
+    missing = keys["SalespersonKey"].isna().to_numpy()
     if missing.any():
         raise ValueError(f"{int(missing.sum())} target row(s) have no SalespersonKey in sales_targets.xlsx: "
                          f"{keys.loc[missing, ['YearMonth', 'Salesperson']].head(5).to_dict('records')}")
@@ -420,6 +445,11 @@ def conform_targets(fact: pd.DataFrame, keys: pd.DataFrame, out: "Conformed") ->
     if no_channel.any():
         raise ValueError(f"{int(no_channel.sum())} TargetLevel = Director row(s) in sales_targets.xlsx have no SalesSegment B2B / B2C: "
                          f"{keys.loc[no_channel, ['YearMonth', 'SalesSegment']].head(5).to_dict('records')}")
+    mismatches = director_target_mismatches(keys)
+    for m in mismatches:
+        log.warning("sales_targets.xlsx: %s %s Director target %.2f <> sum of its Salesperson targets %.2f (difference %.2f)",
+                    m["YearMonth"], m["SalesSegment"], m["director"], m["salespeople"], m["difference"])
+    out.notes["fact_sales_targets.director_target_mismatches"] = mismatches
     out.parity["fact_sales_targets"] = legacy_key_parity(legacy, t)
     return t
 

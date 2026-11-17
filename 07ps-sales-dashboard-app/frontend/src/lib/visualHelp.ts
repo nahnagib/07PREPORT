@@ -318,8 +318,8 @@ export const VISUAL_HELP = {
       notes: 'Only people with a positive YTD target are included. Critical ≤50% · Need attention >50–90% · '
         + 'Behind target >90–<100% · On target 100–110% · Top performer >110%. '
         + 'B2B / B2C Directors are sales people like anyone else (headcount, tiers and their LYD sums): actual = the channel\'s YTD '
-        + 'sales, target = the channel\'s full YTD target. Total sales people LYD is the Tachometer YTD Value (the company, '
-        + 'not a sum of people).',
+        + 'sales, target = their own Director target in sales_targets.xlsx (= the channel\'s Salesperson targets). Total sales '
+        + 'people LYD is the Tachometer YTD Value (the company, Salesperson targets only: never a director\'s target).',
     },
     interactions: ['Click a tier card to filter the whole page to that tier (kept in the link)', 'Click it again, Total sales people or the chip × to show everyone'],
   },

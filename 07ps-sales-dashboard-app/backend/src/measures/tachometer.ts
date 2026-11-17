@@ -52,9 +52,7 @@ import {
   ytdWindow,
   type DateWindow,
   type Filters,
-  DIRECTOR_TARGETS,
   PEOPLE_TARGETS,
-  type TargetLevel,
 } from './filters';
 
 export interface ValueVolume {
@@ -157,12 +155,11 @@ export async function fetchTargetForMonths(
   pool: Pool,
   year: number,
   filters: Filters,
-  opts: { month?: number; monthLt?: number; level?: TargetLevel } = {},
+  opts: { month?: number; monthLt?: number } = {},
 ): Promise<TargetFigures> {
   const { clause, params } = buildWhereClause(filters, 'ftp');
-  // 'people' (default): every salesperson / team row, never a Director row; 'director': only the channel owners' rows.
-  const level = opts.level ?? 'people';
-  const conditions = ['ftp.Year = ?', level === 'director' ? DIRECTOR_TARGETS('ftp') : PEOPLE_TARGETS('ftp')];
+  // TargetLevel = Salesperson rows only: a Director row is never part of a total (filters.ts PEOPLE_TARGETS).
+  const conditions = ['ftp.Year = ?', PEOPLE_TARGETS('ftp')];
   const queryParams: Array<string | number> = [year];
 
   if (opts.month !== undefined) {
@@ -187,9 +184,7 @@ export async function fetchTargetForMonths(
   const [rows] = await pool.query(sql, queryParams);
   const perSalesperson = rows as { salespersonKey: number; target_revenue: number; target_volume: number }[];
 
-  // Admin overrides are per salesperson: they never apply to a director's channel row.
-  const overrides = level === 'director' ? new Map<number, number>()
-    : await fetchMonthlyOverrideAmounts(pool, perSalesperson.map((r) => Number(r.salespersonKey)));
+  const overrides = await fetchMonthlyOverrideAmounts(pool, perSalesperson.map((r) => Number(r.salespersonKey)));
   const monthCount = monthCountForOpts(opts);
 
   let targetRevenue = 0;
@@ -237,12 +232,11 @@ async function ytdTargetToDate(
   pool: Pool,
   anchor: Date,
   filters: Filters,
-  level: TargetLevel = 'people',
 ): Promise<TargetFigures> {
   const year = anchor.getUTCFullYear();
   const month = anchor.getUTCMonth() + 1;
-  const completed = await fetchTargetForMonths(pool, year, filters, { monthLt: month, level });
-  const currentMonth = await fetchTargetForMonths(pool, year, filters, { month, level });
+  const completed = await fetchTargetForMonths(pool, year, filters, { monthLt: month });
+  const currentMonth = await fetchTargetForMonths(pool, year, filters, { month });
   return {
     targetRevenue: prorateYtdTarget(completed.targetRevenue, currentMonth.targetRevenue, anchor) ?? 0,
     targetVolume: prorateYtdTarget(completed.targetVolume, currentMonth.targetVolume, anchor) ?? 0,
@@ -255,8 +249,8 @@ async function fullPeriodTargetForMtd(pool: Pool, anchor: Date, filters: Filters
   });
 }
 
-async function fullPeriodTargetForYtd(pool: Pool, anchor: Date, filters: Filters, level: TargetLevel = 'people') {
-  return fetchTargetForMonths(pool, anchor.getUTCFullYear(), filters, { level });
+async function fullPeriodTargetForYtd(pool: Pool, anchor: Date, filters: Filters) {
+  return fetchTargetForMonths(pool, anchor.getUTCFullYear(), filters);
 }
 
 async function computeCard(
@@ -332,16 +326,12 @@ export async function computeMtdCard(
   );
 }
 
-/** The Tachometer's YTD card. `targetLevel: 'director'` (Salesforce Performance director cards only) takes the target
- * from the TargetLevel = Director rows instead of the people's rows; the actual is the same. */
 export async function computeYtdCard(
   pool: Pool,
   anchor: Date,
   filters: Filters,
   metric: Metric,
-  opts: { targetLevel?: TargetLevel } = {},
 ): Promise<TachometerCard> {
-  const level = opts.targetLevel ?? 'people';
   return computeCard(
     pool,
     anchor,
@@ -350,8 +340,8 @@ export async function computeYtdCard(
     ytdWindow(anchor),
     lytdWindow(anchor),
     flyWindow(anchor),
-    (p, a, f) => ytdTargetToDate(p, a, f, level),
-    (p, a, f) => fullPeriodTargetForYtd(p, a, f, level),
+    ytdTargetToDate,
+    fullPeriodTargetForYtd,
   );
 }
 

@@ -6,6 +6,17 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (B2B / B2C Directors in sales_targets.xlsx, 2026-11-17)
+- **Directors from the targets sheet**: `TargetLevel = Director` rows carry the director's own SalespersonKey; Salesforce
+  Performance lists them under that key (Salesperson filter, people list, tiers, top people, drill-down, exports) with the
+  channel's actual and their own prorated target. The app-user role lookup and key = -segmentKey are gone.
+- **Totals = Salesperson rows only** (`PEOPLE_TARGETS`): the company target never counts a director; the Tachometer's
+  director target level option is removed.
+- **ETL**: Director rows need the director's key; a Director month that differs from its segment's Salesperson sum is a
+  WARNING (task notes). New `scripts/sales/reload_targets.py` reloads only `fact_sales_targets` from the sheet.
+- **Fixed**: two directors computed in parallel overflowed the DB pool queue ("Queue limit reached"); they now run one after
+  the other. A director picked in the Salesperson filter hides the admin reconciliation line (no company total).
+
 ### Changed (page edits round 6, SKU Trend data, directors as plain sales people, 2026-11-16)
 - **Salesforce Performance: B2B / B2C Directors are sales people like anyone else.** One row builder (`personRow`) for every
   person; a director's is fed with the channel's Tachometer figures (actual = the channel's sales, target = its full

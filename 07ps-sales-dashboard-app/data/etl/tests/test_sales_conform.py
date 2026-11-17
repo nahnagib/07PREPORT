@@ -220,18 +220,50 @@ def _targets(levels, persons, segments):
     return fact, cf.target_sheet_rows(sheet)
 
 
-def test_a_director_target_row_is_accepted_without_a_salesperson_and_keeps_its_channel():
-    fact, keys = _targets(["Salesperson", "Director", " director "], [5, None, None], [1, 1, 2])
+def test_a_director_target_row_keeps_the_directors_own_key_and_its_channel():
+    fact, keys = _targets(["Salesperson", "Director", " director "], [5, 54, 42], [1, 1, 2])
     t = cf.conform_targets(fact, keys, cf.Conformed())
-    assert t["SalespersonKey"].tolist() == [5, UNKNOWN, UNKNOWN]
+    assert t["SalespersonKey"].tolist() == [5, 54, 42]
     assert t["SegmentKey"].tolist() == [1, 1, 2]
     assert t["TargetLevel"].tolist() == ["Salesperson", "Director", " director "]  # the app reads it case/space-insensitively
 
 
-def test_a_salesperson_row_still_needs_its_salesperson_and_a_director_row_needs_b2b_or_b2c():
+def test_every_target_row_needs_its_salesperson_and_a_director_row_needs_b2b_or_b2c():
     fact, keys = _targets(["Salesperson"], [None], [1])
     with pytest.raises(ValueError, match="no SalespersonKey"):
         cf.conform_targets(fact, keys, cf.Conformed())
-    fact, keys = _targets(["Director"], [None], [None])
+    fact, keys = _targets(["Director"], [None], [1])  # 2026-11-17: a director row names the director
+    with pytest.raises(ValueError, match="no SalespersonKey"):
+        cf.conform_targets(fact, keys, cf.Conformed())
+    fact, keys = _targets(["Director"], [54], [None])
     with pytest.raises(ValueError, match="no SalesSegment B2B / B2C"):
         cf.conform_targets(fact, keys, cf.Conformed())
+
+
+def _director_sheet(director_jan: float):
+    return pd.DataFrame({
+        "Year": [2026] * 6, "Month": [1, 1, 1, 1, 2, 2],
+        "TargetLevel": ["Salesperson", "Salesperson", "Salesperson", "Director", "Salesperson", "Director"],
+        "SalesSegment": ["B2B", "B2B", "B2C", "B2B", "B2B", "B2B"],
+        "Target_Revenue": [100.0, 50.0, 70.0, director_jan, 80.0, 80.0],
+    })
+
+
+def test_a_director_month_equal_to_its_segments_salesperson_sum_passes():
+    assert cf.director_target_mismatches(_director_sheet(150.0)) == []  # B2C people never count for the B2B director
+
+
+def test_a_director_month_that_differs_is_logged_as_a_warning_not_an_error(caplog):
+    sheet = _director_sheet(160.0)
+    assert cf.director_target_mismatches(sheet) == [
+        {"YearMonth": "2026-01", "SalesSegment": "B2B", "director": 160.0, "salespeople": 150.0, "difference": 10.0}]
+    n = len(sheet)
+    fact = pd.DataFrame({"YearMonth": [f"2026-{m:02d}" for m in sheet["Month"]], "Target_Revenue": sheet["Target_Revenue"],
+                         "Target_Volume": [None] * n, "TargetLevel": sheet["TargetLevel"], "SalesTeamKey": [None] * n,
+                         "ChannelKey": [2] * n, "SegmentKey": [1 if s == "B2B" else 2 for s in sheet["SalesSegment"]], "CompanyKey": [1] * n})
+    keys = sheet.assign(YearMonth=fact["YearMonth"], Target_Volume=None, Salesperson="A", SalespersonKey=[5, 6, 7, 54, 5, 54], CompanyKey=1)
+    out = cf.Conformed()
+    with caplog.at_level("WARNING", logger=cf.__name__):
+        cf.conform_targets(fact, keys, out)
+    assert "2026-01 B2B Director target 160.00 <> sum of its Salesperson targets 150.00" in caplog.text
+    assert len(out.notes["fact_sales_targets.director_target_mismatches"]) == 1

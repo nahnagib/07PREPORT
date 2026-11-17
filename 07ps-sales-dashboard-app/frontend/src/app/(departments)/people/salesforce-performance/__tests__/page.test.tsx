@@ -379,8 +379,9 @@ describe('Salesforce Performance: a Team tiers card filters the whole page (2026
 
 describe('Salesforce Performance: company total = Tachometer, directors as people, reconciliation (2026-11-16)', () => {
   const company = { actual: 1500, target: 1600, achievement: 0.9375, variance: -100, variancePct: -0.0625, status: 'behind_target', fullYearTarget: 19200 };
-  // the B2B Director: a person like any other, with the channel's actual and full target (key = -segmentKey)
-  const nour = person(-1, 'Nour', 2000, 'top_performer', 800);
+  // the B2B Director (2026-11-17: a TargetLevel = Director row of sales_targets.xlsx): a person like any other, under their own
+  // SalespersonKey, with the channel's actual and their own Director target
+  const nour = person(54, 'Mustapha Shaddad', 2000, 'top_performer', 800);
   const reconciliation = {
     listed: { actual: 775, target: 1600 }, gap: { actual: 725, target: 0 },
     rows: [{ key: 50, name: 'No-target person', reason: 'no_target', actual: 700, target: 0 }, { key: null, name: 'Unassigned', reason: 'unassigned', actual: 25, target: 0 }],
@@ -407,20 +408,20 @@ describe('Salesforce Performance: company total = Tachometer, directors as peopl
     await screen.findByRole('region', { name: 'Team pulse' });
     expect(screen.queryByTestId('directors-row')).toBeNull();
     expect([...document.querySelectorAll('section[aria-label]')].map((e) => e.getAttribute('aria-label'))).not.toContain('Directors');
-    // best Top performer by variance %: Nour (+150%), shown exactly like a sales person
+    // best Top performer by variance %: Mustapha Shaddad (+150%), shown exactly like a sales person
     const top = screen.getByRole('region', { name: 'Top performer' });
-    expect(top.textContent).toContain('Nour');
+    expect(top.textContent).toContain('Mustapha Shaddad');
     expect(screen.queryByTestId('director-label')).toBeNull();
     expect(document.body.textContent).not.toContain('Director · B2B');
-    // the Top performer tier counts Nour and adds Nour's LYD like anyone's (+70 of the others, +1,200 of Nour)
+    // the Top performer tier counts the director and adds their LYD like anyone's (+70 of the others, +1,200 of the director)
     const summary = screen.getByRole('region', { name: 'YTD tier summary' });
     const tier = within(summary).getByRole('button', { name: /^Top performer: 3 people/ });
     expect(within(tier).getByTestId('variance-amount').textContent).toBe('+LYD 1.3K');
     const details = screen.getByRole('region', { name: 'Performance details · 8' });
-    expect(details.textContent).toContain('Nour');
+    expect(details.textContent).toContain('Mustapha Shaddad');
     // the search finds the director like anyone
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search sales people' }), { target: { value: 'nou' } });
-    expect(screen.getByRole('region', { name: 'Performance details · 1' }).textContent).toContain('Nour');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search sales people' }), { target: { value: 'shad' } });
+    expect(screen.getByRole('region', { name: 'Performance details · 1' }).textContent).toContain('Mustapha Shaddad');
   });
 
   it('a seat nobody holds is no person card: "B2C Director: not assigned." in the Team tiers "?"', async () => {
@@ -434,9 +435,9 @@ describe('Salesforce Performance: company total = Tachometer, directors as peopl
   it('a director alone (selected) shows their own figures in the pulse', async () => {
     render(<Page />);
     const top = await screen.findByRole('region', { name: 'Top performer' });
-    fireEvent.click(within(top).getByRole('button', { name: 'Nour' }));
+    fireEvent.click(within(top).getByRole('button', { name: 'Mustapha Shaddad' }));
     const pulse = await screen.findByRole('region', { name: 'Team pulse' });
-    await vi.waitFor(() => expect(pulse.textContent).toContain('Pulse · Nour'));
+    await vi.waitFor(() => expect(pulse.textContent).toContain('Pulse · Mustapha Shaddad'));
     expect(pulse.textContent).toMatch(/250(\.0+)?%/);
   });
 

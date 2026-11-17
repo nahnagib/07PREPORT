@@ -1,3 +1,24 @@
+# Deploy notes: B2B / B2C Directors in sales_targets.xlsx (2026-11-17)
+
+No migration. Rebuild **backend**, **frontend** and **etl-api / etl-worker**; then reload the targets.
+
+1. **Input/sales_targets.xlsx** now has 24 rows `TargetLevel = Director` (2026): Mustapha Shaddad (SalespersonKey 54, B2B)
+   and Mohamed Eljhawi (42, B2C), each month = the sum of that segment's Salesperson rows (B2B 106,506,923 / B2C 62,657,610
+   a year). Put the new sheet in the server's input folder.
+2. **Reload the targets** (no Odoo, no sales rebuild): from `data/etl`, `python scripts/sales/reload_targets.py --dry-run`
+   (must say "24 new, 0 removed, 604 existing" and no differences), then without `--dry-run`. If it reports that existing
+   rows would change, run the normal full sales refresh instead. The next full ETL run loads the same rows anyway.
+3. **Every target total sums TargetLevel = Salesperson only** (company, segment, team, Team pulse, Critical Number share,
+   admin salesperson list): the company target does not grow by the director rows.
+4. **Salesforce Performance**: the directors come from the Director rows (no longer from the B2B_DIRECTOR / B2C_DIRECTOR
+   app users) under their own SalespersonKey; actual = the channel's sales, target = their own rows (a company / channel /
+   branch filter uses that slice of the Salesperson targets). They are in the Salesperson filter, also under a Customer
+   Group filter. Before the reload, prod shows "B2B Director / B2C Director: not assigned".
+5. **Admin data to review on prod**: salesperson target overrides (Admin > Salespersons) still replace sheet targets in
+   every total; key 42 locally has a segment override B2B / Tika / TK-WST-BB that moves his own B2C invoices to B2B.
+
+---
+
 # Deploy notes: page edits round 6, SKU Trend data, directors as plain sales people (2026-11-16, evening)
 
 One migration (0079), one optional one-time backfill, rebuild **etl-api / etl-worker**, **backend** and **frontend**.

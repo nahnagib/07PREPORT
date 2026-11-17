@@ -10,8 +10,8 @@ vi.mock('../../measures/salesPeoplePerformance', () => ({
   computeSalesPeoplePerformance: vi.fn(async () => ({ people: [] })),
   computePersonContributions: vi.fn(async () => ({ rows: [] })),
   DIRECTOR_CHANNELS: [
-    { channel: 'B2B', segmentKey: 1, roleName: 'B2B_DIRECTOR', roleLabel: 'B2B Director' },
-    { channel: 'B2C', segmentKey: 2, roleName: 'B2C_DIRECTOR', roleLabel: 'B2C Director' },
+    { channel: 'B2B', segmentKey: 1, roleLabel: 'B2B Director' },
+    { channel: 'B2C', segmentKey: 2, roleLabel: 'B2C Director' },
   ],
 }));
 vi.mock('../../services/dataScopeService', () => ({ getRoleDataScopeRules: vi.fn(async () => []) }));
@@ -95,6 +95,19 @@ describe('director cards and the reconciliation (2026-11-15)', () => {
     vi.mocked(getRoleDataScopeRules).mockResolvedValue([{ dimension: 'segmentKeys', value: '2' }]);
     expect((await get('/overview?anchorDate=2026-11-09', 'viewer')).status).toBe(200);
     expect(options().directorFilters).toMatchObject({ B2B: null, B2C: { segmentKeys: [2] } });
+  });
+
+  it('picking a director in the Salesperson filter (2026-11-17): the director still gets the whole channel, not their own invoices', async () => {
+    expect((await get('/overview?anchorDate=2026-11-09&salespersonKeys=54', 'viewer')).status).toBe(200);
+    expect(vi.mocked(computeSalesPeoplePerformance).mock.calls[0][2].salespersonKeys).toEqual([54]);
+    expect(options().directorFilters?.B2B?.salespersonKeys).toBeUndefined();
+    expect(options().directorFilters?.B2B).toMatchObject({ segmentKeys: [1] });
+  });
+
+  it('a role scope that limits the salespeople cannot see a whole channel: no director', async () => {
+    vi.mocked(getRoleDataScopeRules).mockResolvedValue([{ dimension: 'salespersonKeys', value: '7' }]);
+    expect((await get('/overview?anchorDate=2026-11-09', 'viewer')).status).toBe(200);
+    expect(options().directorFilters).toEqual({ B2B: null, B2C: null });
   });
 
   it('a salesperson gets no director card', async () => {

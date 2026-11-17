@@ -23,9 +23,11 @@ salesPeoplePerformanceRouter.use((req, res, next) => {
 });
 
 /**
- * The director cards (2026-11-15): each is the page's filters with Customer Group = that channel, then the caller's own
- * role scope and salesperson lock, exactly as for any request -- a B2B Director (role scope Customer Group B2B) never
- * gets the B2C card (applyRoleDataScope refuses it), and a salesperson gets no director card at all.
+ * The directors' filters (2026-11-15): each is the page's filters with Customer Group = that channel, then the caller's
+ * own role scope and salesperson lock, exactly as for any request -- a B2B Director (role scope Customer Group B2B) never
+ * gets the B2C director (applyRoleDataScope refuses it), and a salesperson gets no director at all. The page's own
+ * Salesperson pick is dropped (2026-11-17): picking a director shows the channel's sales, not the director's own invoices;
+ * a caller whose role scope limits the salespeople cannot see a whole channel, so gets no director.
  */
 export function directorFiltersFor(scoped: Filters, context: NonNullable<Request['userContext']>):
   Partial<Record<DirectorChannel, Filters | null>> {
@@ -33,7 +35,9 @@ export function directorFiltersFor(scoped: Filters, context: NonNullable<Request
   for (const d of DIRECTOR_CHANNELS) {
     if (context.roleCode === 'SALESPERSON') { out[d.channel] = null; continue; }
     try {
-      out[d.channel] = applySalespersonLock(applyRoleDataScope({ ...scoped, segmentKeys: [d.segmentKey] }, context.dataScopeRules ?? []), context);
+      const f = applySalespersonLock(applyRoleDataScope({ ...scoped, salespersonKeys: undefined, segmentKeys: [d.segmentKey] },
+        context.dataScopeRules ?? []), context);
+      out[d.channel] = f.salespersonKeys?.length ? null : f;
     } catch {
       out[d.channel] = null;
     }

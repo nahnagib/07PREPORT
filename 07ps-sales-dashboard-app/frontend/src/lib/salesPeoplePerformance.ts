@@ -13,8 +13,8 @@ export interface PeopleMonth extends PeopleFigures {
   achievementChange: number | null; previousStatus: MonthStatus;
 }
 export interface SalesPersonPerformance extends PeopleFigures {
-  /** A B2B / B2C Director is a person like any other (2026-11-16): key = -segmentKey, actual = the channel's sales,
-   * target = the channel's full target. */
+  /** A B2B / B2C Director is a person like any other (2026-11-16): key = the director's own SalespersonKey (2026-11-17),
+   * actual = the channel's sales, target = the director's TargetLevel = Director rows of sales_targets.xlsx. */
   key: number; name: string; status: PeopleStatus; lastYear: number; fullYearTarget: number | null; months: PeopleMonth[];
 }
 export interface PeopleStatusDefinition {
@@ -42,7 +42,7 @@ export interface PeopleOverview {
   contributions: ContributionAtom[];
   /** The company total = the Tachometer YTD Value card (2026-11-15). Optional for older API responses. */
   company?: TotalFigures;
-  /** Director seats nobody holds ("B2C Director"): not a person, named in the Team tiers info. */
+  /** Director seats with no TargetLevel = Director rows this year ("B2C Director"): named in the Team tiers info. */
   directorVacancies?: string[];
   reconciliation?: PeopleReconciliation | null;
 }
