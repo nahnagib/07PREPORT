@@ -25,7 +25,8 @@ cd /d "%APP%" || exit /b 1
 
 rem Safety: every service must use the test database, never the production host.
 %COMPOSE% config > "%TEMP%\07ps-test-config.yml" || exit /b 1
-findstr /C:"DB_HOST: host.docker.internal" /C:"DB_HOST: 127.0.0.1" /C:"DB_HOST: localhost" "%TEMP%\07ps-test-config.yml" >nul
+rem Match only the exact DB_HOST key (not NPS_DB_HOST etc., which are other databases).
+findstr /R /C:"^ *DB_HOST: host\.docker\.internal" /C:"^ *DB_HOST: 127\.0\.0\.1" /C:"^ *DB_HOST: localhost" "%TEMP%\07ps-test-config.yml" >nul
 if not errorlevel 1 (echo ABORT: a test-stack service points at the production database host. & exit /b 1)
 
 echo Starting the test database...
