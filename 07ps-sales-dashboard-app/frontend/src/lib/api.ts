@@ -3208,6 +3208,8 @@ export interface CollectionsTrend {
   to: string;
   points: CollectionPoint[];
   firstPaymentDate: string | null;
+  /** the first receivable snapshot (where the Receivables trend starts): no payment before it is counted */
+  trendStart: string | null;
   loadedAt: string | null;
 }
 export interface CollectionPaymentRow {

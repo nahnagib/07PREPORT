@@ -67,12 +67,13 @@ describe('collectionSource', () => {
 
 /** Answers the trend queries: currencies, the per-period sums, the snapshot dates and the rate query. */
 const LINE_SQL = "l.line_kind IN ('invoice', 'credit_note', 'payment')";
-function fakePool(o: { periods?: Record<string, unknown>[]; snapshots?: string[]; lines?: Record<string, unknown>[]; applied?: Record<string, unknown>[] }): Pool & { sqls: string[] } {
+function fakePool(o: { firstSnapshot?: number; periods?: Record<string, unknown>[]; snapshots?: string[]; lines?: Record<string, unknown>[]; applied?: Record<string, unknown>[] }): Pool & { sqls: string[] } {
   const sqls: string[] = [];
   return {
     sqls,
     query: async (sql: string) => {
       sqls.push(sql);
+      if (sql.includes('MIN(SnapshotDateKey) AS first_snapshot')) return [o.firstSnapshot ? [{ first_snapshot: o.firstSnapshot }] : [], []];
       if (sql.includes('GROUP BY v.currency')) return [[{ currency: 'LYD', n: 9 }, { currency: 'USD', n: 1 }], []];
       if (sql.includes('MIN(payment_date)')) return [[{ first: '2021-01-03', loaded: '2026-10-10T15:00:00Z' }], []];
       if (sql.includes('GROUP BY p')) return [o.periods ?? [], []];
@@ -126,6 +127,29 @@ describe('fetchCollectionsTrend', () => {
     ];
     const t = await fetchCollectionsTrend(fakePool({ snapshots: ['2026-10-02'], lines, applied: [{ line_id: 1, applied: 1045 }, { line_id: 4, applied: 900 }] }), q, {});
     expect(t.points[1]).toMatchObject({ startOverdue: 800, collectedOnStartOverdue: 800, collectionRate: 1 });
+  });
+
+  it('starts on the first receivable snapshot (the Receivables trend start, 2026-11-22): nothing before it, in any grain', async () => {
+    const weekPool = fakePool({ firstSnapshot: 20261003 });
+    const w = await fetchCollectionsTrend(weekPool, parseCollectionsQuery({ grain: 'week' }, '2026-11-22'), {});
+    expect(w.trendStart).toBe('2026-10-03');
+    expect(w.points[0].periodStart).toBe('2026-10-03');
+    expect(weekPool.sqls.find((s) => s.includes('GROUP BY p'))).toContain('v.payment_date BETWEEN ? AND ?');
+    for (const grain of ['day', 'month', 'year'] as const) {
+      const pool = fakePool({ firstSnapshot: 20261003 });
+      const t = await fetchCollectionsTrend(pool, parseCollectionsQuery({ grain, from: '2026-01-01', to: '2026-11-22' }), {});
+      expect(t.points[0].periodStart).toBe(grain === 'day' ? '2026-10-03' : grain === 'month' ? '2026-10-01' : '2026-01-01');
+      expect(t.points.every((p) => p.periodEnd >= '2026-10-03')).toBe(true);
+    }
+    // the month / year holding the start counts payments from that day only (the SQL range, not the bucket)
+    const m = fakePool({ firstSnapshot: 20261003, snapshots: ['2026-10-31'], lines: [ln({ line_id: 1, move_id: 1, residual_doc_ccy: 100 })] });
+    const r = await fetchCollectionsTrend(m, parseCollectionsQuery({ grain: 'month', from: '2026-09-01', to: '2026-11-30' }), {});
+    expect(r.points.map((p) => p.periodStart)).toEqual(['2026-10-01', '2026-11-01']);
+    const range = parseCollectionsQuery({ grain: 'month', from: '2026-09-01', to: '2026-11-30' });
+    expect(collectionSource({ ...range, from: '2026-10-03' }, {}, null).params.slice(0, 2)).toEqual(['2026-10-03', '2026-11-30']);
+    // a range wholly before the start: no period
+    const before = await fetchCollectionsTrend(fakePool({ firstSnapshot: 20261003 }), parseCollectionsQuery({ from: '2026-09-01', to: '2026-09-30' }), {});
+    expect(before.points).toEqual([]);
   });
 
   it('a start overdue of 0 gives no rate', async () => {

@@ -22,12 +22,16 @@ import { periodBucketSql, periodEndIso, periodStartIso, periodWindow, PERIOD_COU
  * customer / customer category filters apply (to the allocation row: the invoice's salesperson + branch, or the
  * customer's for unmatched money). The line-level page filters (overdue status, aging bucket, delivery status, payment
  * term, invoice size) describe open invoices, not payments, and do not apply. Week = Saturday..Friday (ar_weekly).
+ *
+ * 2026-11-22: the trend starts on the first receivable snapshot (fetchFirstSnapshotDate, where the Receivables trend
+ * starts: the dashboard's go-live, 3 Oct 2026). Payments dated before it are not counted in any grain: the first week /
+ * month / year is the one holding that day, and it counts only from that day on. No snapshot at all = no floor.
  */
 import type { Pool } from 'mysql2/promise';
 import { odooWebBaseUrl } from '../config/finance';
 import { customerCategoryCondition } from '../lib/customerCategory';
 import { allocateCredits, type AllocatableLine } from './creditAllocation';
-import { COMPANY_CURRENCY, DebtQueryError, linesSource, parseDebtQuery, type DebtQuery } from './debtReport';
+import { COMPANY_CURRENCY, DebtQueryError, fetchFirstSnapshotDate, linesSource, parseDebtQuery, type DebtQuery } from './debtReport';
 import type { Filters } from './filters';
 
 export type CollectionGrain = PeriodGranularity;
@@ -191,24 +195,37 @@ export interface CollectionsTrend {
   from: string;
   to: string;
   points: CollectionPoint[];
-  /** the first payment date in the warehouse (history starts there) and the last load */
+  /** the first payment date in the warehouse and the last load */
   firstPaymentDate: string | null;
+  /** the first receivable snapshot (the Receivables trend's start): nothing before it is counted; null = no snapshot */
+  trendStart: string | null;
   loadedAt: string | null;
 }
 
-export async function fetchCollectionsTrend(pool: Pool, cq: CollectionsQuery, f: Filters): Promise<CollectionsTrend> {
+/** The query with `from` moved up to the trend start (never before the first receivable snapshot); null = the whole
+ * range is before it. */
+function fromTrendStart(cq: CollectionsQuery, trendStart: string | null): CollectionsQuery | null {
+  if (!trendStart || trendStart <= cq.from) return cq;
+  return trendStart > cq.to ? null : { ...cq, from: trendStart };
+}
+
+export async function fetchCollectionsTrend(pool: Pool, query: CollectionsQuery, f: Filters): Promise<CollectionsTrend> {
+  const trendStart = await fetchFirstSnapshotDate(pool);
+  const clamped = fromTrendStart(query, trendStart);
+  // nothing on or after the trend start in the range: no period at all (the SQL below then matches no payment)
+  const cq = clamped ?? { ...query, from: query.to };
   const every = collectionSource(cq, f, null);
   const byCcy = await rows(pool, `SELECT v.currency, COUNT(DISTINCT v.payment_id) AS n ${every.sql} GROUP BY v.currency ORDER BY n DESC, v.currency`, every.params);
   const currencies = byCcy.map((r) => String(r.currency));
   const all = cq.allCurrencies;
   const currency = all ? COMPANY_CURRENCY : (cq.currency ?? currencies[0] ?? null);
-  const periods = periodsBetween(cq.from, cq.to, cq.grain);
+  const periods = clamped ? periodsBetween(cq.from, cq.to, cq.grain) : [];
   const meta = (await rows(pool, "SELECT DATE_FORMAT(MIN(payment_date), '%Y-%m-%d') AS first, DATE_FORMAT(MAX(loaded_at_utc), '%Y-%m-%dT%H:%i:%sZ') AS loaded FROM fact_finance_collection", []))[0] ?? {};
   const empty = (p: Period): CollectionPoint => ({
     periodStart: p.start, periodEnd: p.end, inProgress: p.start <= cq.today && cq.today <= p.end, collected: 0, appliedOverdue: 0, appliedNotDue: 0, appliedOther: 0, unapplied: 0, payments: 0,
     startOverdue: null, collectedOnStartOverdue: null, collectionRate: null,
   });
-  if (!currency) return { currency, allCurrencies: all, currencies, grain: cq.grain, from: cq.from, to: cq.to, points: periods.map(empty), firstPaymentDate: meta.first ?? null, loadedAt: meta.loaded ?? null };
+  if (!currency) return { currency, allCurrencies: all, currencies, grain: cq.grain, from: cq.from, to: cq.to, points: periods.map(empty), firstPaymentDate: meta.first ?? null, trendStart, loadedAt: meta.loaded ?? null };
   const s = collectionSource(cq, f, all ? null : currency);
   const r = await rows(
     pool,
@@ -228,6 +245,7 @@ export async function fetchCollectionsTrend(pool: Pool, cq: CollectionsQuery, f:
     from: cq.from,
     to: cq.to,
     firstPaymentDate: meta.first ?? null,
+    trendStart,
     loadedAt: meta.loaded ?? null,
     points: periods.map((p) => {
       const x = byPeriod.get(p.start);
@@ -296,7 +314,7 @@ async function startOverdueRates(pool: Pool, cq: CollectionsQuery, f: Filters, c
             AND EXISTS (SELECT 1 FROM dim_finance_collection_invoice_date i WHERE i.move_id = m.move_id AND i.invoice_date < c.payment_date)
             AND m.debit_line_id IN (${ids.map(() => '?').join(', ')})
           GROUP BY m.debit_line_id`,
-        [p.start, p.end, ...ids],
+        [p.start < cq.from ? cq.from : p.start, p.end, ...ids],
       );
       for (const a of applied) {
         const o = left.get(Number(a.line_id));
