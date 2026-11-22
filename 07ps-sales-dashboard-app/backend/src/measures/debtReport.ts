@@ -319,6 +319,13 @@ export async function fetchSnapshots(pool: Pool): Promise<SnapshotInfo[]> {
   return r.map((x) => ({ date: isoOfKey(Number(x.k)) as string, lineCount: num(x.n) }));
 }
 
+/** The first receivable snapshot (ISO date), null when there is none: the Receivables trend starts there (fetchDebtTrend
+ * plots every snapshot), and so does the Collections trend (measures/debtCollections.ts), so both charts start the same day. */
+export async function fetchFirstSnapshotDate(pool: Pool): Promise<string | null> {
+  const r = await rows(pool, 'SELECT MIN(SnapshotDateKey) AS first_snapshot FROM fact_finance_receivable_snapshot', []);
+  return isoOfKey(r[0]?.first_snapshot ? Number(r[0].first_snapshot) : null);
+}
+
 /** The snapshot to read: the requested one (it must exist) or the latest. Null when there is no snapshot at all. */
 export async function resolveSnapshot(pool: Pool, q: DebtQuery): Promise<number | null> {
   if (q.snapshotDateKey !== null) {
