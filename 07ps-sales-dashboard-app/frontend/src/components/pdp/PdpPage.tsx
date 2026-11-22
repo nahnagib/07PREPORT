@@ -10,7 +10,7 @@ import { ValidationStatusBar } from '../ValidationStatusBar';
 import { useAuth } from '../../lib/AuthProvider';
 import { formatTimestamp } from '../../lib/format';
 import { useRefreshStatus } from '../../lib/hooks';
-import { APPROVAL, BASE, ENTRY, PLAN, type Row } from '../../lib/pdp/api';
+import { BASE, ENTRY, PLAN, type Row } from '../../lib/pdp/api';
 import { usePdp } from '../../lib/pdp/hooks';
 import { copy as t } from '../../lib/pdp/text';
 import { Loaded } from './ui';
@@ -23,8 +23,14 @@ import { Launches } from './Launches';
 import { Feedback } from './Feedback';
 import { Policy } from './Policy';
 import { Admin } from './Admin';
+import { TrackerDashboard } from '../pdt/Dashboard';
+import { TrackerEntry } from '../pdt/Entry';
+import { TRACKER, type Options as TrackerOptions } from '../../lib/pdt/api';
 
-export type PdpSection = 'overview' | 'tree' | 'roadmap' | 'projects' | 'new-project' | 'project' | 'launches' | 'feedback' | 'policy' | 'admin';
+export type PdpSection = 'dashboard' | 'entry' | 'overview' | 'tree' | 'roadmap' | 'projects' | 'new-project' | 'project' | 'launches' | 'feedback' | 'policy' | 'admin';
+
+/** The dashboard and its data entry (components/pdt) read the tracker API, not the gate module's /options. */
+const TRACKER_SECTIONS: readonly PdpSection[] = ['dashboard', 'entry'];
 
 /** What every section receives: the module's /options payload (drop-downs, tree pickers, governance, the viewer's own
  * governance roles) and a refresh() that re-reads it and the section after a save. */
@@ -35,6 +41,8 @@ export interface SectionProps {
 }
 
 const TAB_OF: Record<PdpSection, keyof typeof t.tabs> = {
+  dashboard: 'dashboard',
+  entry: 'entry',
   overview: 'overview',
   tree: 'tree',
   roadmap: 'roadmap',
@@ -47,7 +55,9 @@ const TAB_OF: Record<PdpSection, keyof typeof t.tabs> = {
   admin: 'admin',
 };
 const HREF: Record<keyof typeof t.tabs, string> = {
-  overview: BASE,
+  dashboard: BASE,
+  entry: `${BASE}/entry`,
+  overview: `${BASE}/gates`,
   tree: `${BASE}/tree`,
   roadmap: `${BASE}/roadmap`,
   projects: `${BASE}/projects`,
@@ -82,21 +92,30 @@ function renderSection(section: PdpSection, props: SectionProps, code?: string) 
   }
 }
 
+/** The TIKA gate module's screens: Admin only since the 2026-11-18 redesign (reached from Admin › Product Development Settings). */
+const GATE_TABS: readonly (keyof typeof t.tabs)[] = ['overview', 'tree', 'roadmap', 'projects', 'launches', 'feedback', 'policy', 'admin'];
+
 /**
- * Product → Product Development Plan (TIKA only). Same chrome as the other Product pages (AppHeader, the app's top tab
- * strip, RefreshFooter, BottomNavBar); every section is one route (/tree, /roadmap, /projects, ...). Readable with the
- * plan page, the data-entry page or the approval page; the forms inside check their own actions.
+ * Product → Product Development Plan. Same chrome as the other Product pages (AppHeader, the app's top tab strip,
+ * RefreshFooter, BottomNavBar).
+ *   dashboard / entry   the pipeline dashboard and its data entry (components/pdt): tabs Dashboard · Data entry & follow-up.
+ *   every other section the TIKA gate module (/gates, /tree, /projects, ...): Admin role only, with its own tab strip.
  */
-export default function PdpPage({ section = 'overview', code }: { section?: PdpSection; code?: string }) {
-  const { user, token, logout, canView, canEdit, isAdmin, error: authError, retryAuth } = useAuth();
+export default function PdpPage({ section = 'dashboard', code }: { section?: PdpSection; code?: string }) {
+  const { user, token, logout, canView, isAdmin, error: authError, retryAuth } = useAuth();
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision((n) => n + 1), []);
-  const allowed = [PLAN, ENTRY, APPROVAL].some(canView);
-  const options = usePdp<Row>(allowed ? '/options' : null, revision);
+  const tracker = TRACKER_SECTIONS.includes(section);
+  // The tracker reads with plan View (dashboard) or entry View; the entry screens need entry View; the gate module is Admin only.
+  const allowed = tracker ? (section === 'entry' ? canView(ENTRY) : canView(PLAN) || canView(ENTRY)) : isAdmin;
+  const options = usePdp<Row>(allowed && !tracker ? '/options' : null, revision);
+  const trackerOptions = usePdp<TrackerOptions>(allowed && tracker ? `${TRACKER}/options` : null, revision);
   const refreshStatus = useRefreshStatus(token, authError, retryAuth);
-  if (!allowed) return <NoAccess message={t.noAccess} />;
+  if (!allowed) return <NoAccess message={tracker ? t.noAccess : 'The R&D gate screens are reserved for the Admin role.'} />;
 
-  const tabKeys = (Object.keys(t.tabs) as (keyof typeof t.tabs)[]).filter((k) => k !== 'admin' || canEdit(ENTRY) || isAdmin);
+  const tabKeys: (keyof typeof t.tabs)[] = tracker
+    ? (['dashboard', 'entry'] as const).filter((k) => (k === 'entry' ? canView(ENTRY) : canView(PLAN) || canView(ENTRY)))
+    : [...GATE_TABS];
   const tabs: TopTab[] = tabKeys.map((k) => ({ label: t.tabs[k], href: HREF[k] }));
   const active = t.tabs[TAB_OF[section]];
   const withWarehouse = section === 'launches';
@@ -121,9 +140,17 @@ export default function PdpPage({ section = 'overview', code }: { section?: PdpS
         />
       )}
       <main data-testid="pdp-main" style={{ flex: 1, padding: 'var(--ps-space-4, 24px)', display: 'flex', flexDirection: 'column', gap: 'var(--ps-space-4, 24px)', minWidth: 0 }}>
-        <Loaded state={options} skeleton="kpi">
-          {(o) => <Suspense fallback={<LoadingSkeleton variant="table" />}>{renderSection(section, { options: o, revision, refresh }, code)}</Suspense>}
-        </Loaded>
+        {tracker ? (
+          <Loaded state={trackerOptions} skeleton="kpi">
+            {(o) =>
+              section === 'entry' ? <TrackerEntry options={o} revision={revision} refresh={refresh} /> : <TrackerDashboard options={o} revision={revision} refresh={refresh} />
+            }
+          </Loaded>
+        ) : (
+          <Loaded state={options} skeleton="kpi">
+            {(o) => <Suspense fallback={<LoadingSkeleton variant="table" />}>{renderSection(section, { options: o, revision, refresh }, code)}</Suspense>}
+          </Loaded>
+        )}
       </main>
       {withWarehouse && (
         <RefreshFooter

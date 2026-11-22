@@ -39,6 +39,7 @@ import { marcomKpiRouter } from './routes/marcomKpi';
 import { exportsRouter } from './routes/exports';
 import { kaizenRouter } from './routes/kaizen';
 import { productDevelopmentRouter } from './routes/productDevelopment';
+import { productDevelopmentTrackerRouter } from './routes/productDevelopmentTracker';
 import { adminKaizenDropdownsRouter } from './routes/admin/kaizenDropdowns';
 import { syncPermissionRegistry } from './services/permissionService';
 import { cleanupExpiredStaged } from './marcom/staging';
@@ -118,6 +119,9 @@ app.use('/marcom/kpi', marcomKpiRouter);
 app.use('/exports', exportsRouter);
 // Kaizen Board (Process department): cards, dashboard, QR, one-time import.
 app.use('/kaizen', kaizenRouter);
+// Product Development Plan dashboard + data entry & follow-up (every company). Before the gate module's router, whose
+// TIKA-only guard would otherwise run on these requests too.
+app.use('/product-development/tracker', productDevelopmentTrackerRouter);
 // Product Development Plan (Product department, TIKA only): tree, roadmap, R&D projects through the gates, launches, feedback.
 app.use('/product-development', productDevelopmentRouter);
 

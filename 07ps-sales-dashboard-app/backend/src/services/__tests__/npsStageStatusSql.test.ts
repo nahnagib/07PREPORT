@@ -16,7 +16,16 @@ const EXTENSIONS = new Set(['.sql', '.ts', '.tsx', '.js', '.py']);
 const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'coverage', '__pycache__', '.venv', 'venv', '.pytest_cache', 'db_backups']);
 /** Database dumps and generated files are not code; a multi-GB dump would also overflow a string. */
 const MAX_BYTES = 5 * 1024 * 1024;
-const ALLOWED = [/data[\\/]warehouse[\\/]migrations[\\/]0052_[^\\/]*\.sql$/, /data[\\/]warehouse[\\/]down[\\/]/, /npsStageStatusSql\.test\.ts$/];
+const ALLOWED = [
+  /data[\\/]warehouse[\\/]migrations[\\/]0052_[^\\/]*\.sql$/,
+  /data[\\/]warehouse[\\/]down[\\/]/,
+  /npsStageStatusSql\.test\.ts$/,
+  // Product Development Plan tracker (0080): pdt_blocker.status is its own list (OPEN / IN_PROGRESS / RESOLVED / CANCELLED),
+  // unrelated to the NPS case stages this test protects.
+  /data[\\/]warehouse[\\/]migrations[\\/]0080_pdt_schema\.sql$/,
+  /[\\/]pdt[\\/][^\\/]*\.tsx?$/,
+  /[\\/]pdt[\\/]__tests__[\\/][^\\/]*\.tsx?$/,
+];
 
 // `status` (any alias, any case, optionally back-quoted) compared with a quoted stage value, directly or inside IN (...)
 const VALUE = `(?:${STAGE_VALUES.join('|')})`;

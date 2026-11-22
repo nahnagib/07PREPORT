@@ -6,7 +6,10 @@
 export const copy = {
   title: 'Product Development Plan',
   tabs: {
-    overview: 'Overview',
+    // The dashboard + data entry & follow-up (components/pdt) come first; the TIKA gate module follows.
+    dashboard: 'Dashboard',
+    entry: 'Data entry & follow-up',
+    overview: 'Gate overview',
     tree: 'Product Tree',
     roadmap: 'Roadmap',
     projects: 'Projects',
