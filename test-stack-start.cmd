@@ -3,7 +3,8 @@ rem Starts the local TEST stack (project 07ps-test) next to production on this P
 rem   test-stack-start.cmd            refresh the test database from production, then build and start
 rem   test-stack-start.cmd /keepdata  keep the test database as it is, just build and start
 rem Frontend http://localhost:3202/Dashboard  backend http://localhost:4201  ETL API http://localhost:4202
-rem The test stack only READS production (one mysqldump --single-transaction); it never writes to it.
+rem The test stack only READS production (one mysqldump --single-transaction); it never writes to it. The local copy's
+rem DEFINER clauses are removed before the restore (test-stack-strip-definers.ps1).
 rem See docs/product_data_runbook.md, "Local test stack".
 setlocal
 set "APP=%~dp007ps-sales-dashboard-app"
@@ -25,7 +26,8 @@ cd /d "%APP%" || exit /b 1
 
 rem Safety: every service must use the test database, never the production host.
 %COMPOSE% config > "%TEMP%\07ps-test-config.yml" || exit /b 1
-findstr /C:"DB_HOST: host.docker.internal" /C:"DB_HOST: 127.0.0.1" /C:"DB_HOST: localhost" "%TEMP%\07ps-test-config.yml" >nul
+rem Match only the exact DB_HOST key (not NPS_DB_HOST etc., which are other databases).
+findstr /R /C:"^ *DB_HOST: host\.docker\.internal" /C:"^ *DB_HOST: 127\.0\.0\.1" /C:"^ *DB_HOST: localhost" "%TEMP%\07ps-test-config.yml" >nul
 if not errorlevel 1 (echo ABORT: a test-stack service points at the production database host. & exit /b 1)
 
 echo Starting the test database...
@@ -48,6 +50,10 @@ set "MYSQL_PWD=%TEST_DB_PASSWORD%"
 set "DUMP_RC=%ERRORLEVEL%"
 set "MYSQL_PWD="
 if not "%DUMP_RC%"=="0" (echo mysqldump failed. & exit /b 1)
+rem The copy's views name production's account as DEFINER, which the test database's app user may not recreate
+rem (needs SUPER / SET_USER_ID). Strip the clauses from the local copy only; the restoring user becomes the definer.
+echo Removing DEFINER clauses from the copy...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0test-stack-strip-definers.ps1" -Path "%DUMP%" || (echo Could not strip DEFINER clauses. & exit /b 1)
 echo Loading the copy into the test database...
 %COMPOSE% exec -T -e MYSQL_PWD=%TEST_DB_PASSWORD% test-mysql mysql -u%TEST_DB_USER% --default-character-set=utf8mb4 < "%DUMP%" || (echo Restore failed. & exit /b 1)
 

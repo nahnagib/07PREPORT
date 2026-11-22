@@ -42,7 +42,7 @@ export const NAV_ITEMS = [
   { label: 'PIM Contribution', icon: PieChart, href: '/product/pim-contribution', pageKey: 'pim_contribution', department: 'product' },
   { label: 'Product Lifecycle', icon: RefreshCw, href: '/product/product-lifecycle', pageKey: 'product_lifecycle', department: 'product' },
   { label: 'Stock Velocity', icon: Boxes, href: '/product/stock-velocity', pageKey: 'stock_velocity', department: 'product' },
-  // "Coming soon" placeholder (2026-10-27): announced in the navigation, opens a placeholder page until it is built.
+  // Landing page = the dashboard (components/pdt); data entry & follow-up and the TIKA gate module are sub-pages.
   { label: 'Product Development Plan', icon: Lightbulb, href: '/product/product-development-plan', pageKey: 'product_development_plan', department: 'product' },
   { label: 'Salesforce Performance', icon: Users, href: '/people/salesforce-performance', pageKey: 'sales_people_performance', department: 'people' },
   // Process department. The card list/entry screens live under this href (see ROUTE_PAGE_KEYS).
@@ -83,11 +83,13 @@ export const ADMIN_TABS: readonly { label: string; href: string; pageKey: string
   { label: 'ETL Control Center', href: '/admin/etl-control', pageKey: null, adminOnly: true },
   { label: 'Audit Log', href: '/admin/audit-log', pageKey: null, adminOnly: true },
   { label: 'Kaizen Dropdowns', href: '/admin/kaizen-dropdowns', pageKey: null, adminOnly: true },
+  { label: 'Product Development Settings', href: '/admin/product-development-settings', pageKey: null, adminOnly: true },
 ];
 
 /** Routes whose permission page differs from the nav entry they sit under: the Kaizen card entry
  * screens belong to kaizen_cards, not to the kaizen_board report they're nested in. */
 const ROUTE_PAGE_KEYS: { href: string; pageKey: string }[] = [
+  { href: '/product/product-development-plan/entry', pageKey: 'product_development_entry' },
   { href: '/product/product-development-plan/projects/new', pageKey: 'product_development_entry' },
   { href: '/product/product-development-plan/admin', pageKey: 'product_development_entry' },
   { href: '/process/kaizen-board/manage', pageKey: 'kaizen_cards' },
@@ -102,6 +104,8 @@ export const SUB_PAGES: readonly { href: string; label: string }[] = [
   { href: '/process/kaizen-board/manage', label: 'Manage Kaizen Cards' },
   { href: '/process/kaizen-board/manage/new', label: 'New Kaizen Card' },
   { href: '/process/nps-followup/reasons', label: 'Reasons' },
+  { href: '/product/product-development-plan/entry', label: 'Data entry & follow-up' },
+  { href: '/product/product-development-plan/gates', label: 'Gate overview' },
   { href: '/product/pim-contribution/brand', label: 'Brand Performance' },
   { href: '/admin/users/import', label: 'Excel Import' },
 ];

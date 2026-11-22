@@ -1,6 +1,6 @@
 import PdpPage from '../../../../components/pdp/PdpPage';
 
-/** Product Development Plan › Overview (components/pdp/PdpPage.tsx). */
+/** Product Development Plan › Dashboard (components/pdt/Dashboard.tsx): KPIs, pipeline, tracker, roadmap, blockers. */
 export default function Page() {
-  return <PdpPage section="overview" />;
+  return <PdpPage section="dashboard" />;
 }
