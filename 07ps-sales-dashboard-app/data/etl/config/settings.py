@@ -63,26 +63,27 @@ class Settings:
     def inventory_validation_path(self) -> Path:
         return self.output_dir / self.inventory_validation_file
 
+    # Every input file: the copy an admin uploaded in the ETL Control Center (ETL_INPUT_UPLOAD_DIR) wins over the input
+    # folder's (config.input_check.effective_input_path).
     @property
     def targets_path(self) -> Path:
-        return self.input_dir / "sales_targets.xlsx"
+        return effective_input_path(self.input_dir, "sales_targets.xlsx")
 
     @property
     def sales_team_path(self) -> Path:
-        return self.input_dir / "SalesTeam.xlsx"
+        return effective_input_path(self.input_dir, "SalesTeam.xlsx")
 
     @property
     def offdays_path(self) -> Path:
-        return self.input_dir / "OffDays.xlsx"
+        return effective_input_path(self.input_dir, "OffDays.xlsx")
 
     @property
     def blocked_customers_path(self) -> Path:
-        return self.input_dir / "BlockedCustomers.xlsx"
+        return effective_input_path(self.input_dir, "BlockedCustomers.xlsx")
 
     @property
     def product_exclusions_path(self) -> Path:
-        """Optional: customers / categories / products left out of the Product pages (sales_pipeline.product_exclusions).
-        The copy an admin uploaded in the ETL Control Center (ETL_INPUT_UPLOAD_DIR) wins over the input folder's."""
+        """Optional: customers / categories / products left out of the Product pages (sales_pipeline.product_exclusions)."""
         return effective_input_path(self.input_dir, "ProductExclusions.xlsx")
 
     @classmethod

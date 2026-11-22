@@ -43,6 +43,7 @@ services:
     volumes: !override
       - ${ETL_INPUT_HOST_DIR:-../Input}:/etl/input:ro
       - test_etl_input_backups:/etl/input_backups
+      - test_etl_input_admin:/etl/input_admin # admin-uploaded input files (ETL_INPUT_UPLOAD_DIR), read before /etl/input
       - test_etl_output:/etl/output
     ports: !override
       - '127.0.0.1:4202:5001'
@@ -91,6 +92,7 @@ services:
 volumes:
   test_mysql_data:
   test_etl_input_backups:
+  test_etl_input_admin:
   test_etl_output:
 
 networks:

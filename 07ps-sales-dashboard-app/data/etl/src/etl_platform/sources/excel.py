@@ -127,7 +127,10 @@ class ExcelSource:
         self.input_dir = Path(input_dir)
 
     def path(self, file_name: str) -> Path:
-        return self.input_dir / file_name
+        # the admin-uploaded copy (ETL_INPUT_UPLOAD_DIR) wins over the input folder's, as in every other reader
+        from config.input_check import effective_input_path
+
+        return effective_input_path(self.input_dir, file_name)
 
     @staticmethod
     def file_hash(path: Path) -> str:

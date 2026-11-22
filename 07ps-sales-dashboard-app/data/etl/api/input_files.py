@@ -388,6 +388,8 @@ def describe_slots() -> dict[str, Any]:
             "exists": meta is not None,
             "size_bytes": meta["size_bytes"] if meta else None,
             "modified": meta["modified"] if meta else None,
+            # of the copy runs read (admin upload or server file): the backend matches it to the last upload's audit row
+            "sha256": meta["sha256"] if meta else None,
             # replaceable from the Control Center (False = the input folder is read-only: the upload only checks the file)
             "replaceable": uploaded or not folder_read_only,
             # "admin_upload" = the copy uploaded in the Control Center (ETL_INPUT_UPLOAD_DIR) is the one runs read
@@ -415,8 +417,9 @@ def describe_slots() -> dict[str, Any]:
     }
 
 
-def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -> dict[str, Any]:
-    """Validates ``content`` as ``name``, backs up the current file, and swaps the new one in."""
+def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool], check_only: bool = False) -> dict[str, Any]:
+    """Validates ``content`` as ``name``, backs up the current file, and swaps the new one in.
+    ``check_only`` ("Check file"): the same validation, then nothing is written."""
     if name not in SLOT_NAMES:
         raise UploadRejected(f"Unknown input file {name!r}. Expected one of: {', '.join(SLOT_NAMES)}.", status=404)
     if not content:
@@ -442,22 +445,25 @@ def replace_file(name: str, content: bytes, is_run_active: Callable[[], bool]) -
         finally:
             gc.collect()
 
-    # Files an admin may replace (ETL_INPUT_ADMIN_FILES, default ProductExclusions.xlsx) are saved in the writable
+    # Files an admin may replace (ETL_INPUT_ADMIN_FILES, default every input file) are saved in the writable
     # ETL_INPUT_UPLOAD_DIR, which every run reads before the input folder (config.input_check.effective_input_path).
     uploads = admin_upload_dir() if admin_slot(name) else None
     if uploads is not None:
         _assert_upload_dir_separate(inputs, backups, uploads)
 
-    # Production mounts the input folder read-only (the ETL never writes an input file): the file has
-    # been validated above, so a bad file is still rejected with its reason. A good one is reported as
-    # checked -- not an error -- and nothing is written.
-    if uploads is None and not os.access(inputs, os.W_OK):
-        current = _file_meta(inputs / name)
+    # "Check file", or a read-only input folder with no admin upload folder for this file (the ETL never writes an
+    # input file): the file has been validated above, so a bad file is still rejected with its reason. A good one is
+    # reported as checked -- not an error -- and nothing is written.
+    read_only = uploads is None and not os.access(inputs, os.W_OK)
+    if check_only or read_only:
+        current = _file_meta(effective_input_path(inputs, name))
         return {
             "name": name,
             "replaced": False,
-            "read_only": True,
+            "read_only": read_only,
+            "check_only": check_only,
             "message": (
+                f"{name} is valid. Nothing was saved." if check_only else
                 f"{name} is valid. The input folder is read-only on this server, so the file was checked but not "
                 "replaced: update it directly in the input folder on the server. The next ETL run reads it."
             ),

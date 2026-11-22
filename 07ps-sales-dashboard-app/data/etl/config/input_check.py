@@ -35,9 +35,10 @@ OPTIONAL_INPUT_FILES: tuple[str, ...] = ("BlockedCustomers.xlsx", "ProductExclus
 
 # Input files an admin replaces from the ETL Control Center even where the input folder is mounted read-only
 # (production): the upload is saved in ETL_INPUT_UPLOAD_DIR, a separate writable folder, and every reader takes that
-# copy before the one in the input folder (effective_input_path). ETL_INPUT_ADMIN_FILES (comma-separated) widens the
-# list; without ETL_INPUT_UPLOAD_DIR nothing changes (uploads go to the input folder when it is writable).
-DEFAULT_ADMIN_INPUT_FILES: tuple[str, ...] = ("ProductExclusions.xlsx",)
+# copy before the one in the input folder (effective_input_path). Since 2026-11-22 that is every input file;
+# ETL_INPUT_ADMIN_FILES (comma-separated) overrides the list. Without ETL_INPUT_UPLOAD_DIR nothing changes (uploads go
+# to the input folder when it is writable).
+DEFAULT_ADMIN_INPUT_FILES: tuple[str, ...] = REQUIRED_INPUT_FILES + OPTIONAL_INPUT_FILES
 
 LISTING_LIMIT = 20
 _WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")

@@ -68,7 +68,7 @@ services:
       ETL_INPUT_DIR: /etl/input
       ETL_INPUT_BACKUP_DIR: /etl/input_backups
       # Writable folder for the input files an admin replaces from the ETL Control Center even though /etl/input is
-      # read-only (ETL_INPUT_ADMIN_FILES, default ProductExclusions.xlsx): the uploaded copy is read before /etl/input's.
+      # read-only (ETL_INPUT_ADMIN_FILES, default every input file): the uploaded copy is read before /etl/input's.
       ETL_INPUT_UPLOAD_DIR: /etl/input_admin
       ETL_OUTPUT_DIR: /etl/output
     extra_hosts: *host-gateway

@@ -355,6 +355,8 @@ export interface EtlInputFileSlot {
   size_bytes: number | null;
   /** ISO-8601 UTC. */
   modified: string | null;
+  /** Of the copy runs read (admin upload or server file); null when missing. */
+  sha256?: string | null;
   /** false = the input folder is read-only and this file is not admin-replaceable: an upload only checks it. */
   replaceable?: boolean;
   /** admin_upload = runs read the copy uploaded in the Control Center (ETL_INPUT_UPLOAD_DIR). */
@@ -383,9 +385,11 @@ export interface EtlFileMeta {
 
 export interface EtlInputFileReplaced {
   name: string;
-  /** false = the file passed validation but the input folder is read-only, so nothing was written. */
+  /** false = the file passed validation but nothing was written ("Check file", or a read-only input folder). */
   replaced?: boolean;
   read_only?: boolean;
+  /** true = "Check file": validated only. */
+  check_only?: boolean;
   message?: string;
   input_dir: string;
   /** Where the new file was written (the upload folder for admin-replaceable files). */
@@ -443,10 +447,14 @@ export async function getEtlInputFiles(): Promise<EtlInputFiles> {
  * Hands a new workbook to the ETL service, which validates it, backs up the current file and swaps
  * the new one in at the exact path the pipeline reads. Does not start or schedule a run.
  */
-export async function replaceEtlInputFile(name: string, content: Buffer): Promise<EtlInputFileReplaced> {
+export async function replaceEtlInputFile(
+  name: string,
+  content: Buffer,
+  options: { checkOnly?: boolean } = {},
+): Promise<EtlInputFileReplaced> {
   try {
     const response = await inputFileClient(INPUT_FILE_UPLOAD_TIMEOUT_MS).put<EtlInputFileReplaced>(
-      `/etl/input-files/${encodeURIComponent(name)}`,
+      `/etl/input-files/${encodeURIComponent(name)}${options.checkOnly ? '?check=1' : ''}`,
       content,
       { headers: { 'Content-Type': 'application/octet-stream' }, maxBodyLength: Infinity },
     );

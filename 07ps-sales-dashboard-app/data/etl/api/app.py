@@ -19,6 +19,7 @@ Endpoints:
                                       structure, recent backups (see input_files.py)
   PUT  /etl/input-files/<name>     - replace one workbook (raw .xlsx body): validated, previous
                                       version backed up, then swapped in. Never starts a run.
+                                      ?check=1: validated only, nothing saved.
   GET  /health                     - unauthenticated
 
 Local dev: `python app.py`. Production (cPanel/gunicorn): gunicorn against wsgi:app (see wsgi.py).
@@ -142,10 +143,14 @@ def etl_input_file_replace(name: str):
         return jsonify({"error": f"The file is larger than the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."}), 413
     content = request.get_data(cache=False)
     try:
-        result = replace_file(name, content, lambda: tracker.active_job() is not None)
+        check_only = request.args.get("check", "").lower() in ("1", "true", "yes")
+        result = replace_file(name, content, lambda: tracker.active_job() is not None, check_only=check_only)
     except UploadRejected as exc:
         logger.info("Rejected upload of %s: %s %s", name, exc, exc.problems)
         return jsonify({"error": str(exc), "problems": exc.problems}), exc.status
+    if not result["replaced"]:
+        logger.info("Checked ETL input file %s (nothing saved)", name)
+        return jsonify(result), 200
     logger.info(
         "Replaced ETL input file %s (backup=%s, sha256=%s)",
         name,

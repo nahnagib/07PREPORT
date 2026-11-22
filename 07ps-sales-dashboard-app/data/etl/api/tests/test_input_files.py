@@ -300,46 +300,219 @@ def test_product_exclusions_2026_11_15_without_a_required_column_is_rejected_wit
     assert "Active" in str(response.get_json()) and "Products" in str(response.get_json())
 
 
-def test_product_exclusions_is_replaced_from_the_admin_side_although_the_input_folder_is_read_only(client, folders, tmp_path, monkeypatch):
-    """Production 2026-11-15: ProductExclusions.xlsx is saved in ETL_INPUT_UPLOAD_DIR (writable) and the ETL reads that
-    copy before the read-only input folder's; every other file is still only checked."""
-    from config.input_check import effective_input_path
-    from config.settings import Settings
+# -- every input file replaceable from the admin side (2026-11-22) --------------------------------------------------------
 
+TARGETS = {
+    "Year": [2026], "Month": [1], "YearMonth": ["2026-01"], "TargetDate": ["2026-01-01"], "TargetLevel": ["Salesperson"],
+    "Company": ["Majaal"], "SalesTeam": ["Team 1"], "SalesTeamKey": ["T1"], "Salesperson": ["A"], "SalesSegment": ["B2B"],
+    "City": ["Tripoli"], "Currency": ["LYD"], "Target_Revenue": [1000], "Target_Volume": [10], "ASP_LY": [100],
+    "ASP_ThisYear": [100], "DistributionChannel": ["Retail"],
+}
+PEOPLE = {"Name": ["A"], "TeamKey": ["T1"], "Status": ["ACTIVE"], "DistributionChannel": ["Retail"]}
+TEAMS = {"TeamKey": ["T1"], "TeamName": ["Team 1"], "Company": ["Majaal"], "City": ["Tripoli"], "Segment": ["Retail"], "Status": ["ACTIVE"]}
+BLOCKED = {"CustomerID": ["C1"], "CustomerName": ["X"], "IsBlocked": ["Yes"], "BlockedDate": ["01/01/2026"],
+           "UnblockedDate": [None], "BlockedReason": ["overdue"], "Notes": [None]}
+
+
+def _drop(columns: dict, column: str) -> dict:
+    return {k: v for k, v in columns.items() if k != column}
+
+
+def _with_extra_row(columns: dict) -> dict:
+    """A second, different version of a one-sheet file (one more row)."""
+    return {k: v + [v[-1]] for k, v in columns.items()}
+
+
+# name -> (a valid file, a different valid file, the same file with one required column missing, that column)
+FILE_CASES = {
+    "sales_targets.xlsx": (
+        lambda: xlsx({"Targets": TARGETS}), lambda: xlsx({"Targets": _with_extra_row(TARGETS)}),
+        lambda: xlsx({"Targets": _drop(TARGETS, "Target_Revenue")}), "Target_Revenue",
+    ),
+    "SalesTeam.xlsx": (
+        lambda: xlsx({"salesperson": PEOPLE, "salesteam": TEAMS}),
+        lambda: xlsx({"salesperson": dict(PEOPLE, Name=["B"]), "salesteam": TEAMS}),
+        lambda: xlsx({"salesperson": PEOPLE, "salesteam": _drop(TEAMS, "Segment")}), "Segment",
+    ),
+    "OffDays.xlsx": (
+        lambda: xlsx({"Sheet1": OFFDAYS}), lambda: xlsx({"Sheet1": dict(OFFDAYS, HolidayName=["X", "Y"])}),
+        lambda: xlsx({"Sheet1": _drop(OFFDAYS, "Country")}), "Country",
+    ),
+    "BlockedCustomers.xlsx": (
+        lambda: xlsx({"BlockedCustomers": BLOCKED}), lambda: xlsx({"BlockedCustomers": _with_extra_row(BLOCKED)}),
+        lambda: xlsx({"BlockedCustomers": _drop(BLOCKED, "IsBlocked")}), "IsBlocked",
+    ),
+    "ProductExclusions.xlsx": (
+        lambda: _exclusions(categories_active="No"), lambda: _exclusions(),
+        lambda: _exclusions_2026_11_15(products_columns_drop=("Active",)), "Active",
+    ),
+}
+
+
+@pytest.fixture
+def read_only_with_uploads(folders, tmp_path, monkeypatch):
+    """Production: /etl/input mounted read-only, ETL_INPUT_UPLOAD_DIR=/etl/input_admin writable, ETL_INPUT_ADMIN_FILES unset."""
     inputs, backups = folders
     uploads = tmp_path / "input_admin"
     monkeypatch.setenv("ETL_INPUT_UPLOAD_DIR", str(uploads))
-    server_copy = _exclusions(categories_active="No")
-    (inputs / "ProductExclusions.xlsx").write_bytes(server_copy)
-    (inputs / "OffDays.xlsx").write_bytes(xlsx({"Sheet1": OFFDAYS}))
     real_access = os.access
-    with patch("input_files.os.access", side_effect=lambda path, mode: False if Path(path) == inputs.resolve() and mode == os.W_OK else real_access(path, mode)):
-        before = client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()
-        uploaded = _exclusions()
-        replaced = put(client, "ProductExclusions.xlsx", uploaded)
-        checked = put(client, "OffDays.xlsx", xlsx({"Sheet1": {k: v[:1] for k, v in OFFDAYS.items()}}))
-        after = client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()
-
-    slot = {f["name"]: f for f in before["files"]}
-    assert before["read_only"] is True and slot["ProductExclusions.xlsx"]["replaceable"] is True
-    assert slot["OffDays.xlsx"]["replaceable"] is False and slot["ProductExclusions.xlsx"]["source"] == "input_folder"
-
-    body = replaced.get_json()
-    assert replaced.status_code == 200 and body["replaced"] is True, body
-    assert Path(body["saved_to"]) == (uploads / "ProductExclusions.xlsx").resolve()
-    assert (uploads / "ProductExclusions.xlsx").read_bytes() == uploaded
-    assert (inputs / "ProductExclusions.xlsx").read_bytes() == server_copy           # the server copy is untouched
-    assert body["backup"] is not None and Path(body["backup"]["path"]).read_bytes() == server_copy
-    assert checked.get_json()["replaced"] is False                                  # other files: checked only
-
-    assert {f["name"]: f["source"] for f in after["files"]}["ProductExclusions.xlsx"] == "admin_upload"
-    assert effective_input_path(inputs, "ProductExclusions.xlsx") == (uploads / "ProductExclusions.xlsx").resolve()
-    assert Settings.from_env().product_exclusions_path == (uploads / "ProductExclusions.xlsx").resolve()
-    assert effective_input_path(inputs, "OffDays.xlsx") == inputs / "OffDays.xlsx"
+    with patch("input_files.os.access",
+               side_effect=lambda path, mode: False if Path(path) == inputs.resolve() and mode == os.W_OK else real_access(path, mode)):
+        yield inputs, backups, uploads
 
 
-def test_without_an_upload_folder_product_exclusions_is_read_from_the_input_folder(folders):
+def test_every_input_file_is_replaceable_when_the_input_folder_is_read_only(client, read_only_with_uploads):
+    listing = client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()
+    assert listing["read_only"] is True
+    assert {f["name"]: f["replaceable"] for f in listing["files"]} == dict.fromkeys(FILE_CASES, True)
+
+
+@pytest.mark.parametrize("name", list(FILE_CASES))
+def test_good_file_is_saved_in_input_admin_and_the_server_copy_is_backed_up(client, read_only_with_uploads, name):
+    from config.input_check import effective_input_path
+
+    inputs, backups, uploads = read_only_with_uploads
+    server_copy, uploaded, _, _ = (f() if callable(f) else f for f in FILE_CASES[name])
+    (inputs / name).write_bytes(server_copy)
+
+    response = put(client, name, uploaded)
+
+    body = response.get_json()
+    assert response.status_code == 200 and body["replaced"] is True, body
+    assert Path(body["saved_to"]) == (uploads / name).resolve()
+    assert (uploads / name).read_bytes() == uploaded
+    assert (inputs / name).read_bytes() == server_copy                                   # /etl/input is never written
+    backup = Path(body["backup"]["path"])
+    assert backup.parent == backups.resolve() and backup.read_bytes() == server_copy
+    stem, suffix = os.path.splitext(name)
+    assert backup.name.startswith(f"{stem}.") and backup.suffix == suffix                 # <name>.<UTC timestamp>.xlsx
+    assert effective_input_path(inputs, name) == (uploads / name).resolve()
+    listing = {f["name"]: f for f in client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()["files"]}
+    assert listing[name]["source"] == "admin_upload" and listing[name]["sha256"] == body["current"]["sha256"]
+
+
+@pytest.mark.parametrize("name", list(FILE_CASES))
+def test_file_missing_a_required_column_is_rejected_and_nothing_is_saved(client, read_only_with_uploads, name):
+    inputs, backups, uploads = read_only_with_uploads
+    server_copy, _, broken, column = (f() if callable(f) else f for f in FILE_CASES[name])
+    (inputs / name).write_bytes(server_copy)
+
+    response = put(client, name, broken)
+
+    assert response.status_code == 422
+    assert column in str(response.get_json())
+    assert not (uploads / name).exists() and not backups.exists()
+    assert (inputs / name).read_bytes() == server_copy
+
+
+@pytest.mark.parametrize("name", list(FILE_CASES))
+def test_unreadable_file_is_rejected(client, read_only_with_uploads, name):
+    _, backups, uploads = read_only_with_uploads
+    response = put(client, name, b"not,an,excel\nfile\n")
+    assert response.status_code == 422 and "not a valid .xlsx" in response.get_json()["error"]
+    assert not (uploads / name).exists() and not backups.exists()
+
+
+def test_check_file_validates_but_saves_nothing(client, read_only_with_uploads):
+    inputs, backups, uploads = read_only_with_uploads
+    (inputs / "OffDays.xlsx").write_bytes(xlsx({"Sheet1": OFFDAYS}))
+    new = xlsx({"Sheet1": dict(OFFDAYS, HolidayName=["X", "Y"])})
+
+    good = client.put("/etl/input-files/OffDays.xlsx?check=1", data=new, headers=AUTH_HEADERS, content_type="application/octet-stream")
+    bad = client.put("/etl/input-files/OffDays.xlsx?check=1", data=xlsx({"Sheet1": _drop(OFFDAYS, "Country")}),
+                     headers=AUTH_HEADERS, content_type="application/octet-stream")
+
+    assert good.status_code == 200 and good.get_json()["replaced"] is False and good.get_json()["check_only"] is True
+    assert bad.status_code == 422 and "Country" in str(bad.get_json())
+    assert not uploads.exists() and not backups.exists()
+
+
+def test_a_second_upload_backs_up_the_previous_admin_upload(client, read_only_with_uploads):
+    inputs, backups, uploads = read_only_with_uploads
+    (inputs / "OffDays.xlsx").write_bytes(xlsx({"Sheet1": OFFDAYS}))
+    first = xlsx({"Sheet1": dict(OFFDAYS, HolidayName=["X", "Y"])})
+    second = xlsx({"Sheet1": dict(OFFDAYS, HolidayName=["P", "Q"])})
+    assert put(client, "OffDays.xlsx", first).status_code == 200
+    response = put(client, "OffDays.xlsx", second)
+    assert response.status_code == 200
+    assert Path(response.get_json()["backup"]["path"]).read_bytes() == first
+    assert (uploads / "OffDays.xlsx").read_bytes() == second
+    assert len(list(backups.iterdir())) == 2
+
+
+def test_etl_admin_files_env_can_still_narrow_the_list(client, read_only_with_uploads, monkeypatch):
+    monkeypatch.setenv("ETL_INPUT_ADMIN_FILES", "ProductExclusions.xlsx")
+    listing = {f["name"]: f["replaceable"] for f in client.get("/etl/input-files", headers=AUTH_HEADERS).get_json()["files"]}
+    assert listing["ProductExclusions.xlsx"] is True and listing["OffDays.xlsx"] is False
+
+
+# -- ETL read order: /etl/input_admin first, else /etl/input -------------------------------------------------------------
+
+
+@pytest.fixture
+def two_folders(folders, tmp_path, monkeypatch):
+    inputs, _ = folders
+    uploads = tmp_path / "input_admin"
+    uploads.mkdir()
+    monkeypatch.setenv("ETL_INPUT_UPLOAD_DIR", str(uploads))
+    return inputs, uploads.resolve()
+
+
+def _settings_path(name: str):
+    from config.settings import Settings
+
+    settings = Settings.from_env()
+    return {
+        "sales_targets.xlsx": settings.targets_path, "SalesTeam.xlsx": settings.sales_team_path,
+        "OffDays.xlsx": settings.offdays_path, "BlockedCustomers.xlsx": settings.blocked_customers_path,
+        "ProductExclusions.xlsx": settings.product_exclusions_path,
+    }[name]
+
+
+@pytest.mark.parametrize("name", list(FILE_CASES))
+def test_etl_reads_input_admin_before_input(two_folders, name):
+    """Every reader: config.settings (legacy pipeline: build_sales_sheets) and etl_platform's ExcelSource (core_dims:
+    load_org_file / load_offdays_file / load_blocked_customers_file)."""
+    from config.input_check import effective_input_path
+    from etl_platform.sources.excel import ExcelSource
+
+    inputs, uploads = two_folders
+    (inputs / name).write_bytes(b"server")
+    assert _settings_path(name) == inputs / name                   # no admin copy: the server file
+    assert ExcelSource(inputs).path(name) == inputs / name
+    (uploads / name).write_bytes(b"admin")
+    assert _settings_path(name) == uploads / name                  # admin copy wins
+    assert ExcelSource(inputs).path(name) == uploads / name
+    assert effective_input_path(inputs, name) == uploads / name
+    (uploads / name).unlink()                                      # rollback: delete the admin copy
+    assert _settings_path(name) == inputs / name
+
+
+def test_conform_sales_reads_the_admin_targets(two_folders):
+    """departments.sales.jobs.conform_sales reads sales_targets.xlsx itself (sheet Targets)."""
+    import inspect
+
+    from departments.sales import jobs
+
+    assert 'effective_input_path(ctx.config.input_dir, "sales_targets.xlsx")' in inspect.getsource(jobs.conform_sales)
+
+
+def test_core_excel_input_is_loaded_from_input_admin(two_folders):
+    """The file core_dims actually parses (OffDays.xlsx through ExcelSource.read) is the admin copy."""
+    from core import excel_inputs as xl
+    from etl_platform.sources.excel import ExcelSource
+
+    inputs, uploads = two_folders
+    (inputs / "OffDays.xlsx").write_bytes(b"not an excel file")      # would fail to parse if it were read
+    (uploads / "OffDays.xlsx").write_bytes(xlsx({"Sheet1": dict(OFFDAYS, CompanyKey=[1, 1])}))
+    spec = next(s for s in xl.INPUTS if s.file == xl.OFFDAYS_FILE)
+    frame = ExcelSource(inputs).read(spec.file, spec.schema)
+    assert len(frame) == 2
+
+
+def test_without_an_upload_folder_every_file_is_read_from_the_input_folder(folders):
     from config.input_check import effective_input_path
 
     inputs, _ = folders
-    assert effective_input_path(inputs, "ProductExclusions.xlsx") == inputs / "ProductExclusions.xlsx"
+    for name in FILE_CASES:
+        assert effective_input_path(inputs, name) == inputs / name

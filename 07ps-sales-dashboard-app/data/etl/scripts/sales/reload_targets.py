@@ -141,7 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     from etl_platform.config import PlatformConfig
 
     config = PlatformConfig.from_env()
-    path = Path(args.file) if args.file else Path(config.input_dir) / "sales_targets.xlsx"
+    from config.input_check import effective_input_path
+
+    path = Path(args.file) if args.file else effective_input_path(Path(config.input_dir), "sales_targets.xlsx")
     sheet = pd.read_excel(path, sheet_name="Targets")
     sheet["Salesperson"] = sheet["Salesperson"].replace({"SalesPerson 2": "Sales Person 2"})  # as jobs.conform_sales
     engine = create_engine(config.database_url, future=True)

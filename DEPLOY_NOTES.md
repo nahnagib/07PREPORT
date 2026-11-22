@@ -1,3 +1,25 @@
+# Deploy notes: every ETL input file replaceable from Admin -> Input Files (2026-11-22)
+
+No migration, no new compose change (`/etl/input_admin` came with the 2026-11-15 ETL fixes below; apply those first if prod
+does not have it yet). Rebuild **etl-api**, **backend** and
+**frontend**.
+
+1. `sales_targets.xlsx`, `SalesTeam.xlsx`, `OffDays.xlsx`, `BlockedCustomers.xlsx` and `ProductExclusions.xlsx` all have
+   **Upload / Replace** (and **Check file**, which validates and saves nothing). Same path as ProductExclusions.xlsx: the
+   file's expected columns are checked and its own ETL loader parses it, the version the ETL reads now is copied to
+   `/etl/input_backups/<name>.<UTC timestamp>.xlsx`, the new one is saved as `/etl/input_admin/<name>`. 5 MB, admin only.
+2. Every ETL reader takes `/etl/input_admin/<name>` first, else `/etl/input/<name>` (`config.input_check.effective_input_path`:
+   `config/settings.py`, `etl_platform/sources/excel.py`, `departments/sales/jobs.py` conform_sales, `scripts/sales/reload_targets.py`).
+   The Full refresh (`full_all`: core_dims + sales_full) reads all five. `/etl/input` is never written.
+3. `ETL_INPUT_ADMIN_FILES` (comma-separated) still overrides the list, e.g. `ProductExclusions.xlsx` restores the old behaviour.
+4. **Roll back a bad upload**: put the wanted version back as `/etl/input_admin/<name>`, e.g.
+   `docker compose exec etl-api sh -c 'ls /etl/input_backups/OffDays.*; cp /etl/input_backups/OffDays.<stamp>.xlsx /etl/input_admin/OffDays.xlsx'`,
+   or upload that backup again from the page (it is validated and the bad one is backed up in turn). To go back to the
+   server file, delete `/etl/input_admin/<name>`. Either way the next Full refresh reads it.
+5. Test stack only: `docker-compose.test-stack.yml` now mounts `test_etl_input_admin:/etl/input_admin`.
+
+---
+
 # Deploy notes: B2B / B2C Directors in sales_targets.xlsx (2026-11-17)
 
 No migration. Rebuild **backend**, **frontend** and **etl-api / etl-worker**; then reload the targets.

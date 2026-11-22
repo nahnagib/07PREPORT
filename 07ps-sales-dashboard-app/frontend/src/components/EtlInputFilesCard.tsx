@@ -6,10 +6,6 @@ import { APP_TIMEZONE, DISPLAY_LOCALE, formatDateTime as formatDisplayDateTime }
 import { useAuth } from '../lib/AuthProvider';
 import { adminApi, ApiError, EtlInputFileReplaced, EtlInputFileSlot, EtlInputFilesResponse } from '../lib/api';
 
-/** Incremental runs skip these tables once they exist (database_exporter.py), so a new file only
- * lands at the next FULL refresh. */
-const FULL_REFRESH_ONLY = new Set(['sales_targets.xlsx', 'OffDays.xlsx']);
-
 function formatBytes(n: number | null): string {
   if (n === null) return '—';
   return n >= 1_048_576 ? `${(n / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
@@ -20,27 +16,30 @@ function formatDateTime(iso: string | null): string {
   return formatDisplayDateTime(iso, APP_TIMEZONE);
 }
 
+type Mode = 'replace' | 'check';
+
 type Outcome =
   | { kind: 'success'; result: EtlInputFileReplaced }
   | { kind: 'checked'; result: EtlInputFileReplaced }
   | { kind: 'error'; name: string; message: string; problems: string[] };
 
 /**
- * ETL Control Center: lists the ETL's manual input workbooks and lets an admin replace one. The ETL
- * service validates the new file against what the pipeline expects, keeps the old one as a
- * timestamped backup, and swaps the new one in at the path the pipeline reads. It deliberately does
- * NOT start a run -- the file is simply used by the next scheduled (or manual) run.
+ * ETL Control Center: lists the ETL's manual input workbooks and lets an admin replace any of them. The ETL
+ * service validates the new file against what the pipeline expects, keeps the current one as a
+ * timestamped backup, and saves the new one in the admin upload folder, which every run reads before the
+ * server's input folder. It deliberately does NOT start a run -- the next Full refresh reads every file.
+ * "Check file" validates a file without saving it.
  */
 export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive: boolean; nextFullRun: string | null }) {
   const { token } = useAuth();
   const [data, setData] = useState<EtlInputFilesResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [pending, setPending] = useState<{ slot: EtlInputFileSlot; file: File } | null>(null);
+  const [pending, setPending] = useState<{ slot: EtlInputFileSlot; file: File; mode: Mode } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const targetSlot = useRef<EtlInputFileSlot | null>(null);
+  const targetSlot = useRef<{ slot: EtlInputFileSlot; mode: Mode } | null>(null);
 
   const load = useCallback(() => {
     if (!token) return;
@@ -57,8 +56,8 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
     load();
   }, [load]);
 
-  function pickFile(slot: EtlInputFileSlot) {
-    targetSlot.current = slot;
+  function pickFile(slot: EtlInputFileSlot, mode: Mode) {
+    targetSlot.current = { slot, mode };
     setOutcome(null);
     if (fileInput.current) {
       fileInput.current.value = '';
@@ -68,8 +67,8 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
 
   function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    const slot = targetSlot.current;
-    if (!file || !slot) return;
+    if (!file || !targetSlot.current) return;
+    const { slot, mode } = targetSlot.current;
     const maxBytes = data?.max_bytes ?? 5 * 1024 * 1024;
     if (!/\.xlsx$/i.test(file.name)) {
       setOutcome({ kind: 'error', name: slot.name, message: 'Only .xlsx files are accepted.', problems: [] });
@@ -84,14 +83,14 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
       });
       return;
     }
-    setPending({ slot, file });
+    setPending({ slot, file, mode });
   }
 
   async function confirmUpload() {
     if (!token || !pending) return;
     setUploading(true);
     try {
-      const result = await adminApi.replaceEtlInputFile(token, pending.slot.name, pending.file);
+      const result = await adminApi.replaceEtlInputFile(token, pending.slot.name, pending.file, pending.mode === 'check');
       setOutcome({ kind: result.replaced === false ? 'checked' : 'success', result });
       load();
     } catch (err) {
@@ -111,12 +110,11 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
   const readOnly = data?.read_only === true;
   /** Read-only folder, but this file is saved in the admin upload folder (ETL_INPUT_UPLOAD_DIR) instead. */
   const canReplace = (f: EtlInputFileSlot) => f.replaceable ?? !readOnly;
-  const replaceableNames = data?.files.filter((f) => readOnly && canReplace(f)).map((f) => f.name) ?? [];
+  const notReplaceable = data?.files.filter((f) => !canReplace(f)).map((f) => f.name) ?? [];
+  const pendingSaves = pending !== null && pending.mode === 'replace' && canReplace(pending.slot);
 
-  const whenApplied = (name: string) =>
-    FULL_REFRESH_ONLY.has(name)
-      ? `the next full refresh${nextFullRun ? ` (${formatDateTime(nextFullRun)})` : ''}`
-      : 'the next ETL run';
+  // The Full refresh reads every input file (core_dims + sales_full).
+  const whenApplied = `the next Full refresh${nextFullRun ? ` (${formatDateTime(nextFullRun)})` : ''}`;
 
   return (
     <Card>
@@ -131,25 +129,18 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
           </Button>
         </div>
       </div>
-      {readOnly ? (
-        <p role="note" style={{ fontSize: 12.5, margin: '6px 0 10px', padding: 10, borderRadius: 8, border: '1px solid var(--ps-color-accent)' }}>
-          <strong>The input folder is read-only on this server.</strong> The ETL never changes these files. To update one,
-          replace it directly in the input folder on the server; the next ETL run reads it. <em>Check file</em> only checks a
-          file against what the ETL expects — nothing is saved.
-          {replaceableNames.length > 0 && (
-            <>
-              {' '}
-              <strong>{replaceableNames.join(', ')}</strong> can be replaced here: <em>Upload / Replace</em> validates the file,
-              keeps the current one as a backup and saves the new one in the admin upload folder, which the ETL reads first.
-            </>
-          )}
-        </p>
-      ) : (
-        <p style={{ fontSize: 12.5, color: 'var(--ps-color-muted-text)', margin: '6px 0 10px' }}>
-          Replacing a file does not start the ETL. The new file is validated, the current one is kept as a backup, and the ETL
-          uses it on its next run.
-        </p>
-      )}
+      <p role="note" style={{ fontSize: 12.5, margin: '6px 0 10px', padding: 10, borderRadius: 8, border: '1px solid var(--ps-color-accent)' }}>
+        <strong>You can replace any input file here.</strong> <em>Upload / Replace</em> checks the new file against what the
+        ETL expects, keeps the current file as a backup, and saves the new one. The new file is used from the next Full
+        refresh; nothing runs now. <em>Check file</em> only checks a file — nothing is saved.
+        {notReplaceable.length > 0 && (
+          <>
+            {' '}
+            <strong>{notReplaceable.join(', ')}</strong> cannot be saved on this server (read-only input folder, no admin upload
+            folder): update {notReplaceable.length === 1 ? 'it' : 'them'} directly in the input folder.
+          </>
+        )}
+      </p>
 
       <input ref={fileInput} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={onFileChosen} />
 
@@ -166,7 +157,7 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
             .map(([k, v]) => `${v.toLocaleString(DISPLAY_LOCALE)} ${k.replace(/_/g, ' ')}`)
             .join(', ')}{' '}
           read. {outcome.result.backup ? <>Previous version backed up to <code>{outcome.result.backup.path}</code>. </> : null}
-          It will be used by {whenApplied(outcome.result.name)}.
+          It will be used from {whenApplied}.
           <SkippedRows warnings={outcome.result.validation.warnings} />
           {!outcome.result.auditLogged && (
             <div style={{ color: 'var(--ps-color-alert)', marginTop: 4 }}>
@@ -179,10 +170,19 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
         <div role="status" style={{ padding: 10, marginBottom: 10, borderRadius: 8, border: '1px solid var(--ps-color-accent)', fontSize: 13 }}>
           <strong>{outcome.result.name} is valid</strong> (
           {Object.entries(outcome.result.validation.counts)
-            .map(([k, v]) => `${v.toLocaleString()} ${k.replace(/_/g, ' ')}`)
+            .map(([k, v]) => `${v.toLocaleString(DISPLAY_LOCALE)} ${k.replace(/_/g, ' ')}`)
             .join(', ')}
-          ). The input folder is read-only on this server, so it was checked, not replaced. Update the file directly in the
-          input folder on the server; {whenApplied(outcome.result.name)} reads it.
+          ).{' '}
+          {outcome.result.check_only ? (
+            <>
+              Checked only — nothing was saved. Use <em>Upload / Replace</em> to use it.
+            </>
+          ) : (
+            <>
+              The input folder is read-only on this server, so it was checked, not replaced. Update the file directly in the
+              input folder on the server; {whenApplied} reads it.
+            </>
+          )}
           <SkippedRows warnings={outcome.result.validation.warnings} />
         </div>
       )}
@@ -238,18 +238,29 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
                       </td>
                       <td style={{ padding: '6px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatBytes(f.size_bytes)}</td>
                       <td style={{ padding: '6px 8px', color: 'var(--ps-color-muted-text)' }}>
-                        {f.lastUpload ? `${f.lastUpload.byName ?? `User #${f.lastUpload.byUserId}`} · ${formatDateTime(f.lastUpload.at)}` : '—'}
+                        {f.lastUpload
+                          ? `${f.lastUpload.byName ?? `User #${f.lastUpload.byUserId}`} · ${formatDateTime(f.lastUpload.at)}`
+                          : f.exists
+                            ? 'Server file'
+                            : '—'}
                       </td>
                       <td style={{ padding: '6px 0', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <Button variant="secondary" onClick={() => pickFile(f)} disabled={etlRunActive || uploading}>
-                          {canReplace(f) ? 'Upload / Replace' : 'Check file'}
-                        </Button>
+                        <span style={{ display: 'inline-flex', gap: 6 }}>
+                          {canReplace(f) && (
+                            <Button variant="secondary" onClick={() => pickFile(f, 'replace')} disabled={etlRunActive || uploading}>
+                              Upload / Replace
+                            </Button>
+                          )}
+                          <Button variant="ghost" onClick={() => pickFile(f, 'check')} disabled={etlRunActive || uploading}>
+                            Check file
+                          </Button>
+                        </span>
                       </td>
                     </tr>
                     {expanded === f.name && (
                       <tr>
                         <td colSpan={5} style={{ padding: '0 0 10px', fontSize: 12, color: 'var(--ps-color-muted-text)' }}>
-                          <div>Feeds: {f.feeds}. Takes effect at {whenApplied(f.name)}.</div>
+                          <div>Feeds: {f.feeds}. Takes effect from {whenApplied}.</div>
                           {f.sheets.map((s) => (
                             <div key={s.label} style={{ marginTop: 4 }}>
                               <strong>{s.sheet_names ? `Sheet named ${s.sheet_names.slice(0, 2).join(' or ')}` : 'First sheet'}</strong>
@@ -291,18 +302,18 @@ export function EtlInputFilesCard({ etlRunActive, nextFullRun }: { etlRunActive:
 
       <ConfirmDialog
         open={pending !== null}
-        title={pending && !canReplace(pending.slot) ? `Check ${pending.slot.name}?` : `Replace ${pending?.slot.name ?? ''}?`}
+        title={pending && !pendingSaves ? `Check ${pending.slot.name}?` : `Replace ${pending?.slot.name ?? ''}?`}
         message={
           pending
-            ? !canReplace(pending.slot)
+            ? !pendingSaves
               ? `"${pending.file.name}" (${formatBytes(pending.file.size)}) will be checked against what the ETL expects for ${pending.slot.name}.` +
-                ' The input folder is read-only, so nothing is saved.'
+                ' Nothing is saved.'
               : `"${pending.file.name}" (${formatBytes(pending.file.size)}) will be checked and, if valid, replace ${pending.slot.name}` +
-                ` ${readOnly ? 'in the admin upload folder (the ETL reads it instead of the server copy)' : 'in the ETL input folder'}.` +
-                ` The current file is kept as a backup. Nothing runs now — it will be used by ${whenApplied(pending.slot.name)}.`
+                ` ${data?.upload_dir ? 'in the admin upload folder (the ETL reads it instead of the server copy)' : 'in the ETL input folder'}.` +
+                ` The current file is kept as a backup. Nothing runs now — it will be used from ${whenApplied}.`
             : ''
         }
-        confirmLabel={pending && !canReplace(pending.slot) ? 'Check file' : 'Replace file'}
+        confirmLabel={pending && !pendingSaves ? 'Check file' : 'Replace file'}
         onConfirm={confirmUpload}
         onCancel={() => setPending(null)}
         busy={uploading}

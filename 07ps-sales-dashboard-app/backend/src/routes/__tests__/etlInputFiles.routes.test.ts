@@ -56,7 +56,7 @@ vi.mock('../../etl/services/pythonRunner', async () => {
   return {
     EtlInputFileError,
     getEtlInputFiles: () => listMock(),
-    replaceEtlInputFile: (name: string, buf: Buffer) => replaceMock(name, buf),
+    replaceEtlInputFile: (name: string, buf: Buffer, opts?: unknown) => replaceMock(name, buf, opts),
   };
 });
 vi.mock('../../services/auditLogService', () => ({
@@ -72,10 +72,10 @@ let base = '';
 
 type Json = Record<string, any>; // eslint-disable-line
 type Res = Omit<Response, 'json'> & { json(): Promise<Json> };
-function upload(name: string, who: string | null, content: Buffer | null, filename = 'OffDays.xlsx'): Promise<Res> {
+function upload(name: string, who: string | null, content: Buffer | null, filename = 'OffDays.xlsx', query = ''): Promise<Res> {
   const fd = new FormData();
   if (content) fd.append('file', new Blob([content]), filename);
-  return fetch(`${base}/admin/etl/input-files/${name}`, {
+  return fetch(`${base}/admin/etl/input-files/${name}${query}`, {
     method: 'PUT',
     headers: who ? { 'x-test-user': who } : {},
     body: fd,
@@ -131,7 +131,7 @@ describe('PUT /admin/etl/input-files/:name', () => {
     const res = await upload('OffDays.xlsx', 'admin', bytes, 'OffDays (edited).xlsx');
     expect(res.status).toBe(200);
     expect((await res.json()).auditLogged).toBe(true);
-    expect(replaceMock).toHaveBeenCalledWith('OffDays.xlsx', bytes);
+    expect(replaceMock).toHaveBeenCalledWith('OffDays.xlsx', bytes, { checkOnly: false });
     expect(writeAuditMock).toHaveBeenCalledWith(
       expect.objectContaining({
         entityType: 'etl_input_file',
@@ -184,6 +184,26 @@ describe('PUT /admin/etl/input-files/:name', () => {
     expect(writeAuditMock).not.toHaveBeenCalled();
   });
 
+  it.each(['sales_targets.xlsx', 'SalesTeam.xlsx', 'OffDays.xlsx', 'BlockedCustomers.xlsx', 'ProductExclusions.xlsx'])(
+    'replaces %s through the same path and audits it',
+    async (name) => {
+      replaceMock.mockResolvedValue({ ...REPLACED, name, replaced: true });
+      const res = await upload(name, 'admin', Buffer.from('PK'), name);
+      expect(res.status).toBe(200);
+      expect(replaceMock).toHaveBeenCalledWith(name, expect.any(Buffer), { checkOnly: false });
+      expect(writeAuditMock).toHaveBeenCalledWith(expect.objectContaining({ entityId: name }));
+    },
+  );
+
+  it('"Check file" (?check=1) only validates: forwarded as checkOnly, nothing audited', async () => {
+    replaceMock.mockResolvedValue({ ...REPLACED, replaced: false, check_only: true, backup: null });
+    const res = await upload('OffDays.xlsx', 'admin', Buffer.from('PK'), 'OffDays.xlsx', '?check=1');
+    expect(res.status).toBe(200);
+    expect((await res.json()).check_only).toBe(true);
+    expect(replaceMock).toHaveBeenCalledWith('OffDays.xlsx', expect.any(Buffer), { checkOnly: true });
+    expect(writeAuditMock).not.toHaveBeenCalled();
+  });
+
   it('reports a lost audit row instead of hiding it', async () => {
     writeAuditMock.mockResolvedValue(false);
     const res = await upload('OffDays.xlsx', 'admin', Buffer.from('PK'));
@@ -206,6 +226,24 @@ describe('GET /admin/etl/input-files', () => {
     const body = await (await get('/admin/etl/input-files', 'admin')).json();
     expect(latestAuditMock).toHaveBeenCalledWith('etl_input_file');
     expect(body.files[0].lastUpload).toEqual({ at: '2026-09-23T09:00:00.000Z', byUserId: 7, byName: 'Admin User' });
+    expect(body.files[1].lastUpload).toBeNull();
+  });
+
+  it('shows the last upload only while it is the version the ETL reads (same sha256)', async () => {
+    listMock.mockResolvedValue({
+      input_dir: '/etl/input',
+      backup_dir: '/etl/input_backups',
+      max_bytes: 5242880,
+      files: [
+        { name: 'OffDays.xlsx', source: 'admin_upload', sha256: 'aaa' },
+        // admin copy deleted (rollback): the server file is read again, so its old upload is not shown
+        { name: 'SalesTeam.xlsx', source: 'input_folder', sha256: 'server' },
+      ],
+    });
+    const audit = (sha256: string) => ({ changed_at: new Date('2026-11-22T09:00:00Z'), changed_by: 7, changed_by_name: 'Admin User', after_value: { sha256 } });
+    latestAuditMock.mockResolvedValue(new Map([['OffDays.xlsx', audit('aaa')], ['SalesTeam.xlsx', audit('old-upload')]]));
+    const body = await (await get('/admin/etl/input-files', 'admin')).json();
+    expect(body.files[0].lastUpload).toEqual({ at: '2026-11-22T09:00:00.000Z', byUserId: 7, byName: 'Admin User' });
     expect(body.files[1].lastUpload).toBeNull();
   });
 

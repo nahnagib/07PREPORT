@@ -923,10 +923,13 @@ export const adminApi = {
   getEtlInputFiles: (token: string): Promise<EtlInputFilesResponse> => request('/admin/etl/input-files', token),
 
   /** Replaces one input workbook in place (validated + backed up by the ETL service). Never starts a run. */
-  replaceEtlInputFile: (token: string, name: string, file: File): Promise<EtlInputFileReplaced> => {
+  replaceEtlInputFile: (token: string, name: string, file: File, checkOnly = false): Promise<EtlInputFileReplaced> => {
     const form = new FormData();
     form.append('file', file);
-    return request(`/admin/etl/input-files/${encodeURIComponent(name)}`, token, { method: 'PUT', body: form });
+    return request(`/admin/etl/input-files/${encodeURIComponent(name)}${checkOnly ? '?check=1' : ''}`, token, {
+      method: 'PUT',
+      body: form,
+    });
   },
 
   listAuditLog: (
@@ -1297,14 +1300,16 @@ export interface EtlInputFileSlot {
   feeds: string;
   exists: boolean;
   size_bytes: number | null;
-  /** ISO-8601 UTC. */
+  /** ISO-8601 UTC, of the copy the ETL reads (admin upload, else the server file). */
   modified: string | null;
+  sha256?: string | null;
   /** false = the input folder is read-only and this file is not admin-replaceable: an upload only checks it. */
   replaceable?: boolean;
   /** admin_upload = runs read the copy uploaded in the Control Center (ETL_INPUT_UPLOAD_DIR). */
   source?: 'admin_upload' | 'input_folder';
   sheets: { label: string; sheet_names: string[] | null; required: string[]; optional: string[] }[];
   recent_backups: { name: string; size_bytes: number; modified: string }[];
+  /** The last Control Center upload, only while it is the version the ETL reads (null = the server file is used). */
   lastUpload: { at: string; byUserId: number | null; byName: string | null } | null;
 }
 
@@ -1321,9 +1326,10 @@ export interface EtlInputFilesResponse {
 
 export interface EtlInputFileReplaced {
   name: string;
-  /** false = valid, but the input folder is read-only, so the file was checked and not replaced. */
+  /** false = valid, but nothing was saved ("Check file", or a read-only input folder). */
   replaced?: boolean;
   read_only?: boolean;
+  check_only?: boolean;
   message?: string;
   input_dir: string;
   /** Where the new file was written (the upload folder for admin-replaceable files). */

@@ -10,7 +10,8 @@ import { ETL_INPUT_FILE_ENTITY, latestAuditByEntity, writeAuditLog } from '../..
 
 /**
  * Replacing the ETL's manual input workbooks (sales_targets.xlsx, SalesTeam.xlsx, OffDays.xlsx,
- * BlockedCustomers.xlsx) from the ETL Control Center. Products come from Odoo (PRODUCTS.xlsx is retired). Admin-role-only, same as the
+ * BlockedCustomers.xlsx, ProductExclusions.xlsx) from the ETL Control Center.
+ * PUT ?check=1 ("Check file") only validates the workbook; nothing is saved or audited. Products come from Odoo (PRODUCTS.xlsx is retired). Admin-role-only, same as the
  * rest of /admin/etl.
  *
  * The file itself is validated, backed up and swapped in by the ETL service (data/etl/api/
@@ -42,9 +43,13 @@ adminEtlInputFilesRouter.get('/', async (_req, res, next) => {
       ...listing,
       files: listing.files.map((f) => {
         const last = lastUploads.get(f.name);
+        // Only when the version runs read now IS that upload: after a rollback (the admin copy deleted) the
+        // server file is in use again, and the page shows it as such.
+        const uploadedSha = (last?.after_value as { sha256?: string } | null | undefined)?.sha256;
+        const inUse = !!last && (!f.sha256 || !uploadedSha || uploadedSha === f.sha256);
         return {
           ...f,
-          lastUpload: last
+          lastUpload: last && inUse
             ? { at: last.changed_at, byUserId: last.changed_by, byName: last.changed_by_name ?? last.changed_by_email }
             : null,
         };
@@ -74,11 +79,12 @@ adminEtlInputFilesRouter.put('/:name', upload.single('file'), async (req, res, n
       return;
     }
 
-    const result = await replaceEtlInputFile(name, req.file.buffer);
+    const checkOnly = req.query.check === '1' || req.query.check === 'true';
+    const result = await replaceEtlInputFile(name, req.file.buffer, { checkOnly });
     const user = req.user!;
     if (result.replaced === false) {
-      // Read-only input folder: the file was only checked. Nothing changed, so nothing is audited.
-      etlLogger.info('ETL input file checked (read-only input folder, not replaced)', { file: result.name, userId: user.id });
+      // "Check file" or a read-only input folder: the file was only checked. Nothing changed, so nothing is audited.
+      etlLogger.info('ETL input file checked (not replaced)', { file: result.name, userId: user.id, checkOnly });
       res.json({ ...result, auditLogged: false });
       return;
     }

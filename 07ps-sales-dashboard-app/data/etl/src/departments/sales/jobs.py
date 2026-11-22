@@ -25,6 +25,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import inspect, text
 
+from config.input_check import effective_input_path
 from config.settings import Settings
 from core.jobs import ensure_date_range
 from core.keys import UNKNOWN
@@ -104,7 +105,7 @@ def conform_sales(ctx: RunContext) -> TaskResult:
     build = ctx.state["build"]
     with ctx.engine.connect() as conn:
         maps = KeyMaps.load(conn)
-    targets = pd.read_excel(ctx.config.input_dir / "sales_targets.xlsx", sheet_name="Targets")
+    targets = pd.read_excel(effective_input_path(ctx.config.input_dir, "sales_targets.xlsx"), sheet_name="Targets")
     targets["Salesperson"] = targets["Salesperson"].replace({"SalesPerson 2": "Sales Person 2"})  # approved: typo
     pipeline = _pipeline(ctx)
     result = cf.conform(build, maps, targets, lambda lines: pipeline.rebuild_product_tables(lines, build.sheets))
