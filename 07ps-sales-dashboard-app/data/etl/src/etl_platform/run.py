@@ -68,10 +68,33 @@ def _print_catalogue() -> None:
         print(f"  {ds.name:32} {ds.layer:7} {ds.source}:{ds.source_object or '-'} -> {ds.target_table} ({ds.load_pattern})")
 
 
+def peak_rss_mb() -> float | None:
+    """Peak resident memory of this process and its finished children, in MB; None where ``resource`` is missing (Windows).
+
+    ``ru_maxrss`` is in KiB on Linux (the etl-api container) and in bytes on macOS."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    peak = max(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss, resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+    return peak / (1024 * 1024 if sys.platform == "darwin" else 1024)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _configure_logging(None if args.list else args.job)
     log = logging.getLogger("etl_platform.run")
+    try:
+        return _run(args, log)
+    finally:
+        # Last line of every run (docs/server-10gb-upgrade.md): the real per-job peak, to size the etl-api memory limit.
+        # A job killed for memory never gets here -- look for OOMKilled on the container instead.
+        peak = peak_rss_mb()
+        if args.job and not args.list and peak is not None:
+            log.info("Job %s peak memory: %.0f MB", args.job, peak)
+
+
+def _run(args: argparse.Namespace, log: logging.Logger) -> int:
     try:
         load_definitions()
         REGISTRY.validate()
