@@ -78,8 +78,9 @@ export interface ComboChartProps {
    * point's `label` -- fires whether the click lands on a bar, a line point, or elsewhere in that
    * category's column, since Recharts resolves the nearest category from the click's X position
    * regardless of which series (or empty space between series) was actually under the cursor. Used
-   * for both the drill-down (year -> class) and the page-filter/cross-filter click behavior. */
-  onCategoryClick?: (label: string) => void;
+   * for both the drill-down (year -> class) and the page-filter/cross-filter click behavior.
+   * `opts.additive` is true for a Ctrl / Cmd click (add to / remove from a multi-selection); callers may ignore it. */
+  onCategoryClick?: (label: string, opts?: { additive: boolean }) => void;
   /** Fires when a click lands truly outside any category's column (the chart's own margins) --
    * only meaningful alongside onCategoryClick. Callers typically clear their selection here, as the
    * "click empty space to clear" half of a click-to-select/click-to-clear toggle. */
@@ -89,6 +90,11 @@ export interface ComboChartProps {
    * selection (as opposed to a chart merely scoped by someone else's selection, which needs no
    * special styling since all of its bars already reflect the filtered data). */
   highlightedCategory?: string | null;
+  /** The multi-select form of highlightedCategory: every listed category is highlighted, the others dim (35%). Empty or
+   * absent = nothing dims. Opt-in. */
+  highlightedCategories?: readonly string[] | null;
+  /** The x-axis labels call onCategoryClick too (pointer cursor on them). Opt-in. */
+  clickableAxisLabels?: boolean;
   /** Join a line across points whose value is null (default true). False shows the gap -- for a time axis with
    * missing days, where a joined line would draw a trend that has no data behind it. */
   connectNulls?: boolean;
@@ -148,6 +154,8 @@ export function ComboChart({
   onCategoryClick,
   onAreaClick,
   highlightedCategory = null,
+  highlightedCategories = null,
+  clickableAxisLabels = false,
   connectNulls = true,
   topPadding,
   tooltipLabelFormatter,
@@ -185,16 +193,25 @@ export function ComboChart({
       ? <circle key={`d${props.index}`} cx={props.cx} cy={props.cy} r={3} fill="#fff" stroke={color} strokeWidth={2} style={{ cursor: 'pointer' }}
         data-testid="combo-dot" onClick={() => seriesClick(props.payload?.label, key)} />
       : <g key={`n${props.index}`} />;
-  const handleChartClick = (state: any) => {
+  const additive = (e: any) => Boolean(e?.ctrlKey || e?.metaKey);
+  const handleChartClick = (state: any, e?: any) => {
     if (seriesClicked.current) {
       seriesClicked.current = false;
       return;
     }
     if (!onCategoryClick) return;
     const label = state?.activeLabel;
-    if (typeof label === 'string') onCategoryClick(label);
+    if (typeof label === 'string') onCategoryClick(label, { additive: additive(e) });
     else onAreaClick?.();
   };
+  // An axis label click: handled here only (the chart's own click below the plot would read as "empty space").
+  const handleTickClick = (entry: any, _i: number, e?: any) => {
+    if (!onCategoryClick || entry?.value === undefined) return;
+    seriesClicked.current = true;
+    e?.stopPropagation?.();
+    onCategoryClick(String(entry.value), { additive: additive(e) });
+  };
+  const selection = highlightedCategories && highlightedCategories.length ? highlightedCategories : highlightedCategory != null ? [highlightedCategory] : null;
 
   const handleLegendClick = (o: unknown) => {
     const key = (o as { dataKey?: unknown })?.dataKey;
@@ -255,9 +272,10 @@ export function ComboChart({
             <CartesianGrid stroke="var(--ps-color-border)" strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fontSize: 11, fill: 'var(--ps-color-muted-text)' }}
+              tick={{ fontSize: 11, fill: 'var(--ps-color-muted-text)', ...(clickableAxisLabels && onCategoryClick ? { cursor: 'pointer' } : {}) }}
               axisLine={{ stroke: 'var(--ps-color-border)' }}
               tickLine={false}
+              {...(clickableAxisLabels && onCategoryClick ? { onClick: handleTickClick } : {})}
               {...(showAllCategories ? { interval: 0, angle: -30, textAnchor: 'end', height: allCategoriesHeight } : {})}
             />
             <YAxis
@@ -315,8 +333,8 @@ export function ComboChart({
                   />
                 ) : null}
                 {points.map((p, i) => {
-                  const isSelected = highlightedCategory === p.label;
-                  const dimmed = highlightedCategory != null && !isSelected;
+                  const isSelected = selection !== null && selection.includes(p.label);
+                  const dimmed = selection !== null && !isSelected;
                   const inProgress = i === ipIndex;
                   const outlined = inProgress && inProgressBarStyle === 'outlined';
                   return (

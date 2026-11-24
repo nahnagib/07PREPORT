@@ -1,5 +1,5 @@
 import type { LifecycleSegment } from '../api';
-import type { ProductFact } from '../materialsAnalogy/shared';
+import { LIFECYCLE_SEGMENTS, type ProductFact } from '../materialsAnalogy/shared';
 import { portfolioOf } from './portfolio';
 
 /**
@@ -110,3 +110,44 @@ export function freshnessByCompany(rows: ProductFact[], targets: Record<string, 
     return { company, pct: f.pct, fresh: f.fresh, portfolio: f.portfolio, target, onTrack: target === null || f.portfolio === 0 ? null : f.pct >= target };
   });
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Segment filter (2026-11-24): a click on a Pareto bar / axis label / legend item filters the rest of the page. The
+// segments themselves are the API's (measures/productLifecycle.ts, the Date filter's period): this only picks rows by
+// their `lifecycle`, it never classifies. Kept in the URL as ?segment=growing,never-sold.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export const SEGMENT_PARAM = 'segment';
+
+/** 'Never sold' -> 'never-sold'. */
+export const segmentSlug = (s: LifecycleSegment): string => s.toLowerCase().replace(/\s+/g, '-');
+
+/** ?segment=growing,never-sold -> ['Growing', 'Never sold'] (page order; unknown values dropped). */
+export function parseSegmentParam(v: string | null | undefined): LifecycleSegment[] {
+  const wanted = new Set((v ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean));
+  return LIFECYCLE_SEGMENTS.filter((s) => wanted.has(segmentSlug(s)));
+}
+
+/** The URL value of a selection; null = no filter (the parameter is removed). */
+export const segmentParamValue = (sel: readonly LifecycleSegment[]): string | null =>
+  sel.length ? LIFECYCLE_SEGMENTS.filter((s) => sel.includes(s)).map(segmentSlug).join(',') : null;
+
+/**
+ * A click on a segment. Plain click: select only that segment, or clear when it is already the only one selected (with
+ * several selected, a plain click keeps only the clicked one). Ctrl / Cmd + click (additive): add or remove it.
+ */
+export function toggleSegment(sel: readonly LifecycleSegment[], seg: LifecycleSegment, additive = false): LifecycleSegment[] {
+  const has = sel.includes(seg);
+  if (additive) return LIFECYCLE_SEGMENTS.filter((s) => (s === seg ? !has : sel.includes(s)));
+  return has && sel.length === 1 ? [] : [seg];
+}
+
+/** The rows of the selected segments (all rows when nothing is selected). */
+export function bySegments<T extends Pick<ProductFact, 'lifecycle'>>(rows: T[], sel: readonly LifecycleSegment[]): T[] {
+  return sel.length ? rows.filter((r) => sel.includes(r.lifecycle)) : rows;
+}
+
+/** "Segment: Growing, Declining" (the filter bar chip). */
+export const segmentChipLabel = (sel: readonly LifecycleSegment[]): string => `Segment: ${LIFECYCLE_SEGMENTS.filter((s) => sel.includes(s)).join(', ')}`;
+
+export const isLifecycleSegment = (v: string): v is LifecycleSegment => (LIFECYCLE_SEGMENTS as string[]).includes(v);

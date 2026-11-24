@@ -1,7 +1,7 @@
 'use client';
 import React, { useEffect, useState } from 'react';
 import { SlidersHorizontal, ChevronDown, RotateCcw } from 'lucide-react';
-import { Select, DateInput, type SelectOption } from '@07ps/ui';
+import { Select, DateInput, FilterChip, type SelectOption } from '@07ps/ui';
 import type { DimOption, TachometerFilters } from '../lib/api';
 import { formatTimestamp } from '../lib/format';
 import { useAuth } from '../lib/AuthProvider';
@@ -100,6 +100,11 @@ export interface FilterBarProps {
   infoText?: string;
   /** The badge count for a page whose filters are its own state (with `onReset`); default: the shared filters above. */
   activeCount?: number;
+  /** Added to the badge count (a page filter outside the bar, e.g. a chart selection). */
+  extraActiveCount?: number;
+  /** Active page filters set outside the bar (e.g. a chart click), shown as removable chips under the header, also while
+   * the bar is collapsed. */
+  chips?: { key: string; label: string; onRemove: () => void }[];
 }
 
 const fieldBox: React.CSSProperties = { width: 152, flexShrink: 0 };
@@ -164,6 +169,8 @@ export function FilterBar({
   isPristine,
   infoText,
   activeCount,
+  extraActiveCount = 0,
+  chips,
 }: FilterBarProps) {
   const { isAdmin } = useAuth();
   // Options are cross-filtered by the server (FilterProvider owns the single /filters/options
@@ -222,7 +229,7 @@ export function FilterBar({
     (showTransactionDimensions ? (filters.channelKeys?.length ?? 0) : 0) +
     (showTransactionDimensions ? (filters.salesTeamKeys?.length ?? 0) : 0) +
     (showTransactionDimensions ? (filters.salespersonKeys?.length ?? 0) : 0) +
-    (customerEnabled ? customerValue.length : 0));
+    (customerEnabled ? customerValue.length : 0)) + extraActiveCount;
 
   const floorDate = (date: string) => (ytdOnly && date < ytdStartIso() ? ytdStartIso() : date);
 
@@ -291,6 +298,12 @@ export function FilterBar({
         <span style={{ fontSize: 11, color: 'var(--ps-color-muted-text)' }}>{isOpen ? 'Hide filters' : 'Show filters'}</span>
         <ChevronDown size={14} style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }} />
       </button>
+
+      {chips && chips.length > 0 && (
+        <div data-testid="filter-bar-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 var(--ps-space-4, 24px) var(--ps-space-2, 8px)' }}>
+          {chips.map((c) => <FilterChip key={c.key} label={c.label} onRemove={c.onRemove} />)}
+        </div>
+      )}
 
       {isOpen && (
         <div

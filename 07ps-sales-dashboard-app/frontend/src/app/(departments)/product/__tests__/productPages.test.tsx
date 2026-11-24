@@ -148,7 +148,8 @@ describe('FilterBar parity with Promotion (Revenue Trend)', () => {
   const NARROWED = ['businessUnits', 'customerGroups'];
   // ... and has no date range (always the last 12 months, 2026-11-14)
   // ... and shows Company + its own Date range only (2026-11-14): no transaction filters, dates default to the Last 12 Months
-  const PRODUCT_ONLY = ['secondRow', 'onReset', 'isPristine', 'showTransactionDimensions'];
+  // chips + extraActiveCount: the Product Lifecycle segment selection (Pareto click), shown as a chip and counted in the badge
+  const PRODUCT_ONLY = ['secondRow', 'onReset', 'isPristine', 'showTransactionDimensions', 'chips', 'extraActiveCount'];
   const OWN_DATES = ['dateFromDate', 'dateToDate', 'onDateRangeChange'];
   const promotionProps = () => {
     mocked.filterBars.length = 0;

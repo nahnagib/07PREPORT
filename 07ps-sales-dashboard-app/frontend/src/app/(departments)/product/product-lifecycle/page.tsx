@@ -1,6 +1,6 @@
 'use client';
 import { vh } from '../../../../lib/visualHelp';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AppHeader } from '../../../../components/AppHeader';
 import { BottomNavBar } from '../../../../components/BottomNavBar';
 import { FilterBar } from '../../../../components/FilterBar';
@@ -42,12 +42,35 @@ import {
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
 import { ProductName } from '../../../../components/product/ProductUi';
-import { freshnessByCompany, freshnessTargets, inSentence, lifecycleConfig, maturePct, portfolioFreshness, segmentDefinitions, type CompanyFreshness } from '../../../../lib/product/lifecycle';
+import {
+  SEGMENT_PARAM,
+  bySegments,
+  freshnessByCompany,
+  freshnessTargets,
+  inSentence,
+  isLifecycleSegment,
+  lifecycleConfig,
+  maturePct,
+  parseSegmentParam,
+  portfolioFreshness,
+  segmentChipLabel,
+  segmentDefinitions,
+  segmentParamValue,
+  toggleSegment,
+  type CompanyFreshness,
+} from '../../../../lib/product/lifecycle';
+import type { LifecycleSegment } from '../../../../lib/api';
 
 const SEGMENTS = LIFECYCLE_SEGMENTS;
 interface TableRow extends ProductFact, Record<string, unknown> {
   /** Volume of the period vs the prior period, %; null = nothing sold before. */
   growth: number | null;
+}
+
+/** The ?segment= of the current URL (the Pareto selection, kept on refresh / in a shared link). */
+function segmentsInUrl(): LifecycleSegment[] {
+  if (typeof window === 'undefined') return [];
+  return parseSegmentParam(new URLSearchParams(window.location.search).get(SEGMENT_PARAM));
 }
 
 export default function ProductLifecyclePage() {
@@ -60,20 +83,32 @@ export default function ProductLifecyclePage() {
   const overview = useProductDashboard(token, authError, retryAuth, 'product-lifecycle', scope);
   const facts = useMemo(() => toProductFacts(overview.data), [overview.data]);
   const [category, setCategory] = useState<string[]>([]);
-  const [segment, setSegment] = useState<'All' | (typeof SEGMENTS)[number]>('All');
+  // The segment filter (Pareto bar / axis label / legend item click, the pills): filters every visual but the Pareto.
+  const [segments, setSegments] = useState<LifecycleSegment[]>(segmentsInUrl);
+  const pickSegment = (label: string, additive = false) => isLifecycleSegment(label) && setSegments((sel) => toggleSegment(sel, label, additive));
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete(SEGMENT_PARAM);
+      const v = segmentParamValue(segments);
+      // readable ?segment=growing,mature (slugs are letters and dashes: nothing to encode)
+      const rest = url.searchParams.toString();
+      url.search = [rest, v ? `${SEGMENT_PARAM}=${v}` : ''].filter(Boolean).join('&');
+      if (url.toString() !== window.location.href) window.history.replaceState(null, '', url.toString());
+    } catch {
+      /* the URL is a convenience only */
+    }
+  }, [segments]);
 
   const categoryOptions: SelectOption[] = useMemo(
     () => distinctSorted(facts.map((r) => r.Category)).map((c) => ({ value: c, label: c })),
     [facts],
   );
 
-  const filtered = useMemo(
-    () =>
-      facts.filter(
-        (r) => (category.length === 0 || (r.Category !== null && category.includes(r.Category))) && (segment === 'All' || r.lifecycle === segment),
-      ),
-    [facts, category, segment],
-  );
+  // The page filters without the segment selection: the Pareto (it highlights the selection, never filters itself).
+  const base = useMemo(() => facts.filter((r) => category.length === 0 || (r.Category !== null && category.includes(r.Category))), [facts, category]);
+  // Every other visual: the selected segments of the same rows (segments are the API's, for the Date filter's period).
+  const filtered = useMemo(() => bySegments(base, segments), [base, segments]);
   // ---- KPIs (segments computed by the API for the Date filter's period vs the prior period: measures/productLifecycle.ts) ----
   const matureRows = filtered.filter((r) => r.lifecycle === 'Mature');
   const discRows = filtered.filter((r) => r.lifecycle === 'Discontinued');
@@ -102,7 +137,7 @@ export default function ProductLifecyclePage() {
   // and the cumulative share of the units ----
   const bySeg = new Map<string, { units: number; unitsLY: number; n: number }>();
   SEGMENTS.forEach((s) => bySeg.set(s, { units: 0, unitsLY: 0, n: 0 }));
-  filtered.forEach((r) => {
+  base.forEach((r) => {
     const o = bySeg.get(r.lifecycle);
     if (!o) return;
     o.units += r.volume;
@@ -132,6 +167,7 @@ export default function ProductLifecyclePage() {
         {rows.map(([name, value, color]) => (
           <div key={name} style={{ ...chartTooltipProps.itemStyle, color }}>{name} : {value}</div>
         ))}
+        <div style={{ ...chartTooltipProps.itemStyle, opacity: 0.75, marginTop: 4 }}>Click to filter · Ctrl / ⌘ + click to add</div>
       </div>
     );
   };
@@ -187,16 +223,21 @@ export default function ProductLifecyclePage() {
           {...filterBarProps}
           {...withLocalReset(() => {
             setCategory([]);
-            setSegment('All');
-          }, category.length === 0 && segment === 'All')}
+            setSegments([]);
+          }, category.length === 0 && segments.length === 0)}
+          extraActiveCount={segments.length ? 1 : 0}
+          chips={segments.length ? [{ key: 'segment', label: segmentChipLabel(segments), onRemove: () => setSegments([]) }] : []}
           secondRow={
             <>
               <div style={{ width: 200 }}>
                 <Select label="Category" options={categoryOptions} value={category} onChange={setCategory} multiSelect searchable placeholder="All Categories" />
               </div>
               <PillField label="Lifecycle Segment">
-                {(['All', ...SEGMENTS] as const).map((s) => (
-                  <Button key={s} variant={segment === s ? 'primary' : 'secondary'} style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setSegment(s)}>
+                <Button variant={segments.length === 0 ? 'primary' : 'secondary'} style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={() => setSegments([])}>
+                  All
+                </Button>
+                {SEGMENTS.map((s) => (
+                  <Button key={s} variant={segments.includes(s) ? 'primary' : 'secondary'} style={{ padding: '6px 12px', fontSize: 12.5 }} onClick={(e: React.MouseEvent) => pickSegment(s, e.ctrlKey || e.metaKey)}>
                     {s}
                   </Button>
                 ))}
@@ -256,14 +297,32 @@ export default function ProductLifecyclePage() {
               rightAxisFormatter={(v) => `${v.toFixed(0)}%`}
               tooltipContent={paretoTooltip}
               height={360}
+              onCategoryClick={(label, o) => pickSegment(label, o?.additive)}
+              highlightedCategories={segments}
+              clickableAxisLabels
             />
             <dl data-testid="lifecycle-segment-definitions" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: '6px 16px', margin: '12px 0 0', fontSize: 12 }}>
-              {SEGMENTS.map((s) => (
-                <div key={s} style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-                  <dt style={{ fontWeight: 700, color: SEGMENT_COLOR[s], whiteSpace: 'nowrap' }}>{s}</dt>
-                  <dd style={{ margin: 0, color: 'var(--ps-color-muted-text)' }}>{segDef[s]}</dd>
-                </div>
-              ))}
+              {SEGMENTS.map((s) => {
+                const on = segments.includes(s);
+                return (
+                  <div
+                    key={s}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={on}
+                    aria-label={`${s}: ${segDef[s]}`}
+                    title="Click to filter · Ctrl / ⌘ + click to add"
+                    onClick={(e) => pickSegment(s, e.ctrlKey || e.metaKey)}
+                    onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), pickSegment(s, e.ctrlKey || e.metaKey))}
+                    data-testid={`lifecycle-legend-${s}`}
+                    style={{ display: 'flex', gap: 6, alignItems: 'baseline', cursor: 'pointer', borderRadius: 4, padding: '1px 4px', opacity: segments.length && !on ? 0.45 : 1,
+                      outline: on ? `1px solid ${SEGMENT_COLOR[s]}` : 'none' }}
+                  >
+                    <dt style={{ fontWeight: 700, color: SEGMENT_COLOR[s], whiteSpace: 'nowrap' }}>{s}</dt>
+                    <dd style={{ margin: 0, color: 'var(--ps-color-muted-text)' }}>{segDef[s]}</dd>
+                  </div>
+                );
+              })}
             </dl>
           </ChartPanel>
 
@@ -272,10 +331,12 @@ export default function ProductLifecyclePage() {
               <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ps-color-text)' }}>
                 Product Detail <VisualInfoIcons title="Product Detail" {...vh('product.productLifecycle.productDetail')} />
               </span>
-              <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>Highest volume first</div>
+              <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }} data-testid="lifecycle-detail-summary">
+                Highest volume first · {tableRows.length.toLocaleString('en-US')} SKUs · {fmtNum(sum(tableRows, (r) => r.volume))} units{segments.length ? ` · ${segmentChipLabel(segments)}` : ''}
+              </div>
             </div>
             <div data-testid="lifecycle-product-grid">
-              <DataGrid key={`${periodLabel}|${lc.priorLabel}`} columns={columns} rows={tableRows} getRowId={(row) => row.id} fileName="product-lifecycle-detail" filtersSummary={`${companyLabel} · Lifecycle: ${periodLabel} vs ${priorText}`} />
+              <DataGrid key={`${periodLabel}|${lc.priorLabel}`} columns={columns} rows={tableRows} getRowId={(row) => row.id} fileName="product-lifecycle-detail" filtersSummary={`${companyLabel} · Lifecycle: ${periodLabel} vs ${priorText}${segments.length ? ` · ${segmentChipLabel(segments)}` : ''}`} />
             </div>
           </Card>
 

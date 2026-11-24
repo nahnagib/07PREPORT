@@ -6,6 +6,15 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Added (Product Lifecycle: click a segment to filter the page, 2026-11-24, round 3)
+- A click on a Pareto bar, its x-axis label, its legend item or its pill selects that segment; Ctrl / Cmd + click adds or
+  removes more; clicking the only selected segment clears it. Every other visual (KPI cards, Product Detail grid and its
+  exports) shows only the selected segments; the Pareto keeps every bar and dims the others (35%).
+- The selection is a chip in the filter bar ("Segment: Growing ✕"), counts in the Filters badge, is cleared by Reset
+  filters and is kept in the URL (?segment=growing,declining). It uses the API's segments (the Date filter's period).
+- Shared components (opt-in, other pages unchanged): ComboChart highlightedCategories / clickableAxisLabels and an
+  additive flag on onCategoryClick; FilterBar chips / extraActiveCount.
+
 ### Changed (PDP design fixes + Product Lifecycle on the Date filter, 2026-11-24, round 2)
 - **Product Lifecycle**: Growing / Mature / Declining now compare the Date filter's period with the prior period of the same
   length (default 12 months), computed in the backend; nothing sold before = Growing. Every label (legend, "?" help, Pareto
