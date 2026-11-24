@@ -198,7 +198,7 @@ describe('Product tables use the standard grid, volume first, and every product 
   it('Product Lifecycle: Product Detail is the standard grid, volume first', () => {
     render(<ProductLifecyclePage />);
     const grid = within(screen.getByTestId('lifecycle-product-grid')).getByTestId('data-grid');
-    expect(grid.getAttribute('data-headers')!.split('|').slice(0, 3)).toEqual(['Product Name', 'Volume (period)', 'Volume vs prior period']);
+    expect(grid.getAttribute('data-headers')!.split('|').slice(0, 3)).toEqual(['Product Name', 'Volume (Last 12 months)', 'Volume vs prior 12 months']);
     expect(within(grid).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([url(3, 3), url(2, 1), url(1, 1)]); // highest volume first
   });
 

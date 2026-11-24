@@ -38,13 +38,35 @@
 .pfamily { font-size: 11.5px; color: var(--ps-color-muted-text); display: flex; align-items: center; gap: 6px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
 
-/* ---- chart grid + panel header controls ------------------------------------------------------------------------- */
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 16px; align-items: stretch; }
-.toggleBtn {
-  font-size: 11px; font-weight: 600; color: var(--ps-color-muted-text); background: var(--ps-color-muted-bg); border: 1px solid var(--ps-color-border);
-  border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap;
+/* ---- development stage pipeline: chevrons joined end to end ----------------------------------------------------- */
+.summaryTotals { margin: 0 0 10px; font-size: 13px; color: var(--ps-color-muted-text); }
+.summaryTotals b { color: var(--ps-color-text); font-weight: 700; }
+.flow { display: flex; height: 104px; overflow-x: auto; overflow-y: hidden; }
+.chevronCell { flex: 1 1 0; min-width: 132px; display: flex; }
+.chevronCell + .chevronCell { margin-inline-start: -10px; }
+.chevronEmpty { flex: 0 0 104px; min-width: 104px; }
+.chevron {
+  all: unset; box-sizing: border-box; cursor: pointer; flex: 1; display: flex; padding: 2px; min-width: 0; background: transparent;
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%, 18px 50%);
 }
-.toggleBtn[aria-pressed='true'] { color: var(--ps-color-accent); border-color: var(--ps-color-accent); }
+.chevronInner {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 6px 24px 6px 28px;
+  background: color-mix(in srgb, var(--stage) 30%, var(--ps-card-bg, var(--ps-color-surface))); color: var(--ps-color-text);
+  clip-path: polygon(0 0, calc(100% - 17px) 0, 100% 50%, calc(100% - 17px) 100%, 0 100%, 17px 50%); transition: background 0.15s;
+}
+.chevron.chevronFirst { clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%); }
+.chevronInner.chevronFirst { padding-inline-start: 14px; clip-path: polygon(0 0, calc(100% - 17px) 0, 100% 50%, calc(100% - 17px) 100%, 0 100%); }
+.chevron:hover .chevronInner { background: color-mix(in srgb, var(--stage) 46%, var(--ps-card-bg, var(--ps-color-surface))); }
+.chevron:focus-visible, .chevronActive { background: var(--ps-color-text); }
+.chevronActive .chevronInner { background: color-mix(in srgb, var(--stage) 55%, var(--ps-card-bg, var(--ps-color-surface))); }
+.chevronEmpty .chevronName { white-space: normal; text-align: center; line-height: 1.15; font-size: 11.5px; }
+.chevronEmpty .chevronInner { align-items: center; padding-inline: 22px 20px; background: color-mix(in srgb, var(--stage) 9%, var(--ps-card-bg, var(--ps-color-surface))); color: var(--ps-color-muted-text); }
+.chevronEmpty .chevronInner.chevronFirst { padding-inline-start: 10px; }
+.chevronName { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.chevronCount { font-size: 24px; font-weight: 700; line-height: 1.1; display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.chevronCount small { font-size: 12px; font-weight: 600; color: var(--ps-color-muted-text); }
+.chevronMeta { display: flex; flex-wrap: wrap; gap: 1px 8px; font-size: 11px; color: var(--ps-color-muted-text); white-space: nowrap; max-height: 30px; overflow: hidden; }
+.overdueBadge { font-weight: 700; padding: 0 6px; border-radius: 5px; color: var(--ps-color-gold, #c4892f); background: color-mix(in srgb, var(--ps-color-gold, #c4892f) 18%, transparent); }
 
 /* ---- details table (drill-down) modal: the Receivables drill-down shell ------------------------------------------ */
 .modalOverlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; padding: var(--ps-space-3, 16px); }
@@ -87,6 +109,9 @@
 
 /* ---- cards (sections) --------------------------------------------------------------------------------------- */
 .card { padding: 20px 22px; border-radius: 12px; border: 1px solid var(--ps-color-border); background: var(--ps-card-bg, var(--ps-color-surface)); min-width: 0; }
+.cardHeadTight { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.badgeBtn { border: 0; cursor: pointer; font-family: inherit; }
+.badgeBtn:focus-visible { outline: 2px solid var(--ps-color-accent); outline-offset: 2px; }
 .cardHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .cardTitle { font-size: 17px; font-weight: 700; color: var(--ps-color-text); display: flex; align-items: center; gap: 8px; margin: 0; }
 .cardSub { font-size: 13px; color: var(--ps-color-muted-text); margin: 4px 0 0; }
@@ -150,20 +175,20 @@
 
 /* ---- roadmap + blockers --------------------------------------------------------------------------------------- */
 .twoCol { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 24px; }
-.roadmap { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); gap: 0; overflow-x: auto; }
-.month { border-inline-start: 1px dashed var(--ps-color-border); padding: 0 10px 8px; display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
-.monthName { font-size: 12px; font-weight: 700; color: var(--ps-color-muted-text); letter-spacing: 0.04em; padding-bottom: 4px; }
+.roadmap { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(160px, 1fr); gap: 0; overflow-x: auto; }
+.month { border-inline-start: 1px dashed var(--ps-color-border); padding: 0 10px 12px; display: flex; flex-direction: column; gap: 14px; min-height: 180px; }
+.monthName { font-size: 12px; font-weight: 700; color: var(--ps-color-muted-text); letter-spacing: 0.04em; padding-bottom: 14px; }
 .launch {
   all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 2px;
-  padding: 8px 10px; border-radius: 6px; border-inline-start: 3px solid var(--ps-color-accent);
+  padding: 10px 12px; border-radius: 6px; border-inline-start: 3px solid var(--ps-color-accent);
   background: color-mix(in srgb, var(--ps-color-accent) 12%, transparent); font-size: 12.5px; color: var(--ps-color-text);
 }
 .launch:focus-visible { outline: 2px solid var(--ps-color-accent); outline-offset: 2px; }
 .launch b { font-size: 13px; }
 .launchHealth { color: var(--ps-color-accent); }
-.footnote { font-size: 12px; color: var(--ps-color-muted-text); margin: 10px 0 0; }
-.items { display: flex; flex-direction: column; }
-.item { display: flex; gap: 12px; padding: 12px 8px; border-top: 1px solid var(--ps-color-border); }
+.footnote { font-size: 12px; color: var(--ps-color-muted-text); margin: 16px 0 0; }
+.items { display: flex; flex-direction: column; margin: 0 -22px; }
+.item { display: flex; gap: 14px; padding: 18px 22px; border-top: 1px solid var(--ps-color-border); }
 .itemLink { cursor: pointer; }
 .itemLink:hover { background: color-mix(in srgb, var(--ps-color-accent) 5%, transparent); }
 .itemIcon {

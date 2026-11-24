@@ -549,11 +549,11 @@ export const VISUAL_HELP = {
     interactions: ['Click a brand to open its page'],
   },
   'product.productLifecycle.pareto': {
-    help: { definition: 'Units sold per lifecycle segment, with the cumulative share.', formula: 'New ≤ 180 d · Growing / Declining = last 90 d vs prior 90 d ±20% · Discontinued = no sale in 365 d' },
+    help: { definition: 'Units sold per lifecycle segment, with the cumulative share.', formula: 'New ≤ 180 d · Growing / Declining = units in the selected period vs the prior period of the same length ±20% · Discontinued = no sale in 365 d' },
   },
-  // KPI cards (2026-11-15): the page fills each formula from the ETL config (lib/product/lifecycle.ts).
+  // Pareto + KPI cards: the page fills each formula from the API's lifecycle benchmark (lib/product/lifecycle.ts).
   'product.productLifecycle.kpiMature': {
-    help: { definition: 'SKUs in the Mature segment.', formula: 'Last 90 d within ±20% of prior 90 d · % = Mature ÷ portfolio' },
+    help: { definition: 'SKUs in the Mature segment.', formula: 'Selected period within ±20% of the prior period · % = Mature ÷ portfolio' },
   },
   'product.productLifecycle.kpiDiscontinued': {
     help: { definition: 'SKUs with no sale in the last 365 days.', formula: 'Last sale > 365 d ago · sub-line = units sold in the prior period' },

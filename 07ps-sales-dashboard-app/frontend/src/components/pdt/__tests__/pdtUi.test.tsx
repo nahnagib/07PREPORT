@@ -142,14 +142,21 @@ describe('Product Development Plan dashboard', () => {
     for (const label of ['On track', 'Need attention', 'Launches in next 90 days']) expect(within(status).getByText(label)).toBeTruthy();
     expect(screen.getByTestId('pdt-health-not-set').textContent).toBe('Health not set: 2');
     expect(within(screen.getByTestId('pdt-roadmap')).getByText('MonoSeal')).toBeTruthy();
-    expect(screen.getByTestId('pdt-roadmap-all').textContent).toBe('Next 90 days · 1 launch');
+    expect(screen.getByTestId('pdt-roadmap-all').textContent).toBe('NEXT 90 DAYS · 1');
+    expect([...screen.getByTestId('pdt-roadmap').querySelectorAll('[class*="monthName"]')].map((m) => m.textContent)).toEqual(['NOV 2026', 'DEC 2026', 'JAN 2027', 'FEB 2027']);
     // the shared filter bar starts collapsed, like on the other pages; the info line is on the right of its panel
     expect(screen.queryByTestId('filter-bar-info')).toBeNull();
     fireEvent.click(within(screen.getByTestId('pdt-filters')).getByRole('button', { name: /Filters/ }));
     expect(screen.getByTestId('filter-bar-info').textContent).toMatch(/^Last Excel import: 18 Nov 2026/);
-    // the stage pipeline: count, share and the overdue badge
-    expect(within(screen.getByTestId('pdt-pipeline')).getByText('1 · 33% 1 overdue')).toBeTruthy();
-    expect(within(screen.getByTestId('pdt-pipeline')).getAllByText('0 · 0%')).toHaveLength(3); // Research, Testing, Launch ready (faded)
+    // the stage pipeline: one line of totals, then a chevron per stage with count, share, overdue, readiness, next target
+    expect(screen.getByTestId('pdt-stage-totals').textContent).toBe('3 products · 2 in pipeline · 1 in market');
+    const idea = screen.getByTestId('pdt-stage-IDEA');
+    expect(idea.getAttribute('aria-label')).toBe('Idea: 1 products (33%)');
+    expect(within(idea).getByText('1 overdue')).toBeTruthy();
+    expect(within(idea).getByText('Next 01 Apr 2026')).toBeTruthy();
+    expect(within(screen.getByTestId('pdt-stage-DEVELOPMENT')).getByText('Avg 48%')).toBeTruthy();
+    // an empty stage still shows 0, without share or details
+    expect(screen.getByTestId('pdt-stage-RESEARCH').textContent).toBe('Research0');
     expect(screen.queryByText('Product stage pipeline')).toBeNull();
     expect(screen.getByText('Development stage pipeline')).toBeTruthy();
   });
@@ -180,14 +187,15 @@ describe('Product Development Plan dashboard', () => {
   it('a stage click filters the page on it (and ?stage=) and opens its products; clicking it again clears both', async () => {
     respond(DASH);
     render(<PdpPage section="dashboard" />);
-    fireEvent.click(await screen.findByRole('button', { name: 'bar Development' }));
+    fireEvent.click(await screen.findByTestId('pdt-stage-DEVELOPMENT'));
     await waitFor(() => expect(request).toHaveBeenCalledWith('/tracker/dashboard?stages=DEVELOPMENT', 'test'));
+    expect(screen.getByTestId('pdt-stage-DEVELOPMENT').getAttribute('aria-pressed')).toBe('true');
     expect(window.location.search).toBe('?stage=development');
     const drill = await screen.findByTestId('pdt-drill');
     expect(within(drill).getByText('MonoSeal')).toBeTruthy();
     expect(within(drill).queryByText('XtraCol One')).toBeNull();
     fireEvent.click(within(drill).getByRole('button', { name: 'Close' }));
-    fireEvent.click(screen.getByRole('button', { name: 'bar Development' }));
+    fireEvent.click(screen.getByTestId('pdt-stage-DEVELOPMENT'));
     await waitFor(() => expect(window.location.search).toBe(''));
     expect(screen.queryByTestId('pdt-drill')).toBeNull();
   });
@@ -200,22 +208,22 @@ describe('Product Development Plan dashboard', () => {
     expect(request).toHaveBeenCalledWith('/tracker/dashboard?stages=DEVELOPMENT', 'test');
   });
 
-  it('a family segment, a family and a table-view cell open the right products', { timeout: 15_000 }, async () => {
+  it('where we stand: a count cell opens that family + stage, a family name filters the page', { timeout: 15_000 }, async () => {
     respond(DASH);
     render(<PdpPage section="dashboard" />);
-    fireEvent.click(await screen.findByRole('button', { name: 'segment Tile Fixing LAUNCHED' }));
-    let drill = await screen.findByTestId('pdt-drill');
+    const matrix = await screen.findByTestId('pdt-matrix');
+    expect(within(matrix).queryByTestId('pdt-matrix-toggle')).toBeNull();
+    fireEvent.click(within(matrix).getByRole('button', { name: 'Tile Fixing, Launched: 1' }));
+    const drill = await screen.findByTestId('pdt-drill');
     expect(within(drill).getByText('Tile Fixing · Launched')).toBeTruthy();
     expect(within(drill).getByText('XtraCol One')).toBeTruthy();
     expect(within(drill).queryByText('Wide-Joint Grout')).toBeNull();
     fireEvent.click(within(drill).getByRole('button', { name: 'Close' }));
-    fireEvent.click(screen.getByRole('button', { name: 'bar Tile Fixing' }));
-    drill = await screen.findByTestId('pdt-drill');
-    expect(within(drill).getByTestId('pdt-drill-count').textContent).toBe('2 products');
-    fireEvent.click(within(drill).getByRole('button', { name: 'Close' }));
-    fireEvent.click(screen.getByTestId('pdt-matrix-toggle'));
-    fireEvent.click(within(screen.getByTestId('pdt-matrix')).getByRole('button', { name: 'Waterproofing, Development: 1' }));
+    fireEvent.click(within(matrix).getByRole('button', { name: 'Waterproofing, Development: 1' }));
     expect(within(await screen.findByTestId('pdt-drill')).getByText('MonoSeal')).toBeTruthy();
+    fireEvent.click(within(screen.getByTestId('pdt-drill')).getByRole('button', { name: 'Close' }));
+    fireEvent.click(within(matrix).getByRole('button', { name: /Waterproofing$/ }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith('/tracker/dashboard?familyIds=22', 'test'));
   });
 
   it('a year opens its launched and planned products', async () => {

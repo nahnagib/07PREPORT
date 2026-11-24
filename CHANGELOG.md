@@ -6,6 +6,14 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (PDP design fixes + Product Lifecycle on the Date filter, 2026-11-24, round 2)
+- **Product Lifecycle**: Growing / Mature / Declining now compare the Date filter's period with the prior period of the same
+  length (default 12 months), computed in the backend; nothing sold before = Growing. Every label (legend, "?" help, Pareto
+  series, KPI sub-line, table headers, exports) shows the period ("Last 12 months", "Last 90 days", or the dates).
+- **Product Development Plan**: Where we stand table, Launch roadmap (next 90 days, its months only) and Blockers &
+  decisions restored; the Development stage pipeline is a compact row of chevrons (count, share, overdue, readiness, next
+  target, hover = top products, click = details table). The year chart no longer dims the other years.
+
 ### Changed (Product Development Plan dashboard redesign + Brand, 2026-11-24)
 - **Brand**: new optional last column in Product_Development_Input.xlsx (Products!U, Lists!J dropdown); the import reads it by
   header name (blank or missing = "Unassigned"); migration 0082 `pdt_product.brand`; Brand filter next to Family.

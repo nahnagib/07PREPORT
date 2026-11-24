@@ -10,7 +10,7 @@ import { ExportButtons } from '../product/ProductUi';
 import { FilterBar, fmtDay, fmtMonth, fmtStamp, useLookup } from './common';
 import { DrillModal } from './DrillModal';
 import { ProductDrawer } from './ProductDrawer';
-import { stageFromParam, stageToParam } from './StageSummary';
+import { StagePipeline, stageFromParam, stageToParam } from './StageSummary';
 import s from './Pdt.module.css';
 
 /** What the open details table shows. */
@@ -37,17 +37,16 @@ function stageInUrl(): StageCode | null {
   return stageFromParam(new URLSearchParams(window.location.search).get('stage'));
 }
 
-const pct = (n: number, total: number) => (total > 0 ? Math.round((n / total) * 100) : 0);
 
 /**
  * Product → Product Development Plan (dashboard tab). Read with product_development_plan View.
  *   Row 1 (portfolio): Total = In market + Active (target within 12 months) + Planned (no date, > 12 months, date passed).
  *   Row 2 (status, not-launched products): On track, Need attention, Launches in next 90 days (+ "Health not set" note).
- *   Charts: development stage pipeline, where we stand (family x stage), launch roadmap (= the 90-day card), launches by
- *   year, open blockers & decisions.
- * Every card, stage, family segment and year opens the details table (DrillModal) of its products; a row opens the product
- * drawer. Everything follows the filters (backend applies them; the drill-downs use the same filtered set). A stage click
- * also sets the Stage filter (?stage= in the URL).
+ *   Sections (full-width rows): development stage pipeline (chevrons), where we stand (family x stage table), launch
+ *   roadmap (= the 90-day card) next to the open blockers & decisions, launches by year.
+ * Every card, stage, count cell and year opens the details table (DrillModal) of its products; a row opens the product
+ * drawer; a family name filters the page. Everything follows the filters (backend applies them; the drill-downs use the
+ * same filtered set). A stage click also sets the Stage filter (?stage= in the URL).
  */
 export function TrackerDashboard({ options, revision, refresh }: { options: Options; revision: number; refresh: () => void }) {
   const { token, canView } = useAuth();
@@ -61,7 +60,6 @@ export function TrackerDashboard({ options, revision, refresh }: { options: Opti
     return st ? { kind: 'stage', stage: st } : null;
   });
   const [open, setOpen] = useState<{ code: string } | null>(null);
-  const [matrixTable, setMatrixTable] = useState(false);
   const query = filterQuery(filters);
   const dash = usePdp<DashboardData>(`${TRACKER}/dashboard${query}`, revision);
   const d = dash.data;
@@ -121,6 +119,10 @@ export function TrackerDashboard({ options, revision, refresh }: { options: Opti
     }
   }, [d, drill, byCode, lookup]);
 
+  /** A family name filters the page to that family (again = all families). */
+  const focusFamily = (id: number | null) =>
+    id !== null && setFilters((f) => ({ ...f, familyIds: f.familyIds.length === 1 && f.familyIds[0] === String(id) ? [] : [String(id)] }));
+
   const kpiActive = (key: KpiKey) => drill?.kind === 'kpi' && drill.key === key;
   const kpi = (key: KpiKey, value: number, status: SemanticStatus, footnote?: string) => (
     <button
@@ -136,12 +138,6 @@ export function TrackerDashboard({ options, revision, refresh }: { options: Opti
   );
 
   // ---- charts ----
-  const stagePoints: GroupedBarChartPoint[] = (d?.stageSummary.stages ?? []).map((t) => ({ label: t.label, count: t.count, _stage: t.stage, _color: t.color, _overdue: t.overdue }));
-  const stageTotal = d?.stageSummary.totals.total ?? 0;
-  const stageOfLabel = (label: string) => d?.stageSummary.stages.find((t) => t.label === label)?.stage;
-  const familyRows = (d?.matrix.rows ?? []).filter((r) => r.total > 0);
-  const familyPoints: GroupedBarChartPoint[] = familyRows.map((r) => ({ label: r.family, ...r.counts, _total: r.total }));
-  const familyOfLabel = (label: string) => familyRows.find((r) => r.family === label);
   const yearPoints: GroupedBarChartPoint[] = (d?.byYear ?? []).filter((y) => y.launched + y.planned > 0).map((y) => ({ label: String(y.year), launched: y.launched, planned: y.planned }));
   const roadmapCount = d ? d.roadmap.months.reduce((n, m) => n + m.products.length, 0) : 0;
 
@@ -184,135 +180,154 @@ export function TrackerDashboard({ options, revision, refresh }: { options: Opti
             )}
           </div>
 
-          <div className={s.grid2}>
-            <ChartPanel title="Development stage pipeline" style={PANEL} wrapHeader headerActions={<span className={s.badge}>{stageTotal} products</span>}>
-              <div data-testid="pdt-pipeline">
-                <GroupedBarChart
-                  showTitle={false}
-                  showLegend={false}
-                  points={stagePoints}
-                  bars={[{ key: 'count', name: 'Products', color: 'var(--ps-color-accent)' }]}
-                  colorForPoint={(p) => ((p.count as number) > 0 ? (p._color as string) : `color-mix(in srgb, ${p._color as string} 30%, transparent)`)}
-                  highlightedCategory={selected ? lookup.label('stage', selected) : null}
-                  onCategoryClick={(label) => {
-                    const st = stageOfLabel(label);
-                    if (st) clickStage(st);
-                  }}
-                  endLabel={(p) => ({
-                    text: `${p.count as number} · ${pct(p.count as number, stageTotal)}%`,
-                    badge: (p._overdue as number) > 0 ? `${p._overdue as number} overdue` : undefined,
-                    muted: (p.count as number) === 0,
+          <section className={s.card} data-testid="pdt-pipeline-card">
+            <div className={s.cardHeadTight}>
+              <h2 className={s.cardTitle}>Development stage pipeline</h2>
+              <span className={s.hint}>Hover a stage for its products · click to open them</span>
+            </div>
+            <StagePipeline tiles={d.stageSummary.stages} totals={d.stageSummary.totals} selected={selected} onSelect={clickStage} />
+          </section>
+
+          <section className={s.card} data-testid="pdt-matrix">
+            <div className={s.cardHead}>
+              <div>
+                <h2 className={s.cardTitle}>Where we stand</h2>
+                <p className={s.cardSub}>Products by family and stage. Click a number to see its products; click a family to see only that family.</p>
+              </div>
+              <span className={s.badge}>{d.matrix.total} products</span>
+            </div>
+            <div className={s.tableWrap} style={{ margin: 0 }}>
+              <table className={s.matrix}>
+                <thead>
+                  <tr>
+                    <th scope="col">Family</th>
+                    {lookup.stages.map((st) => <th key={st.code} scope="col">{st.label}</th>)}
+                    <th scope="col">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.matrix.rows.map((r) => {
+                    const famActive = filters.familyIds.length === 1 && filters.familyIds[0] === String(r.familyId);
+                    return (
+                      <tr key={r.familyId ?? 'none'}>
+                        <td>
+                          <button type="button" className={s.familyBtn} onClick={() => focusFamily(r.familyId)} aria-pressed={famActive} title={lookup.families.find((f) => f.value_id === r.familyId)?.description ?? undefined}>
+                            <span className={s.dot} style={{ background: lookup.familyColor(r.familyId) }} />
+                            {r.family}
+                          </button>
+                        </td>
+                        {lookup.stages.map((st) => {
+                          const n = r.counts[st.code as StageCode] ?? 0;
+                          const active = drill?.kind === 'family' && drill.familyId === r.familyId && drill.stage === st.code;
+                          return (
+                            <td key={st.code}>
+                              {n === 0 ? (
+                                <span className={`${s.cell} ${s.cellZero}`}>·</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={`${s.cell}${active ? ` ${s.cellActive}` : ''}`}
+                                  style={{ background: `color-mix(in srgb, ${st.color} ${Math.min(14 + n * 6, 46)}%, transparent)` }}
+                                  onClick={() => setDrill({ kind: 'family', familyId: r.familyId, family: r.family, stage: st.code as StageCode })}
+                                  aria-label={`${r.family}, ${st.label}: ${n}`}
+                                >
+                                  {n}
+                                </button>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td><b>{r.total}</b></td>
+                      </tr>
+                    );
                   })}
-                  integerAxis
-                  height={Math.max(200, stagePoints.length * 38)}
-                  yAxisWidth={104}
-                />
-              </div>
-            </ChartPanel>
+                  <tr className={s.totalRow}>
+                    <td>Total</td>
+                    {lookup.stages.map((st) => <td key={st.code}>{d.matrix.totals[st.code as StageCode] ?? 0}</td>)}
+                    <td>{d.matrix.total}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-            <ChartPanel
-              title="Where we stand"
-              style={PANEL}
-              wrapHeader
-              headerActions={
-                <button type="button" className={s.toggleBtn} aria-pressed={matrixTable} onClick={() => setMatrixTable((x) => !x)} data-testid="pdt-matrix-toggle">
-                  {matrixTable ? 'Chart view' : 'Table view'}
-                </button>
-              }
-            >
-              <div data-testid="pdt-matrix">
-                {matrixTable ? (
-                  <MatrixTable d={d} lookup={lookup} onCell={(familyId, family, stage) => setDrill({ kind: 'family', familyId, family, stage })} />
-                ) : (
-                  <GroupedBarChart
-                    showTitle={false}
-                    stacked
-                    points={familyPoints}
-                    bars={lookup.stages.map((st) => ({ key: st.code as string, name: st.label, color: st.color }))}
-                    onBarClick={(label, stage) => {
-                      const r = familyOfLabel(label);
-                      if (r) setDrill({ kind: 'family', familyId: r.familyId, family: r.family, stage: stage as StageCode });
-                    }}
-                    onCategoryClick={(label) => {
-                      const r = familyOfLabel(label);
-                      if (r) setDrill({ kind: 'family', familyId: r.familyId, family: r.family });
-                    }}
-                    endLabel={(p) => ({ text: String(p._total) })}
-                    endLabelWidth={40}
-                    integerAxis
-                    height={Math.max(220, familyPoints.length * 34 + 60)}
-                    yAxisWidth={170}
-                  />
-                )}
-              </div>
-            </ChartPanel>
-
-            <ChartPanel
-              title="Launch roadmap"
-              style={PANEL}
-              wrapHeader
-              headerActions={
-                <button type="button" className={s.toggleBtn} onClick={() => setDrill({ kind: 'kpi', key: 'upcomingLaunches' })} data-testid="pdt-roadmap-all">
-                  Next {d.settings.upcomingWindowDays} days · {roadmapCount} launch{roadmapCount === 1 ? '' : 'es'}
-                </button>
-              }
-            >
-              <div data-testid="pdt-roadmap">
-                <div className={s.roadmap}>
-                  {d.roadmap.months.map((m) => (
-                    <div key={m.month} className={s.month}>
-                      <div className={s.monthName}>{fmtMonth(m.month)}</div>
-                      {m.products.length === 0 && <span className={s.muted}>—</span>}
-                      {m.products.map((p) => (
-                        <button key={p.code} type="button" className={s.launch} onClick={() => setOpen({ code: p.code })}>
-                          <b>{p.name}</b>
-                          <span>{fmtDay(p.targetLaunch)} · {p.health ? lookup.label('health', p.health) : 'Health not set'}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ))}
+          <div className={s.twoCol}>
+            <section className={s.card} data-testid="pdt-roadmap">
+              <div className={s.cardHead}>
+                <div>
+                  <h2 className={s.cardTitle}>Launch roadmap</h2>
+                  <p className={s.cardSub}>Upcoming target launches · grouped by month</p>
                 </div>
-                <p className={s.footnote}>
-                  Target launch {fmtDay(d.today)} – {fmtDay(d.roadmap.windowEnd)}. {d.roadmap.outsideWindow} other product(s) have a target date outside this window.
-                </p>
+                <button type="button" className={`${s.badge} ${s.badgeBtn}`} onClick={() => setDrill({ kind: 'kpi', key: 'upcomingLaunches' })} data-testid="pdt-roadmap-all">
+                  NEXT {d.settings.upcomingWindowDays} DAYS · {roadmapCount}
+                </button>
               </div>
-            </ChartPanel>
+              <div className={s.roadmap}>
+                {d.roadmap.months.map((m) => (
+                  <div key={m.month} className={s.month}>
+                    <div className={s.monthName}>{fmtMonth(m.month)}</div>
+                    {m.products.length === 0 && <span className={s.muted}>No launch</span>}
+                    {m.products.map((p) => (
+                      <button key={p.code} type="button" className={s.launch} onClick={() => setOpen({ code: p.code })}>
+                        <b>{p.name}</b>
+                        <span>{fmtDay(p.targetLaunch)}</span>
+                        <span className={s.launchHealth}>{p.health ? lookup.label('health', p.health) : 'Health not set'}</span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+              <p className={s.footnote}>
+                Target launch {fmtDay(d.today)} – {fmtDay(d.roadmap.windowEnd)}. {d.roadmap.outsideWindow} other product(s) have target dates outside this window. Readiness is manually estimated.
+              </p>
+            </section>
 
-            <ChartPanel title="Launches by year" style={PANEL} wrapHeader>
-              <div data-testid="pdt-years">
-                <GroupedBarChart
-                  showTitle={false}
-                  stacked
-                  points={yearPoints}
-                  bars={[
-                    { key: 'launched', name: 'Launched', color: 'var(--ps-color-success)' },
-                    { key: 'planned', name: 'Planned (target)', color: 'var(--ps-color-accent)' },
-                  ]}
-                  onCategoryClick={(label) => setDrill({ kind: 'year', year: Number(label) })}
-                  showTotals
-                  integerAxis
-                  height={Math.max(200, yearPoints.length * 30 + 60)}
-                  yAxisWidth={48}
-                />
+            <section className={s.card} data-testid="pdt-blockers">
+              <div className={s.cardHead}>
+                <div>
+                  <h2 className={s.cardTitle}>Blockers &amp; decisions</h2>
+                  <p className={s.cardSub}>Actions that need attention to keep delivery moving.</p>
+                </div>
+                <span className={`${s.badge} ${s.badgeWarn}`}>{d.blockers.length} open</span>
               </div>
-            </ChartPanel>
+              <div className={s.items}>
+                {d.blockers.length === 0 && (
+                  <div className={s.item}>
+                    <span className={s.muted}>Nothing open. Blockers and decisions come from the Excel file&apos;s &quot;Blockers &amp; decisions&quot; sheet or the product drawer.</span>
+                  </div>
+                )}
+                {d.blockers.map((b) => (
+                  <div key={b.blockerId} className={`${s.item} ${s.itemLink}${b.overdue ? ` ${s.itemOverdue}` : ''}`} role="button" tabIndex={0} onClick={() => b.productCode && setOpen({ code: b.productCode })} onKeyDown={(e) => e.key === 'Enter' && b.productCode && setOpen({ code: b.productCode })}>
+                    <span className={`${s.itemIcon}${b.overdue ? ` ${s.itemIconOverdue}` : ''}`} aria-hidden>!</span>
+                    <div>
+                      <div className={s.itemTitle}>{b.title}</div>
+                      <div className={s.itemMeta}>
+                        {b.productName} · {b.ownerName ?? 'No owner'} · Due {fmtDay(b.dueDate)}{b.overdue ? ' · Overdue' : ''}
+                      </div>
+                      <div className={s.itemAction}>{b.requiredAction}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
           </div>
 
-          <ChartPanel title="Blockers & decisions" style={PANEL} wrapHeader headerActions={<span className={`${s.badge} ${s.badgeWarn}`}>{d.blockers.length} open</span>}>
-            <div className={s.items} data-testid="pdt-blockers">
-              {d.blockers.length === 0 && <div className={s.item}><span className={s.muted}>Nothing open.</span></div>}
-              {d.blockers.map((b) => (
-                <div key={b.blockerId} className={`${s.item} ${s.itemLink}${b.overdue ? ` ${s.itemOverdue}` : ''}`} role="button" tabIndex={0} onClick={() => b.productCode && setOpen({ code: b.productCode })} onKeyDown={(e) => e.key === 'Enter' && b.productCode && setOpen({ code: b.productCode })}>
-                  <span className={`${s.itemIcon}${b.overdue ? ` ${s.itemIconOverdue}` : ''}`} aria-hidden>!</span>
-                  <div>
-                    <div className={s.itemTitle}>{b.title}</div>
-                    <div className={s.itemMeta}>
-                      {b.productName} · {b.ownerName ?? 'No owner'} · Due {fmtDay(b.dueDate)}{b.overdue ? ' · Overdue' : ''}
-                    </div>
-                    <div className={s.itemAction}>{b.requiredAction}</div>
-                  </div>
-                </div>
-              ))}
+          <ChartPanel title="Launches by year" style={PANEL} wrapHeader>
+            <div data-testid="pdt-years">
+              <GroupedBarChart
+                showTitle={false}
+                stacked
+                points={yearPoints}
+                bars={[
+                  { key: 'launched', name: 'Launched', color: 'var(--ps-color-success)' },
+                  { key: 'planned', name: 'Planned (target)', color: 'var(--ps-color-accent)' },
+                ]}
+                onCategoryClick={(label) => setDrill({ kind: 'year', year: Number(label) })}
+                showTotals
+                integerAxis
+                height={Math.max(180, yearPoints.length * 28 + 60)}
+                yAxisWidth={48}
+              />
             </div>
           </ChartPanel>
         </>
@@ -360,58 +375,3 @@ const KPI_RULE = (days: number): Record<KpiKey, string> => ({
   upcomingLaunches: `Not launched, target launch from today to today + ${days} days (the launch roadmap).`,
   healthNotSet: 'Not launched, health left blank.',
 });
-
-/** "Where we stand" as a table (the Table view toggle): families x stages, every non-zero cell opens its products. */
-function MatrixTable({ d, lookup, onCell }: { d: DashboardData; lookup: ReturnType<typeof useLookup>; onCell: (familyId: number | null, family: string, stage?: StageCode) => void }) {
-  return (
-    <div className={s.tableWrap} style={{ margin: 0 }}>
-      <table className={s.matrix}>
-        <thead>
-          <tr>
-            <th scope="col">Family</th>
-            {lookup.stages.map((st) => <th key={st.code} scope="col">{st.label}</th>)}
-            <th scope="col">Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {d.matrix.rows.map((r) => (
-            <tr key={r.familyId ?? 'none'}>
-              <td>
-                <button type="button" className={s.familyBtn} onClick={() => onCell(r.familyId, r.family)}>
-                  <span className={s.dot} style={{ background: lookup.familyColor(r.familyId) }} />
-                  {r.family}
-                </button>
-              </td>
-              {lookup.stages.map((st) => {
-                const n = r.counts[st.code as StageCode] ?? 0;
-                return (
-                  <td key={st.code}>
-                    {n === 0 ? (
-                      <span className={`${s.cell} ${s.cellZero}`}>·</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className={s.cell}
-                        style={{ background: `color-mix(in srgb, ${st.color} ${Math.min(14 + n * 6, 46)}%, transparent)` }}
-                        onClick={() => onCell(r.familyId, r.family, st.code as StageCode)}
-                        aria-label={`${r.family}, ${st.label}: ${n}`}
-                      >
-                        {n}
-                      </button>
-                    )}
-                  </td>
-                );
-              })}
-              <td><b>{r.total}</b></td>
-            </tr>
-          ))}
-          <tr className={s.totalRow}>
-            <td>Total</td>
-            {lookup.stages.map((st) => <td key={st.code}>{d.matrix.totals[st.code as StageCode] ?? 0}</td>)}
-            <td>{d.matrix.total}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  );
-}

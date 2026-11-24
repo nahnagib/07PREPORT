@@ -1,3 +1,16 @@
+# Deploy notes: PDP design fixes + Product Lifecycle on the Date filter (2026-11-24, round 2)
+
+No migration (0082 from the first round is still needed). Rebuild **backend** and **frontend**; no ETL change.
+
+1. **Product Lifecycle**: Growing / Mature / Declining are computed by the backend (`measures/productLifecycle.ts`) on the
+   Date filter's period vs the prior period of the same length (default Last 12 Months vs the 12 months before), on units,
+   ±`growth_threshold_pct` (20%). New (180 d) and Discontinued (365 d) keep their fixed rules from the ETL run's date.
+   The ETL's own `LifecycleSegment` column and `trend_window_days` are no longer read by the page.
+2. **Product Development Plan**: Where we stand table, Launch roadmap (90 days) and Blockers & decisions are back in their
+   previous design; the stage pipeline is a row of chevrons. "In pipeline" = every product not launched yet.
+
+---
+
 # Deploy notes: Product Development Plan dashboard redesign + Brand (2026-11-24)
 
 **Migration 0082** (`data/warehouse/migrations/0082_pdt_brand.sql`, idempotent; down: `data/warehouse/down/0082_pdt_brand_down.sql`):

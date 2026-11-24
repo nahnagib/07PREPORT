@@ -17,15 +17,21 @@ describe('Portfolio Freshness (2026-11-15): Active + Non Active only', () => {
   });
 });
 
-describe('lifecycle definitions come from the ETL config', () => {
-  it('uses the config values (defaults = config/product_dashboard.json)', () => {
-    expect(lifecycleConfig(undefined)).toEqual({ newDays: 180, windowDays: 90, growthPct: 20, noSalesDays: 365 });
+describe('lifecycle definitions follow the benchmark period', () => {
+  it('defaults to the config values and the Last 12 Months', () => {
+    expect(lifecycleConfig(undefined)).toEqual({ newDays: 180, growthPct: 20, noSalesDays: 365, label: 'Last 12 months', priorLabel: 'Prior 12 months' });
     const c = lifecycleConfig({ lifecycle: { new_first_sale_within_days: 120, trend_window_days: 60, growth_threshold_pct: 15, discontinued_no_sales_days: 300 } });
     const d = segmentDefinitions(c);
     expect(d.New).toBe('First sale ≤ 120 d');
     expect(d.Discontinued).toBe('No sale in 300 d');
-    expect(d.Growing).toBe('Last 60 d > +15%');
-    expect(d.Mature).toBe('Last 60 d within ±15%');
+    expect(d.Growing).toBe('Last 12 months > +15%');
+    expect(d.Mature).toBe('Last 12 months within ±15%');
+  });
+  it("uses the API's benchmark labels for any other range", () => {
+    const d = segmentDefinitions(lifecycleConfig({}, { label: '1 Jan – 24 Nov 2026', priorLabel: 'Prior period (7 Feb – 31 Dec 2025)', growthPct: 20, newDays: 180, noSalesDays: 365 }));
+    expect(d.Growing).toBe('1 Jan – 24 Nov 2026 > +20%');
+    expect(d.Declining).toBe('1 Jan – 24 Nov 2026 < −20%');
+    expect(segmentDefinitions(lifecycleConfig({}, { label: 'Last 90 days', priorLabel: 'Prior 90 days', growthPct: 20, newDays: 180, noSalesDays: 365 })).Mature).toBe('Last 90 days within ±20%');
   });
 });
 

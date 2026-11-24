@@ -445,8 +445,19 @@ export async function getDashboard(filters: Filters, today = businessToday()) {
     /** The product codes behind each KPI card (the drill-down tables), same filtered set as the cards. */
     kpiCodes: kpiSets(products, today, settings),
     stageSummary: {
-      stages: stageSummary(summarySet, today).map((st) => ({ ...st, label: stageList.find((x) => x.code === st.stage)?.label ?? st.stage, color: stageList.find((x) => x.code === st.stage)?.color ?? '#8a94a6' })),
-      totals: { total: summaryKpis.total, inPipeline: summaryKpis.active, inMarket: summaryKpis.inMarket },
+      stages: stageSummary(summarySet, today).map((st) => ({
+        ...st,
+        label: stageList.find((x) => x.code === st.stage)?.label ?? st.stage,
+        color: stageList.find((x) => x.code === st.stage)?.color ?? '#8a94a6',
+        // The pipeline tooltip: the first products of the stage (nearest target first; launched: latest launch first).
+        top: summarySet
+          .filter((p) => p.stage === st.stage)
+          .sort((x, y) => (st.stage === 'LAUNCHED' ? (y.actualLaunch ?? '').localeCompare(x.actualLaunch ?? '') : (x.targetLaunch ?? '9999').localeCompare(y.targetLaunch ?? '9999')))
+          .slice(0, 5)
+          .map((p) => ({ code: p.code, name: p.name, date: st.stage === 'LAUNCHED' ? p.actualLaunch : p.targetLaunch })),
+      })),
+      // In pipeline = every product not launched yet (Active + Planned), so total = in pipeline + in market.
+      totals: { total: summaryKpis.total, inPipeline: summaryKpis.total - summaryKpis.inMarket, inMarket: summaryKpis.inMarket },
     },
     pipeline: stageList.map((st) => ({ stage: st.code as StageCode, label: st.label, color: st.color, products: productCards.filter((p) => p.stage === st.code) })),
     // The matrix lists every family even under a family filter, so the selected row stays in context.

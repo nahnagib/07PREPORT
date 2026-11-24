@@ -43,7 +43,8 @@
  * BCG class: Active products only, always one of Stars / Cash Cows / Strategic / Dogs (measures/bcgLatestProfit.ts; no
  * cost data = low GP%, flagged missingCost). The thresholds never leave the server (publicThresholds).
  * Profit data -- profit, GP%, cost, missingCost -- is served only with View on `profit_data` (withoutProfit, the route).
- * Stock, days of inventory and lifecycle are as of the last ETL run.
+ * Stock and days of inventory are as of the last ETL run. Lifecycle segment (2026-11-24): the period vs the prior period
+ * (measures/productLifecycle.ts); New / Discontinued stay measured from the ETL run's date.
  * On Hand (2026-11-10): Odoo's On Hand of the product in its company (OnHandQty / OnHandValue, every internal location);
  * stockQty stays the finished-goods stock behind DOH, the stock band and ISR.
  *
@@ -60,6 +61,8 @@ import { odooConfiguredBaseUrl, odooFormUrl } from '../lib/odooLinks';
 import { FRESHNESS_TARGET_PCT } from '../config/productTargets';
 import { BCG_CLASS_KEYS, bcgRule, classify, classifyPeriod, fetchBcgPeriod, withBcgThresholds, type BcgClassKey, type BcgResult } from './bcgLatestProfit';
 import { resolveProductPeriod, type ProductPeriod } from '../lib/last12Months';
+import { lifecycleBenchmark, lifecycleRule, lifecycleSegmentOf, type LifecycleBenchmark } from './productLifecycle';
+import { getAppTimezone } from '../lib/timezone';
 import { isArchivedRow, isPortfolioStatus, productStatusOf, statusFromSalesAndStock, PRODUCT_STATUSES, type ProductStatus } from './productPortfolio';
 
 export interface UomQty {
@@ -204,6 +207,8 @@ export interface ProductDashboardOverview {
   statusSummaryError: string | null;
   /** Only with query.includeSkuList: the SKUs behind the Total SKUs / Product Status cards (same grouping, same count). */
   skuList?: ProductStatusSkuRow[];
+  /** The Product Lifecycle benchmark: the period vs the prior period, its labels and the segment rule (productLifecycle.ts). */
+  lifecycleBenchmark: LifecycleBenchmark;
 }
 
 /** One SKU of the Product Status cards (2026-11-15): an Odoo variant, its company rows combined exactly as the cards
@@ -558,6 +563,11 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     r.bcgDataAsOf = b?.dataAsOf ?? null;
     r.bcgMovement = movementOf(r, period, movementRule);
   }
+  // Lifecycle segment on the Date filter's period vs the prior period (productLifecycle.ts), not the ETL's 90-day window.
+  const today = DateTime.now().setZone(getAppTimezone()).toISODate() as string;
+  const lcRule = lifecycleRule(thresholds);
+  const lcAsOf = isoDate(meta.AsOfDate) ?? today;
+  for (const r of products) r.lifecycleSegment = lifecycleSegmentOf(r, lcRule, lcAsOf);
 
   const statuses = new Map(viewRows.map((r) => [String(r.ProductCompanyKey), statusOf(r)]));
 
@@ -579,6 +589,7 @@ export async function computeProductDashboard(pool: Pool, query: ProductDashboar
     builtAtUtc: meta.BuiltAtUtc ? new Date(meta.BuiltAtUtc).toISOString() : null,
     period,
     lookbackDays: num(meta.LookbackDays) || 90,
+    lifecycleBenchmark: lifecycleBenchmark(period, lcRule, lcAsOf, today),
     thresholds: { ...publicThresholds(thresholds), freshness_targets: { ...FRESHNESS_TARGET_PCT } },
     products,
     totals: { value: totalValue, lines: totalLines, volumeByUom: uomList(totalQty) },

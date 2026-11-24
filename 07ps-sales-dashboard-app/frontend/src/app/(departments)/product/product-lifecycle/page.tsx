@@ -42,7 +42,7 @@ import {
   type ProductFact,
 } from '../../../../lib/materialsAnalogy/shared';
 import { ProductName } from '../../../../components/product/ProductUi';
-import { freshnessByCompany, freshnessTargets, lifecycleConfig, maturePct, portfolioFreshness, segmentDefinitions, type CompanyFreshness } from '../../../../lib/product/lifecycle';
+import { freshnessByCompany, freshnessTargets, inSentence, lifecycleConfig, maturePct, portfolioFreshness, segmentDefinitions, type CompanyFreshness } from '../../../../lib/product/lifecycle';
 
 const SEGMENTS = LIFECYCLE_SEGMENTS;
 interface TableRow extends ProductFact, Record<string, unknown> {
@@ -74,19 +74,25 @@ export default function ProductLifecyclePage() {
       ),
     [facts, category, segment],
   );
-  // ---- KPIs (segments come precomputed from the ETL: config/product_dashboard.json "lifecycle") ----
+  // ---- KPIs (segments computed by the API for the Date filter's period vs the prior period: measures/productLifecycle.ts) ----
   const matureRows = filtered.filter((r) => r.lifecycle === 'Mature');
   const discRows = filtered.filter((r) => r.lifecycle === 'Discontinued');
   // Portfolio Freshness (2026-11-15): Active + Non Active only (lib/product/lifecycle.ts portfolioFreshness)
   const fresh = portfolioFreshness(filtered);
   // Freshness vs each company's own target (2026-11-15, backend config/productTargets.ts): never one blended number
   const freshByCompany = freshnessByCompany(filtered, freshnessTargets(overview.data?.thresholds));
-  const lc = lifecycleConfig(overview.data?.thresholds);
+  const lc = lifecycleConfig(overview.data?.thresholds, overview.data?.lifecycleBenchmark);
   const segDef = segmentDefinitions(lc);
+  // The benchmark in every label: "Last 12 months" / "Prior 12 months" (or the dates of a custom range)
+  const periodLabel = lc.label;
+  const priorText = inSentence(lc.priorLabel);
+  const unitsLabel = `Units sold (${periodLabel})`;
   const withFormula = (entry: ReturnType<typeof vh>, formula: string) => (entry.help ? { ...entry.help, formula } : undefined);
   const kpiHelp = {
-    mature: withFormula(vh('product.productLifecycle.kpiMature'), `${segDef.Mature} · % = Mature ÷ portfolio`),
-    discontinued: withFormula(vh('product.productLifecycle.kpiDiscontinued'), `${segDef.Discontinued} · sub-line = units sold in the prior period`),
+    mature: withFormula(vh('product.productLifecycle.kpiMature'), `Units ${inSentence(segDef.Mature)} of the ${priorText} · % = Mature ÷ portfolio`),
+    discontinued: withFormula(vh('product.productLifecycle.kpiDiscontinued'), `${segDef.Discontinued} · sub-line = units sold in the ${priorText}`),
+    pareto: withFormula(vh('product.productLifecycle.pareto'),
+      `New ≤ ${lc.newDays} d · Growing / Declining = units ${inSentence(periodLabel)} vs the ${priorText} ±${lc.growthPct}% · Discontinued = no sale in ${lc.noSalesDays} d`),
     freshness: withFormula(vh('product.productLifecycle.kpiFreshness'),
       `Freshness = SKUs first sold ≤ ${lc.newDays} d ÷ (Active + Non Active), per company · On Track at or above the company target${
         freshByCompany.some((c) => c.target !== null) ? ` (${freshByCompany.filter((c) => c.target !== null).map((c) => `${c.company} ≥ ${c.target}%`).join(', ')})` : ''}`),
@@ -116,8 +122,8 @@ export default function ProductLifecyclePage() {
     if (!p) return null;
     const rows: [string, string, string][] = [
       ['SKUs', p.skus.toLocaleString('en-US'), 'var(--ps-tooltip-fg)'],
-      ['Units sold (period)', fmtNum(p.units), 'var(--ps-color-accent)'],
-      ['Prior period', fmtNum(p.unitsLY), 'var(--ps-color-last-year)'],
+      [unitsLabel, fmtNum(p.units), 'var(--ps-color-accent)'],
+      [lc.priorLabel, fmtNum(p.unitsLY), 'var(--ps-color-last-year)'],
       ['Cumulative %', `${p.cumPct.toFixed(0)}%`, 'var(--ps-color-gold)'],
     ];
     return (
@@ -137,10 +143,10 @@ export default function ProductLifecyclePage() {
     .sort((a, b) => b.volume - a.volume);
   const columns: DataGridColumn<TableRow>[] = [
     { key: 'ProductName', header: 'Product Name', width: 260, render: (row) => <ProductName name={row.ProductName} href={row.odooUrl} />, rawValue: (row) => row.ProductName },
-    { key: 'volume', header: 'Volume (period)', align: 'right', render: (row) => <strong>{fmtVolume(row)}</strong>, rawValue: (row) => row.volume },
+    { key: 'volume', header: `Volume (${periodLabel})`, align: 'right', render: (row) => <strong>{fmtVolume(row)}</strong>, rawValue: (row) => row.volume },
     {
       key: 'growth',
-      header: 'Volume vs prior period',
+      header: `Volume vs ${priorText}`,
       align: 'right',
       rawValue: (row) => (row.growth === null ? '' : Math.round(row.growth * 10) / 10),
       sortValue: (row) => row.growth ?? Number.NEGATIVE_INFINITY,
@@ -163,7 +169,7 @@ export default function ProductLifecyclePage() {
       rawValue: (row) => (row.daysSinceLastSale === null ? 'never sold' : row.daysSinceLastSale),
       sortValue: (row) => row.daysSinceLastSale ?? Number.POSITIVE_INFINITY,
     },
-    { key: 'value', header: 'Value (period)', align: 'right', render: (row) => fmtLYD(row.value), rawValue: (row) => row.value },
+    { key: 'value', header: `Value (${periodLabel})`, align: 'right', render: (row) => fmtLYD(row.value), rawValue: (row) => row.value },
   ];
 
   return (
@@ -226,7 +232,7 @@ export default function ProductLifecyclePage() {
             <KpiTile
               label="Discontinued"
               value={String(discRows.length)}
-              variance={`${fmtUnits(sum(discRows, (r) => r.volumePrior))} sold in the prior period`}
+              variance={`${fmtUnits(sum(discRows, (r) => r.volumePrior))} sold in the ${priorText}`}
               status="alert"
               help={kpiHelp.discontinued}
             />
@@ -234,16 +240,17 @@ export default function ProductLifecyclePage() {
           </div>
 
           <ChartPanel {...vh("product.productLifecycle.pareto")}
-            title="Segment Volume — Pareto"
+            help={kpiHelp.pareto}
+            title={`Segment Volume — Pareto · ${periodLabel} vs ${priorText}`}
             style={{ minHeight: 420 }}
           >
             <ComboChart
               showTitle={false}
               points={paretoPoints}
-              bars={[{ key: 'units', name: 'Units sold (period)', color: 'var(--ps-color-accent)' }]}
+              bars={[{ key: 'units', name: unitsLabel, color: 'var(--ps-color-accent)' }]}
               leftAxisFormatter={(v) => fmtNum(v)}
               lines={[
-                { key: 'unitsLY', name: 'Prior period', color: 'var(--ps-color-last-year)', yAxisId: 'left' },
+                { key: 'unitsLY', name: lc.priorLabel, color: 'var(--ps-color-last-year)', yAxisId: 'left' },
                 { key: 'cumPct', name: 'Cumulative %', color: 'var(--ps-color-gold)', yAxisId: 'right' },
               ]}
               rightAxisFormatter={(v) => `${v.toFixed(0)}%`}
@@ -268,7 +275,7 @@ export default function ProductLifecyclePage() {
               <div style={{ fontSize: 11, color: 'var(--ps-color-muted-text)', marginTop: 2 }}>Highest volume first</div>
             </div>
             <div data-testid="lifecycle-product-grid">
-              <DataGrid columns={columns} rows={tableRows} getRowId={(row) => row.id} fileName="product-lifecycle-detail" filtersSummary={companyLabel} />
+              <DataGrid key={`${periodLabel}|${lc.priorLabel}`} columns={columns} rows={tableRows} getRowId={(row) => row.id} fileName="product-lifecycle-detail" filtersSummary={`${companyLabel} · Lifecycle: ${periodLabel} vs ${priorText}`} />
             </div>
           </Card>
 

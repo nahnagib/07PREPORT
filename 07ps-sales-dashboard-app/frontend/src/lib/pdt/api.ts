@@ -132,6 +132,8 @@ export interface StageTile {
   nextTargetPassed: boolean;
   overdue: number;
   blocked: number;
+  /** The first products of the stage (the pipeline tooltip). */
+  top?: { code: string; name: string; date: string | null }[];
 }
 
 export interface MatrixRow {

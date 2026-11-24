@@ -3,29 +3,49 @@ import type { ProductFact } from '../materialsAnalogy/shared';
 import { portfolioOf } from './portfolio';
 
 /**
- * Product Lifecycle definitions (2026-11-15), written from the ETL rule (data/etl/src/sales_pipeline/product_dashboard.py
- * ProductDashboardBuilder._lifecycle) and its config (data/etl/config/product_dashboard.json "lifecycle"), which the API
- * sends in `thresholds.lifecycle`. Segments are computed by the ETL as of its run date (not the page's Date filter), in
- * this order -- the first rule that matches wins: Never sold > Discontinued > New > Growing > Declining > Mature.
+ * Product Lifecycle definitions. Segments are computed by the backend (measures/productLifecycle.ts, 2026-11-24) for the
+ * page's Date filter: Growing / Mature / Declining compare the units of the period with the prior period of the same
+ * length (default the Last 12 Months vs the 12 months before); New and Discontinued keep their fixed day rules from the
+ * ETL config. The first rule that matches wins: Never sold > Discontinued > New > Growing > Declining > Mature. The API
+ * sends the benchmark (`lifecycleBenchmark`: its labels and the rule's values); every label on the page comes from it.
  * Only Active + Non Active products have a segment on the page (archived ones are Dormant, never listed).
  */
 export interface LifecycleConfig {
   newDays: number;
-  windowDays: number;
   growthPct: number;
+  noSalesDays: number;
+  /** The benchmark period: "Last 12 months", "Last 90 days", or its dates ("1 Jan – 24 Nov 2026"). */
+  label: string;
+  /** "Prior 12 months", or "Prior period (7 Feb – 31 Dec 2025)". */
+  priorLabel: string;
+}
+
+export interface LifecycleBenchmarkLabels {
+  label: string;
+  priorLabel: string;
+  growthPct: number;
+  newDays: number;
   noSalesDays: number;
 }
 
-export function lifecycleConfig(thresholds: Record<string, unknown> | undefined | null): LifecycleConfig {
+/** The API's benchmark when sent; else the config values with the default Last 12 Months. */
+export function lifecycleConfig(thresholds: Record<string, unknown> | undefined | null, benchmark?: LifecycleBenchmarkLabels | null): LifecycleConfig {
+  if (benchmark) {
+    return { newDays: benchmark.newDays, growthPct: benchmark.growthPct, noSalesDays: benchmark.noSalesDays, label: benchmark.label, priorLabel: benchmark.priorLabel };
+  }
   const l = ((thresholds ?? {}).lifecycle ?? {}) as Record<string, unknown>;
   const n = (v: unknown, d: number) => (Number.isFinite(Number(v)) && v !== null && v !== undefined ? Number(v) : d);
   return {
     newDays: n(l.new_first_sale_within_days, 180),
-    windowDays: n(l.trend_window_days, 90),
     growthPct: n(l.growth_threshold_pct, 20),
     noSalesDays: n(l.discontinued_no_sales_days, 365),
+    label: 'Last 12 months',
+    priorLabel: 'Prior 12 months',
   };
 }
+
+/** "Prior 12 months" -> "prior 12 months" (inside a sentence). */
+export const inSentence = (label: string): string => label.charAt(0).toLowerCase() + label.slice(1);
 
 /** Mature SKUs % (2026-11-15): Mature ÷ the portfolio (Active + Non Active) after the page filters. */
 export function maturePct(rows: ProductFact[]): number | null {
@@ -33,15 +53,15 @@ export function maturePct(rows: ProductFact[]): number | null {
   return portfolio.length ? (portfolio.filter((r) => r.lifecycle === 'Mature').length / portfolio.length) * 100 : null;
 }
 
-/** One line per segment, from the config values. */
+/** One line per segment: the benchmark period and the config values (the Pareto legend). */
 export function segmentDefinitions(c: LifecycleConfig): Record<LifecycleSegment, string> {
   return {
     'Never sold': 'Never sold',
     Discontinued: `No sale in ${c.noSalesDays} d`,
     New: `First sale ≤ ${c.newDays} d`,
-    Growing: `Last ${c.windowDays} d > +${c.growthPct}%`,
-    Declining: `Last ${c.windowDays} d < −${c.growthPct}%`,
-    Mature: `Last ${c.windowDays} d within ±${c.growthPct}%`,
+    Growing: `${c.label} > +${c.growthPct}%`,
+    Declining: `${c.label} < −${c.growthPct}%`,
+    Mature: `${c.label} within ±${c.growthPct}%`,
   };
 }
 

@@ -2673,6 +2673,8 @@ export interface ProductDashboardOverview {
   /** The caller may see profit data; without it every profit field is absent. */
   profitAccess: boolean;
   lookbackDays: number;
+  /** Product Lifecycle benchmark (backend measures/productLifecycle.ts): the period vs the prior period of the same length. */
+  lifecycleBenchmark?: { from: string; to: string; priorFrom: string; priorTo: string; days: number; label: string; priorLabel: string; growthPct: number; newDays: number; noSalesDays: number; asOf: string };
   thresholds: {
     days_of_inventory?: { lookback_days?: number; overstock_days?: Record<string, number>; stockout_risk_days?: Record<string, number> };
     /** The BCG class thresholds never reach the client (server-side only). */
