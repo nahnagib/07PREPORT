@@ -72,10 +72,10 @@ def safe_datetime_to_local(series: pd.Series, timezone: str, assume_utc_for_naiv
     tz_mask = text.str.contains(r"(?:Z|[+-]\d{2}:?\d{2})$", regex=True, na=False)
     out = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
     if tz_mask.any():
-        aware = pd.to_datetime(text[tz_mask], errors="coerce", utc=True)
+        aware = pd.to_datetime(text[tz_mask], errors="coerce", utc=True, format="ISO8601")
         out.loc[tz_mask] = aware.dt.tz_convert(timezone).dt.tz_localize(None)
     if (~tz_mask).any():
-        naive = pd.to_datetime(text[~tz_mask], errors="coerce")
+        naive = pd.to_datetime(text[~tz_mask], errors="coerce", format="ISO8601")
         if assume_utc_for_naive:
             naive = naive.dt.tz_localize("UTC").dt.tz_convert(timezone).dt.tz_localize(None)
         out.loc[~tz_mask] = naive
