@@ -47,6 +47,11 @@ services:
       - test_etl_output:/etl/output
     ports: !override
       - '127.0.0.1:4202:5001'
+    # docker-compose.yml is sized for the production server (10G limit, 4G reservation); the laptop keeps 3G.
+    deploy:
+      resources:
+        limits: { cpus: '2.00', memory: 3G }
+        reservations: !reset {}
     depends_on:
       test-mysql:
         condition: service_healthy

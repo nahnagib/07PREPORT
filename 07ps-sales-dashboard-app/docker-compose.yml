@@ -30,6 +30,8 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # BullMQ needs noeviction: an evicting policy would silently drop queue keys. The cap stays under the 256M limit.
+    command: ['redis-server', '--maxmemory', '192mb', '--maxmemory-policy', 'noeviction']
     environment:
       TZ: ${APP_TIMEZONE:-Africa/Tripoli}
     volumes:
@@ -88,9 +90,14 @@ services:
     ports:
       - '127.0.0.1:5001:5001' # localhost only - internal-only service
     # Healthcheck comes from data/etl/Dockerfile.api's own HEALTHCHECK instruction.
+    # Sized for the production server (docs/server-10gb-upgrade.md): the 02:00 full refresh and the long-lane sales
+    # build run as two Python processes side by side. Each job logs its "peak memory" at the end (etl_platform.run),
+    # so this limit can be lowered once the real peak is known. The reservation is soft: it never blocks startup.
+    # docker-compose.local.yml and docker-compose.test-stack.yml pin the laptop stacks back to 3G.
     deploy:
       resources:
-        limits: { cpus: '2.00', memory: 3G }
+        limits: { cpus: '2.00', memory: 10G }
+        reservations: { memory: 4G }
     logging: *default-logging
 
   backend:
@@ -102,6 +109,7 @@ services:
     env_file: ./backend/.env
     environment:
       NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=512 # heap cap under the 768M limit: Node collects before Docker kills it
       TZ: ${APP_TIMEZONE:-Africa/Tripoli}
       APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli}
       ETL_SCHEDULE_TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli} # cron expressions are read in the business zone
@@ -181,6 +189,7 @@ services:
     env_file: ./backend/.env
     environment:
       NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=256 # only queues jobs and polls etl-api over HTTP; the heavy work is in etl-api
       TZ: ${APP_TIMEZONE:-Africa/Tripoli}
       APP_TIMEZONE: ${APP_TIMEZONE:-Africa/Tripoli}
       ETL_API_URL: http://etl-api:5001 # internal Docker network DNS, not localhost
