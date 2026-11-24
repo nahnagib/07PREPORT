@@ -18,8 +18,7 @@ const LISTS: [DropdownValue['list_key'], string, string][] = [
 
 const SETTING_FIELDS: [keyof Settings, string, string][] = [
   ['staleDays', 'Stale after (days without an update)', '"No update" marker on the pipeline and the follow-up board.'],
-  ['upcomingWindowDays', 'Upcoming launches window (days)', 'The "Upcoming launches" KPI.'],
-  ['roadmapMonths', 'Launch roadmap (months)', 'Months shown from the current one.'],
+  ['upcomingWindowDays', 'Upcoming launches window (days)', 'The "Launches in next N days" card and the launch roadmap (same window).'],
   ['followupDueSoonDays', 'Blockers due soon (days)', 'Follow-up board: items due within this many days.'],
   ['launchSoonDays', 'Launch soon (days)', 'Follow-up board: launches within this many days…'],
   ['launchSoonMinReadiness', '…below readiness (%)', '…with readiness below this.'],

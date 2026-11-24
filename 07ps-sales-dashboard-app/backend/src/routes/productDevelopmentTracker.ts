@@ -35,7 +35,7 @@ import { confirmImport, exportWorkbook, importHistory, previewImport } from '../
  *   GET    /followup?<filters>   GET /followup/export?<filters>
  *   POST   /import/preview   POST /import/confirm (file + sha256)   GET /import/history   GET /import/export
  *   GET/POST /admin/dropdowns   PATCH/DELETE /admin/dropdowns/:id   PUT /admin/settings
- * Filters: familyIds, subfamilies, stages, health, owners, priorities (comma lists; NONE = not set), launchFrom, launchTo,
+ * Filters: familyIds, subfamilies, brands, stages, health, owners, priorities (comma lists; NONE = not set), launchFrom, launchTo,
  * search.
  */
 export const productDevelopmentTrackerRouter = Router();
@@ -104,6 +104,7 @@ export function parseFilters(q: Request['query']): Filters {
   return {
     familyIds: list(q.familyIds).map(Number).filter((n) => Number.isInteger(n) && n > 0),
     subfamilies: list(q.subfamilies),
+    brands: list(q.brands),
     stages: pick(q.stages, STAGES),
     owners: list(q.owners),
     // NONE = "not set" (blank in the Excel file)

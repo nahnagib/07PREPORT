@@ -66,6 +66,16 @@ export interface GroupedBarChartProps {
   showTotals?: boolean;
   /** Whole-number value axis (for counts): no fractional ticks that would round to duplicates. */
   integerAxis?: boolean;
+  /** Makes each bar (each stacked segment) clickable: called with its category label and series `key`. When given, a
+   * click on a bar calls only this, not onCategoryClick. Opt-in. */
+  onBarClick?: (label: string, seriesKey: string) => void;
+  /** Text at the end of each category's bar (replaces showTotals), with an optional alert-coloured badge after it (e.g.
+   * "12 · 22%" + "3 overdue"); `muted` greys the text (an empty category). Opt-in. */
+  endLabel?: (point: GroupedBarChartPoint) => { text: string; badge?: string; muted?: boolean };
+  /** Space (px) kept right of the bars for `endLabel`. Defaults to 130. */
+  endLabelWidth?: number;
+  /** Hide the series legend (a single-series chart whose title already names it). Defaults to true (shown). */
+  showLegend?: boolean;
 }
 
 /** Renders a category-axis tick with the label truncated (character-count approximation, not a
@@ -140,10 +150,20 @@ export function GroupedBarChart({
   stacked = false,
   showTotals = false,
   integerAxis = false,
+  onBarClick,
+  endLabel,
+  endLabelWidth = 130,
+  showLegend = true,
 }: GroupedBarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // A bar click bubbles up to the chart's own click: the chart then skips its category callback once.
+  const barClicked = useRef(false);
 
   const handleChartClick = (state: any) => {
+    if (barClicked.current) {
+      barClicked.current = false;
+      return;
+    }
     if (!onCategoryClick) return;
     const label = state?.activeLabel;
     if (typeof label === 'string') onCategoryClick(label);
@@ -190,12 +210,12 @@ export function GroupedBarChart({
         </button>
         )}
       </div>
-      <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick ? 'pointer' : 'default', ...(fill ? { flex: 1, minHeight: height } : {}) }}>
+      <div ref={containerRef} style={{ width: '100%', cursor: onCategoryClick || onBarClick ? 'pointer' : 'default', ...(fill ? { flex: 1, minHeight: height } : {}) }}>
         <ResponsiveContainer width="100%" height={fill ? '100%' : height}>
           <BarChart
             data={points}
             layout="vertical"
-            margin={{ top: 4, right: 24, left: 0, bottom: 0 }}
+            margin={{ top: 4, right: endLabel ? endLabelWidth : 24, left: 0, bottom: 0 }}
             onClick={handleChartClick}
           >
             <CartesianGrid stroke="var(--ps-color-border)" strokeDasharray="3 3" horizontal={false} />
@@ -238,7 +258,7 @@ export function GroupedBarChart({
                   : undefined
               }
             />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
+            {showLegend && <Legend wrapperStyle={{ fontSize: 12 }} />}
             {bars.map((b, barIndex) => (
               <Bar
                 key={b.key}
@@ -250,8 +270,36 @@ export function GroupedBarChart({
                 radius={!stacked || barIndex === bars.length - 1 ? [0, 4, 4, 0] : 0}
                 barSize={stacked ? 18 : points.length > 6 ? 12 : 18}
                 isAnimationActive={false}
+                onClick={
+                  onBarClick
+                    ? (data: any) => {
+                        const label = data?.payload?.label ?? data?.label;
+                        if (typeof label !== 'string') return;
+                        barClicked.current = true;
+                        onBarClick(label, b.key);
+                      }
+                    : undefined
+                }
               >
-                {showTotals && barIndex === bars.length - 1 && (
+                {endLabel && barIndex === bars.length - 1 && (
+                  <LabelList
+                    dataKey={b.key}
+                    content={(props: any) => {
+                      const point = points[props.index as number];
+                      if (!point) return null;
+                      const { text, badge, muted } = endLabel(point);
+                      const x = Number(props.x) + Math.max(0, Number(props.width) || 0) + 6;
+                      const y = Number(props.y) + Number(props.height) / 2;
+                      return (
+                        <text x={x} y={y} dominantBaseline="central" style={{ fontSize: 12 }}>
+                          <tspan style={{ fontWeight: 700, fill: muted ? 'var(--ps-color-muted-text)' : 'var(--ps-color-text)' }}>{text}</tspan>
+                          {badge && <tspan dx={8} style={{ fontWeight: 700, fill: 'var(--ps-color-alert)' }}>{badge}</tspan>}
+                        </text>
+                      );
+                    }}
+                  />
+                )}
+                {showTotals && !endLabel && barIndex === bars.length - 1 && (
                   <LabelList
                     position="right"
                     valueAccessor={(entry: any) => bars.reduce((sum, s) => sum + (Number(entry?.payload?.[s.key]) || 0), 0)}

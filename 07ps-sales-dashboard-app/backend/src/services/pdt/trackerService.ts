@@ -15,12 +15,14 @@ import {
   SETTING_KEYS,
   SETTING_RANGES,
   STAGES,
+  UNASSIGNED_BRAND,
   applyFilters,
   buildFollowup,
   buildRoadmap,
   businessToday,
   computeKpis,
   familyStageMatrix,
+  kpiSets,
   forcedHealth,
   isActive,
   isStale,
@@ -202,17 +204,20 @@ export async function listOwnerUsers(): Promise<OwnerOption[]> {
 }
 
 export async function getOptions() {
-  const [dropdowns, settings, users, owners, subfamilies] = await Promise.all([
+  const [dropdowns, settings, users, owners, subfamilies, brands] = await Promise.all([
     listDropdowns(),
     getSettings(),
     listOwnerUsers(),
     rows<{ owner_name: string }>(pool, 'SELECT DISTINCT owner_name FROM pdt_product WHERE deleted_at IS NULL AND owner_name IS NOT NULL UNION SELECT DISTINCT owner_name FROM pdt_blocker WHERE deleted_at IS NULL AND owner_name IS NOT NULL ORDER BY owner_name'),
     rows<{ family_id: number; subfamily: string }>(pool, 'SELECT DISTINCT family_id, subfamily FROM pdt_product WHERE deleted_at IS NULL AND subfamily IS NOT NULL ORDER BY subfamily'),
+    rows<{ brand: string }>(pool, 'SELECT DISTINCT brand FROM pdt_product WHERE deleted_at IS NULL ORDER BY brand'),
   ]);
   return {
     dropdowns, settings, users, today: businessToday(),
     owners: owners.map((o) => o.owner_name),
     subfamilies: subfamilies.map((s) => ({ familyId: s.family_id, subfamily: s.subfamily })),
+    // "Unassigned" (blank in the file) last.
+    brands: brands.map((b) => b.brand).sort((a, b) => Number(a === UNASSIGNED_BRAND) - Number(b === UNASSIGNED_BRAND) || a.localeCompare(b)),
     stages: STAGES, healths: HEALTHS, priorities: PRIORITIES, projectTypes: PROJECT_TYPES, blockerKinds: BLOCKER_KINDS, blockerStatuses: BLOCKER_STATUSES,
   };
 }
@@ -228,6 +233,7 @@ interface ProductDbRow {
   family_id: number | null;
   family: string | null;
   subfamily: string | null;
+  brand: string | null;
   owner_user_id: number | null;
   owner_name: string | null;
   priority: PriorityCode | null;
@@ -246,7 +252,7 @@ interface ProductDbRow {
 }
 
 const PRODUCT_SELECT = `
-  SELECT p.product_id, p.code, p.name, p.family_id, f.label AS family, p.subfamily, p.owner_user_id, p.owner_name,
+  SELECT p.product_id, p.code, p.name, p.family_id, f.label AS family, p.subfamily, p.brand, p.owner_user_id, p.owner_name,
          pr.code AS priority, st.code AS stage, h.code AS health, p.readiness_pct, p.target_launch, p.actual_launch,
          pt.code AS project_type, p.next_step, p.next_step_due, p.health_review_required, p.stage_since, p.last_update_at, p.created_at
     FROM pdt_product p
@@ -271,6 +277,7 @@ function toProduct(r: ProductDbRow): Product {
     familyId: r.family_id,
     family: r.family,
     subfamily: r.subfamily,
+    brand: r.brand?.trim() || UNASSIGNED_BRAND,
     ownerUserId: r.owner_user_id,
     ownerName: r.owner_name,
     priority: r.priority,
@@ -410,23 +417,33 @@ function cards(products: Product[], blockers: Blocker[], today: string, s: Setti
   });
 }
 
+/** When the Excel file was last imported (the dashboard's "last refresh"); null before the first import. */
+async function lastImportAt(): Promise<string | null> {
+  const r = await one<{ at: unknown }>(pool, 'SELECT MAX(imported_at) AS at FROM pdt_import_log');
+  return isoDateTime(r?.at);
+}
+
 export async function getDashboard(filters: Filters, today = businessToday()) {
-  const [all, blockers, settings, dropdowns, families] = await Promise.all([loadProducts(), loadBlockers(), getSettings(), listDropdowns(), familyList()]);
+  const [all, blockers, settings, dropdowns, families, lastImport] = await Promise.all([loadProducts(), loadBlockers(), getSettings(), listDropdowns(), familyList(), lastImportAt()]);
   const products = applyFilters(all, filters);
   const ids = new Set(products.map((p) => p.productId));
   const inView = blockers.filter((b) => ids.has(b.productId));
   const byId = new Map(products.map((p) => [p.productId, p]));
   const productCards = cards(products, inView, today, settings);
   const stageList = dropdowns.filter((d) => d.list_key === 'stage');
-  const roadmap = buildRoadmap(products, today, settings.roadmapMonths);
+  // The roadmap shows exactly the "Launches in next N days" products (same window, same rule).
+  const roadmap = buildRoadmap(products, today, settings.upcomingWindowDays);
   // The stage tiles keep every stage visible while one is selected: the same filters without the stage filter.
   const summarySet = filters.stages.length ? applyFilters(all, { ...filters, stages: [] }) : products;
   const summaryKpis = computeKpis(summarySet, today, settings);
   return {
     today,
     settings,
+    lastImport,
     totalProducts: all.length,
     kpis: computeKpis(products, today, settings),
+    /** The product codes behind each KPI card (the drill-down tables), same filtered set as the cards. */
+    kpiCodes: kpiSets(products, today, settings),
     stageSummary: {
       stages: stageSummary(summarySet, today).map((st) => ({ ...st, label: stageList.find((x) => x.code === st.stage)?.label ?? st.stage, color: stageList.find((x) => x.code === st.stage)?.color ?? '#8a94a6' })),
       totals: { total: summaryKpis.total, inPipeline: summaryKpis.active, inMarket: summaryKpis.inMarket },
@@ -438,6 +455,7 @@ export async function getDashboard(filters: Filters, today = businessToday()) {
     roadmap: {
       months: roadmap.months.map((m) => ({ month: m.month, products: m.products.map((p) => ({ code: p.code, name: p.name, family: p.family, targetLaunch: p.targetLaunch, health: p.health })) })),
       outsideWindow: roadmap.outsideWindow,
+      windowEnd: roadmap.windowEnd,
     },
     byYear: launchesByYear(products),
     blockers: openBlockers(inView, today).map((b) => ({ ...b, productCode: byId.get(b.productId)!.code, productName: byId.get(b.productId)!.name })),

@@ -1,3 +1,24 @@
+# Deploy notes: Product Development Plan dashboard redesign + Brand (2026-11-24)
+
+**Migration 0082** (`data/warehouse/migrations/0082_pdt_brand.sql`, idempotent; down: `data/warehouse/down/0082_pdt_brand_down.sql`):
+`pdt_product.brand VARCHAR(100) NOT NULL DEFAULT 'Unassigned'`. Apply it **before** the new backend starts (the tracker
+SELECT reads `p.brand`). Then rebuild **backend** and **frontend**. No ETL image change (the Excel import is in the backend).
+
+1. **Input/product_development/Product_Development_Input.xlsx** has a new last column **Products!U "Brand"** (yellow input
+   cells, dropdown from the new **Lists!J "Brand"**, a line in Read me). Nothing was inserted, so Days to launch, Flag and the
+   Where we stand formulas are unchanged (checked in Excel: identical values, no formula errors). Fill Lists › Brand with the
+   real brands, then the Brand cells, and import the file again (Data entry & follow-up › Excel import).
+2. The import reads every Products column by its header name. **Brand is optional**: a blank cell, or an older file without
+   the column, gives "Unassigned" (an older file therefore resets every brand to Unassigned). The round-trip export writes
+   Brand back as the last column and the brands in Lists › Brand.
+3. **KPI definitions changed** (dashboard and its Excel export): Active = not launched with a target launch from today to
+   today + 12 months; Planned (new) = every other not-launched product (no date / > 12 months / date passed); Total = In
+   market + Active + Planned. On track / Need attention / Health not set are on the not-launched products. The launch roadmap
+   shows exactly the "Launches in next 90 days" products (setting "Upcoming launches window"; the roadmap-months setting is
+   no longer used). The Excel file's own "Where we stand" sheet still uses its old "Active in pipeline" formula.
+
+---
+
 # Deploy notes: every ETL input file replaceable from Admin -> Input Files (2026-11-22)
 
 No migration, no new compose change (`/etl/input_admin` came with the 2026-11-15 ETL fixes below; apply those first if prod

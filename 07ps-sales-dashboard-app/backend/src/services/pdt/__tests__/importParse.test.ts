@@ -68,6 +68,31 @@ describe.skipIf(!existsSync(DELIVERED))('the file as delivered', () => {
     const launched = parsed.products.filter((p) => p.stage === 'LAUNCHED');
     expect(launched.every((p) => p.readinessPct === 100 && p.actualLaunch !== null)).toBe(true);
     expect(parsed.products.filter((p) => p.health === null)).toHaveLength(42);
+    // Brand (column U, after Flag): blank until the business fills it in.
+    expect(parsed.products.every((p) => p.brand === 'Unassigned')).toBe(true);
+  });
+});
+
+describe('Brand (optional column, read by header name)', () => {
+  it('reads Brand wherever the column is, trimmed; blank = Unassigned', async () => {
+    const parsed = await parseWorkbook(await book({
+      productHeaders: [...PRODUCT_HEADERS, 'Brand'],
+      products: [[...row(), '  Xtreme '], [...row({ 0: 'XT-002', 1: 'Second' }), null], [...row({ 0: 'XT-003', 1: 'Third' }), '']],
+    }));
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.products.map((p) => p.brand)).toEqual(['Xtreme', 'Unassigned', 'Unassigned']);
+    const moved = await parseWorkbook(await book({ productHeaders: ['Brand', ...PRODUCT_HEADERS], products: [['Tika', ...row()]] }));
+    expect(moved.errors).toEqual([]);
+    expect(moved.products[0]).toMatchObject({ code: 'XT-001', brand: 'Tika', stage: 'TESTING' });
+  });
+  it('accepts an older file with no Brand column: every product is Unassigned', async () => {
+    const parsed = await parseWorkbook(await book({ products: [row(), row({ 0: 'XT-002', 1: 'Second' })] }));
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.products.map((p) => p.brand)).toEqual(['Unassigned', 'Unassigned']);
+  });
+  it('refuses a brand longer than 100 characters', async () => {
+    const parsed = await parseWorkbook(await book({ productHeaders: [...PRODUCT_HEADERS, 'Brand'], products: [[...row(), 'B'.repeat(101)]] }));
+    expect(codes(parsed.errors)).toEqual(['Brand:text.tooLong']);
   });
 });
 

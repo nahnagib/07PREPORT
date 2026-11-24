@@ -9,6 +9,7 @@ import {
   PRIORITIES,
   PROJECT_TYPES,
   STAGES,
+  UNASSIGNED_BRAND,
   businessToday,
   daysBetween,
   normaliseReadiness,
@@ -29,6 +30,8 @@ import { ENTITY, codeId, fail, getSettings, loadBlockers, loadProducts, listDrop
  *
  *   Products              upsert by Code (XT-###). A stage change is written to the stage history with comment "Excel import".
  *                         A product in the database but missing from the file is left as it is and reported.
+ *                         Columns are found by their header name. "Brand" (0082) is optional: a blank cell, or a file
+ *                         from before the column existed, gives "Unassigned".
  *   Status updates        append-only; an exact duplicate (date + code + summary) is skipped.
  *   Blockers & decisions  upsert by ID (BL-###).
  *   Lists                 families (+ descriptions) are added / updated; the other lists are fixed.
@@ -41,6 +44,8 @@ export const SHEETS = { products: 'Products', updates: 'Status updates', blocker
 const PRODUCT_COLUMNS = ['Code', 'Product name', 'Family', 'Subfamily', 'Description', 'Pipeline stage', 'Health', 'Priority', 'Owner', 'Readiness %', 'Target launch date', 'Actual launch date', 'Project type', 'Next step', 'Next step due', 'Comment', 'Last updated', 'Updated by'] as const;
 const UPDATE_COLUMNS = ['Update date', 'Product code', 'Health', 'Readiness %', 'Progress summary', 'Next step', 'Next step due', 'Updated by'] as const;
 const BLOCKER_COLUMNS = ['ID', 'Product code', 'Type', 'Title', 'Required action / decision', 'Owner', 'Raised on', 'Due date', 'Status', 'Resolution note', 'Resolved date'] as const;
+/** Optional Products column (added after Flag, 2026-11-24); read by name, never by position. */
+const PRODUCT_BRAND = 'Brand';
 const LIST_FAMILY = 'Product family';
 const LIST_FAMILY_DESC = 'Family description';
 
@@ -128,6 +133,7 @@ export interface ProductRow {
   name: string;
   family: string | null;
   subfamily: string | null;
+  brand: string;
   description: string | null;
   stage: StageCode;
   health: HealthCode | null;
@@ -266,6 +272,7 @@ export async function parseWorkbook(buffer: Buffer): Promise<Parsed> {
     const h = headerMap(products, PRODUCT_COLUMNS, errors);
     if (h) {
       const c = (r: ExcelJS.Row, name: (typeof PRODUCT_COLUMNS)[number]) => r.getCell(h.get(name.toLowerCase())!).value;
+      const brandCol = h.get(PRODUCT_BRAND.toLowerCase());
       const S = SHEETS.products;
       for (const { r, i } of dataRows(products, (x) => str(c(x, 'Code')) !== null || str(c(x, 'Product name')) !== null)) {
         const before = errors.length;
@@ -296,8 +303,10 @@ export async function parseWorkbook(buffer: Buffer): Promise<Parsed> {
           if (v && v.length > max) err(S, i, f, 'text.tooLong', `At most ${max} characters.`);
           return v;
         };
+        const brand = brandCol ? str(r.getCell(brandCol).value) : null;
+        if (brand && brand.length > 100) err(S, i, PRODUCT_BRAND, 'text.tooLong', 'At most 100 characters.');
         const row: ProductRow = {
-          row: i, code, name, family: str(c(r, 'Family')), subfamily: longText('Subfamily', 100), description: longText('Description', 5000),
+          row: i, code, name, family: str(c(r, 'Family')), subfamily: longText('Subfamily', 100), brand: brand ?? UNASSIGNED_BRAND, description: longText('Description', 5000),
           stage: stage ?? 'IDEA', health: health ?? null, priority: priority ?? null, owner: longText('Owner', 150),
           readinessPct: readiness !== null && Number.isNaN(readiness) ? null : readiness,
           targetLaunch: dates['Target launch date'], actualLaunch: dates['Actual launch date'], projectType: projectType ?? null,
@@ -396,6 +405,7 @@ interface DbProduct {
   name: string;
   family: string | null;
   subfamily: string | null;
+  brand: string | null;
   description: string | null;
   stage: StageCode;
   stage_id: number;
@@ -416,7 +426,7 @@ interface DbProduct {
 async function dbProducts(db: Db): Promise<DbProduct[]> {
   return rows<DbProduct>(
     db,
-    `SELECT p.product_id, p.code, p.name, f.label AS family, p.subfamily, p.description, st.code AS stage, p.stage_id, h.code AS health, pr.code AS priority,
+    `SELECT p.product_id, p.code, p.name, f.label AS family, p.subfamily, p.brand, p.description, st.code AS stage, p.stage_id, h.code AS health, pr.code AS priority,
             p.owner_name, p.readiness_pct, p.target_launch, p.actual_launch, pt.code AS project_type, p.next_step, p.next_step_due, p.comment,
             p.last_edited_on, p.updated_by_name
        FROM pdt_product p
@@ -434,6 +444,7 @@ const PRODUCT_FIELDS: [keyof ProductRow, string, (d: DbProduct) => unknown][] = 
   ['name', 'Product name', (d) => d.name],
   ['family', 'Family', (d) => d.family],
   ['subfamily', 'Subfamily', (d) => d.subfamily],
+  ['brand', 'Brand', (d) => d.brand ?? UNASSIGNED_BRAND],
   ['description', 'Description', (d) => d.description],
   ['stage', 'Pipeline stage', (d) => d.stage],
   ['health', 'Health', (d) => d.health],
@@ -707,7 +718,7 @@ export async function confirmImport(buffer: Buffer, fileName: string, expectedSh
         continue;
       }
       const values = [
-        p.name, p.family ? familyIds.get(p.family.toLowerCase())! : null, p.subfamily, p.description, userId(p.owner), p.owner,
+        p.name, p.family ? familyIds.get(p.family.toLowerCase())! : null, p.subfamily, p.brand, p.description, userId(p.owner), p.owner,
         p.priority ? await codeId(conn, 'priority', p.priority) : null, await codeId(conn, 'stage', p.stage), p.health ? await codeId(conn, 'health', p.health) : null,
         p.readinessPct, p.targetLaunch, p.actualLaunch, p.projectType ? await codeId(conn, 'project_type', p.projectType) : null,
         p.nextStep, p.nextStepDue, p.comment, p.lastEditedOn, p.updatedByName,
@@ -716,10 +727,10 @@ export async function confirmImport(buffer: Buffer, fileName: string, expectedSh
       if (!d) {
         const { insertId } = await exec(
           conn,
-          `INSERT INTO pdt_product (code, name, family_id, subfamily, description, owner_user_id, owner_name, priority_id, stage_id, health_id, readiness_pct,
+          `INSERT INTO pdt_product (code, name, family_id, subfamily, brand, description, owner_user_id, owner_name, priority_id, stage_id, health_id, readiness_pct,
                                     target_launch, actual_launch, project_type_id, next_step, next_step_due, comment, last_edited_on, updated_by_name,
                                     stage_since, created_by, updated_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [p.code, ...values, today, uid, uid],
         );
         await exec(conn, 'INSERT INTO pdt_stage_history (product_id, from_stage_id, to_stage_id, changed_on, changed_by, comment) VALUES (?, NULL, ?, ?, ?, ?)', [insertId, await codeId(conn, 'stage', p.stage), today, uid, IMPORT_COMMENT]);
@@ -729,7 +740,7 @@ export async function confirmImport(buffer: Buffer, fileName: string, expectedSh
         const stageChanged = d.stage !== p.stage;
         await exec(
           conn,
-          `UPDATE pdt_product SET name = ?, family_id = ?, subfamily = ?, description = ?, owner_user_id = ?, owner_name = ?, priority_id = ?, stage_id = ?, health_id = ?,
+          `UPDATE pdt_product SET name = ?, family_id = ?, subfamily = ?, brand = ?, description = ?, owner_user_id = ?, owner_name = ?, priority_id = ?, stage_id = ?, health_id = ?,
                   readiness_pct = ?, target_launch = ?, actual_launch = ?, project_type_id = ?, next_step = ?, next_step_due = ?, comment = ?, last_edited_on = ?,
                   updated_by_name = ?, stage_since = IF(?, ?, stage_since), health_review_required = 0, updated_by = ?
             WHERE product_id = ?`,
@@ -836,6 +847,7 @@ export async function exportWorkbook(today = businessToday()): Promise<Buffer> {
     ['Status updates', 'Add a NEW row per update. Exact duplicates (date + code + summary) are skipped.'],
     ['Blockers & decisions', 'Upsert by ID. Resolved needs a resolution note and the resolved date.'],
     ['Readiness %', '0% to 100% (45% or 0.45).'],
+    ['Brand', 'Products › Brand (last column): pick from Lists › Brand. Blank = Unassigned.'],
   ]);
   readme.getColumn(1).width = 24;
   readme.getColumn(2).width = 110;
@@ -848,7 +860,7 @@ export async function exportWorkbook(today = businessToday()): Promise<Buffer> {
     for (const c of pctCols) ws.getColumn(c).numFmt = '0%';
     return ws;
   };
-  const P = sheet(SHEETS.products, [...PRODUCT_COLUMNS, 'Days to launch', 'Flag'].map((h) => [h, h === 'Description' || h === 'Comment' ? 40 : h === 'Product name' ? 28 : 16] as [string, number]), [11, 12, 15, 17], [10]);
+  const P = sheet(SHEETS.products, [...PRODUCT_COLUMNS, 'Days to launch', 'Flag', PRODUCT_BRAND].map((h) => [h, h === 'Description' || h === 'Comment' ? 40 : h === 'Product name' ? 28 : 16] as [string, number]), [11, 12, 15, 17], [10]);
   for (const p of products) {
     const m = more.get(p.code);
     const flag = productFlag(p, open.get(p.productId) ?? 0, today, settings);
@@ -858,6 +870,7 @@ export async function exportWorkbook(today = businessToday()): Promise<Buffer> {
       p.nextStep, asDate(p.nextStepDue), m?.comment ?? null, asDate(isoDate(m?.last_edited_on)), m?.updated_by_name ?? null,
       p.stage === 'LAUNCHED' || !p.targetLaunch ? null : daysBetween(today, p.targetLaunch),
       flag ? { OPEN_BLOCKER: 'Open blocker', TARGET_PASSED: 'Target date passed', HEALTH_NOT_SET: 'Health not set', LAUNCH_SOON_LOW_READINESS: 'Launch soon, low readiness' }[flag] : null,
+      p.brand === UNASSIGNED_BRAND ? null : p.brand,
     ]);
   }
   const U = sheet(SHEETS.updates, [['Update date', 13], ['Product code', 12], ['Product name (auto)', 28], ['Health', 11], ['Readiness %', 11], ['Progress summary', 50], ['Next step', 30], ['Next step due', 13], ['Updated by', 18]], [1, 8], [5]);
@@ -870,12 +883,13 @@ export async function exportWorkbook(today = businessToday()): Promise<Buffer> {
     const overdue = (b.status === 'OPEN' || b.status === 'IN_PROGRESS') && b.dueDate < today;
     B.addRow([b.externalId, p.code, p.name, KIND_LABEL[b.kind], b.title, b.requiredAction, b.ownerName, asDate(b.raisedOn), asDate(b.dueDate), STATUS_LABEL[b.status], b.resolutionNote, asDate(b.resolvedAt), overdue ? 'OVERDUE' : null]);
   }
-  const L = sheet(SHEETS.lists, [['Stage', 14], ['Health', 11], ['Priority', 10], ['Project type', 14], ['Blocker type', 16], ['Blocker status', 14], ['Owners (type names)', 22], [LIST_FAMILY, 30], [LIST_FAMILY_DESC, 90]], []);
+  const L = sheet(SHEETS.lists, [['Stage', 14], ['Health', 11], ['Priority', 10], ['Project type', 14], ['Blocker type', 16], ['Blocker status', 14], ['Owners (type names)', 22], [LIST_FAMILY, 30], [LIST_FAMILY_DESC, 90], [PRODUCT_BRAND, 20]], []);
   const fams = dropdowns.filter((d) => d.list_key === 'family' && d.is_active);
   const owners = [...new Set(products.map((p) => p.ownerName).filter((o): o is string => Boolean(o)))].sort();
+  const brands = [...new Set(products.map((p) => p.brand).filter((b) => b !== UNASSIGNED_BRAND))].sort();
   const cols = [
     STAGES.map((s) => STAGE_LABEL[s]), HEALTHS.map((h) => HEALTH_LABEL[h]), PRIORITIES.map((p) => PRIORITY_LABEL[p]), PROJECT_TYPES.map((p) => PROJECT_LABEL[p]),
-    ['Blocker', 'Decision needed'], BLOCKER_STATUSES.map((s) => STATUS_LABEL[s]), owners, fams.map((f) => f.label), fams.map((f) => f.description ?? ''),
+    ['Blocker', 'Decision needed'], BLOCKER_STATUSES.map((s) => STATUS_LABEL[s]), owners, fams.map((f) => f.label), fams.map((f) => f.description ?? ''), brands,
   ];
   const n = Math.max(...cols.map((c) => c.length));
   for (let i = 0; i < n; i += 1) L.addRow(cols.map((c) => c[i] ?? null));

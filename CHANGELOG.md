@@ -6,6 +6,17 @@ actually landed in git history plus what's currently uncommitted.
 
 ## [Unreleased]
 
+### Changed (Product Development Plan dashboard redesign + Brand, 2026-11-24)
+- **Brand**: new optional last column in Product_Development_Input.xlsx (Products!U, Lists!J dropdown); the import reads it by
+  header name (blank or missing = "Unassigned"); migration 0082 `pdt_product.brand`; Brand filter next to Family.
+- **Filter bar**: the app's shared FilterBar (Filters header + badge, Hide filters, Reset filters, last Excel import on the right).
+- **KPI cards**: Total = In market + Active (target within 12 months) + Planned (no date / > 12 months / date passed, with the
+  split under the number); status row On track / Need attention / Launches in next 90 days on not-launched products, with a
+  "Health not set" note. Every card opens a sortable, searchable details table (CSV / Excel) of its products.
+- **Charts**: Development stage pipeline (stage bars with share and overdue badge; a click filters the page and opens the
+  stage), Where we stand as family x stage stacked bars (clickable segments; Table view toggle), Launches by year chart,
+  launch roadmap = the 90-day card. Shared GroupedBarChart gained optional bar clicks, end labels and a hidden legend.
+
 ### Changed (B2B / B2C Directors in sales_targets.xlsx, 2026-11-17)
 - **Directors from the targets sheet**: `TargetLevel = Director` rows carry the director's own SalespersonKey; Salesforce
   Performance lists them under that key (Salesperson filter, people list, tiers, top people, drill-down, exports) with the

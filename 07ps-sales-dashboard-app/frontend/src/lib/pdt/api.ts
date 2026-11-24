@@ -10,6 +10,9 @@ export const TRACKER = '/tracker';
 /** Filter value for "not set" (health / priority / owner left blank in the Excel file). */
 export const NOT_SET = 'NONE';
 
+/** The brand of a product whose Excel "Brand" cell is blank. */
+export const UNASSIGNED_BRAND = 'Unassigned';
+
 export type StageCode = 'IDEA' | 'RESEARCH' | 'DEVELOPMENT' | 'TESTING' | 'LAUNCH_READY' | 'LAUNCHED';
 export type HealthCode = 'ON_TRACK' | 'AT_RISK' | 'BLOCKED';
 export type PriorityCode = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -45,6 +48,8 @@ export interface Options {
   users: { user_id: number; display_name: string }[];
   owners: string[];
   subfamilies: { familyId: number | null; subfamily: string }[];
+  /** Brands in use ("Unassigned" last). */
+  brands: string[];
   today: string;
 }
 
@@ -55,6 +60,7 @@ export interface Product {
   familyId: number | null;
   family: string | null;
   subfamily: string | null;
+  brand: string;
   ownerUserId: number | null;
   ownerName: string | null;
   priority: PriorityCode | null;
@@ -99,13 +105,21 @@ export interface BlockerRow {
 export interface Kpis {
   total: number;
   inMarket: number;
+  /** Not launched, target launch from today to today + 12 months. */
   active: number;
+  /** Every other not-launched product: no target date, target more than 12 months away, or target already passed. */
+  planned: number;
+  plannedNoDate: number;
+  plannedBeyond: number;
+  plannedPassed: number;
   onTrack: number;
   needAttention: number;
   upcomingLaunches: number;
-  targetPassed: number;
   healthNotSet: number;
+  targetPassed: number;
 }
+
+export type KpiKey = 'total' | 'inMarket' | 'active' | 'planned' | 'onTrack' | 'needAttention' | 'upcomingLaunches' | 'healthNotSet';
 
 export interface StageTile {
   stage: StageCode;
@@ -130,14 +144,18 @@ export interface MatrixRow {
 export interface Dashboard {
   today: string;
   settings: Settings;
+  /** Last confirmed Excel import (ISO instant), null before the first one. */
+  lastImport: string | null;
   totalProducts: number;
   kpis: Kpis;
+  /** The product codes behind each KPI card (its drill-down table). */
+  kpiCodes: Record<KpiKey, string[]>;
   /** The stage tiles: the same filters as the KPIs, without the stage filter (every tile stays visible). */
   stageSummary: { stages: StageTile[]; totals: { total: number; inPipeline: number; inMarket: number } };
   pipeline:{ stage: StageCode; label: string; color: string; products: Product[] }[];
   matrix: { rows: MatrixRow[]; totals: Record<StageCode, number>; total: number };
   tracker: Product[];
-  roadmap: { months: { month: string; products: { code: string; name: string; family: string | null; targetLaunch: string; health: HealthCode | null }[] }[]; outsideWindow: number };
+  roadmap: { months: { month: string; products: { code: string; name: string; family: string | null; targetLaunch: string; health: HealthCode | null }[] }[]; outsideWindow: number; windowEnd: string };
   byYear: { year: number; launched: number; planned: number }[];
   blockers: BlockerRow[];
 }
@@ -233,6 +251,7 @@ export interface ImportLog {
 
 export interface Filters {
   familyIds: string[];
+  brands: string[];
   subfamilies: string[];
   stages: string[];
   health: string[];
@@ -243,9 +262,9 @@ export interface Filters {
   search: string;
 }
 
-export const EMPTY_FILTERS: Filters = { familyIds: [], subfamilies: [], stages: [], health: [], owners: [], priorities: [], launchFrom: '', launchTo: '', search: '' };
+export const EMPTY_FILTERS: Filters = { familyIds: [], brands: [], subfamilies: [], stages: [], health: [], owners: [], priorities: [], launchFrom: '', launchTo: '', search: '' };
 
-const LIST_KEYS = ['familyIds', 'subfamilies', 'stages', 'health', 'owners', 'priorities'] as const;
+const LIST_KEYS = ['familyIds', 'brands', 'subfamilies', 'stages', 'health', 'owners', 'priorities'] as const;
 
 export function filterQuery(f: Filters): string {
   const q = new URLSearchParams();

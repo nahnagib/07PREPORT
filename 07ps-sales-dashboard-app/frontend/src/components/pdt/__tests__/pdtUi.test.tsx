@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 /**
- * Product Development Plan dashboard (components/pdt): the sections from the API (6 KPI cards with the gap lines, pipeline
- * with Launched collapsed, family x stage matrix, tracker with Family / Flag), clicks that filter the page, the two tabs
- * only, the gate screens Admin-only, the empty state.
+ * Product Development Plan dashboard (components/pdt): the KPI rows from the API (Total = In market + Active + Planned,
+ * the status row, the "Health not set" note), every card / pipeline stage / family segment / year opening its details
+ * table, the stage click filtering the page, the Brand filter in the shared filter bar, the 90-day roadmap, the two tabs
+ * only, the gate screens Admin-only, the empty state. The charts are replaced by buttons that call the same callbacks
+ * (Recharts draws nothing in jsdom).
  */
 
 const { request, perms } = vi.hoisted(() => ({ request: vi.fn(), perms: { entry: true, admin: false } }));
@@ -23,6 +25,29 @@ vi.mock('../../AppHeader', () => ({ AppHeader: () => <header>header</header> }))
 vi.mock('../../BottomNavBar', () => ({ BottomNavBar: () => null }));
 vi.mock('../../TopTabBar', () => ({ TopTabBar: ({ tabs }: { tabs: { label: string }[] }) => <nav>{tabs.map((x) => x.label).join('|')}</nav> }));
 vi.mock('../../../lib/hooks', () => ({ useRefreshStatus: () => ({ data: null }) }));
+// The shared filter bar reads the app's FilterProvider; this page passes its own state (onReset / activeCount).
+vi.mock('../../FilterProvider', () => ({
+  useFilterState: () => ({ setOptionsDateMode: vi.fn(), setCustomerFilterEnabled: vi.fn(), resetFilters: vi.fn(), isAtDefaults: true }),
+  useScopedFilterOptions: () => ({ businessUnits: { loading: false, data: [] }, customers: { data: [] } }),
+}));
+vi.mock('@07ps/ui', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@07ps/ui');
+  type Point = { label: string; [k: string]: unknown };
+  return {
+    ...actual,
+    GroupedBarChart: ({ points, bars, onCategoryClick, onBarClick, endLabel }: { points: Point[]; bars: { key: string }[]; onCategoryClick?: (l: string) => void; onBarClick?: (l: string, k: string) => void; endLabel?: (p: Point) => { text: string; badge?: string } }) => (
+      <div>
+        {points.map((p) => (
+          <div key={p.label}>
+            <button type="button" onClick={() => onCategoryClick?.(p.label)}>{`bar ${p.label}`}</button>
+            {endLabel && <span>{`${endLabel(p).text}${endLabel(p).badge ? ` ${endLabel(p).badge}` : ''}`}</span>}
+            {onBarClick && bars.filter((b) => Number(p[b.key]) > 0).map((b) => <button key={b.key} type="button" onClick={() => onBarClick(p.label, b.key)}>{`segment ${p.label} ${b.key}`}</button>)}
+          </div>
+        ))}
+      </div>
+    ),
+  };
+});
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }), useSearchParams: () => new URLSearchParams(), usePathname: () => '/product/product-development-plan' }));
 
 import PdpPage from '../../pdp/PdpPage';
@@ -41,10 +66,10 @@ const OPTIONS = {
     dd('project_type', 'PLANNED', 'Planned', '#8a94a6', 1, 31),
   ],
   settings: { staleDays: 14, roadmapMonths: 4, upcomingWindowDays: 90, followupDueSoonDays: 7, launchSoonDays: 30, launchSoonMinReadiness: 80 },
-  users: [], owners: ['Omar Ali'], subfamilies: [{ familyId: 21, subfamily: 'Tile Adhesive' }], today: '2026-11-18',
+  users: [], owners: ['Omar Ali'], subfamilies: [{ familyId: 21, subfamily: 'Tile Adhesive' }], brands: ['Xtreme', 'Unassigned'], today: '2026-11-18',
 };
 const product = (code: string, name: string, family: [number, string], stage: string, health: string | null, readiness: number | null, target: string | null, actual: string | null = null, flag: string | null = null) => ({
-  productId: Number(code.slice(3)), code, name, familyId: family[0], family: family[1], subfamily: 'Sub', ownerUserId: null, ownerName: null, priority: null, stage, health,
+  productId: Number(code.slice(3)), code, name, familyId: family[0], family: family[1], subfamily: 'Sub', brand: code === 'XT-011' ? 'Xtreme' : 'Unassigned', ownerUserId: null, ownerName: null, priority: null, stage, health,
   readinessPct: readiness, targetLaunch: target, actualLaunch: actual, projectType: 'PLANNED', nextStep: null, nextStepDue: null, healthReviewRequired: false,
   stageSince: '2026-11-18', lastUpdateAt: null, stale: false, openBlockers: 0, flag, flagLabel: flag === 'TARGET_PASSED' ? 'Target date passed' : flag === 'HEALTH_NOT_SET' ? 'Health not set' : null,
 });
@@ -56,8 +81,10 @@ const D1 = product('XT-011', 'MonoSeal', WP, 'DEVELOPMENT', null, null, '2027-01
 const ALL = [L1, I1, D1];
 const zero = { IDEA: 0, RESEARCH: 0, DEVELOPMENT: 0, TESTING: 0, LAUNCH_READY: 0, LAUNCHED: 0 };
 const DASH = {
-  today: '2026-11-18', settings: OPTIONS.settings, totalProducts: 3,
-  kpis: { total: 3, inMarket: 1, active: 2, onTrack: 0, needAttention: 0, upcomingLaunches: 1, targetPassed: 1, healthNotSet: 2 },
+  today: '2026-11-18', settings: OPTIONS.settings, totalProducts: 3, lastImport: '2026-11-18T10:05:00Z',
+  // XT-011 (Jan 2027) is Active and launches within 90 days; XT-009 (Apr 2026) is Planned, date passed.
+  kpis: { total: 3, inMarket: 1, active: 1, planned: 1, plannedNoDate: 0, plannedBeyond: 0, plannedPassed: 1, onTrack: 0, needAttention: 0, upcomingLaunches: 1, healthNotSet: 2, targetPassed: 1 },
+  kpiCodes: { total: ['XT-001', 'XT-009', 'XT-011'], inMarket: ['XT-001'], active: ['XT-011'], planned: ['XT-009'], onTrack: [], needAttention: [], upcomingLaunches: ['XT-011'], healthNotSet: ['XT-009', 'XT-011'] },
   stageSummary: {
     stages: STAGE_ROWS.map((d) => ({
       stage: d.code, label: d.label, color: d.color, count: ALL.filter((p) => p.stage === d.code).length,
@@ -74,7 +101,7 @@ const DASH = {
     totals: { ...zero, IDEA: 1, DEVELOPMENT: 1, LAUNCHED: 1 }, total: 3,
   },
   tracker: ALL,
-  roadmap: { months: [{ month: '2026-11', products: [] }, { month: '2026-12', products: [] }, { month: '2027-01', products: [{ code: 'XT-011', name: 'MonoSeal', family: 'Waterproofing', targetLaunch: '2027-01-10', health: null }] }, { month: '2027-02', products: [] }], outsideWindow: 1 },
+  roadmap: { months: [{ month: '2026-11', products: [] }, { month: '2026-12', products: [] }, { month: '2027-01', products: [{ code: 'XT-011', name: 'MonoSeal', family: 'Waterproofing', targetLaunch: '2027-01-10', health: null }] }, { month: '2027-02', products: [] }], outsideWindow: 1, windowEnd: '2027-02-16' },
   byYear: [2023, 2024, 2025, 2026, 2027, 2028].map((year) => ({ year, launched: year === 2023 ? 1 : 0, planned: year === 2026 ? 1 : year === 2027 ? 1 : 0 })),
   blockers: [],
 };
@@ -102,115 +129,135 @@ afterEach(() => {
 });
 
 describe('Product Development Plan dashboard', () => {
-  it('shows the six KPI cards with the gap lines, the matrix and the tracker', async () => {
+  it('shows the portfolio row that adds up, the status row, the health note and the 90-day roadmap', async () => {
     respond(DASH);
     render(<PdpPage section="dashboard" />);
-    const kpis = await screen.findByTestId('pdt-kpis');
-    for (const label of ['Total products', 'In market', 'Active in pipeline', 'On track', 'Need attention', 'Launches in next 90 days']) expect(within(kpis).getByText(label)).toBeTruthy();
-    expect(within(kpis).getByRole('button', { name: /Target date passed\s*1/ })).toBeTruthy();
-    expect(within(kpis).getByRole('button', { name: /Health not set\s*2/ })).toBeTruthy();
-    const matrix = screen.getByTestId('pdt-matrix');
-    expect(within(matrix).getByText('3 products')).toBeTruthy();
-    expect(within(matrix).getByRole('button', { name: 'Waterproofing, Development: 1' })).toBeTruthy();
-    // The full tracker sits behind "Show all products" so the landing page starts compact.
-    expect(screen.queryByTestId('pdt-tracker')).toBeNull();
-    fireEvent.click(screen.getByTestId('pdt-show-tracker'));
-    const tracker = screen.getByTestId('pdt-tracker');
-    expect(within(tracker).getByText('3 products')).toBeTruthy();
-    expect(within(tracker).getByText('Target date passed')).toBeTruthy();
-    expect(within(tracker).getAllByText('Health not set').length).toBeGreaterThan(0);
-    expect(within(screen.getByTestId('pdt-years')).getByText('2023')).toBeTruthy();
+    const portfolio = await screen.findByTestId('pdt-kpi-portfolio');
+    for (const label of ['Total products', 'In market', 'Active', 'Planned']) expect(within(portfolio).getByText(label)).toBeTruthy();
+    const n = (key: string) => Number(screen.getByTestId(`pdt-kpi-${key}`).querySelector('[aria-label] > div')!.textContent);
+    expect(n('total')).toBe(3);
+    expect(n('inMarket') + n('active') + n('planned')).toBe(n('total'));
+    expect(within(portfolio).getByText('No date 0 · >12 months 0 · Date passed 1')).toBeTruthy();
+    const status = screen.getByTestId('pdt-kpi-status');
+    for (const label of ['On track', 'Need attention', 'Launches in next 90 days']) expect(within(status).getByText(label)).toBeTruthy();
+    expect(screen.getByTestId('pdt-health-not-set').textContent).toBe('Health not set: 2');
+    expect(within(screen.getByTestId('pdt-roadmap')).getByText('MonoSeal')).toBeTruthy();
+    expect(screen.getByTestId('pdt-roadmap-all').textContent).toBe('Next 90 days · 1 launch');
+    // the shared filter bar starts collapsed, like on the other pages; the info line is on the right of its panel
+    expect(screen.queryByTestId('filter-bar-info')).toBeNull();
+    fireEvent.click(within(screen.getByTestId('pdt-filters')).getByRole('button', { name: /Filters/ }));
+    expect(screen.getByTestId('filter-bar-info').textContent).toMatch(/^Last Excel import: 18 Nov 2026/);
+    // the stage pipeline: count, share and the overdue badge
+    expect(within(screen.getByTestId('pdt-pipeline')).getByText('1 · 33% 1 overdue')).toBeTruthy();
+    expect(within(screen.getByTestId('pdt-pipeline')).getAllByText('0 · 0%')).toHaveLength(3); // Research, Testing, Launch ready (faded)
+    expect(screen.queryByText('Product stage pipeline')).toBeNull();
+    expect(screen.getByText('Development stage pipeline')).toBeTruthy();
   });
 
-  it('shows six stage tiles with the backend counts, health split and warnings; no product cards', async () => {
+  it('every KPI card opens its details table with the products behind it, and shows as active', { timeout: 15_000 }, async () => {
     respond(DASH);
     render(<PdpPage section="dashboard" />);
-    await screen.findByTestId('pdt-tile-IDEA');
-    expect(screen.getByTestId('pdt-stage-totals').textContent).toBe('3 products · 2 in pipeline · 1 in market');
-    const tile = (st: string) => screen.getByTestId(`pdt-tile-${st}`).textContent;
-    expect(tile('DEVELOPMENT')).toMatch(/Development\s*1/);
-    expect(tile('DEVELOPMENT')).toContain('2 on track · 1 at risk · 1 blocked · 1 not set');
-    expect(tile('DEVELOPMENT')).toContain('Avg readiness 48%');
-    expect(tile('DEVELOPMENT')).toContain('Next target 10 Jan 2027');
-    expect(tile('DEVELOPMENT')).toContain('1 blocked');
-    expect(tile('IDEA')).toContain('1 not set');
-    expect(tile('IDEA')).toContain('Avg readiness —');
-    expect(tile('IDEA')).toContain('1 overdue');
-    // An empty stage is muted with "No products"; Launched shows the count and "in market" only.
-    expect(tile('RESEARCH')).toBe('Research0No products');
-    expect(tile('LAUNCHED')).toBe('Launched1in market');
-    expect(screen.queryByTestId('pdt-card-XT-011')).toBeNull();
-    expect(screen.queryByTestId('pdt-stage-detail')).toBeNull();
+    const card = await screen.findByTestId('pdt-kpi-planned');
+    fireEvent.click(card);
+    const drill = await screen.findByTestId('pdt-drill');
+    expect(card.getAttribute('aria-pressed')).toBe('true');
+    expect(within(drill).getByTestId('pdt-drill-count').textContent).toBe('1 product');
+    expect(within(drill).getByText('Wide-Joint Grout')).toBeTruthy();
+    expect(within(drill).queryByText('MonoSeal')).toBeNull();
+    for (const h of ['Code', 'Product name', 'Brand', 'Family', 'Subfamily', 'Stage', 'Health', 'Priority', 'Owner', 'Readiness %', 'Target launch', 'Days to launch', 'Flag', 'Next step']) {
+      expect(within(drill).getAllByText(h).length).toBeGreaterThan(0);
+    }
+    fireEvent.click(within(drill).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByTestId('pdt-drill')).toBeNull());
+    fireEvent.click(screen.getByTestId('pdt-kpi-upcomingLaunches'));
+    expect(within(await screen.findByTestId('pdt-drill')).getByTestId('pdt-drill-count').textContent).toBe('1 product');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('pdt-drill')).toBeNull());
+    fireEvent.click(screen.getByTestId('pdt-health-not-set'));
+    expect(within(await screen.findByTestId('pdt-drill')).getByTestId('pdt-drill-count').textContent).toBe('2 products');
   });
 
-  it('opens one stage below the tiles, sets the Stage filter and ?stage=, and closes with the tile, ✕ or Esc', async () => {
+  it('a stage click filters the page on it (and ?stage=) and opens its products; clicking it again clears both', async () => {
     respond(DASH);
     render(<PdpPage section="dashboard" />);
-    fireEvent.click(await screen.findByTestId('pdt-tile-DEVELOPMENT'));
+    fireEvent.click(await screen.findByRole('button', { name: 'bar Development' }));
     await waitFor(() => expect(request).toHaveBeenCalledWith('/tracker/dashboard?stages=DEVELOPMENT', 'test'));
-    const panel = await screen.findByTestId('pdt-stage-detail');
-    expect(within(panel).getByTestId('pdt-detail-row-XT-011')).toBeTruthy();
-    expect(within(panel).queryByTestId('pdt-detail-row-XT-001')).toBeNull();
     expect(window.location.search).toBe('?stage=development');
-    expect(screen.getByTestId('pdt-tile-DEVELOPMENT').getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(screen.getByTestId('pdt-tile-DEVELOPMENT'));
-    await waitFor(() => expect(screen.queryByTestId('pdt-stage-detail')).toBeNull());
-    expect(window.location.search).toBe('');
-    fireEvent.click(screen.getByTestId('pdt-tile-IDEA'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Close Idea' }));
-    await waitFor(() => expect(screen.queryByTestId('pdt-stage-detail')).toBeNull());
-    fireEvent.click(screen.getByTestId('pdt-tile-IDEA'));
-    await screen.findByTestId('pdt-stage-detail');
-    fireEvent.keyDown(window, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByTestId('pdt-stage-detail')).toBeNull());
+    const drill = await screen.findByTestId('pdt-drill');
+    expect(within(drill).getByText('MonoSeal')).toBeTruthy();
+    expect(within(drill).queryByText('XtraCol One')).toBeNull();
+    fireEvent.click(within(drill).getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bar Development' }));
+    await waitFor(() => expect(window.location.search).toBe(''));
+    expect(screen.queryByTestId('pdt-drill')).toBeNull();
   });
 
   it('opens the stage from a ?stage= deep link', async () => {
     window.history.replaceState(null, '', '/?stage=development');
     respond(DASH);
     render(<PdpPage section="dashboard" />);
-    expect(await screen.findByTestId('pdt-stage-detail')).toBeTruthy();
+    expect(within(await screen.findByTestId('pdt-drill')).getByText('MonoSeal')).toBeTruthy();
     expect(request).toHaveBeenCalledWith('/tracker/dashboard?stages=DEVELOPMENT', 'test');
   });
 
-  it('groups the open stage by family', async () => {
-    window.history.replaceState(null, '', '/?stage=development');
+  it('a family segment, a family and a table-view cell open the right products', { timeout: 15_000 }, async () => {
     respond(DASH);
     render(<PdpPage section="dashboard" />);
-    const panel = await screen.findByTestId('pdt-stage-detail');
-    fireEvent.click(within(panel).getByLabelText('Group by family'));
-    const head = within(panel).getByRole('button', { name: /Waterproofing \(1\)/ });
-    expect(within(panel).queryByTestId('pdt-detail-row-XT-011')).toBeNull();
-    fireEvent.click(head);
-    expect(within(panel).getByTestId('pdt-detail-row-XT-011')).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: 'segment Tile Fixing LAUNCHED' }));
+    let drill = await screen.findByTestId('pdt-drill');
+    expect(within(drill).getByText('Tile Fixing · Launched')).toBeTruthy();
+    expect(within(drill).getByText('XtraCol One')).toBeTruthy();
+    expect(within(drill).queryByText('Wide-Joint Grout')).toBeNull();
+    fireEvent.click(within(drill).getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'bar Tile Fixing' }));
+    drill = await screen.findByTestId('pdt-drill');
+    expect(within(drill).getByTestId('pdt-drill-count').textContent).toBe('2 products');
+    fireEvent.click(within(drill).getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByTestId('pdt-matrix-toggle'));
+    fireEvent.click(within(screen.getByTestId('pdt-matrix')).getByRole('button', { name: 'Waterproofing, Development: 1' }));
+    expect(within(await screen.findByTestId('pdt-drill')).getByText('MonoSeal')).toBeTruthy();
   });
 
-  it('a row opens the product drawer: editable with entry rights, read-only without', async () => {
-    window.history.replaceState(null, '', '/?stage=development');
+  it('a year opens its launched and planned products', async () => {
+    respond(DASH);
+    render(<PdpPage section="dashboard" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'bar 2023' }));
+    const drill = await screen.findByTestId('pdt-drill');
+    expect(within(drill).getByText('Launches in 2023')).toBeTruthy();
+    expect(within(drill).getByText('XtraCol One')).toBeTruthy();
+  });
+
+  it('a row of the details table opens the product drawer: editable with entry rights, read-only without', { timeout: 15_000 }, async () => {
     respond(DASH);
     const { unmount } = render(<PdpPage section="dashboard" />);
-    fireEvent.click(await screen.findByTestId('pdt-detail-row-XT-011'));
+    fireEvent.click(await screen.findByTestId('pdt-kpi-active'));
+    fireEvent.click(within(await screen.findByTestId('pdt-drill')).getByText('MonoSeal').closest('tr')!);
     const drawer = await screen.findByTestId('pdt-drawer');
     await waitFor(() => expect(within(drawer).getByRole('button', { name: 'Change stage' })).toBeTruthy());
     unmount();
     perms.entry = false;
-    window.history.replaceState(null, '', '/?stage=development');
     render(<PdpPage section="dashboard" />);
-    fireEvent.click(await screen.findByTestId('pdt-detail-row-XT-011'));
+    fireEvent.click(await screen.findByTestId('pdt-kpi-active'));
+    fireEvent.click(within(await screen.findByTestId('pdt-drill')).getByText('MonoSeal').closest('tr')!);
     const ro = await screen.findByTestId('pdt-drawer');
-    await waitFor(() => expect(within(ro).getByText('MonoSeal')).toBeTruthy());
+    await waitFor(() => expect(within(ro).getAllByText('MonoSeal').length).toBeGreaterThan(0));
     expect(within(ro).queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(within(ro).queryByRole('button', { name: 'Change stage' })).toBeNull();
   });
 
-  it('a matrix cell and a gap line filter the whole page', async () => {
+  it('the Brand filter sits next to Family in the shared filter bar and filters the page', async () => {
     respond(DASH);
     render(<PdpPage section="dashboard" />);
-    await screen.findByTestId('pdt-matrix');
-    fireEvent.click(screen.getByRole('button', { name: 'Waterproofing, Development: 1' }));
-    await waitFor(() => expect(request).toHaveBeenCalledWith('/tracker/dashboard?familyIds=22&stages=DEVELOPMENT', 'test'));
-    fireEvent.click(screen.getByRole('button', { name: /Health not set\s*2/ }));
-    await waitFor(() => expect(request).toHaveBeenCalledWith('/tracker/dashboard?stages=IDEA%2CRESEARCH%2CDEVELOPMENT%2CTESTING%2CLAUNCH_READY&health=NONE', 'test'));
+    await screen.findByTestId('pdt-kpis');
+    const bar = screen.getByTestId('pdt-filters');
+    fireEvent.click(within(bar).getByRole('button', { name: /Filters/ }));
+    const labels = [...bar.querySelectorAll('label')].map((l) => l.textContent);
+    expect(labels.indexOf('Brand')).toBe(labels.indexOf('Family') + 1);
+    expect(within(bar).getByRole('button', { name: 'Reset filters' })).toHaveProperty('disabled', true);
+    fireEvent.click(within(bar).getAllByRole('button', { name: /All/ })[1]);
+    fireEvent.click(await within(bar).findByText('Xtreme'));
+    await waitFor(() => expect(request).toHaveBeenCalledWith('/tracker/dashboard?brands=Xtreme', 'test'));
+    expect(within(bar).getByRole('button', { name: 'Reset filters' })).toHaveProperty('disabled', false);
   });
 
   it('shows only Dashboard and Data entry tabs; no gate tabs', async () => {

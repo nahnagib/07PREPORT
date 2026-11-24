@@ -95,6 +95,11 @@ export interface FilterBarProps {
   onReset?: () => void;
   /** True when the page's own filters already equal their defaults (disables the Reset button). */
   isPristine?: boolean;
+  /** The right-hand info line for a page whose data is not the ETL's (e.g. "Last Excel import: …"); replaces the
+   * Last Order Date / Last Refresh Time lines. */
+  infoText?: string;
+  /** The badge count for a page whose filters are its own state (with `onReset`); default: the shared filters above. */
+  activeCount?: number;
 }
 
 const fieldBox: React.CSSProperties = { width: 152, flexShrink: 0 };
@@ -157,6 +162,8 @@ export function FilterBar({
   secondRow,
   onReset,
   isPristine,
+  infoText,
+  activeCount,
 }: FilterBarProps) {
   const { isAdmin } = useAuth();
   // Options are cross-filtered by the server (FilterProvider owns the single /filters/options
@@ -209,13 +216,13 @@ export function FilterBar({
   // again (no cross-page persistence needed -- "collapsed by default" per the revision request).
   const [isOpen, setIsOpen] = useState(false);
 
-  const activeFilterCount =
+  const activeFilterCount = activeCount ?? (
     (showCompanyDimension ? (filters.companyKeys?.length ?? 0) : 0) +
     (showTransactionDimensions ? (filters.segmentKeys?.length ?? 0) : 0) +
     (showTransactionDimensions ? (filters.channelKeys?.length ?? 0) : 0) +
     (showTransactionDimensions ? (filters.salesTeamKeys?.length ?? 0) : 0) +
     (showTransactionDimensions ? (filters.salespersonKeys?.length ?? 0) : 0) +
-    (customerEnabled ? customerValue.length : 0);
+    (customerEnabled ? customerValue.length : 0));
 
   const floorDate = (date: string) => (ytdOnly && date < ytdStartIso() ? ytdStartIso() : date);
 
@@ -428,7 +435,16 @@ export function FilterBar({
 
       <div style={{ flex: 1 }} />
 
-      {showLastOrderInfo && (
+      {infoText !== undefined && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+          <span aria-hidden style={labelSpacerStyle}>&nbsp;</span>
+          <div data-testid="filter-bar-info" style={{ display: 'flex', alignItems: 'center', height: 38, fontSize: 11, color: 'var(--ps-color-muted-text)', whiteSpace: 'nowrap' }}>
+            {infoText}
+          </div>
+        </div>
+      )}
+
+      {showLastOrderInfo && infoText === undefined && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
           <span aria-hidden style={labelSpacerStyle}>&nbsp;</span>
           <div

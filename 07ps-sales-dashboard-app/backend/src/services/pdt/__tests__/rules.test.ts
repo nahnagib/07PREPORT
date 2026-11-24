@@ -7,6 +7,9 @@ import {
   applyFilters,
   buildFollowup,
   buildRoadmap,
+  addMonths,
+  kpiSets,
+  UNASSIGNED_BRAND,
   computeKpis,
   daysBetween,
   familyStageMatrix,
@@ -34,7 +37,7 @@ type Fam = keyof typeof FAM;
 
 function p(id: number, name: string, family: Fam, stage: StageCode, owner: string | null, priority: PriorityCode | null, health: HealthCode | null, readiness: number | null, target: string | null, actual: string | null = null): Product {
   return {
-    productId: id, code: `XT-${String(id).padStart(3, '0')}`, name, familyId: FAM[family], family, subfamily: `${family} sub`, ownerUserId: null, ownerName: owner, priority, stage, health,
+    productId: id, code: `XT-${String(id).padStart(3, '0')}`, name, familyId: FAM[family], family, subfamily: `${family} sub`, brand: id <= 3 ? 'Xtreme' : UNASSIGNED_BRAND, ownerUserId: null, ownerName: owner, priority, stage, health,
     readinessPct: readiness, targetLaunch: target, actualLaunch: actual, projectType: 'PLANNED', nextStep: null, nextStepDue: null, healthReviewRequired: false,
     stageSince: '2026-10-01', lastUpdateAt: '2026-11-10', createdOn: '2026-09-01',
   };
@@ -81,12 +84,38 @@ describe('dates, codes, readiness', () => {
   });
 });
 
-describe('KPIs (6 cards + the two gap lines)', () => {
-  it('counts total, in market, active, on track, need attention, upcoming, target passed, health not set', () => {
+describe('KPIs (portfolio row + status row)', () => {
+  it('counts total, in market, active (target within 12 months), planned and the status row on not-launched products', () => {
     expect(computeKpis(SET, TODAY, DEFAULT_SETTINGS)).toEqual({
-      // upcoming: XT-005 (10 Dec), XT-007 (20 Dec), XT-003 (15 Jan); XT-006 is 2028, XT-004 already passed
-      total: 7, inMarket: 2, active: 5, onTrack: 1, needAttention: 2, upcomingLaunches: 3, targetPassed: 1, healthNotSet: 2,
+      // active: XT-005 (10 Dec), XT-007 (20 Dec), XT-003 (15 Jan 2027); planned: XT-006 (2028, beyond), XT-004 (June 2026, passed)
+      total: 7, inMarket: 2, active: 3, planned: 2, plannedNoDate: 0, plannedBeyond: 1, plannedPassed: 1,
+      // on track: XT-006 (planned, not launched); launched XT-001/002 are on track too but not counted
+      onTrack: 1, needAttention: 2, upcomingLaunches: 3, healthNotSet: 2, targetPassed: 1,
     });
+  });
+  it('adds up: total = in market + active + planned, with and without filters', () => {
+    const withNoDate = [...SET, p(8, 'No Date', 'Flooring', 'IDEA', null, null, null, null, null)];
+    for (const set of [withNoDate, applyFilters(withNoDate, { ...NO_FILTERS, familyIds: [4] }), applyFilters(withNoDate, { ...NO_FILTERS, brands: ['xtreme'] })]) {
+      const k = computeKpis(set, TODAY, DEFAULT_SETTINGS);
+      expect(k.inMarket + k.active + k.planned).toBe(k.total);
+      expect(k.plannedNoDate + k.plannedBeyond + k.plannedPassed).toBe(k.planned);
+    }
+    expect(computeKpis(withNoDate, TODAY, DEFAULT_SETTINGS).plannedNoDate).toBe(1);
+  });
+  it('lists the products behind each card', () => {
+    const s = kpiSets(SET, TODAY, DEFAULT_SETTINGS);
+    expect(s.active).toEqual(['XT-003', 'XT-005', 'XT-007']);
+    expect(s.planned).toEqual(['XT-004', 'XT-006']);
+    expect(s.needAttention).toEqual(['XT-003', 'XT-007']);
+    expect(s.upcomingLaunches).toEqual(['XT-003', 'XT-005', 'XT-007']);
+  });
+  it('counts the 12-month boundary day as Active and the day after as Planned', () => {
+    const bucketOf = (target: string) => kpiSets([p(1, 'A', 'Flooring', 'TESTING', null, null, 'ON_TRACK', 10, target)], TODAY, DEFAULT_SETTINGS);
+    expect(addMonths(TODAY, 12)).toBe('2027-11-18');
+    expect(bucketOf('2027-11-18').active).toHaveLength(1);
+    expect(bucketOf('2027-11-19').planned).toHaveLength(1);
+    expect(bucketOf(TODAY).active).toHaveLength(1);
+    expect(addMonths('2027-01-31', 1)).toBe('2027-02-28');
   });
   it('counts the 90-day boundary day itself, not the day after', () => {
     const one = (target: string) => computeKpis([p(1, 'A', 'Flooring', 'TESTING', null, null, 'ON_TRACK', 10, target)], TODAY, DEFAULT_SETTINGS).upcomingLaunches;
@@ -154,11 +183,18 @@ describe('launches by year', () => {
 });
 
 describe('roadmap', () => {
-  it('groups active products by target month over the window and counts the rest', () => {
-    const r = buildRoadmap(SET, TODAY, 4);
+  it('groups the next-90-days launches by target month and counts the rest', () => {
+    const r = buildRoadmap(SET, TODAY, 90);
+    expect(r.windowEnd).toBe('2027-02-16');
     expect(r.months.map((m) => m.month)).toEqual(['2026-11', '2026-12', '2027-01', '2027-02']);
     expect(r.months.map((m) => m.products.map((x) => x.code))).toEqual([[], ['XT-005', 'XT-007'], ['XT-003'], []]);
     expect(r.outsideWindow).toBe(2); // XT-004 (June 2026, passed) and XT-006 (2028)
+    expect(r.months.reduce((n, m) => n + m.products.length, 0)).toBe(computeKpis(SET, TODAY, DEFAULT_SETTINGS).upcomingLaunches);
+  });
+  it('leaves out a launch on day 91', () => {
+    const r = buildRoadmap([p(1, 'A', 'Flooring', 'TESTING', null, null, 'ON_TRACK', 10, addDays(TODAY, 91))], TODAY, 90);
+    expect(r.months.flatMap((m) => m.products)).toHaveLength(0);
+    expect(r.outsideWindow).toBe(1);
   });
 });
 
@@ -171,6 +207,8 @@ describe('filters', () => {
     expect(applyFilters(SET, { ...NO_FILTERS, owners: [NOT_SET] })).toHaveLength(5);
     expect(applyFilters(SET, { ...NO_FILTERS, owners: ['omar ali'] }).map((x) => x.code)).toEqual(['XT-003']);
     expect(applyFilters(SET, { ...NO_FILTERS, priorities: ['HIGH'] })).toHaveLength(1);
+    expect(applyFilters(SET, { ...NO_FILTERS, brands: ['Xtreme'] }).map((x) => x.code)).toEqual(['XT-001', 'XT-002', 'XT-003']);
+    expect(applyFilters(SET, { ...NO_FILTERS, brands: [UNASSIGNED_BRAND] })).toHaveLength(4);
     expect(applyFilters(SET, { ...NO_FILTERS, search: 'xt-00' })).toHaveLength(7);
     expect(applyFilters(SET, { ...NO_FILTERS, launchFrom: '2026-12-01', launchTo: '2027-01-31' }).map((x) => x.code)).toEqual(['XT-003', 'XT-005', 'XT-007']);
   });

@@ -26,6 +26,9 @@ export type BlockerStatus = (typeof BLOCKER_STATUSES)[number];
 /** The filter value for "not set" (health / priority / owner left blank). */
 export const NOT_SET = 'NONE';
 
+/** Brand of a product whose Excel "Brand" cell is blank (or whose file has no Brand column). */
+export const UNASSIGNED_BRAND = 'Unassigned';
+
 /** Stages where readiness may be 100%. */
 export const FULL_READINESS_STAGES: readonly StageCode[] = ['LAUNCH_READY', 'LAUNCHED'];
 /** Stages that need a target launch date (an Idea may not have one yet; a launched product has its actual date). */
@@ -76,6 +79,8 @@ export interface Product {
   familyId: number | null;
   family: string | null;
   subfamily: string | null;
+  /** Never empty: UNASSIGNED_BRAND when the file leaves it blank. */
+  brand: string;
   ownerUserId: number | null;
   ownerName: string | null;
   priority: PriorityCode | null;
@@ -130,6 +135,16 @@ export function addDays(iso: string, days: number): string {
   return new Date(toUtc(iso) + days * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** The same day `months` calendar months later (31 Jan + 1 month = 28/29 Feb). */
+export function addMonths(iso: string, months: number): string {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7)) - 1 + months;
+  const ty = y + Math.floor(m / 12);
+  const tm = ((m % 12) + 12) % 12;
+  const last = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(ty, tm, Math.min(Number(iso.slice(8, 10)), last))).toISOString().slice(0, 10);
+}
+
 /** Whole days from `from` to `to` (negative when `to` is earlier). */
 export function daysBetween(from: string, to: string): number {
   return Math.round((toUtc(to) - toUtc(from)) / 86_400_000);
@@ -144,7 +159,7 @@ export function isValidIsoDate(v: unknown): v is string {
 // Status of one product / item
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** Active = every stage before Launched. */
+/** Not launched = every stage before Launched (the KPI "Active" is narrower: see portfolioBucket). */
 export const isActive = (p: Pick<Product, 'stage'>): boolean => p.stage !== 'LAUNCHED';
 
 /** Unresolved = Open or In progress; the dashboard's "open" items. */
@@ -230,6 +245,8 @@ export function productProblems(p: { name: string; stage: StageCode; readinessPc
 export interface Filters {
   familyIds: number[];
   subfamilies: string[];
+  /** Brand names (UNASSIGNED_BRAND for a blank brand). */
+  brands?: string[];
   stages: StageCode[];
   /** Health codes and/or NOT_SET. */
   health: string[];
@@ -250,10 +267,12 @@ export function applyFilters(products: Product[], f: Filters): Product[] {
   const q = f.search?.trim().toLowerCase();
   const owners = f.owners.map((o) => (o === NOT_SET ? o : o.toLowerCase()));
   const subs = f.subfamilies.map((x) => x.toLowerCase());
+  const brands = (f.brands ?? []).map((x) => x.toLowerCase());
   return products.filter(
     (p) =>
       (f.familyIds.length === 0 || (p.familyId !== null && f.familyIds.includes(p.familyId))) &&
       (subs.length === 0 || (p.subfamily !== null && subs.includes(p.subfamily.toLowerCase()))) &&
+      (brands.length === 0 || brands.includes(p.brand.toLowerCase())) &&
       (f.stages.length === 0 || f.stages.includes(p.stage)) &&
       matches(f.health, p.health) &&
       matches(owners, p.ownerName ? p.ownerName.toLowerCase() : null) &&
@@ -273,29 +292,78 @@ export interface Kpis {
   total: number;
   inMarket: number;
   active: number;
+  planned: number;
+  /** Planned split: no target date / target more than 12 months away / target date already passed. */
+  plannedNoDate: number;
+  plannedBeyond: number;
+  plannedPassed: number;
   onTrack: number;
   needAttention: number;
   upcomingLaunches: number;
-  targetPassed: number;
   healthNotSet: number;
+  /** Not launched with the target date already past (= plannedPassed); kept for the export. */
+  targetPassed: number;
+}
+
+export type KpiKey = 'total' | 'inMarket' | 'active' | 'planned' | 'onTrack' | 'needAttention' | 'upcomingLaunches' | 'healthNotSet';
+
+/** Months ahead a target launch may be for the product to count as Active (otherwise it is Planned). */
+export const ACTIVE_WINDOW_MONTHS = 12;
+
+/** A product's place in the portfolio: in market, Active (not launched, target in [today, today + 12 months]) or Planned. */
+export type PortfolioBucket = 'IN_MARKET' | 'ACTIVE' | 'PLANNED_NO_DATE' | 'PLANNED_BEYOND' | 'PLANNED_PASSED';
+
+export function portfolioBucket(p: Pick<Product, 'stage' | 'targetLaunch'>, today: string): PortfolioBucket {
+  if (!isActive(p)) return 'IN_MARKET';
+  if (!p.targetLaunch) return 'PLANNED_NO_DATE';
+  if (p.targetLaunch < today) return 'PLANNED_PASSED';
+  if (p.targetLaunch > addMonths(today, ACTIVE_WINDOW_MONTHS)) return 'PLANNED_BEYOND';
+  return 'ACTIVE';
+}
+
+/** Not launched, target launch from today to today + window days (both included): the KPI card and the roadmap. */
+export function isUpcomingLaunch(p: Pick<Product, 'stage' | 'targetLaunch'>, today: string, windowDays: number): boolean {
+  return isActive(p) && p.targetLaunch !== null && p.targetLaunch >= today && p.targetLaunch <= addDays(today, windowDays);
 }
 
 /**
- * The six KPI cards plus the two gap lines -- the same rules as the Excel "Where we stand" key numbers.
- * Upcoming = active with target launch from today to today + window (both days included).
+ * The products behind each KPI card (codes, in the order given). Row 1 adds up: total = inMarket + active + planned.
+ * Row 2 is on the not-launched products (active + planned): on track, need attention (at risk or blocked), launches in
+ * the next `upcomingWindowDays`; healthNotSet is the note under that row.
  */
-export function computeKpis(products: Product[], today: string, s: Pick<Settings, 'upcomingWindowDays'>): Kpis {
-  const active = products.filter(isActive);
-  const windowEnd = addDays(today, s.upcomingWindowDays);
+export function kpiSets(products: Product[], today: string, s: Pick<Settings, 'upcomingWindowDays'>): Record<KpiKey, string[]> {
+  const bucket = new Map(products.map((p) => [p.code, portfolioBucket(p, today)]));
+  // eslint-disable-next-line no-unused-vars -- parameter name of a function type (the base rule misreads it)
+  const codes = (f: (p: Product) => boolean) => products.filter(f).map((p) => p.code);
   return {
-    total: products.length,
-    inMarket: products.length - active.length,
-    active: active.length,
-    onTrack: active.filter((p) => p.health === 'ON_TRACK').length,
-    needAttention: active.filter((p) => p.health === 'AT_RISK' || p.health === 'BLOCKED').length,
-    upcomingLaunches: active.filter((p) => p.targetLaunch !== null && p.targetLaunch >= today && p.targetLaunch <= windowEnd).length,
-    targetPassed: active.filter((p) => isTargetPassed(p, today)).length,
-    healthNotSet: active.filter((p) => p.health === null).length,
+    total: codes(() => true),
+    inMarket: codes((p) => bucket.get(p.code) === 'IN_MARKET'),
+    active: codes((p) => bucket.get(p.code) === 'ACTIVE'),
+    planned: codes((p) => bucket.get(p.code)!.startsWith('PLANNED')),
+    onTrack: codes((p) => isActive(p) && p.health === 'ON_TRACK'),
+    needAttention: codes((p) => isActive(p) && (p.health === 'AT_RISK' || p.health === 'BLOCKED')),
+    upcomingLaunches: codes((p) => isUpcomingLaunch(p, today, s.upcomingWindowDays)),
+    healthNotSet: codes((p) => isActive(p) && p.health === null),
+  };
+}
+
+export function computeKpis(products: Product[], today: string, s: Pick<Settings, 'upcomingWindowDays'>): Kpis {
+  const sets = kpiSets(products, today, s);
+  const buckets = products.map((p) => portfolioBucket(p, today));
+  const n = (b: PortfolioBucket) => buckets.filter((x) => x === b).length;
+  return {
+    total: sets.total.length,
+    inMarket: sets.inMarket.length,
+    active: sets.active.length,
+    planned: sets.planned.length,
+    plannedNoDate: n('PLANNED_NO_DATE'),
+    plannedBeyond: n('PLANNED_BEYOND'),
+    plannedPassed: n('PLANNED_PASSED'),
+    onTrack: sets.onTrack.length,
+    needAttention: sets.needAttention.length,
+    upcomingLaunches: sets.upcomingLaunches.length,
+    healthNotSet: sets.healthNotSet.length,
+    targetPassed: n('PLANNED_PASSED'),
   };
 }
 
@@ -388,30 +456,26 @@ export interface RoadmapMonth {
   products: Product[];
 }
 
-/** `months` calendar months from the current one; active products grouped by target-launch month, earliest first. */
-export function buildRoadmap(products: Product[], today: string, months: number): { months: RoadmapMonth[]; outsideWindow: number } {
+/**
+ * The launch roadmap: exactly the products of the "Launches in next N days" card (isUpcomingLaunch, the same rule),
+ * grouped by target-launch month (every calendar month the window touches, empty ones included), earliest first.
+ * outsideWindow = the other not-launched products that have a target date.
+ */
+export function buildRoadmap(products: Product[], today: string, windowDays: number): { months: RoadmapMonth[]; outsideWindow: number; windowEnd: string } {
+  const windowEnd = addDays(today, windowDays);
   const keys: string[] = [];
-  let y = Number(today.slice(0, 4));
-  let m = Number(today.slice(5, 7));
-  for (let i = 0; i < months; i += 1) {
-    keys.push(`${y}-${String(m).padStart(2, '0')}`);
-    m += 1;
-    if (m > 12) {
-      m = 1;
-      y += 1;
-    }
-  }
+  for (let k = today.slice(0, 7); k <= windowEnd.slice(0, 7); k = addMonths(`${k}-01`, 1).slice(0, 7)) keys.push(k);
   const byMonth = new Map<string, Product[]>(keys.map((k) => [k, []]));
   let outsideWindow = 0;
   for (const p of products.filter(isActive)) {
     if (!p.targetLaunch) continue;
-    const bucket = byMonth.get(p.targetLaunch.slice(0, 7));
-    if (bucket) bucket.push(p);
+    if (isUpcomingLaunch(p, today, windowDays)) byMonth.get(p.targetLaunch.slice(0, 7))!.push(p);
     else outsideWindow += 1;
   }
   return {
     months: keys.map((k) => ({ month: k, products: (byMonth.get(k) ?? []).sort((a, b) => (a.targetLaunch ?? '').localeCompare(b.targetLaunch ?? '')) })),
     outsideWindow,
+    windowEnd,
   };
 }
 

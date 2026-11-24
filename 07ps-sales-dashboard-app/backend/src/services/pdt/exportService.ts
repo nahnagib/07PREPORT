@@ -25,10 +25,10 @@ export async function exportDashboard(filters: Filters): Promise<Buffer> {
   const [dash, label] = await Promise.all([getDashboard(filters), labels()]);
   const workbook = new ExcelJS.Workbook();
 
-  const tracker = sheetOf(workbook, 'Product tracker', [['Code', 9], ['Product', 30], ['Family', 24], ['Subfamily', 22], ['Stage', 14], ['Owner', 20], ['Priority', 10], ['Health', 13], ['Readiness %', 12], ['Target launch', 14], ['Actual launch', 14], ['Flag', 24]], [10, 11]);
+  const tracker = sheetOf(workbook, 'Product tracker', [['Code', 9], ['Product', 30], ['Brand', 16], ['Family', 24], ['Subfamily', 22], ['Stage', 14], ['Owner', 20], ['Priority', 10], ['Health', 13], ['Readiness %', 12], ['Target launch', 14], ['Actual launch', 14], ['Flag', 24]], [11, 12]);
   for (const p of dash.tracker) {
     tracker.addRow([
-      p.code, p.name, p.family ?? '', p.subfamily ?? '', label('stage', p.stage), p.ownerName ?? 'Not set', label('priority', p.priority) || 'Not set',
+      p.code, p.name, p.brand, p.family ?? '', p.subfamily ?? '', label('stage', p.stage), p.ownerName ?? 'Not set', label('priority', p.priority) || 'Not set',
       label('health', p.health) || 'Not set', p.readinessPct, asDate(p.targetLaunch), asDate(p.actualLaunch), p.flagLabel ?? '',
     ]);
   }
@@ -41,7 +41,7 @@ export async function exportDashboard(filters: Filters): Promise<Buffer> {
   const roadmap = sheetOf(workbook, 'Launch roadmap', [['Month', 12], ['Code', 9], ['Product', 30], ['Family', 24], ['Target launch', 14], ['Health', 13]], [5]);
   for (const m of dash.roadmap.months) for (const p of m.products) roadmap.addRow([m.month, p.code, p.name, p.family ?? '', asDate(p.targetLaunch), label('health', p.health) || 'Not set']);
   roadmap.addRow([]);
-  roadmap.addRow([`${dash.roadmap.outsideWindow} active product(s) have target dates outside this window. Readiness is manually estimated.`]);
+  roadmap.addRow([`Target launch from ${dash.today} to ${dash.roadmap.windowEnd} (next ${dash.settings.upcomingWindowDays} days). ${dash.roadmap.outsideWindow} other not-launched product(s) have a target date outside this window. Readiness is manually estimated.`]);
 
   const years = sheetOf(workbook, 'Launches by year', [['Year', 8], ['Launched', 11], ['Planned', 11]], []);
   for (const y of dash.byYear) years.addRow([y.year, y.launched, y.planned]);
@@ -55,8 +55,10 @@ export async function exportDashboard(filters: Filters): Promise<Buffer> {
   const k = dash.kpis;
   const summary = sheetOf(workbook, 'KPIs', [['KPI', 32], ['Value', 10]], []);
   for (const [n, v] of [
-    ['Total products', k.total], ['In market', k.inMarket], ['Active in pipeline', k.active], ['On track', k.onTrack], ['Need attention (at risk + blocked)', k.needAttention],
-    [`Launches in next ${dash.settings.upcomingWindowDays} days`, k.upcomingLaunches], ['Target date passed', k.targetPassed], ['Health not set', k.healthNotSet], ['As of', dash.today],
+    ['Total products', k.total], ['In market', k.inMarket], ['Active (target within 12 months)', k.active],
+    ['Planned', k.planned], ['  Planned: no target date', k.plannedNoDate], ['  Planned: target more than 12 months away', k.plannedBeyond], ['  Planned: target date passed', k.plannedPassed],
+    ['On track (not launched)', k.onTrack], ['Need attention (at risk + blocked)', k.needAttention],
+    [`Launches in next ${dash.settings.upcomingWindowDays} days`, k.upcomingLaunches], ['Health not set (not launched)', k.healthNotSet], ['As of', dash.today],
   ] as [string, number | string][]) summary.addRow([n, v]);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }

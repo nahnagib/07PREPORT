@@ -1,6 +1,7 @@
 'use client';
 import React, { useMemo } from 'react';
-import { Button, DateInput, Select } from '@07ps/ui';
+import { DateInput, Select } from '@07ps/ui';
+import { FilterBar as SharedFilterBar } from '../FilterBar';
 import { usePdp } from '../../lib/pdp/hooks';
 import { EMPTY_FILTERS, NOT_SET, TRACKER, countActiveFilters, type DropdownValue, type Filters, type HealthCode, type Options, type PriorityCode, type StageCode } from '../../lib/pdt/api';
 import s from './Pdt.module.css';
@@ -103,37 +104,74 @@ export const countActive = countActiveFilters;
 
 const withNotSet = (opts: { value: string; label: string }[], label = 'Not set') => [...opts, { value: NOT_SET, label }];
 
-/** Family, Subfamily, Stage, Health, Owner, Priority, Target launch range and search: every section below follows them. */
-export function FilterBar({ filters, onChange, lookup, options }: { filters: Filters; onChange: (f: Filters) => void; lookup: Lookup; options: Options }) {
+/** Same width as every field of the shared filter bar. */
+const fieldBox: React.CSSProperties = { width: 152, flexShrink: 0 };
+const searchLabel: React.CSSProperties = { display: 'block', fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--ps-color-muted-text)', marginBottom: 4 };
+
+/**
+ * The page's filters in the app's shared filter bar (components/FilterBar: "Filters" header with the active-filter badge,
+ * Hide / Show filters, Reset filters, the info line on the right): Search, Family, Brand, Subfamily, Stage, Health,
+ * Owner, Priority, Target launch range. Every section of the page follows them.
+ */
+export function FilterBar({ filters, onChange, lookup, options, infoText }: { filters: Filters; onChange: (f: Filters) => void; lookup: Lookup; options: Options; infoText?: string }) {
   const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
   const byCode = (list: DropdownValue[]) => list.map((d) => ({ value: d.code ?? String(d.value_id), label: d.label }));
   // Subfamilies of the chosen families (all when none is chosen).
   const subs = [...new Set(options.subfamilies.filter((x) => filters.familyIds.length === 0 || filters.familyIds.includes(String(x.familyId))).map((x) => x.subfamily))].sort();
+  const active = countActiveFilters(filters);
   return (
-    <div className={s.filters} data-testid="pdt-filters">
-      <div>
-        <label className={s.fieldLabel} htmlFor="pdt-search">Search</label>
-        <input id="pdt-search" className={s.search} type="search" placeholder="Product name or code" value={filters.search} onChange={(e) => set({ search: e.target.value })} />
-      </div>
-      <Select
-        label="Family"
-        multiSelect
-        options={lookup.families.map((f) => ({ value: String(f.value_id), label: f.label }))}
-        value={filters.familyIds}
-        onChange={(v) => set({ familyIds: v, subfamilies: filters.subfamilies.filter((x) => subs.includes(x)) })}
+    <div className={s.filterBar} data-testid="pdt-filters">
+      <SharedFilterBar
+        showDateRange={false}
+        showCompanyDimension={false}
+        showTransactionDimensions={false}
+        showLastOrderInfo={false}
+        onReset={() => onChange(EMPTY_FILTERS)}
+        isPristine={active === 0}
+        activeCount={active}
+        infoText={infoText}
+        extraFields={
+          <>
+            <div style={fieldBox}>
+              <label style={searchLabel} htmlFor="pdt-search">Search</label>
+              <input id="pdt-search" className={s.search} type="search" placeholder="Name or code" value={filters.search} onChange={(e) => set({ search: e.target.value })} />
+            </div>
+            <div style={fieldBox}>
+              <Select
+                label="Family"
+                multiSelect
+                options={lookup.families.map((f) => ({ value: String(f.value_id), label: f.label }))}
+                value={filters.familyIds}
+                onChange={(v) => set({ familyIds: v, subfamilies: filters.subfamilies.filter((x) => subs.includes(x)) })}
+              />
+            </div>
+            <div style={fieldBox}>
+              <Select label="Brand" multiSelect searchable options={(options.brands ?? []).map((b) => ({ value: b, label: b }))} value={filters.brands} onChange={(v) => set({ brands: v })} />
+            </div>
+            <div style={fieldBox}>
+              <Select label="Subfamily" multiSelect searchable options={subs.map((x) => ({ value: x, label: x }))} value={filters.subfamilies} onChange={(v) => set({ subfamilies: v })} />
+            </div>
+            <div style={fieldBox}>
+              <Select label="Stage" multiSelect options={byCode(lookup.stages)} value={filters.stages} onChange={(v) => set({ stages: v })} />
+            </div>
+            <div style={fieldBox}>
+              <Select label="Health" multiSelect options={withNotSet(byCode(lookup.health))} value={filters.health} onChange={(v) => set({ health: v })} />
+            </div>
+            <div style={fieldBox}>
+              <Select label="Owner" multiSelect searchable options={withNotSet(options.owners.map((o) => ({ value: o, label: o })), 'No owner')} value={filters.owners} onChange={(v) => set({ owners: v })} />
+            </div>
+            <div style={fieldBox}>
+              <Select label="Priority" multiSelect options={withNotSet(byCode(lookup.priorities))} value={filters.priorities} onChange={(v) => set({ priorities: v })} />
+            </div>
+            <div style={fieldBox}>
+              <DateInput label="Target launch from" value={filters.launchFrom} max={filters.launchTo || undefined} onChange={(v) => set({ launchFrom: v })} />
+            </div>
+            <div style={fieldBox}>
+              <DateInput label="Target launch to" value={filters.launchTo} min={filters.launchFrom || undefined} onChange={(v) => set({ launchTo: v })} />
+            </div>
+          </>
+        }
       />
-      <Select label="Subfamily" multiSelect searchable options={subs.map((x) => ({ value: x, label: x }))} value={filters.subfamilies} onChange={(v) => set({ subfamilies: v })} />
-      <Select label="Stage" multiSelect options={byCode(lookup.stages)} value={filters.stages} onChange={(v) => set({ stages: v })} />
-      <Select label="Health" multiSelect options={withNotSet(byCode(lookup.health))} value={filters.health} onChange={(v) => set({ health: v })} />
-      <Select label="Owner" multiSelect searchable options={withNotSet(options.owners.map((o) => ({ value: o, label: o })), 'No owner')} value={filters.owners} onChange={(v) => set({ owners: v })} />
-      <Select label="Priority" multiSelect options={withNotSet(byCode(lookup.priorities))} value={filters.priorities} onChange={(v) => set({ priorities: v })} />
-      <DateInput label="Target launch from" value={filters.launchFrom} max={filters.launchTo || undefined} onChange={(v) => set({ launchFrom: v })} />
-      <DateInput label="Target launch to" value={filters.launchTo} min={filters.launchFrom || undefined} onChange={(v) => set({ launchTo: v })} />
-      <div className={s.filterActions}>
-        <Button variant="ghost" disabled={countActiveFilters(filters) === 0} onClick={() => onChange(EMPTY_FILTERS)}>
-          Clear filters
-        </Button>
-      </div>
     </div>
   );
 }
