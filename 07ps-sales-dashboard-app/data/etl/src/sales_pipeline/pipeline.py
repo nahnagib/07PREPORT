@@ -68,6 +68,15 @@ from sales_pipeline.product_dashboard import IntercompanyFlagger, ProductDashboa
 from sales_pipeline.product_exclusions import ProductExclusions, load_for_run as load_product_exclusions
 
 
+def _combine_first_skip_empty(primary: pd.Series, fallback: pd.Series) -> pd.Series:
+    """combine_first without pandas' FutureWarning when one side is entirely NA (keeps the current dtype behaviour)."""
+    if fallback.isna().all():
+        return primary
+    if primary.isna().all():
+        return fallback.copy()
+    return primary.combine_first(fallback)
+
+
 SALE_REPORT_CACHE_TABLE = "raw_sale_report_api"
 SALE_REPORT_CACHE_KEY = "SaleReportLineID"
 
@@ -1363,7 +1372,7 @@ class PowerBISalesPipeline:
         )
         sales_order_links = sales_order_links[sales_order_links["IsSalesOrder"] & sales_order_links["QuotationKey"].notna()]
         linked_real_sales_order_map = sales_order_links.groupby("QuotationKey")["IsRealSalesOrder"].max().astype(bool).to_dict() if not sales_order_links.empty else {}
-        linked_real_sales_order = quote_key.map(linked_real_sales_order_map).fillna(False).astype(bool)
+        linked_real_sales_order = quote_key.map(linked_real_sales_order_map).astype("boolean").fillna(False).astype(bool)
         won_without_real_sales_order = int((is_won & ~linked_real_sales_order).sum())
         if won_not_real:
             raise RuntimeError(f"IsWonQuotation validation failed: won quotations not marked real={won_not_real}")
@@ -1710,7 +1719,7 @@ class PowerBISalesPipeline:
             if col in overwrite_cols:
                 out[col] = out[journey_col]
             elif col in existing_cols:
-                out[col] = out[col].combine_first(out[journey_col])
+                out[col] = _combine_first_skip_empty(out[col], out[journey_col])
             else:
                 out[col] = out[journey_col]
             if journey_col != col:
